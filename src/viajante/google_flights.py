@@ -14,7 +14,6 @@ from types import SimpleNamespace
 from typing import Mapping, Optional, Protocol
 from urllib.parse import urlencode
 
-from curl_cffi import requests as curl_requests
 from selectolax.lexbor import LexborHTMLParser
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
@@ -231,11 +230,18 @@ class SweepHttpClient(Protocol):
     def close(self) -> None: ...
 
 
+def _curl_requests():
+    # Sweep TLS only: card parse and unittest import must not pay for curl_cffi.
+    from curl_cffi import requests as curl_requests
+
+    return curl_requests
+
+
 class ChromeSweepClient:
     """One curl_cffi session: Chrome TLS, HTTP/2, keep-alive."""
 
     def __init__(self) -> None:
-        self._session = curl_requests.Session(impersonate="chrome")
+        self._session = _curl_requests().Session(impersonate="chrome")
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
         response = self._session.get(url, timeout=timeout, allow_redirects=True)
