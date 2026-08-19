@@ -53,6 +53,7 @@ from viajante.parsers import (
 from viajante.storage import default_state_dir, write_json_atomic
 
 DEFAULT_BAGGAGE_BUFFER_EUR = 70
+DEFAULT_TOP = 8
 
 UNKNOWN_DURATION_SORTS_LAST = float("inf")
 
@@ -764,7 +765,7 @@ def _search_with_source(
 def search_flights(
     queries: Sequence[Trip],
     *,
-    top: int = 8,
+    top: int = DEFAULT_TOP,
     buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",

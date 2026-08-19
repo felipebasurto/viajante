@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
 from viajante.airports import is_known_iata, lookup_airports
+from viajante.bench import run_bench
 from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
     parse_route_pair,
@@ -26,6 +27,7 @@ from viajante.explore import (
 )
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
+    DEFAULT_TOP,
     FlightSort,
     normalize_trip_kind,
     parse_airline_codes,
@@ -87,6 +89,11 @@ Examples:
   viajante airports tokyo
   viajante airports london
   viajante airports JFK
+"""
+
+BENCH_EXAMPLES = """\
+Examples:
+  viajante bench
 """
 
 HOTELS_EXAMPLES = """\
@@ -796,8 +803,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     flights.add_argument(
         "--top",
         type=int,
-        default=8,
-        help="Offers per query (default 8)",
+        default=DEFAULT_TOP,
+        help=f"Offers per query (default {DEFAULT_TOP})",
     )
     flights.add_argument(
         "--baggage-buffer",
@@ -1060,6 +1067,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     airports.add_argument("query", help="IATA code or city/name fragment")
 
+    sub.add_parser(
+        "bench",
+        help="Offline keep-or-revert bench (unittest + owned parse corpus)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=BENCH_EXAMPLES,
+    )
+
     try:
         args = parser.parse_args(list(argv) if argv is not None else None)
     except SystemExit as exc:
@@ -1076,6 +1090,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_explore(args)
     if args.cmd == "airports":
         return _run_airports(args)
+    if args.cmd == "bench":
+        return run_bench()
 
     parser.print_help()
     return 1

@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "source": "Owned builders in tests/test_google_flights.py. Do not add empty files.",
+  "min_files": 15,
+  "min_total_bytes": 8000,
+  "min_cards": 14,
+  "fixtures": [
+    {
+      "name": "shopping-one-stop.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-round-trip.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-midnight-noon.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-tap-layover.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-iberia-hour-only.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-iberia-late-nonstop.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-iberia-fco-late.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-ryanair-fco-late.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-two-stop.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-longhaul-group.wrb",
+      "kind": "shopping"
+    },
+    {
+      "name": "shopping-empty.wrb",
+      "kind": "shopping_empty"
+    },
+    {
+      "name": "shopping-rejected.wrb",
+      "kind": "shopping_rejected"
+    },
+    {
+      "name": "cards-best.html",
+      "kind": "html"
+    },
+    {
+      "name": "cards-http.html",
+      "kind": "html_http"
+    },
+    {
+      "name": "cards-empty.html",
+      "kind": "html_empty"
+    }
+  ]
+}

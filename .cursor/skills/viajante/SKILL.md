@@ -25,6 +25,7 @@ uv run viajante dates ORIGIN-DEST --from YYYY-MM-DD --to YYYY-MM-DD [--max-stops
 uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [--top N] [--adults N] [--cabin CABIN] [--max-stops {0,1}] [--save FILE]
 uv run viajante airports QUERY
 uv run viajante hotels LOCATION CHECK_IN CHECK_OUT [--source {booking,google}] [--adults N] [--rooms N] [--top N] [--min-rating SCORE] [--entire-home] [--allow-non-refundable] [--compare-cancellation] [--save FILE]
+uv run viajante bench
 ```
 
 Route grammar: `MAD-BCN:2026-09-01`, or several dates comma-separated on one route. `MAD-OPO:2026-10-09:2026-10-12` without `--trip` is sugar for outbound + return as two one-way queries. `--trip rt` POSTs one package. You can still pass a return leg as a second route.
@@ -169,4 +170,5 @@ Stored outside the repo at `VIAJANTE_STATE_DIR` or the XDG state dir. Delete `pw
 ```bash
 uv run python -m unittest discover -s tests -v
 uv run ruff check src tests
+uv run viajante bench
 ```

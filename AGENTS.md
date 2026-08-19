@@ -12,6 +12,10 @@
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
+- Offline keep-or-revert bench: `src/viajante/bench.py`
+- Loop protocol: `program.md` (humans edit this to steer)
+- Bench baseline: `bench-baseline.json` (update only when a human merges a win)
+- Owned parse corpus: `tests/bench/`
 - Domain types or JSON keys: `src/viajante/models.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
 - Offline IATA lookup: `src/viajante/airports.py`
@@ -57,7 +61,10 @@ Prefer the locked checkout workflow:
 uv sync --locked
 uv run python -m unittest discover -s tests -v
 uv run ruff check src tests
+uv run viajante bench
 ```
+
+`viajante bench` is the offline keep-or-revert command. It runs the unittest suite plus `ruff check` / `ruff format --check`, then prints `gate` and `score_ms` (`tests_ms` + owned `tests/bench/` parse). No Chromium. No live Google unless `VIAJANTE_BENCH_LIVE=1`, and that extra `sweep_ms` is never the score. Read `program.md` before running a loop experiment.
 
 `pip install -e .` still works, but `uv` is the reproducible path for this tree. Tests are offline. They must not launch Chromium or use the network. CI runs the suite on Python 3.10 through 3.14.
 

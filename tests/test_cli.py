@@ -546,6 +546,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("dates", help_text)
         self.assertIn("explore", help_text)
         self.assertIn("airports", help_text)
+        self.assertIn("bench", help_text)
         self.assertIn("Examples:", help_text)
         self.assertIn("viajante flights JFK-LHR", help_text)
 

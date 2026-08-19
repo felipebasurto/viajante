@@ -345,6 +345,14 @@ uv run ruff check src tests
 
 Fully offline. They never launch Chromium and never touch the network. `tests/test_google_flights.py` pins query encoding and drives synthetic compact shopping bodies plus HTML markup through the owned parsers. CI runs the suite on Python 3.10 through 3.14.
 
+## Bench
+
+```bash
+uv run viajante bench
+```
+
+Offline keep-or-revert score for a looping agent. Unittest + ruff must pass (`gate: ok`); `score_ms` is unittest wall time plus the owned `tests/bench/` compact-shopping / card-parse corpus. Lower is better. `program.md` is the experiment protocol. `bench-baseline.json` holds the last human-merged win. No live Google unless `VIAJANTE_BENCH_LIVE=1`, and that extra is never the score.
+
 ## Privacy
 
 This tree is the public export of a private trip-planning repo. Do not commit scrapes, personal routes, or browser session files. Saved results (`results/`, `*.viajante.json`), logs, and Playwright artifacts are gitignored, and consent cookies live outside the checkout. Before pushing a fork, check `git status --short` and `git ls-files`.
