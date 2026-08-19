@@ -26,6 +26,7 @@ uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [-
 uv run viajante airports QUERY
 uv run viajante hotels LOCATION CHECK_IN CHECK_OUT [--source {booking,google}] [--adults N] [--rooms N] [--top N] [--min-rating SCORE] [--entire-home] [--allow-non-refundable] [--compare-cancellation] [--save FILE]
 uv run viajante bench
+uv run viajante bench --prompts
 ```
 
 Route grammar: `MAD-BCN:2026-09-01`, or several dates comma-separated on one route. `MAD-OPO:2026-10-09:2026-10-12` without `--trip` is sugar for outbound + return as two one-way queries. `--trip rt` POSTs one package. You can still pass a return leg as a second route.
@@ -171,4 +172,7 @@ Stored outside the repo at `VIAJANTE_STATE_DIR` or the XDG state dir. Delete `pw
 uv run python -m unittest discover -s tests -v
 uv run ruff check src tests
 uv run viajante bench
+uv run viajante bench --prompts
 ```
+
+`viajante bench` is the weekday speed loop (`gate` + `score_ms`). `--prompts` is the graded quality contract (offline deterministic tiers; DeepSeek 1–100 judge is opt-in via `VIAJANTE_BENCH_JUDGE=1` and `DEEPSEEK_API_KEY` / `VIAJANTE_JUDGE_KEY`). Do not delete `tests/prompts/` to make the speed loop look better.

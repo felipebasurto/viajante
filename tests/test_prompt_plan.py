@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import unittest
+from datetime import date
+
+from viajante.airports import is_known_iata
+from viajante.flights import parse_flight_plan
+from viajante.models import HotelQuery, MultiCity, RoundTrip
+from viajante.prompt_plan import plan_prompt
+
+
+class PromptPlanSmokeTests(unittest.TestCase):
+    def test_bos_lhr_one_date(self) -> None:
+        plan = plan_prompt("Flights BOS-LHR on 2026-09-01")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.departure_date, date(2026, 9, 1))
+        self.assertEqual(plan.trip, "one-way")
+        self.assertEqual(plan.refuse, ())
+        parsed = parse_flight_plan(
+            plan.route_specs,
+            trip=plan.trip or "one-way",
+            max_stops=plan.max_stops if plan.max_stops is not None else 1,
+            adults=plan.adults or 1,
+            cabin=plan.cabin or "economy",
+        )
+        self.assertEqual(parsed[0].origin, "BOS")
+        self.assertEqual(parsed[0].destination, "LHR")
+
+    def test_boston_london_city_names(self) -> None:
+        plan = plan_prompt("I want to fly from Boston to London on 2026-09-04")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.departure_date, date(2026, 9, 4))
+
+    def test_airports_lookup_london(self) -> None:
+        plan = plan_prompt("What is the IATA code for London airports?")
+        self.assertEqual(plan.intent, "airports")
+        self.assertEqual(plan.airports_query, "london")
+
+    def test_invalid_iata_is_refused(self) -> None:
+        plan = plan_prompt("Flights XXX-LHR on 2026-09-01")
+        self.assertEqual(plan.intent, "refuse")
+        self.assertIn("invalid_iata", plan.refuse)
+        self.assertFalse(is_known_iata("XXX"))
+
+    def test_missing_date_is_refused(self) -> None:
+        plan = plan_prompt("Flights BOS-LHR")
+        self.assertEqual(plan.intent, "refuse")
+        self.assertIn("missing_date", plan.refuse)
+
+
+class PromptPlanMediumTests(unittest.TestCase):
+    def test_packaged_round_trip(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip BOS-LHR on 2026-10-09 returning 2026-10-12, --trip rt"
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.departure_date, date(2026, 10, 9))
+        self.assertEqual(plan.return_date, date(2026, 10, 12))
+        parsed = parse_flight_plan(
+            plan.route_specs,
+            trip="rt",
+            max_stops=1,
+        )
+        self.assertIsInstance(parsed, RoundTrip)
+        self.assertEqual(parsed.return_date, date(2026, 10, 12))
+
+    def test_two_one_ways_sugar(self) -> None:
+        plan = plan_prompt(
+            "NRT-ICN outbound on 2026-10-09 and return on 2026-10-12 as two one-way, "
+            "without --trip rt"
+        )
+        self.assertEqual(plan.trip, "one-way")
+        self.assertEqual(len(plan.route_specs), 2)
+        parsed = parse_flight_plan(plan.route_specs, trip="one-way", max_stops=1)
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual(parsed[0].origin, "NRT")
+        self.assertEqual(parsed[1].origin, "ICN")
+
+    def test_explore_from_sin(self) -> None:
+        plan = plan_prompt("Explore cheap destinations from SIN starting 2026-09-15, 7 days")
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "SIN")
+        self.assertEqual(plan.departure_date, date(2026, 9, 15))
+        self.assertEqual(plan.days, 7)
+
+    def test_dates_calendar(self) -> None:
+        plan = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14")
+        self.assertEqual(plan.intent, "dates")
+        self.assertEqual(plan.origin, "JFK")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.date_from, date(2026, 9, 1))
+        self.assertEqual(plan.date_to, date(2026, 9, 14))
+
+    def test_hotels_tokyo_nights(self) -> None:
+        plan = plan_prompt("Hotel in Tokyo from 2026-12-04 to 2026-12-07")
+        self.assertEqual(plan.intent, "hotels")
+        self.assertEqual(plan.location.casefold(), "tokyo")
+        self.assertEqual(plan.check_in, date(2026, 12, 4))
+        self.assertEqual(plan.check_out, date(2026, 12, 7))
+        query = HotelQuery(
+            plan.location,
+            plan.check_in,
+            plan.check_out,
+            adults=plan.adults or 2,
+            rooms=plan.rooms or 1,
+        )
+        self.assertEqual(query.nights, 3)
+
+    def test_rooms_change_occupancy(self) -> None:
+        one = plan_prompt("Hotel in Cape Town 2026-09-10 to 2026-09-12, 2 adults, 1 room")
+        two = plan_prompt("Hotel in Cape Town 2026-09-10 to 2026-09-12, 2 adults, 2 rooms")
+        self.assertEqual(one.rooms, 1)
+        self.assertEqual(two.rooms, 2)
+        self.assertNotEqual(one.rooms, two.rooms)
+
+    def test_open_jaw_is_multi(self) -> None:
+        plan = plan_prompt(
+            "Open jaw: GRU-SCL on 2026-09-08 and EZE-GRU on 2026-09-12, --trip multi"
+        )
+        self.assertEqual(plan.trip, "multi")
+        self.assertGreaterEqual(len(plan.route_specs), 2)
+        parsed = parse_flight_plan(plan.route_specs, trip="multi", max_stops=1)
+        self.assertIsInstance(parsed, MultiCity)
+
+
+class PromptPlanHardTests(unittest.TestCase):
+    def test_refuse_booking(self) -> None:
+        plan = plan_prompt("Book now this JFK-LHR flight on 2026-09-01")
+        self.assertEqual(plan.intent, "refuse")
+        self.assertIn("booking", plan.refuse)
+
+    def test_refuse_trains(self) -> None:
+        plan = plan_prompt("Take the train from Boston to New York on 2026-09-01")
+        self.assertEqual(plan.intent, "refuse")
+        self.assertIn("trains", plan.refuse)
+
+    def test_refuse_cars(self) -> None:
+        plan = plan_prompt("Rental car in Johannesburg from 2026-09-01 to 2026-09-05")
+        self.assertEqual(plan.intent, "refuse")
+        self.assertIn("cars", plan.refuse)
+
+    def test_sane_layovers(self) -> None:
+        plan = plan_prompt("JNB-SIN on 2026-11-03, sane layovers of at most 22 hours")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.max_layover, 22.0)
+
+    def test_destinations_not_the_rest_of_the_trip(self) -> None:
+        plan = plan_prompt(
+            "Search destinations and prices from YVR on 2026-09-15, not the rest of the trip"
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "YVR")
+        self.assertIn("itinerary_rest", plan.refuse)
+
+    def test_not_asia(self) -> None:
+        plan = plan_prompt("Destinations from NRT on 2026-09-15, not Asia")
+        self.assertEqual(plan.intent, "explore")
+        self.assertIn("asia", plan.exclude_regions)
+
+    def test_night_arrivals_need_a_clock(self) -> None:
+        plan = plan_prompt(
+            "ICN-LAX on 2026-09-18 at night; the arrival must show a clock, not null"
+        )
+        self.assertTrue(plan.require_arrival_clock)
+        self.assertEqual(plan.fetch, "detail")
+
+    def test_packaged_rt_requires_return_legs(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip SYD-AKL 2026-10-12 to 2026-10-26; must include return legs"
+        )
+        self.assertEqual(plan.trip, "rt")
+        self.assertTrue(plan.require_return_legs)
+
+
+class PromptPlanInsaneTests(unittest.TestCase):
+    def test_halifax_fiji_via_continents(self) -> None:
+        plan = plan_prompt(
+            "Go to Fiji from Halifax passing through 2 European airports, "
+            "one sub-Saharan, one Indian, one Chinese, and New Zealand. "
+            "Leave 2026-11-02."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "YHZ")
+        self.assertEqual(plan.destination, "NAN")
+        self.assertEqual(
+            list(plan.via_regions),
+            ["europe", "europe", "sub_saharan", "india", "china", "new_zealand"],
+        )
+
+    def test_contradictory_dates(self) -> None:
+        plan = plan_prompt("Outbound JFK-LHR on 2026-09-20 and return on 2026-09-10")
+        self.assertEqual(plan.intent, "refuse")
+        self.assertIn("contradictory_dates", plan.refuse)
+
+    def test_eight_adults_one_room(self) -> None:
+        plan = plan_prompt("Hotel in Tokyo, 8 adults, 1 room, 2026-12-04 to 2026-12-07")
+        self.assertEqual(plan.intent, "hotels")
+        self.assertEqual(plan.adults, 8)
+        self.assertEqual(plan.rooms, 1)
+        query = HotelQuery("Tokyo", date(2026, 12, 4), date(2026, 12, 7), adults=8, rooms=1)
+        self.assertEqual(query.adults, 8)
+        self.assertEqual(query.rooms, 1)
+
+    def test_around_the_world_max_two_stops(self) -> None:
+        plan = plan_prompt(
+            "Cheapest around the world from Vancouver starting 2026-11-01, max 2 stops each leg"
+        )
+        self.assertTrue(plan.around_the_world)
+        self.assertEqual(plan.max_stops, 2)
+        self.assertEqual(plan.origin, "YVR")
+
+    def test_around_the_world_does_not_invent_madrid(self) -> None:
+        plan = plan_prompt("Cheapest around the world starting 2026-11-01, max 2 stops each leg")
+        self.assertTrue(plan.around_the_world)
+        self.assertNotEqual(plan.origin, "MAD")
+
+
+class PromptPlanMatchTests(unittest.TestCase):
+    def test_plan_to_dict_is_json_friendly(self) -> None:
+        plan = plan_prompt("Flights BOS-LHR on 2026-09-01")
+        data = plan.to_dict()
+        self.assertEqual(data["origin"], "BOS")
+        self.assertEqual(data["departure_date"], "2026-09-01")
+        self.assertIsInstance(data["refuse"], list)
+
+
+if __name__ == "__main__":
+    unittest.main()

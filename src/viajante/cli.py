@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import os
 import re
 import sys
 from datetime import date
@@ -56,6 +57,7 @@ from viajante.models import (
     RoundTrip,
     Trip,
 )
+from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
 
 FLIGHTS_EXAMPLES = """\
 Examples:
@@ -94,6 +96,7 @@ Examples:
 BENCH_EXAMPLES = """\
 Examples:
   viajante bench
+  viajante bench --prompts
 """
 
 HOTELS_EXAMPLES = """\
@@ -1067,11 +1070,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     airports.add_argument("query", help="IATA code or city/name fragment")
 
-    sub.add_parser(
+    bench = sub.add_parser(
         "bench",
         help="Offline keep-or-revert bench (unittest + owned parse corpus)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=BENCH_EXAMPLES,
+    )
+    bench.add_argument(
+        "--prompts",
+        action="store_true",
+        help=(
+            "Run the graded prompt battery instead of the speed bench. "
+            "Deterministic tiers are offline. LLM judge is opt-in "
+            "(VIAJANTE_BENCH_JUDGE=1, DEEPSEEK_API_KEY or VIAJANTE_JUDGE_KEY), "
+            "scores 1-100, and is never the score_ms. Unset key prints judge: skip."
+        ),
     )
 
     try:
@@ -1091,6 +1104,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.cmd == "airports":
         return _run_airports(args)
     if args.cmd == "bench":
+        if args.prompts or os.environ.get(PROMPTS_ENV) == "1":
+            return run_prompt_bench()
         return run_bench()
 
     parser.print_help()

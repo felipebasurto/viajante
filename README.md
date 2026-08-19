@@ -353,6 +353,14 @@ uv run viajante bench
 
 Offline keep-or-revert score for a looping agent. Unittest + ruff must pass (`gate: ok`); `score_ms` is unittest wall time plus the owned `tests/bench/` compact-shopping / card-parse corpus. Lower is better. `program.md` is the experiment protocol. `bench-baseline.json` holds the last human-merged win. No live Google unless `VIAJANTE_BENCH_LIVE=1`, and that extra is never the score.
 
+The graded prompt battery is a separate quality contract, not `score_ms`:
+
+```bash
+uv run viajante bench --prompts
+```
+
+Ninety prompts, smoke → insane, English, international origins. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy). `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1–100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Do not delete `tests/prompts/` to “win” the speed loop.
+
 ## Privacy
 
 This tree is the public export of a private trip-planning repo. Do not commit scrapes, personal routes, or browser session files. Saved results (`results/`, `*.viajante.json`), logs, and Playwright artifacts are gitignored, and consent cookies live outside the checkout. Before pushing a fork, check `git status --short` and `git ls-files`.

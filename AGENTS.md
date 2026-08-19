@@ -13,9 +13,11 @@
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
+- Graded prompt battery (quality contract): `src/viajante/prompt_plan.py`, `src/viajante/prompt_bench.py`
 - Loop protocol: `program.md` (humans edit this to steer)
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
+- Graded prompt corpus: `tests/prompts/`
 - Domain types or JSON keys: `src/viajante/models.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
 - Offline IATA lookup: `src/viajante/airports.py`
@@ -65,6 +67,8 @@ uv run viajante bench
 ```
 
 `viajante bench` is the offline keep-or-revert command. It runs the unittest suite plus `ruff check` / `ruff format --check`, then prints `gate` and `score_ms` (`tests_ms` + owned `tests/bench/` parse). No Chromium. No live Google unless `VIAJANTE_BENCH_LIVE=1`, and that extra `sweep_ms` is never the score. Read `program.md` before running a loop experiment.
+
+`viajante bench --prompts` (or `VIAJANTE_BENCH_PROMPTS=1`) is the graded prompt battery: the quality contract, not `score_ms`. Prompts are English with international origins (no implied home hub). Deterministic tiers are offline against the owned prompt→query planner. LLM-as-judge is opt-in (`VIAJANTE_BENCH_JUDGE=1`) via DeepSeek `deepseek-chat` (`DEEPSEEK_API_KEY`, or `VIAJANTE_JUDGE_KEY` as override; optional `DEEPSEEK_MODEL` / `VIAJANTE_JUDGE_MODEL`). There is no single correct answer: the judge records `score_1_100` plus a one-line reason. Unset key prints `judge: skip` and invents no score. The key lives outside the repo; never commit `.env` or secrets. Do not fold judge latency or live scrapes into `score_ms`. A looping agent may not delete `tests/prompts/` to “win”. Humans may later gate easy-tier failures; do not silently gate insane/llm cases.
 
 `pip install -e .` still works, but `uv` is the reproducible path for this tree. Tests are offline. They must not launch Chromium or use the network. CI runs the suite on Python 3.10 through 3.14.
 

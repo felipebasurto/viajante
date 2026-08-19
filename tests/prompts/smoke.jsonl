@@ -1,0 +1,12 @@
+{"id":"smoke-bos-lhr-one-date","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Flights BOS-LHR on 2026-09-01","expect":{"intent":"flights","origin":"BOS","destination":"LHR","departure_date":"2026-09-01","trip":"one-way"}}
+{"id":"smoke-nrt-icn-one-date","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Flights NRT-ICN on 2026-09-08","expect":{"intent":"flights","origin":"NRT","destination":"ICN","departure_date":"2026-09-08"}}
+{"id":"smoke-airports-tokyo","tier":"smoke","lang":"en","judge":"deterministic","prompt":"IATA code for Tokyo","expect":{"intent":"airports","airports_query":"tokyo"}}
+{"id":"smoke-airports-gru","tier":"smoke","lang":"en","judge":"deterministic","prompt":"IATA code for GRU","expect":{"intent":"airports","airports_query":"gru"}}
+{"id":"smoke-airports-london","tier":"smoke","lang":"en","judge":"deterministic","prompt":"What is the IATA code for London airports?","expect":{"intent":"airports","airports_query":"london"}}
+{"id":"smoke-cheapest-friday-jfk-lhr","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Cheapest Friday JFK-LHR in September 2026","expect":{"intent":"dates","origin":"JFK","destination":"LHR","weekday":"friday","date_from":"2026-09-01","date_to":"2026-09-30"}}
+{"id":"smoke-invalid-iata-xxx","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Flights XXX-LHR on 2026-09-01","expect":{"intent":"refuse","refuse":["invalid_iata"]}}
+{"id":"smoke-missing-date-bos-lhr","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Flights BOS-LHR","expect":{"intent":"refuse","refuse":["missing_date"]}}
+{"id":"smoke-gru-scl-one-date","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Flights GRU-SCL on 2026-10-09","expect":{"intent":"flights","origin":"GRU","destination":"SCL","departure_date":"2026-10-09"}}
+{"id":"smoke-cai-jnb-one-date","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Flights CAI-JNB on 2026-11-03","expect":{"intent":"flights","origin":"CAI","destination":"JNB","departure_date":"2026-11-03"}}
+{"id":"smoke-iata-pair-grammar","tier":"smoke","lang":"en","judge":"deterministic","prompt":"YVR-AKL:2026-09-01 one-way","expect":{"intent":"flights","origin":"YVR","destination":"AKL","departure_date":"2026-09-01","trip":"one-way"}}
+{"id":"smoke-unknown-iata-zzz","tier":"smoke","lang":"en","judge":"deterministic","prompt":"Flights ZZZ-SIN on 2026-09-01","expect":{"intent":"refuse","refuse":["invalid_iata"]}}

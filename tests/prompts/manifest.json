@@ -1,0 +1,24 @@
+{
+  "files": [
+    {
+      "name": "smoke.jsonl",
+      "tier": "smoke"
+    },
+    {
+      "name": "easy.jsonl",
+      "tier": "easy"
+    },
+    {
+      "name": "medium.jsonl",
+      "tier": "medium"
+    },
+    {
+      "name": "hard.jsonl",
+      "tier": "hard"
+    },
+    {
+      "name": "insane.jsonl",
+      "tier": "insane"
+    }
+  ]
+}

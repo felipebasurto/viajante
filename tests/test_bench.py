@@ -126,7 +126,10 @@ class BenchReportTests(unittest.TestCase):
 
 class BenchCliTests(unittest.TestCase):
     def test_cli_wires_to_run_bench(self) -> None:
-        with patch("viajante.cli.run_bench", return_value=0) as bench:
+        with (
+            patch.dict("os.environ", {"VIAJANTE_BENCH_PROMPTS": ""}),
+            patch("viajante.cli.run_bench", return_value=0) as bench,
+        ):
             code = main(["bench"])
         self.assertEqual(code, 0)
         bench.assert_called_once_with()

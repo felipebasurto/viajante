@@ -9,6 +9,13 @@ stops. There is no loop script in this repo.
 Make viajante faster without breaking the public contract. The score is
 offline wall time. Lower is better.
 
+The graded prompt battery (`viajante bench --prompts`) is the **quality**
+contract. It is not `score_ms`. The weekday speed loop still uses
+`viajante bench` with no flags. A looping agent may not delete
+`tests/prompts/` (or drop cases below the floors) to “win”. Humans may
+later make easy-tier failures part of the gate; do not silently do that
+for insane/llm cases.
+
 ## One experiment
 
 1. Read this file, `AGENTS.md`, and the current `bench-baseline.json`.
@@ -67,19 +74,38 @@ Metric (one number, lower is better):
   corpus in `tests/bench/` (owned compact-shopping / `wrb.fr` / HTML card
   parse). Not a network call.
 
-The bench has no flags to skip tests, subset the corpus, or change
+The bench has no flags to skip tests, subset the parse corpus, or change
 `--top`. Product defaults stay `DEFAULT_TOP = 8` and
-`DEFAULT_BAGGAGE_BUFFER_EUR = 70`.
+`DEFAULT_BAGGAGE_BUFFER_EUR = 70`. `--prompts` is a different command:
+the quality battery, never mixed into `score_ms`.
+
+## Prompt battery (quality, not score)
+
+```bash
+uv run viajante bench --prompts
+```
+
+Checked-in corpus: `tests/prompts/` (JSONL + README, smoke → insane).
+Prompts are English. Origins are international; no city is the implied
+home hub. Default run is offline deterministic cases. LLM-as-judge is
+`VIAJANTE_BENCH_JUDGE=1` with DeepSeek `deepseek-chat` (`DEEPSEEK_API_KEY`
+outside the repo, or `VIAJANTE_JUDGE_KEY` as override; optional
+`DEEPSEEK_MODEL` / `VIAJANTE_JUDGE_MODEL`). There is no single correct
+answer: record `score_1_100` plus a one-line reason, not pass/fail as
+the only output. Unset key prints `judge: skip`; do not invent a score.
+Judge wall time and live scrapes are never `score_ms`.
+Empty or dropped prompt files fail the prompts run.
 
 ## Hard to game
 
 - Do not skip tests, shrink `tests/bench/`, or drop a fixture from
   `manifest.json`.
+- Do not delete, empty, or shrink `tests/prompts/` to look faster.
 - Do not add empty fixtures to “win”. New files belong there only when
   they are real owned parse cases already covered by tests.
 - Do not lower `--top` or the baggage buffer to make ranking cheaper.
 - Do not delete tests, skip ruff, or stub parsers to go faster.
-- Do not count `sweep_ms` or live Google in the score.
+- Do not count `sweep_ms`, live Google, or LLM-judge latency in the score.
 
 ## Constraints (already in AGENTS.md)
 
