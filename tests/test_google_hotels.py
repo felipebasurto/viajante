@@ -103,6 +103,22 @@ class HotelsEncodeTests(unittest.TestCase):
         query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), adults=1)
         self.assertEqual(build_hotels_inner(query)[1][1], [[[3]], 1])
 
+    def test_rooms_change_the_occupancy_block(self) -> None:
+        dates = (date(2026, 12, 4), date(2026, 12, 7))
+        default = HotelQuery("Prague", *dates, adults=2, rooms=1)
+        one_adult = HotelQuery("Prague", *dates, adults=1, rooms=1)
+        two_rooms = HotelQuery("Prague", *dates, adults=2, rooms=2)
+        four_rooms = HotelQuery("Prague", *dates, adults=2, rooms=4)
+        self.assertIsNone(build_hotels_inner(default)[1][1])
+        self.assertEqual(build_hotels_inner(one_adult)[1][1], [[[3]], 1])
+        self.assertEqual(build_hotels_inner(two_rooms)[1][1], [[[3], [3]], 2])
+        self.assertEqual(build_hotels_inner(four_rooms)[1][1], [[[3], [3]], 4])
+        self.assertNotEqual(
+            build_hotels_inner(two_rooms)[1][1],
+            build_hotels_inner(four_rooms)[1][1],
+        )
+        self.assertNotEqual(build_hotels_inner(two_rooms), build_hotels_inner(four_rooms))
+
     def test_request_url_is_batchexecute_with_eur(self) -> None:
         url, body = build_hotels_request(QUERY)
         parsed = urlparse(url)

@@ -125,13 +125,16 @@ Empty or dropped prompt files fail the prompts run.
 These are product bugs. Do **not** “fix” them by deleting features or
 tests.
 
-- Late-evening arrival clocks can still come out null on some compact
-  shapes.
-- Packaged `--trip rt` can miss return legs.
-- Google Hotels `--rooms` is ignored.
+- Packaged `--trip rt` still cannot invent a return leg when the compact
+  body only contains the outbound flight. Query `return_date` is not a
+  second leg. Wrapped or sibling return flights in that body should parse.
 
-Touch them only if the bench still passes and `score_ms` does not get
-worse, or if you add a failing test first and the score stays honest.
+Late-evening compact clocks (including proto3-omitted hour 0) and Google
+Hotels `--rooms` occupancy are covered by tests; do not regress them.
+
+Touch leftover holes only if the bench still passes and `score_ms` does
+not get worse, or if you add a failing test first and the score stays
+honest.
 
 ## After the run
 

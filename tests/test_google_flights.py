@@ -4,6 +4,7 @@ import base64
 import json
 import unittest
 from datetime import date
+from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from viajante.flights import _normalize_offer
@@ -513,6 +514,110 @@ class ShoppingRpcTests(unittest.TestCase):
         assert offer is not None
         self.assertEqual(len(offer.legs), 2)
         self.assertEqual(offer.legs[1].departure, "18:00")
+        self.assertEqual(offer.to_dict()["legs"][1]["arrival"], "19:20")
+
+    def test_wrapped_round_trip_pair_keeps_return_leg(self) -> None:
+        outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]
+        inbound = _itinerary(airline="TAP", dep=(18, 0), arr=(19, 20), minutes=80, price=40)[0]
+        inbound[3] = "OPO"
+        inbound[6] = "MAD"
+        item = [[[outbound], [inbound]], [[None, 199], "tok"]]
+        card = parse_shopping_body(_compact_body(item))[0]
+        self.assertEqual(len(card.legs), 2)
+        self.assertEqual(card.legs[0].departure, "08:00")
+        self.assertEqual(card.legs[1].departure, "18:00")
+        self.assertEqual(card.legs[1].arrival, "19:20")
+        offer = _normalize_offer(card, max_stops=1)
+        assert offer is not None
+        data = offer.to_dict()
+        self.assertEqual(len(data["legs"]), 2)
+        self.assertEqual(data["legs"][1]["departure"], "18:00")
+        self.assertEqual(data["legs"][1]["arrival"], "19:20")
+
+    def test_sibling_return_flight_keeps_return_leg(self) -> None:
+        outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]
+        inbound = _itinerary(airline="Iberia", dep=(18, 0), arr=(19, 20), minutes=80, price=40)[0]
+        inbound[3] = "OPO"
+        inbound[6] = "MAD"
+        item = [outbound, [[None, 199], "tok"], inbound]
+        card = parse_shopping_body(_compact_body(item))[0]
+        self.assertEqual(len(card.legs), 2)
+        self.assertEqual(card.legs[1].arrival, "19:20")
+        offer = _normalize_offer(card, max_stops=1)
+        assert offer is not None
+        self.assertEqual(len(offer.to_dict()["legs"]), 2)
+
+    def test_live_shaped_round_trip_keeps_return_airports(self) -> None:
+        day_out = [2026, 10, 9]
+        day_back = [2026, 10, 12]
+        outbound = _live_flight(
+            code="TP",
+            airline="Tap Air Portugal",
+            legs=[
+                _live_leg(
+                    origin="MAD",
+                    origin_name="Adolfo Suárez Madrid-Barajas Airport",
+                    dest="OPO",
+                    dest_name="Francisco Sá Carneiro Airport",
+                    dep=[8, 0],
+                    arr=[9, 10],
+                    minutes=70,
+                    dep_date=day_out,
+                    arr_date=day_out,
+                )
+            ],
+            origin="MAD",
+            dest="OPO",
+            dep_date=day_out,
+            dep=[8, 0],
+            arr_date=day_out,
+            arr=[9, 10],
+            minutes=70,
+        )
+        inbound = _live_flight(
+            code="TP",
+            airline="Tap Air Portugal",
+            legs=[
+                _live_leg(
+                    origin="OPO",
+                    origin_name="Francisco Sá Carneiro Airport",
+                    dest="MAD",
+                    dest_name="Adolfo Suárez Madrid-Barajas Airport",
+                    dep=[18, 0],
+                    arr=[19, 20],
+                    minutes=80,
+                    dep_date=day_back,
+                    arr_date=day_back,
+                )
+            ],
+            origin="OPO",
+            dest="MAD",
+            dep_date=day_back,
+            dep=[18, 0],
+            arr_date=day_back,
+            arr=[19, 20],
+            minutes=80,
+        )
+        item = [[outbound, inbound], [[None, 199], "tok"]]
+        card = parse_shopping_body(_compact_body(item))[0]
+        self.assertEqual(len(card.legs), 2)
+        self.assertEqual(card.legs[0].departure, "08:00")
+        self.assertEqual(card.legs[1].departure, "18:00")
+        self.assertEqual(card.legs[1].arrival, "19:20")
+        offer = _normalize_offer(card, max_stops=1)
+        assert offer is not None
+        data = offer.to_dict()
+        self.assertEqual(len(data["legs"]), 2)
+        self.assertEqual(data["legs"][1]["arrival"], "19:20")
+
+    def test_outbound_only_compact_does_not_invent_a_return_leg(self) -> None:
+        # Packaged --trip rt still encodes return_date on the query. If the
+        # shopping body only has the outbound flight, we must not fake a return.
+        card = parse_shopping_body(_compact_body(_iberia_late_nonstop()))[0]
+        self.assertEqual(len(card.legs), 1)
+        offer = _normalize_offer(card, max_stops=1)
+        assert offer is not None
+        self.assertEqual(len(offer.to_dict()["legs"]), 1)
 
     def test_compact_body_yields_raw_card_fields(self) -> None:
         body = _compact_body(
@@ -611,8 +716,8 @@ def _live_leg(
     origin_name: str,
     dest: str,
     dest_name: str,
-    dep: list[int],
-    arr: list[int],
+    dep: list[object],
+    arr: list[object],
     minutes: int,
     dep_date: list[int],
     arr_date: list[int],
@@ -669,9 +774,9 @@ def _live_flight(
     origin: str,
     dest: str,
     dep_date: list[int],
-    dep: list[int],
+    dep: list[object],
     arr_date: list[int],
-    arr: list[int],
+    arr: list[object],
     minutes: int,
     stops: int | None = None,
     layover: list[object] | None = None,
@@ -842,6 +947,78 @@ def _ryanair_fco_late_evening() -> list[object]:
             dest_name="Leonardo da Vinci International Airport",
             dep=[22, 15],
             arr=[24, 30],
+            minutes=135,
+            dep_date=day,
+            arr_date=next_day,
+            code="FR",
+            number="5994",
+            airline="Ryanair",
+            arr_day_offset=1,
+        )
+    ]
+    flight = _live_flight(
+        code="FR",
+        airline="Ryanair",
+        legs=legs,
+        origin="MAD",
+        dest="FCO",
+        dep_date=day,
+        dep=[22, 15],
+        arr_date=next_day,
+        arr=next_day,
+        minutes=135,
+    )
+    return _priced(flight, 41)
+
+
+def _iberia_fco_omitted_midnight_hour() -> list[object]:
+    day = [2026, 9, 15]
+    next_day = [2026, 9, 16]
+    legs = [
+        _live_leg(
+            origin="MAD",
+            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            dest="FCO",
+            dest_name="Leonardo da Vinci International Airport",
+            dep=[21, 50],
+            arr=[None, 5],
+            minutes=135,
+            dep_date=day,
+            arr_date=next_day,
+            code="IB",
+            number="3234",
+            airline="Iberia",
+            arr_day_offset=1,
+        )
+    ]
+    return _priced(
+        _live_flight(
+            code="IB",
+            airline="Iberia",
+            legs=legs,
+            origin="MAD",
+            dest="FCO",
+            dep_date=day,
+            dep=[21, 50],
+            arr_date=next_day,
+            arr=[None, 5],
+            minutes=135,
+        ),
+        79,
+    )
+
+
+def _ryanair_fco_omitted_midnight_hour() -> list[object]:
+    day = [2026, 9, 15]
+    next_day = [2026, 9, 16]
+    legs = [
+        _live_leg(
+            origin="MAD",
+            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            dest="FCO",
+            dest_name="Leonardo da Vinci International Airport",
+            dep=[22, 15],
+            arr=[None, 30],
             minutes=135,
             dep_date=day,
             arr_date=next_day,
@@ -1188,6 +1365,36 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(ryanair.airline, "Ryanair")
         self.assertEqual(ryanair.departure, "22:15")
         self.assertEqual(ryanair.arrival, "00:30")
+
+    def test_fco_late_bench_fixtures_keep_arrivals_in_json(self) -> None:
+        root = Path(__file__).resolve().parent / "bench"
+        cases = (
+            ("shopping-iberia-fco-late.wrb", "Iberia", "21:50", "00:05"),
+            ("shopping-ryanair-fco-late.wrb", "Ryanair", "22:15", "00:30"),
+        )
+        for name, airline, dep, arr in cases:
+            with self.subTest(name=name):
+                card = parse_shopping_body((root / name).read_text(encoding="utf-8"))[0]
+                self.assertEqual(card.airline, airline)
+                self.assertEqual(card.departure, dep)
+                self.assertEqual(card.arrival, arr)
+                offer = _normalize_offer(card, max_stops=1)
+                assert offer is not None
+                data = offer.to_dict()
+                self.assertEqual(data["departure"], dep)
+                self.assertEqual(data["arrival"], arr)
+                self.assertEqual(data["legs"][0]["arrival"], arr)
+
+    def test_omitted_midnight_hour_is_not_null(self) -> None:
+        iberia = parse_shopping_body(_compact_body(_iberia_fco_omitted_midnight_hour()))[0]
+        self.assertEqual(iberia.departure, "21:50")
+        self.assertEqual(iberia.arrival, "00:05")
+        ryanair = parse_shopping_body(_compact_body(_ryanair_fco_omitted_midnight_hour()))[0]
+        self.assertEqual(ryanair.departure, "22:15")
+        self.assertEqual(ryanair.arrival, "00:30")
+        offer = _normalize_offer(ryanair, max_stops=1)
+        assert offer is not None
+        self.assertEqual(offer.to_dict()["arrival"], "00:30")
 
     def test_two_stop_card_keeps_both_layover_cities(self) -> None:
         card = parse_shopping_body(_compact_body(_two_stop_mad_icn()))[0]

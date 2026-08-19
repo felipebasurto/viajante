@@ -82,8 +82,9 @@ def normalize_clock(text: str | None) -> str | None:
     if match:
         hour = int(match.group(1))
         minute = int(match.group(2))
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return f"{hour:02d}:{minute:02d}"
+        if 0 <= minute <= 59 and 0 <= hour <= 47:
+            # Compact next-day arrivals sometimes render as 24:05 rather than 00:05.
+            return f"{hour % 24:02d}:{minute:02d}"
     return None
 
 

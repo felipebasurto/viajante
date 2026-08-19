@@ -409,52 +409,65 @@ def _looks_like_flight(flight: object) -> bool:
     airlines = flight[1]
     if not isinstance(airlines, list) or not airlines or not isinstance(airlines[0], str):
         return False
-    if _format_clock(flight[5]) is None:
+    if _flight_departure(flight) is None:
         return False
     return isinstance(flight[9], int)
 
 
+def _collect_flights(obj: object, *, depth: int = 0, seen: Optional[set[int]] = None) -> list[Any]:
+    if seen is None:
+        seen = set()
+    if _looks_like_flight(obj):
+        marker = id(obj)
+        if marker in seen:
+            return []
+        seen.add(marker)
+        return [obj]
+    if depth >= 3 or not isinstance(obj, list):
+        return []
+    found: list[Any] = []
+    for item in obj:
+        found.extend(_collect_flights(item, depth=depth + 1, seen=seen))
+    return found
+
+
 def _journey_flights(head: object) -> Optional[list[Any]]:
-    if not isinstance(head, list) or not head:
-        return None
-    flights = [item for item in head if _looks_like_flight(item)]
+    flights = _collect_flights(head)
     if len(flights) >= 2:
         return flights
     return None
 
 
+def _itinerary_journeys(item: list[Any]) -> list[Any]:
+    head = item[0]
+    journeys = _journey_flights(head)
+    if journeys:
+        return journeys
+    collected = _collect_flights(item)
+    if len(collected) >= 2:
+        return collected
+    if _looks_like_flight(head):
+        return [head]
+    return collected
+
+
 def _looks_like_itinerary(item: object) -> bool:
     if not isinstance(item, list) or len(item) < 2:
         return False
-    head = item[0]
-    if _looks_like_flight(head):
-        return True
-    return _journey_flights(head) is not None
-
-
-def _primary_flight(item: list[Any]) -> Optional[list[Any]]:
-    head = item[0]
-    if _looks_like_flight(head):
-        return head
-    flights = _journey_flights(head)
-    if flights is None:
-        return None
-    return flights[0]
+    return bool(_itinerary_journeys(item))
 
 
 def _itinerary_to_card(item: list[Any]) -> Optional[RawFlightCard]:
-    flight = _primary_flight(item)
-    if flight is None:
+    journeys = _itinerary_journeys(item)
+    if not journeys:
         return None
+    flight = journeys[0]
     airlines = [name for name in flight[1] if isinstance(name, str)]
-    price = _price_text(item[1])
+    price = _price_text(item[1] if len(item) > 1 else None)
     if price is None:
         return None
     layover_city, layover_hours = _layover_from_flight(flight)
-    journeys = _journey_flights(item[0])
-    journey_legs = tuple(_flight_to_journey_leg(row) for row in journeys) if journeys else ()
-    if not journey_legs:
-        journey_legs = (_flight_to_journey_leg(flight),)
+    journey_legs = tuple(_flight_to_journey_leg(row) for row in journeys)
     return RawFlightCard(
         airline=", ".join(airlines) or None,
         departure=_flight_departure(flight),
@@ -483,14 +496,27 @@ def _flight_to_journey_leg(flight: list[Any]) -> RawJourneyLeg:
     )
 
 
+def _clock_from_slots(flight: list[Any], *indexes: int) -> Optional[str]:
+    for index in indexes:
+        if index >= len(flight):
+            continue
+        value = flight[index]
+        if _is_year_ymd(value):
+            continue
+        clock = _format_clock(value)
+        if clock is not None:
+            return clock
+    return None
+
+
 def _flight_departure(flight: list[Any]) -> Optional[str]:
-    return _format_clock(flight[5] if len(flight) > 5 else None) or _clock_from_leg(
+    return _clock_from_slots(flight, 5) or _clock_from_leg(
         flight[2] if len(flight) > 2 else None, 0, 8
     )
 
 
 def _flight_arrival(flight: list[Any]) -> Optional[str]:
-    return _format_clock(flight[8] if len(flight) > 8 else None) or _clock_from_leg(
+    return _clock_from_slots(flight, 8) or _clock_from_leg(
         flight[2] if len(flight) > 2 else None, -1, 10
     )
 
@@ -582,6 +608,11 @@ def _layover_from_flight(flight: list[Any]) -> tuple[Optional[str], Optional[flo
     return longest.city, longest.hours
 
 
+def _is_year_ymd(value: object) -> bool:
+    parsed = _ymd(value)
+    return parsed is not None and parsed[0] >= 100
+
+
 def _clock_hm(value: object) -> Optional[tuple[int, int]]:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         hour = _as_clock_int(value)
@@ -590,12 +621,27 @@ def _clock_hm(value: object) -> Optional[tuple[int, int]]:
         return _normalize_hm(hour, 0)
     if not isinstance(value, list) or not value:
         return None
+    if _is_year_ymd(value):
+        if len(value) >= 5:
+            hour = _as_clock_int(value[3])
+            minute = _as_clock_int(value[4]) if len(value) > 4 else 0
+            if hour is None:
+                hour = 0
+            if minute is None:
+                minute = 0
+            return _normalize_hm(hour, minute)
+        return None
     if len(value) == 1 and isinstance(value[0], list):
         return _clock_hm(value[0])
+    if value[0] is None and len(value) > 1 and isinstance(value[1], list):
+        return _clock_hm(value[1])
     hour = _as_clock_int(value[0])
     minute = _as_clock_int(value[1]) if len(value) > 1 else 0
+    # proto3 JSON omits hour 0, so 00:05 arrives as [null, 5].
     if hour is None:
-        return None
+        if len(value) < 2 or minute is None:
+            return None
+        hour = 0
     if minute is None:
         minute = 0
     suffix = value[2] if len(value) > 2 and isinstance(value[2], str) else None

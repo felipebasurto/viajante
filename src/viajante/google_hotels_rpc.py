@@ -63,9 +63,7 @@ def build_hotels_inner(
         None,
         [None, 0],
     ]
-    extras: Any = None
-    if query.adults != 2:
-        extras = [[[3]] * query.adults, 1]
+    extras = _occupancy_extras(query)
     filter_details = [
         None,
         None,
@@ -84,6 +82,13 @@ def build_hotels_inner(
         [filter_details, None, [], [None, None, 1]],
     ]
     return [f"{query.location} hotels", search_params, list(_REQUEST_META)]
+
+
+def _occupancy_extras(query: HotelQuery) -> Any:
+    # Google default occupancy is 2 adults / 1 room. Anything else must be sent.
+    if query.adults == 2 and query.rooms == 1:
+        return None
+    return [[[3]] * query.adults, query.rooms]
 
 
 def _rpc_params(html_lang: str, currency: str) -> dict[str, str]:

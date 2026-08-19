@@ -28,6 +28,7 @@ from viajante.models import (
     QueryFailure,
     QueryResult,
     QuerySuccess,
+    RawJourneyLeg,
     RoundTrip,
     SearchError,
     SearchErrorCode,
@@ -532,6 +533,17 @@ def _normalize_offer(
     ):
         return None
     airline = raw.airline or ""
+    legs = tuple(
+        RawJourneyLeg(
+            departure=normalize_clock(leg.departure) or leg.departure,
+            arrival=normalize_clock(leg.arrival) or leg.arrival,
+            duration=leg.duration,
+            stops=leg.stops,
+            segments=leg.segments,
+            layovers=leg.layovers,
+        )
+        for leg in raw.legs
+    )
     return FlightOffer(
         airline=raw.airline,
         departure=normalize_clock(raw.departure) or raw.departure,
@@ -548,7 +560,7 @@ def _normalize_offer(
         booking_token=raw.booking_token,
         baggage_buffer_eur=baggage_buffer_eur(airline, buffer_eur=buffer_eur),
         needs_bag_verify=is_low_cost(airline),
-        legs=raw.legs,
+        legs=legs,
     )
 
 
