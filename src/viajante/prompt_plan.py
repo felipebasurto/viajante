@@ -386,33 +386,48 @@ def _first_city_iata(folded: str) -> Optional[str]:
     return None
 
 
-def _city_pair_from_text(text: str) -> Optional[tuple[str, str]]:
+def _resolve_city_iata(name: str) -> Optional[str]:
+    cleaned = " ".join(name.split())
+    return _CITY_IATA.get(cleaned) or _CITY_IATA.get(cleaned.split()[0]) or _lookup_alias(cleaned)
+
+
+def _city_pairs_from_text(text: str) -> list[tuple[str, str]]:
+    """Every from/to city pair, in document order. Open jaws keep all of them."""
     folded = _fold(text)
     patterns = (
-        r"\b(?:de|desde|from)\s+([a-záéíóúüñ ]+?)\s+(?:a|to|hacia)\s+([a-záéíóúüñ ]+?)"
-        r"(?:\s+(?:el|on|del|al|passing|pasando|,)|$)",
-        r"\bto\s+([a-záéíóúüñ ]+?)\s+from\s+([a-záéíóúüñ ]+?)"
-        r"(?:\s+(?:passing|pasando|on|el|,)|$)",
+        (
+            r"\b(?:de|desde|from)\s+([a-záéíóúüñ ]+?)\s+(?:a|to|hacia)\s+([a-záéíóúüñ ]+?)"
+            r"(?:\s+(?:el|on|del|al|passing|pasando|,)|$)",
+            False,
+        ),
+        (
+            r"\bto\s+([a-záéíóúüñ ]+?)\s+from\s+([a-záéíóúüñ ]+?)"
+            r"(?:\s+(?:passing|pasando|on|el|,)|$)",
+            True,
+        ),
     )
-    for index, pattern in enumerate(patterns):
-        match = re.search(pattern, folded)
-        if match is None:
+    found: list[tuple[int, str, str]] = []
+    for pattern, swapped in patterns:
+        for match in re.finditer(pattern, folded):
+            left, right = match.group(1).strip(), match.group(2).strip()
+            if swapped:
+                dest_name, origin_name = left, right
+            else:
+                origin_name, dest_name = left, right
+            origin = _resolve_city_iata(origin_name)
+            dest = _resolve_city_iata(dest_name)
+            if origin and dest and origin != dest:
+                found.append((match.start(), origin, dest))
+    found.sort(key=lambda item: item[0])
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for _, origin, dest in found:
+        pair = (origin, dest)
+        if pair in seen:
             continue
-        left, right = match.group(1).strip(), match.group(2).strip()
-        if index == 1:
-            dest_name, origin_name = left, right
-        else:
-            origin_name, dest_name = left, right
-        origin = _CITY_IATA.get(origin_name) or _CITY_IATA.get(origin_name.split()[0])
-        dest = _CITY_IATA.get(dest_name) or _CITY_IATA.get(dest_name.split()[0])
-        # trim trailing filler words from dest/origin names
-        if origin is None:
-            origin = _lookup_alias(origin_name)
-        if dest is None:
-            dest = _lookup_alias(dest_name)
-        if origin and dest and origin != dest:
-            return origin, dest
-    return None
+        seen.add(pair)
+        pairs.append(pair)
+    return pairs
 
 
 def _lookup_alias(name: str) -> Optional[str]:
@@ -536,7 +551,7 @@ def _is_hotels(folded: str) -> bool:
 def _has_flight_words(folded: str) -> bool:
     return bool(
         re.search(
-            r"\b(vuelo|vuelos|volar|flight|flights|one-way|ida|round-trip|open jaw)\b",
+            r"\b(vuelo|vuelos|volar|flight|flights|one-way|ida|round-trip|open jaws?)\b",
             folded,
         )
     )
@@ -605,6 +620,24 @@ def _trip_kind(folded: str, flags: Mapping[str, str], pair_count: int) -> Option
     return None
 
 
+def _impossible_packaged_via(
+    *,
+    via_regions: Sequence[str],
+    max_stops: Optional[int],
+    pair_count: int,
+    around: bool,
+) -> bool:
+    """True when one packaged O-D cannot visit the named via-regions under max_stops.
+
+    A packaged shopping request with max K stops has at most K intermediate
+    airports. Five continents with max 2 stops is not one BOS-SYD POST.
+    Around-the-world shortlists and already-split multi-city pairs stay.
+    """
+    if around or pair_count >= 2 or not via_regions or max_stops is None:
+        return False
+    return len(via_regions) > max_stops
+
+
 def _build_route_specs(
     *,
     origin: Optional[str],
@@ -638,6 +671,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     flags = _flag_map(raw)
     dates = _iso_dates(raw)
     pairs = _iata_pairs(raw)
+    if not pairs:
+        pairs = _city_pairs_from_text(raw)
     month_from, month_to = _month_window(raw)
     today = today or date.today()
 
@@ -755,12 +790,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             is_known_iata(left) and is_known_iata(right) for left, right in pairs
         ):
             refuse.append("invalid_iata")
-    else:
-        city_pair = _city_pair_from_text(raw)
-        if city_pair:
-            origin, destination = city_pair
-        elif around:
-            origin = origin or _first_city_iata(folded)
+    elif around:
+        origin = origin or _first_city_iata(folded)
     if origin is None:
         for match in re.findall(r"\b([A-Z]{3})\b", raw):
             if is_known_iata(match):
@@ -804,14 +835,39 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         and ("fiji" in folded or "fiyi" in folded or destination == "NAN")
     ):
         refuse.append("contradictory_routing")
+    elif _impossible_packaged_via(
+        via_regions=via_regions,
+        max_stops=max_stops,
+        pair_count=len(pairs),
+        around=around,
+    ):
+        refuse.append("impossible_routing")
 
-    route_specs = _build_route_specs(
-        origin=origin if origin and is_known_iata(origin) else None,
-        destination=destination if destination and is_known_iata(destination) else None,
-        dates=dates,
-        trip=trip,
-        pairs=[pair for pair in pairs if is_known_iata(pair[0]) and is_known_iata(pair[1])],
-    )
+    known_pairs = [pair for pair in pairs if is_known_iata(pair[0]) and is_known_iata(pair[1])]
+    if "impossible_routing" in refuse:
+        route_specs: Tuple[str, ...] = ()
+    else:
+        route_specs = _build_route_specs(
+            origin=origin if origin and is_known_iata(origin) else None,
+            destination=destination if destination and is_known_iata(destination) else None,
+            dates=dates,
+            trip=trip,
+            pairs=known_pairs,
+        )
+
+    notes = ""
+    if "impossible_routing" in refuse:
+        via_n = len(via_regions)
+        od = f"{origin}-{destination}" if origin and destination else "this route"
+        notes = (
+            f"A packaged {od} with max {max_stops} stops cannot touch "
+            f"{via_n} via-regions; do not emit one shopping request or invent fares."
+        )
+    elif "open jaw" in folded and len(known_pairs) >= 2:
+        notes = (
+            "Keep every dated open-jaw city pair on --trip multi; "
+            "do not collapse them into one origin-destination."
+        )
 
     departure = dates[0] if dates else None
     returning = dates[1] if len(dates) >= 2 else None
@@ -868,7 +924,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             date_to = month_to
     elif "invalid_iata" in refuse:
         intent = "refuse"
-    elif "contradictory_dates" in refuse or "contradictory_routing" in refuse:
+    elif (
+        "contradictory_dates" in refuse
+        or "contradictory_routing" in refuse
+        or "impossible_routing" in refuse
+    ):
         intent = "refuse"
     elif "past_date" in refuse:
         intent = "refuse"
@@ -893,6 +953,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             "invalid_iata" in refuse
             or "contradictory_dates" in refuse
             or "contradictory_routing" in refuse
+            or "impossible_routing" in refuse
         ):
             intent = "refuse"
         elif "past_date" in refuse and intent == "flights":
@@ -967,8 +1028,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             departure_date=departure,
             return_date=returning,
             trip=trip,
+            max_stops=max_stops,
             refuse=all_refuse,
             via_regions=via_regions,
+            route_specs=() if "impossible_routing" in all_refuse else route_specs,
+            notes=notes,
         )
 
     split = bool(via_regions) and len(via_regions) + 1 > 6
@@ -1001,4 +1065,5 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         no_overnight=tuple(no_overnight),
         refuse=all_refuse,
         route_specs=route_specs,
+        notes=notes,
     )

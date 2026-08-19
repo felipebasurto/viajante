@@ -220,6 +220,56 @@ class PromptPlanInsaneTests(unittest.TestCase):
         self.assertTrue(plan.around_the_world)
         self.assertNotEqual(plan.origin, "MAD")
 
+    def test_city_name_triple_open_jaw_keeps_all_pairs(self) -> None:
+        plan = plan_prompt(
+            "Three open jaws: from Sao Paulo to Santiago on 2026-09-07, "
+            "from Buenos Aires to Lima on 2026-09-10, from Bogota to Sao Paulo "
+            "on 2026-09-13."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "GRU")
+        self.assertEqual(plan.destination, "GRU")
+        self.assertEqual(plan.trip, "multi")
+        self.assertEqual(
+            list(plan.route_specs),
+            [
+                "GRU-SCL:2026-09-07",
+                "EZE-LIM:2026-09-10",
+                "BOG-GRU:2026-09-13",
+            ],
+        )
+        self.assertNotEqual(plan.origin, "MAD")
+        self.assertNotIn("MAD", "".join(plan.route_specs))
+        parsed = parse_flight_plan(plan.route_specs, trip="multi", max_stops=1)
+        self.assertIsInstance(parsed, MultiCity)
+        self.assertEqual(len(parsed.legs), 3)
+        self.assertEqual(parsed.legs[1].origin, "EZE")
+        self.assertEqual(parsed.legs[1].destination, "LIM")
+        self.assertEqual(parsed.legs[2].origin, "BOG")
+
+    def test_five_continents_max_two_stops_is_impossible(self) -> None:
+        plan = plan_prompt(
+            "BOS to Sydney leaving 2026-11-01, touching Europe, sub-Saharan Africa, "
+            "India, China, and New Zealand before SYD. Max 2 stops each packaged leg."
+        )
+        self.assertEqual(plan.intent, "refuse")
+        self.assertIn("impossible_routing", plan.refuse)
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "SYD")
+        self.assertEqual(plan.max_stops, 2)
+        self.assertEqual(
+            list(plan.via_regions),
+            ["europe", "sub_saharan", "india", "china", "new_zealand"],
+        )
+        self.assertEqual(plan.route_specs, ())
+        self.assertNotEqual(plan.origin, "MAD")
+        folded_notes = plan.notes.casefold()
+        self.assertIn("cannot", folded_notes)
+        self.assertIn("5 via-regions", folded_notes)
+        self.assertIn("max 2 stops", folded_notes)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotIn("EUR", plan.notes)
+
 
 class PromptPlanMatchTests(unittest.TestCase):
     def test_plan_to_dict_is_json_friendly(self) -> None:
