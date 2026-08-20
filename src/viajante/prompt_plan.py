@@ -1013,6 +1013,24 @@ def _impossible_packaged_via(
     return len(via_regions) > max_stops
 
 
+def _around_the_world_notes(
+    *,
+    max_stops: Optional[int],
+    exclude_regions: Sequence[str] = (),
+    max_layover: Optional[float] = None,
+) -> str:
+    """Honesty line for an unnamed circumnavigation. No invented cities or fares."""
+    bits = ["Around-the-world shortlist"]
+    if exclude_regions:
+        bits.append("without " + ", ".join(exclude_regions))
+    if max_layover is not None:
+        bits.append(f"layover cap {max_layover:g}h")
+    if max_stops is not None:
+        bits.append(f"max_stops {max_stops} on every leg")
+    bits.append("do not invent fares")
+    return "; ".join(bits)
+
+
 def _build_route_specs(
     *,
     origin: Optional[str],
@@ -1332,7 +1350,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if trip is None and origin and destination:
         trip = "one-way"
     if around:
-        trip = trip or "multi"
+        # Circumnavigation is a multi-city circuit, not one packaged O-D.
+        # Closing destination=origin below must not collapse this to one-way.
+        trip = "multi" if len(pairs) < 2 else (trip or "multi")
+        if destination is None and origin and is_known_iata(origin):
+            destination = origin
 
     unknown_pairs = [
         pair for pair in pairs if not is_known_iata(pair[0]) or not is_known_iata(pair[1])
@@ -1364,6 +1386,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     known_pairs = [pair for pair in pairs if is_known_iata(pair[0]) and is_known_iata(pair[1])]
     if "impossible_routing" in refuse:
         route_specs: Tuple[str, ...] = ()
+    elif around and not known_pairs:
+        # Do not emit a fake origin-origin spec or invent hops the user did not name.
+        route_specs = ()
     else:
         route_specs = _build_route_specs(
             origin=origin if origin and is_known_iata(origin) else None,
@@ -1395,6 +1420,12 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         ]
         joined = "/".join(codes) if codes else "the named airport"
         notes = f"Unsatisfiable layover: overnight {joined} is both required and forbidden."
+    elif around:
+        notes = _around_the_world_notes(
+            max_stops=max_stops,
+            exclude_regions=exclude_regions,
+            max_layover=max_layover,
+        )
 
     departure = dates[0] if dates else None
     returning = dates[1] if len(dates) >= 2 else None
@@ -1426,16 +1457,20 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if depart_hit:
         depart_after = _hhmm(depart_hit.group(1))
     work_back_by = _work_back_by(folded)
+    if around:
+        prefer_seed = (*use_airports, *via_airports, *require_overnight)
+    else:
+        prefer_seed = (
+            origin,
+            destination,
+            *use_airports,
+            *via_airports,
+            *require_overnight,
+        )
     prefer_airports: Tuple[str, ...] = tuple(
         dict.fromkeys(
             code
-            for code in (
-                origin,
-                destination,
-                *use_airports,
-                *via_airports,
-                *require_overnight,
-            )
+            for code in prefer_seed
             if code and code in named_airports and code not in exclude_airports
         )
     )

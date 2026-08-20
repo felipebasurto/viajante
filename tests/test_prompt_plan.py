@@ -261,14 +261,34 @@ class PromptPlanInsaneTests(unittest.TestCase):
         plan = plan_prompt(
             "Cheapest around the world from Vancouver starting 2026-11-01, max 2 stops each leg"
         )
+        self.assertEqual(plan.intent, "flights")
         self.assertTrue(plan.around_the_world)
         self.assertEqual(plan.max_stops, 2)
         self.assertEqual(plan.origin, "YVR")
+        # Circuit returns to the named origin. Do not invent intermediate cities.
+        self.assertEqual(plan.destination, "YVR")
+        self.assertEqual(plan.trip, "multi")
+        self.assertEqual(plan.departure_date, date(2026, 11, 1))
+        self.assertEqual(plan.route_specs, ())
+        self.assertEqual(plan.prefer_airports, ())
+        folded_notes = plan.notes.casefold()
+        self.assertIn("shortlist", folded_notes)
+        self.assertIn("max_stops 2", folded_notes)
+        self.assertIn("every leg", folded_notes)
+        self.assertIn("do not invent fares", folded_notes)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotIn("EUR", plan.notes)
+        self.assertNotEqual(plan.origin, "MAD")
+        self.assertNotIn("MAD", "".join(plan.route_specs))
 
     def test_around_the_world_does_not_invent_madrid(self) -> None:
         plan = plan_prompt("Cheapest around the world starting 2026-11-01, max 2 stops each leg")
         self.assertTrue(plan.around_the_world)
+        self.assertEqual(plan.max_stops, 2)
+        self.assertEqual(plan.trip, "multi")
+        self.assertEqual(plan.route_specs, ())
         self.assertNotEqual(plan.origin, "MAD")
+        self.assertNotEqual(plan.destination, "MAD")
 
     def test_city_name_triple_open_jaw_keeps_all_pairs(self) -> None:
         plan = plan_prompt(
