@@ -40,6 +40,14 @@ Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
 #29: score_ms 669→650/659 (both below warm). Cold `--help` 280→280 (did not veto). Kept. Baseline left at 1603.
 #30: score_ms 711→654/656 (both below warm). Cold `--help` 281→285 (veto). Reverted.
 
+## Sweep HTTP (not weekday keep)
+
+| pr | result | gate | fail | score_ms | cold `--help` | live | do not redo |
+|---:|--------|------|-----:|---------:|--------------:|------|-------------|
+| **56** | keep | ok | 0 | 1189 | 287.7→287.6 | 16/16 then 60/64 (4 rejected, 0×429) | 429 resets TLS and continues remaining; no happy-path sleep; multiplex kept |
+
+Live 429 did not fire on this host, so it did not stop the batch. Unittest covers continue-after-429. No p50 invented.
+
 ## Quality keep (weekday)
 
 - KEEP METRIC is `judge_mean` (mean of `score_1_100` on `judge=llm` scored rows). Gate = suite+fail:0. Keep iff `judge_mean` strictly up; Δ<3 → second run. Holdout is human veto. `score_ms` is not the keep. Agent must not edit the judge or pad easy prompts.

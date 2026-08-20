@@ -409,13 +409,34 @@ class ChromeSweepClient:
         jobs: Sequence[SweepPost],
         timeout: float,
     ) -> list[SweepHttpResponse]:
+        # Keep HTTP/2 multiplex on the happy path. After HTTP 429, stop
+        # feeding this TLS session; unsent jobs are marked 429 so the
+        # caller can continue them on a fresh session.
         semaphore = self._asyncio.Semaphore(_SWEEP_STREAMS)
+        stop = self._asyncio.Event()
+        out: list[SweepHttpResponse | None] = [None] * len(jobs)
 
-        async def _one(job: SweepPost) -> SweepHttpResponse:
+        async def _one(index: int, job: SweepPost) -> None:
+            if stop.is_set():
+                return
             async with semaphore:
-                return await self._apost(job.url, job.data, job.headers, timeout)
+                if stop.is_set():
+                    return
+                try:
+                    response = await self._apost(job.url, job.data, job.headers, timeout)
+                except Exception:
+                    stop.set()
+                    out[index] = SweepHttpResponse(429, "", job.url)
+                    return
+                out[index] = response
+                if response.status == 429:
+                    stop.set()
 
-        return list(await self._asyncio.gather(*[_one(job) for job in jobs]))
+        await self._asyncio.gather(*[_one(index, job) for index, job in enumerate(jobs)])
+        return [
+            item if item is not None else SweepHttpResponse(429, "", job.url)
+            for item, job in zip(out, jobs, strict=True)
+        ]
 
     def close(self) -> None:
         loop = getattr(self, "_loop", None)
@@ -518,6 +539,10 @@ def _is_retriable_sweep_failure(exc: BaseException) -> bool:
         status = exc.status
         return isinstance(status, int) and status >= 500
     return False
+
+
+def _is_rate_limited_sweep_failure(exc: BaseException) -> bool:
+    return isinstance(exc, GoogleFlightsBlocked) and exc.status == 429
 
 
 def _http_error_code(exc: BaseException) -> Optional[int]:
@@ -656,19 +681,25 @@ class GoogleFlightsHttpSource:
         responses = dispatch_posts(client, jobs, timeout=self._timeout)
         results: list[tuple[RawFlightCard, ...] | BaseException] = []
         retry_indexes: list[int] = []
+        rate_indexes: list[int] = []
         for index, (trip, response) in enumerate(zip(trips, responses, strict=True)):
             try:
                 results.append(self._cards_from_shopping_response(client, trip, response))
             except BaseException as exc:
                 results.append(exc)
-                if _is_retriable_sweep_failure(exc):
+                if _is_rate_limited_sweep_failure(exc):
+                    rate_indexes.append(index)
+                elif _is_retriable_sweep_failure(exc):
                     retry_indexes.append(index)
-        if retry_indexes and SWEEP_RETRY_LIMIT >= 1:
-            if SWEEP_RETRY_BACKOFF_SECONDS > 0:
+        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
+        if replay and SWEEP_RETRY_LIMIT >= 1:
+            if rate_indexes:
+                client = self._client_after_rate_limit()
+            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
                 self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
-            retry_jobs = [jobs[index] for index in retry_indexes]
+            retry_jobs = [jobs[index] for index in replay]
             retried = dispatch_posts(client, retry_jobs, timeout=self._timeout)
-            for index, response in zip(retry_indexes, retried, strict=True):
+            for index, response in zip(replay, retried, strict=True):
                 try:
                     results[index] = self._cards_from_shopping_response(
                         client, trips[index], response
@@ -701,6 +732,7 @@ class GoogleFlightsHttpSource:
             tuple[tuple[RawFlightCard, ...] | BaseException, tuple[CompactCalendarDay, ...]]
         ] = []
         retry_indexes: list[int] = []
+        rate_indexes: list[int] = []
         for index, (query, _start, _end) in enumerate(jobs):
             shop_resp = responses[2 * index]
             cal_resp = responses[2 * index + 1]
@@ -710,20 +742,25 @@ class GoogleFlightsHttpSource:
                 )
             except BaseException as exc:
                 cards = exc
-                if _is_retriable_sweep_failure(exc):
+                if _is_rate_limited_sweep_failure(exc):
+                    rate_indexes.append(index)
+                elif _is_retriable_sweep_failure(exc):
                     retry_indexes.append(index)
             days = self._days_from_calendar_response(cal_resp, posts[2 * index + 1].url)
             results.append((cards, days))
-        if retry_indexes and SWEEP_RETRY_LIMIT >= 1:
-            if SWEEP_RETRY_BACKOFF_SECONDS > 0:
+        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
+        if replay and SWEEP_RETRY_LIMIT >= 1:
+            if rate_indexes:
+                client = self._client_after_rate_limit()
+            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
                 self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
             retry_posts: list[SweepPost] = []
-            for index in retry_indexes:
+            for index in replay:
                 query, start, end = jobs[index]
                 retry_posts.append(self._shopping_post(query))
                 retry_posts.append(self._calendar_post(query, start, end))
             retried = dispatch_posts(client, retry_posts, timeout=self._timeout)
-            for offset, index in enumerate(retry_indexes):
+            for offset, index in enumerate(replay):
                 query, _start, _end = jobs[index]
                 shop_resp = retried[2 * offset]
                 cal_resp = retried[2 * offset + 1]
@@ -738,6 +775,12 @@ class GoogleFlightsHttpSource:
     def reset(self) -> None:
         if self._injected_client is None and self._opener is None:
             reset_shared_chrome_sweep_client()
+
+    def _client_after_rate_limit(self) -> SweepHttpClient:
+        self.reset()
+        if SWEEP_RETRY_BACKOFF_SECONDS > 0:
+            self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+        return self._ensure_client()
 
     def close(self) -> None:
         # Keep the process TLS session warm for the next MCP/CLI search.

@@ -6,6 +6,7 @@ import time
 import unittest
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -1034,6 +1035,17 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(client.gets, [])
         self.assertEqual(sleeps, [])
 
+    def test_source_raises_blocked_on_shopping_429_without_retry(self) -> None:
+        sleeps: list[float] = []
+        client = _FakeSweepClient(post_status=429, post_text="no")
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(caught.exception.status, 429)
+        self.assertEqual(len(client.posts), 1)
+        self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [])
+
 
 class HttpSweepRetryTests(unittest.TestCase):
     def test_retry_backoff_is_under_200ms_not_an_anti_bot_pause(self) -> None:
@@ -1929,6 +1941,223 @@ class _MuxFakeSweepClient:
 
     def close(self) -> None:
         return None
+
+
+class _ScriptedMuxClient:
+    """post_many rounds with per-job replies. Happy path still one multiplex call."""
+
+    def __init__(self, rounds: tuple[tuple[SweepHttpResponse, ...], ...]) -> None:
+        self._rounds = [list(round_replies) for round_replies in rounds]
+        self.posts: list[str] = []
+        self.gets: list[str] = []
+        self.post_many_calls = 0
+
+    def post(
+        self,
+        url: str,
+        *,
+        data: str,
+        headers: object,
+        timeout: float,
+    ) -> SweepHttpResponse:
+        job = SimpleNamespace(url=url)
+        return self.post_many((job,), timeout=timeout)[0]
+
+    def post_many(self, jobs, *, timeout: float) -> list[SweepHttpResponse]:
+        self.post_many_calls += 1
+        if not self._rounds:
+            raise AssertionError("unexpected extra post_many round")
+        replies = self._rounds.pop(0)
+        if len(replies) != len(jobs):
+            raise AssertionError(f"post_many got {len(jobs)} jobs, scripted {len(replies)}")
+        for job in jobs:
+            self.posts.append(job.url)
+        return list(replies)
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        self.gets.append(url)
+        return SweepHttpResponse(200, "<html></html>", url)
+
+    def close(self) -> None:
+        return None
+
+
+class _TrackingHttpSource(GoogleFlightsHttpSource):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.reset_calls = 0
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+        super().reset()
+
+
+class SweepRateLimitSessionTests(unittest.TestCase):
+    def _trips(self, n: int) -> tuple[FlightQuery, ...]:
+        return tuple(
+            FlightQuery("MAD", "BCN", date(2026, 9, day), max_stops=1) for day in range(1, n + 1)
+        )
+
+    def test_fetch_many_continues_remaining_after_429_on_a_fresh_session(self) -> None:
+        shop = _compact_body(_itinerary(price=41, airline="Vueling"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(429, "slow down"),
+                ),
+                (SweepHttpResponse(200, shop),),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(3))
+        self.assertEqual(len(results), 3)
+        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
+        self.assertEqual(results[2][0].airline, "Vueling")
+        self.assertEqual(client.post_many_calls, 2)
+        self.assertEqual(len(client.posts), 4)
+        self.assertEqual(source.reset_calls, 1)
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+        self.assertLess(sleeps[0], 0.2)
+
+    def test_fetch_many_happy_path_does_not_sleep_or_reset(self) -> None:
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(((SweepHttpResponse(200, shop), SweepHttpResponse(200, shop)),))
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(2))
+        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
+
+    def test_fetch_many_403_is_not_retried(self) -> None:
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(403, "no"),
+                    SweepHttpResponse(200, shop),
+                ),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(3))
+        self.assertFalse(isinstance(results[0], BaseException))
+        self.assertIsInstance(results[1], GoogleFlightsBlocked)
+        self.assertEqual(results[1].status, 403)
+        self.assertFalse(isinstance(results[2], BaseException))
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
+
+    def test_fetch_many_consent_block_is_not_retried(self) -> None:
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(
+                        200,
+                        "our systems have detected unusual traffic",
+                        "https://consent.google.com/ml",
+                    ),
+                ),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(2))
+        self.assertFalse(isinstance(results[0], BaseException))
+        self.assertIsInstance(results[1], GoogleFlightsBlocked)
+        self.assertIsNone(results[1].status)
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
+
+    def test_fetch_many_second_429_stays_blocked(self) -> None:
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (SweepHttpResponse(429, "slow"), SweepHttpResponse(200, shop)),
+                (SweepHttpResponse(429, "still slow"),),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(2))
+        self.assertIsInstance(results[0], GoogleFlightsBlocked)
+        self.assertEqual(results[0].status, 429)
+        self.assertFalse(isinstance(results[1], BaseException))
+        self.assertEqual(client.post_many_calls, 2)
+        self.assertEqual(source.reset_calls, 1)
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_fetch_many_5xx_still_replays_on_the_same_session(self) -> None:
+        shop = _compact_body(_itinerary(price=91, airline="Iberia"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (SweepHttpResponse(200, shop), SweepHttpResponse(503, "upstream")),
+                (SweepHttpResponse(200, shop),),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(2))
+        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
+        self.assertEqual(results[1][0].price, "€91")
+        self.assertEqual(client.post_many_calls, 2)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_fetch_many_with_calendar_continues_remaining_after_429(self) -> None:
+        shop = _compact_body(_itinerary(price=88, airline="Iberia"))
+        calendar = _calendar_rpc_body(
+            [
+                ["2026-09-01", None, [[None, 80], "tok"], 1],
+                ["2026-09-02", None, [[None, 90], "tok"], 1],
+                ["2026-09-03", None, [[None, 100], "tok"], 1],
+            ]
+        )
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(200, calendar),
+                    SweepHttpResponse(429, "slow"),
+                    SweepHttpResponse(200, calendar),
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(200, calendar),
+                ),
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(200, calendar),
+                ),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        jobs = tuple(
+            (
+                FlightQuery("MAD", dest, date(2026, 9, 1), max_stops=1),
+                date(2026, 9, 1),
+                date(2026, 9, 3),
+            )
+            for dest in ("BCN", "LHR", "CDG")
+        )
+        results = source.fetch_many_with_calendar(jobs)
+        self.assertEqual(len(results), 3)
+        for cards, days in results:
+            self.assertFalse(isinstance(cards, BaseException))
+            self.assertEqual(cards[0].airline, "Iberia")
+            self.assertEqual(len(days), 3)
+        self.assertEqual(client.post_many_calls, 2)
+        self.assertEqual(source.reset_calls, 1)
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
 
 
 class SweepClientShapeTests(unittest.TestCase):
