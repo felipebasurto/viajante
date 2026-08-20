@@ -36,6 +36,7 @@ from viajante.prompt_bench import (
     _format_case_line,
     _judge_model,
     compact_plan_dict,
+    format_prompt_report,
     invention_reason,
     judge_case,
     load_holdout_cases,
@@ -226,6 +227,7 @@ class PromptBenchRunnerTests(unittest.TestCase):
         self.assertIn("prompts:", text)
         self.assertIn("judge: skip", text)
         self.assertIn("scored: 0", text)
+        self.assertNotRegex(text, r"judge_mean:\s*\d")
         self.assertNotIn("score_ms", text)
         self.assertNotIn("score_1_100", text)
         self.assertRegex(text, r"wall_ms: \d+")
@@ -260,6 +262,7 @@ class PromptBenchRunnerTests(unittest.TestCase):
         err = stderr.getvalue()
         self.assertIn("judge: skip", out)
         self.assertIn("scored: 0", out)
+        self.assertNotRegex(out, r"judge_mean:\s*\d")
         self.assertNotIn("score_ms", out)
         self.assertNotIn("score_1_100=", err)
         self.assertNotIn("sk-not-used", out)
@@ -695,6 +698,77 @@ class JudgeScoreTests(unittest.TestCase):
             dumped = json.loads(ln.split("plan=", 1)[1])
             self.assertIsInstance(dumped, dict)
             self.assertIn("intent", dumped)
+
+    def test_format_prompt_report_prints_judge_mean_from_scored_rows(self) -> None:
+        case = PromptCase(
+            id="scored-mean",
+            tier="insane",
+            prompt="BOS to LHR on 2026-09-01",
+            judge="llm",
+            expect={"intent": "flights"},
+            lang="en",
+        )
+        det = PromptCase(
+            id="det-not-in-mean",
+            tier="easy",
+            prompt="BOS to LHR on 2026-09-01",
+            judge="deterministic",
+            expect={"intent": "flights"},
+            lang="en",
+        )
+        results = [
+            PromptRunResult(
+                case=case,
+                status="scored",
+                elapsed_ms=1,
+                reason="sane routing",
+                score_1_100=80,
+            ),
+            PromptRunResult(
+                case=case,
+                status="scored",
+                elapsed_ms=1,
+                reason="honest split",
+                score_1_100=91,
+            ),
+            PromptRunResult(
+                case=det,
+                status="scored",
+                elapsed_ms=1,
+                reason="ok",
+                score_1_100=0,
+            ),
+        ]
+        with patch.dict(
+            "os.environ",
+            {JUDGE_ENV: "1", JUDGE_KEY_ENV: "test-deepseek-key"},
+            clear=False,
+        ):
+            text = format_prompt_report(
+                cases=[case, case],
+                results=results,
+                wall_ms=10,
+            )
+        self.assertIn("judge: ran", text)
+        self.assertIn("judge_mean: 85.5", text)
+        self.assertNotIn("score_ms", text)
+
+        skipped = format_prompt_report(cases=[case], results=[], wall_ms=10)
+        self.assertIn("judge: skip", skipped)
+        self.assertNotRegex(skipped, r"judge_mean:\s*\d")
+
+        with patch.dict(
+            "os.environ",
+            {JUDGE_ENV: "", JUDGE_KEY_ENV: "", JUDGE_KEY_OVERRIDE_ENV: ""},
+            clear=False,
+        ):
+            skipped_scores = format_prompt_report(
+                cases=[case, case],
+                results=results,
+                wall_ms=10,
+            )
+        self.assertIn("judge: skip", skipped_scores)
+        self.assertNotRegex(skipped_scores, r"judge_mean:\s*\d")
 
     def test_judge_posts_to_deepseek_not_openai(self) -> None:
         case = next(row for row in load_prompt_cases() if row.is_llm)

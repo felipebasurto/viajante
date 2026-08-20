@@ -38,6 +38,10 @@ Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
 #29: score_ms 669→650/659 (both below warm). Cold `--help` 280→280 (did not veto). Kept. Baseline left at 1603.
 #30: score_ms 711→654/656 (both below warm). Cold `--help` 281→285 (veto). Reverted.
 
+## Quality keep (weekday)
+
+- KEEP METRIC is `judge_mean` (mean of `score_1_100` on `judge=llm` scored rows). Gate = suite+fail:0. Keep iff `judge_mean` strictly up; Δ<3 → second run. Holdout is human veto. `score_ms` is not the keep. Agent must not edit the judge or pad easy prompts.
+
 ## Quality already landed (do not redo)
 
 - #4 open-jaw keeps every pair; refuse impossible continents

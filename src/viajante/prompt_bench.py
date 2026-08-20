@@ -717,7 +717,7 @@ def format_prompt_report(
     scores: list[int] = []
     for row in results:
         counts[row.status] = counts.get(row.status, 0) + 1
-        if row.status == "scored" and row.score_1_100 is not None:
+        if row.status == "scored" and row.case.judge == "llm" and row.score_1_100 is not None:
             scores.append(row.score_1_100)
     judged = os.environ.get(JUDGE_ENV) == "1" and _judge_api_key() is not None and scores
     lines = [
@@ -729,6 +729,10 @@ def format_prompt_report(
         f"wall_ms: {wall_ms}",
         f"judge: {'ran' if judged else 'skip'}",
     ]
+    if judged:
+        lines.append(f"judge_mean: {sum(scores) / len(scores):.1f}")
+    else:
+        lines.append("judge_mean:")
     return "\n".join(lines) + "\n"
 
 

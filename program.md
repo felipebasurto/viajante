@@ -6,86 +6,97 @@ stops. There is no loop script in this repo.
 
 Before choosing a hypothesis, read `bench-history.md` (one screen).
 Do not redo a listed keep or loss. Do not open `tests/prompts/holdout.jsonl`.
-After a keep or revert, append one row to the speed table with this host's
-real numbers. Never invent a figure.
+After a keep or revert, record this host's real `judge_mean`. Never invent
+a figure. Holdout is a **human veto**, not the weekday keep.
 
 ## Goal
 
-Make viajante faster without breaking the public contract. The score is
-offline wall time. Lower is better.
+Raise weekday `judge_mean` without breaking the public contract. **KEEP
+METRIC** is `judge_mean` (arithmetic mean of `score_1_100` on `judge=llm`
+scored rows). Higher is better. `score_ms` is **not** the keep.
 
-The graded prompt battery (`viajante bench --prompts`) is the **quality**
-contract. It is not `score_ms`. The weekday speed loop still uses
-`viajante bench` with no flags. A looping agent may not delete
-`tests/prompts/` (or drop cases below the floors) to “win”. Humans may
-later make easy-tier failures part of the gate; do not silently do that
-for insane/llm cases.
+Gate = suite + `fail: 0`. A looping agent
+may not delete `tests/prompts/` (or drop cases below the floors) to “win”.
+Do not edit the judge or pad easy prompts. Humans may later make easy-tier
+failures part of the gate; do not silently do that for insane/llm cases.
 
 ## One experiment
 
 1. Read this file, `AGENTS.md`, and the current `bench-baseline.json`.
 2. Pick **one** small hypothesis. Examples that fit this tree:
-   - fewer allocations or copies in `parse_shopping_body` / `_first_wrb_data`
-   - cheaper `wrb.fr` walk or itinerary collect
-   - less work in `parse_flight_cards` / `parse_http_flight_cards`
-   - smaller shopping RPC encode (`build_shopping_request` / TFS)
-   - CLI / import startup that the unittest suite actually pays for
+   - planner follows a named contract the judge already scores
+   - packaged `--trip rt` vs two one-ways the user asked for
+   - refuse rest-of-trip / trains / cars without inventing a fare
+   - occupancy, cabin, or dests the prompt named
 3. Change only the files that test that hypothesis. Keep the diff small.
-4. Run the bench from the checkout root:
+   Do not edit `JUDGE_SYSTEM_PROMPT`, `invention_reason`, or existing
+   prompt `expect` fields. Do not rewrite old easy prompts to be easier.
+4. Run the gate and the keep metric from the checkout root:
 
    ```bash
    uv run viajante bench
+   VIAJANTE_BENCH_JUDGE=1 uv run viajante bench --prompts
    ```
 
-5. Parse the tiny stdout block:
+5. Parse the tiny stdout blocks:
 
    ```
    gate: ok
-   tests_ms: 531
-   parse_ms: 12
-   score_ms: 543
    ```
 
-6. **Keep** the change only if `gate: ok` **and** `score_ms` is **strictly
-   lower** than `score_ms` in `bench-baseline.json`. `score_ms` is wall
-   time on this machine. A few tens of ms can be noise; if the delta is
-   that small, run the bench once more and keep only if both runs are
-   strictly lower. Do not average runs into a fake score. Then apply
-   **Anti-maxxing** (cold `viajante --help`).
-7. **Revert** the experiment files if the gate fails, `score_ms` is worse
-   or equal, or cold `--help` got slower. Do not revert unrelated work.
-8. Open or update a pull request. **Never merge to main.** A human merges.
-   Update `bench-baseline.json` only in a winning PR, and only when a
-   human is ready to merge that win. Do not rewrite the baseline to hide
-   a loss.
+   ```
+   fail: 0
+   judge: ran
+   judge_mean: 89.0
+   ```
 
-If `gate: fail`, there is no score. Do not invent one. Do not keep the
-change.
+   If the judge skipped or `judge_mean:` is blank, there is no keep
+   metric. Do not invent one.
+
+6. **Keep** the change only if the gate is ok, `fail: 0`, **and**
+   `judge_mean` is **strictly higher** than the last kept `judge_mean` on
+   this host. If the delta is **< 3**, run the prompts bench once more
+   and keep only if **both** runs are strictly up. Do not average runs
+   into a fake mean. Then apply **Anti-maxxing**.
+7. **Revert** the experiment files if the gate fails, `fail` is not 0,
+   `judge_mean` is worse or equal, or Anti-maxxing vetoes. Do not revert
+   unrelated work.
+8. Open or update a pull request. **Never merge to main.** A human merges.
+   Holdout is a human veto after the fact; do not open
+   `tests/prompts/holdout.jsonl` to decide keep/revert. Do not rewrite
+   `bench-baseline.json` to hide a loss (`score_ms` is not the keep).
+
+If `gate: fail` or the judge skipped, there is no keep metric. Do not
+invent one. Do not keep the change.
 
 ## Bench contract
 
 `viajante bench` is offline. No Chromium. No live Google unless
 `VIAJANTE_BENCH_LIVE=1` (off by default). That optional path may print
 `sweep_ms` as extra. `sweep_ms` is **never** the keep/revert score.
+`score_ms` is also **not** the keep; it is the speed loop's number only.
 
 Gate (must pass or exit non-zero):
 
-- `python -m unittest discover -s tests`
-- `ruff check src tests`
-- `ruff format --check src tests`
+- suite (`viajante bench`: unittest + ruff)
+- prompt battery `fail: 0`
 
-Metric (one number, lower is better):
+KEEP METRIC (one number, higher is better):
 
-- `score_ms` = wall ms of the unittest suite + wall ms of the checked-in
-  corpus in `tests/bench/` (owned compact-shopping / `wrb.fr` / HTML card
-  parse). Not a network call.
+- `judge_mean` = arithmetic mean of `score_1_100` on `judge=llm` scored
+  rows when the judge ran. Blank / omitted when the judge skipped or
+  there are no llm scores. Never invent.
+
+`score_ms` = wall ms of the unittest suite + wall ms of the checked-in
+corpus in `tests/bench/` (owned compact-shopping / `wrb.fr` / HTML card
+parse). Not a network call. Record it if you like; do not keep on it.
 
 The bench has no flags to skip tests, subset the parse corpus, or change
 `--top`. Product defaults stay `DEFAULT_TOP = 8` and
-`DEFAULT_BAGGAGE_BUFFER_EUR = 70`. `--prompts` is a different command:
-the quality battery, never mixed into `score_ms`.
+`DEFAULT_BAGGAGE_BUFFER_EUR = 70`. `--prompts` is the quality battery,
+never mixed into `score_ms`.
 
-## Prompt battery (quality, not score)
+## Prompt battery (quality keep: judge_mean)
 
 ```bash
 uv run viajante bench --prompts
@@ -105,37 +116,35 @@ asked for two one-ways. Do not invent fares. Default run is offline deterministi
 outside the repo, or `VIAJANTE_JUDGE_KEY` as override; optional
 `DEEPSEEK_MODEL` / `VIAJANTE_JUDGE_MODEL`). There is no single correct
 answer: record `score_1_100` plus a one-line reason, not pass/fail as
-the only output. Unset key prints `judge: skip`; do not invent a score.
+the only output. When the judge ran and `scores[]` is non-empty, stdout
+prints `judge_mean:` to one decimal. Unset key prints `judge: skip` and
+`judge_mean:` blank; do not invent a score or a mean.
 Judge wall time and live scrapes are never `score_ms`.
 Empty or dropped prompt files fail the prompts run. Holdout is **not**
 in that weekday battery. Do not add `holdout.jsonl` to `manifest.json`.
-Operator-only: `uv run viajante bench --prompts --holdout`.
+Operator-only: `uv run viajante bench --prompts --holdout`. A human may
+veto a keep after holdout; the agent must not open that file.
 
 ## Anti-maxxing
 
-`score_ms` is unittest + the owned parse corpus. A keep that only moves
-import taxes or unittest-only caches is suspect. After BEFORE/AFTER
-`uv run viajante bench`, also time a COLD CLI on this host:
-`uv run viajante --help` twice, discard the first, keep the second wall
-ms. If that cold help is strictly worse than this host's pre-change cold
-help, REVERT even if `score_ms` won. Record both numbers in the PR.
-
-Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
-coverage, drop a fixture from `manifest.json`, add empty fixtures, lower
-`--top` or the baggage buffer, or stub parsers to win `score_ms`. Do not
-count `sweep_ms`, live Google, or LLM-judge latency.
-
-Do not edit `JUDGE_SYSTEM_PROMPT`, `invention_reason`, or existing prompt
-`expect` fields to raise the 1–100 mean. Invented price/route stays
-automatic 0.
+KEEP METRIC is `judge_mean`, not `score_ms`. Do not edit
+`JUDGE_SYSTEM_PROMPT`, `invention_reason`, or existing prompt `expect`
+fields to raise the 1–100 mean. Do not pad easy prompts. Invented
+price/route stays automatic 0.
 
 Existing smoke→insane rows are frozen except to fix a real planner bug
 (wrong IATA, dropped dests). New hardness goes in new files
 (brutal/holdout), not by rewriting old prompts to be easier.
 
-Looping speed agents read this file and `bench-history.md` only. They
+Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
+coverage, drop a fixture from `manifest.json`, add empty fixtures, lower
+`--top` or the baggage buffer, or stub parsers. Do not count `sweep_ms`,
+live Google, or LLM-judge latency as the keep.
+
+Looping agents read this file and `bench-history.md` only. They
 must not open `tests/prompts/holdout.jsonl` when choosing a hypothesis.
-Holdout is the operator overfitting check, not the weekday 90.
+Holdout is the operator overfitting check and a **human veto**, not the
+weekday keep.
 
 ## Constraints (already in AGENTS.md)
 
@@ -162,15 +171,14 @@ tests.
 Late-evening compact clocks (including proto3-omitted hour 0) and Google
 Hotels `--rooms` occupancy are covered by tests; do not regress them.
 
-Touch leftover holes only if the bench still passes and `score_ms` does
-not get worse, or if you add a failing test first and the score stays
+Touch leftover holes only if the gate still passes and `judge_mean` does
+not get worse, or if you add a failing test first and the mean stays
 honest.
 
 ## After the run
 
-- Write the recorded `score_ms` (and `tests_ms` / `parse_ms`) in the PR
-  body next to the baseline. For a speed keep, also record cold
-  `viajante --help` ms (pre-change vs second run), per Anti-maxxing.
-- If it is a win, say so and leave baseline update for the human merge.
+- Write the recorded `judge_mean` in the PR body next to this host's
+  last keep. `score_ms` may be noted; it is not the keep.
+- If it is a win, say so. A human merges and may run holdout as veto.
 - If it is a loss or a fail, the PR should show the revert, or not exist.
 - Stop. The scheduler starts the next experiment, not this checkout.
