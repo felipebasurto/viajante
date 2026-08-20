@@ -4,6 +4,11 @@ Experiment protocol for viajante. Humans edit this file to steer.
 A looping agent reads it, runs **one** keep-or-revert experiment, then
 stops. There is no loop script in this repo.
 
+Before choosing a hypothesis, read `bench-history.md` (one screen).
+Do not redo a listed keep or loss. After a keep or revert, append one
+row to the speed table with this host's real numbers. Never invent a
+figure.
+
 ## Goal
 
 Make viajante faster without breaking the public contract. The score is
