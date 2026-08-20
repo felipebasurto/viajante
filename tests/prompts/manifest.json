@@ -19,6 +19,10 @@
     {
       "name": "insane.jsonl",
       "tier": "insane"
+    },
+    {
+      "name": "brutal.jsonl",
+      "tier": "brutal"
     }
   ]
 }

@@ -1,7 +1,7 @@
 """Graded prompt battery: quality contract, not the keep-or-revert score.
 
 `viajante bench --prompts` (or VIAJANTE_BENCH_PROMPTS=1) loads the weekday
-corpus via tests/prompts/manifest.json (smoke → insane). `--holdout` loads
+corpus via tests/prompts/manifest.json (smoke → brutal). `--holdout` loads
 only holdout.jsonl, which is not in that manifest. Deterministic contracts
 are offline. LLM-as-judge is opt-in via VIAJANTE_BENCH_JUDGE=1, scores
 quality 1–100 with DeepSeek (`deepseek-chat`), and is never folded into
@@ -11,7 +11,8 @@ score.
 
 Harness priorities:
 1. Honesty: invented price or route = 0 (deterministic; no DeepSeek, no live search).
-2. Named contract (IATA, dates, dests the user said, refuse rest-of-trip).
+2. Named contract (IATA, dates, dests the user said, refuse rest-of-trip,
+   packaged RT vs two one-ways).
 3. score_ms is a different loop.
 """
 
@@ -34,7 +35,9 @@ from viajante.prompt_plan import (
     _city_pairs_from_text,
     _iata_pairs,
     _iter_city_iata,
+    asked_two_one_ways,
     plan_prompt,
+    wants_packaged_rt,
 )
 
 PROMPTS_ENV = "VIAJANTE_BENCH_PROMPTS"
@@ -56,6 +59,14 @@ JUDGE_SYSTEM_PROMPT = (
     "that the user did not name is AUTOMATIC 0. Not a 15-point ding. Zero.\n"
     "- A price_cap or via_regions the user stated is a constraint, not an invention.\n"
     "- Extra route_specs / city pairs the user did not name are AUTOMATIC 0.\n"
+    "- If the prompt names outbound and return dates and does NOT ask for "
+    "two one-ways / without --trip / separate tickets, a plan that is two "
+    "one-ways, sugar one-ways, or missing trip=rt is AUTOMATIC 0 (same as "
+    "inventing a fare). Say the plan split a packaged RT.\n"
+    "- If the prompt explicitly asks for two one-ways / without --trip rt / "
+    "separate tickets, a plan that packages --trip rt is AUTOMATIC 0.\n"
+    "- Quoting one-way prices as if they were the RT package, or inventing a "
+    "package total, is AUTOMATIC 0.\n"
     "- Omitting prices, fare estimates, destination shortlists, and concrete "
     "routes is CORRECT and must not lower the score. Do not deduct for lacking "
     "explicit pricing, a destination shortlist, a concrete route, or fare estimates.\n"
@@ -64,20 +75,23 @@ JUDGE_SYSTEM_PROMPT = (
     "stating that viajante does not book.\n"
     "- Madrid is not the implied home hub. No city is the default origin unless "
     "the prompt names one.\n"
-    "The harness already zeros invented prices/routes. You write a 1–100 only "
-    "when the plan invented nothing.\n"
+    "The harness already zeros invented prices/routes and packaged-RT splits. "
+    "You write a 1–100 only when the plan invented nothing and did not split "
+    "or mis-package the RT.\n"
     "Score quality: follows the named contract (IATA, dates, dests the user said, "
-    "refuse rest-of-trip), sane routing, honest about what viajante can and cannot do.\n"
+    "refuse rest-of-trip, packaged RT vs two one-ways), sane routing, honest "
+    "about what viajante can and cannot do.\n"
     'Reply JSON {"score_1_100": <integer 1-100>, "reason": "<one line>"}.'
 )
 
-MIN_PROMPT_CASES = 80
+MIN_PROMPT_CASES = 120
 MIN_TIER_CASES = {
     "smoke": 10,
     "easy": 16,
     "medium": 20,
     "hard": 20,
     "insane": 8,
+    "brutal": 25,
 }
 MIN_INSANE = MIN_TIER_CASES["insane"]
 MIN_UNIQUE_ORIGINS = 12
@@ -87,6 +101,7 @@ REQUIRED_PROMPT_FILES = (
     "medium.jsonl",
     "hard.jsonl",
     "insane.jsonl",
+    "brutal.jsonl",
 )
 REQUIRED_PROMPT_IDS = frozenset(
     {
@@ -101,7 +116,7 @@ REQUIRED_PROMPT_IDS = frozenset(
         "insane-contradictory-dates",
     }
 )
-TIER_ORDER = ("smoke", "easy", "medium", "hard", "insane")
+TIER_ORDER = ("smoke", "easy", "medium", "hard", "insane", "brutal")
 VALID_TIERS = (*TIER_ORDER, HOLDOUT_TIER)
 MIN_HOLDOUT_CASES = 8
 MAX_HOLDOUT_CASES = 12
@@ -311,7 +326,7 @@ def validate_prompt_corpus(root: Optional[Path] = None) -> list[PromptCase]:
     for row in cases:
         rank = ranks[row.tier]
         if rank < previous:
-            raise PromptCorpusError("prompt corpus must be ordered smoke → insane")
+            raise PromptCorpusError("prompt corpus must be ordered smoke → brutal")
         previous = rank
     return cases
 
@@ -462,6 +477,36 @@ def invention_reason(prompt: str, plan: PromptPlan) -> Optional[str]:
     return None
 
 
+def _split_return_specs(plan: PromptPlan) -> bool:
+    """True when the plan is two reverse one-way legs instead of one RT package."""
+    if len(plan.route_specs) != 2:
+        return False
+    first = _spec_pair(plan.route_specs[0])
+    second = _spec_pair(plan.route_specs[1])
+    if first is None or second is None:
+        return False
+    return first == (second[1], second[0])
+
+
+def rt_split_reason(prompt: str, plan: PromptPlan) -> Optional[str]:
+    """Deterministic packaged-RT law. One-line reason, or None when the plan is clean.
+
+    Named outbound+return without an explicit split request must be one
+    ``trip=rt`` package. Two one-ways, sugar one-ways, or a missing
+    ``trip=rt`` is a 0 before DeepSeek. Packaging ``--trip rt`` when the
+    prompt asked for two one-ways is the same 0.
+    """
+    if plan.intent != "flights":
+        return None
+    if wants_packaged_rt(prompt):
+        if plan.trip != "rt" or _split_return_specs(plan):
+            return "plan split a packaged RT"
+        return None
+    if asked_two_one_ways(prompt) and plan.trip == "rt":
+        return "plan packaged a two one-way request as --trip rt"
+    return None
+
+
 def parse_score_1_100(raw: object) -> Optional[int]:
     """Accept an integer 1–100 only. Never coerce pass/fail or invent a score."""
     if isinstance(raw, bool) or raw is None:
@@ -518,21 +563,31 @@ def _skip_judge() -> JudgeResult:
 
 
 def judge_case(case: PromptCase, plan: PromptPlan) -> JudgeResult:
-    """Score a plan. Invented price/route is 0 without calling DeepSeek.
+    """Score a plan. Invented price/route or a packaged-RT split is 0 without DeepSeek.
 
     Harness priorities:
     1. Honesty: invented price or route = 0.
-    2. Named contract (IATA, dates, dests the user said, refuse rest-of-trip).
+    2. Named contract (IATA, dates, dests the user said, refuse rest-of-trip,
+       packaged RT vs two one-ways).
     3. score_ms is a different loop.
     """
     invented = invention_reason(case.prompt, plan)
     if invented is not None:
         return JudgeResult(0, invented)
+    split = rt_split_reason(case.prompt, plan)
+    if split is not None:
+        return JudgeResult(0, split)
     if os.environ.get(JUDGE_ENV) != "1":
         return _skip_judge()
     key = _judge_api_key()
     if not key:
         return _skip_judge()
+    if wants_packaged_rt(case.prompt):
+        rt_contract = "packaged_rt_required"
+    elif asked_two_one_ways(case.prompt):
+        rt_contract = "two_one_ways_required"
+    else:
+        rt_contract = "one_way_or_unspecified"
     body = {
         "model": _judge_model(),
         "temperature": 0,
@@ -550,6 +605,7 @@ def judge_case(case: PromptCase, plan: PromptPlan) -> JudgeResult:
                         "prompt": case.prompt,
                         "expect": case.expect,
                         "plan": plan.to_dict(),
+                        "rt_contract": rt_contract,
                     },
                     ensure_ascii=False,
                 ),
@@ -592,6 +648,16 @@ def _evaluate_case(case: PromptCase) -> PromptRunResult:
             status="scored",
             elapsed_ms=elapsed,
             reason=invented,
+            score_1_100=0,
+            plan=plan,
+        )
+    split = rt_split_reason(case.prompt, plan)
+    if split is not None:
+        return PromptRunResult(
+            case=case,
+            status="scored",
+            elapsed_ms=elapsed,
+            reason=split,
             score_1_100=0,
             plan=plan,
         )

@@ -24,6 +24,7 @@ from viajante.prompt_bench import (
     LIVE_ENV,
     MIN_INSANE,
     MIN_PROMPT_CASES,
+    MIN_TIER_CASES,
     MIN_UNIQUE_ORIGINS,
     PROMPTS_ENV,
     REQUIRED_PROMPT_IDS,
@@ -41,6 +42,7 @@ from viajante.prompt_bench import (
     load_prompt_cases,
     parse_judge_verdict,
     parse_score_1_100,
+    rt_split_reason,
     run_prompt_bench,
     validate_prompt_corpus,
 )
@@ -87,12 +89,14 @@ class PromptCorpusIntegrityTests(unittest.TestCase):
         self.assertTrue(REQUIRED_PROMPT_IDS.issubset(ids))
         insane = [row for row in cases if row.tier == "insane"]
         self.assertGreaterEqual(len(insane), MIN_INSANE)
+        brutal = [row for row in cases if row.tier == "brutal"]
+        self.assertGreaterEqual(len(brutal), MIN_TIER_CASES["brutal"])
 
     def test_no_empty_prompts_or_blank_ids(self) -> None:
         for row in load_prompt_cases():
             self.assertTrue(row.id.strip())
             self.assertTrue(row.prompt.strip())
-            self.assertIn(row.tier, {"smoke", "easy", "medium", "hard", "insane"})
+            self.assertIn(row.tier, {"smoke", "easy", "medium", "hard", "insane", "brutal"})
             self.assertIn(row.judge, {"deterministic", "llm"})
 
     def test_deterministic_flight_cases_have_expected_iata(self) -> None:
@@ -124,6 +128,18 @@ class PromptCorpusIntegrityTests(unittest.TestCase):
         self.assertIn("new zealand", lowered)
         self.assertEqual(row.expect.get("origin"), "YHZ")
         self.assertEqual(row.expect.get("destination"), "NAN")
+
+    def test_brutal_impossible_slice_is_present(self) -> None:
+        rows = [row for row in load_prompt_cases() if row.id.startswith("brutal-impossible-")]
+        self.assertGreaterEqual(len(rows), 10)
+        for row in rows:
+            self.assertEqual(row.tier, "brutal", row.id)
+            self.assertEqual(row.judge, "llm", row.id)
+            self.assertEqual(row.lang, "en", row.id)
+            notes = str(row.expect.get("notes") or "")
+            self.assertIn("Unsatisfiable", notes)
+            self.assertNotRegex(notes, r"\d+\s*€")
+            self.assertNotRegex(row.prompt, r"\bMAD\b")
 
     def test_empty_prompt_file_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -178,7 +194,7 @@ class PromptCorpusIntegrityTests(unittest.TestCase):
 
     def test_corpus_is_ordered_easy_to_insane(self) -> None:
         cases = load_prompt_cases()
-        order = {"smoke": 0, "easy": 1, "medium": 2, "hard": 3, "insane": 4}
+        order = {"smoke": 0, "easy": 1, "medium": 2, "hard": 3, "insane": 4, "brutal": 5}
         ranks = [order[row.tier] for row in cases]
         self.assertEqual(ranks, sorted(ranks))
 
@@ -373,6 +389,9 @@ class JudgeScoreTests(unittest.TestCase):
         )
         self.assertIn("Madrid is not the implied home hub", prompt)
         self.assertIn("You write a 1–100 only", prompt)
+        self.assertIn("split a packaged RT", prompt)
+        self.assertIn("two one-ways / without --trip / separate tickets", prompt)
+        self.assertIn("one-way prices as if they were the RT package", prompt)
         self.assertIn('"score_1_100"', prompt)
         self.assertIn('"reason"', prompt)
         self.assertNotIn("LARGE penalty", prompt)
@@ -455,6 +474,14 @@ class JudgeScoreTests(unittest.TestCase):
                 failures.append(f"{row.id}: {reason}")
         self.assertEqual(failures, [])
 
+    def test_owned_plans_are_not_rt_splits(self) -> None:
+        failures = []
+        for row in load_prompt_cases():
+            reason = rt_split_reason(row.prompt, plan_prompt(row.prompt))
+            if reason is not None:
+                failures.append(f"{row.id}: {reason}")
+        self.assertEqual(failures, [])
+
     def test_invented_fare_is_automatic_zero_without_llm(self) -> None:
         case = next(row for row in load_prompt_cases() if row.is_llm)
         honest = plan_prompt(case.prompt)
@@ -529,6 +556,92 @@ class JudgeScoreTests(unittest.TestCase):
             judged = judge_case(case, fake)
         self.assertEqual(judged.score_1_100, 0)
         self.assertIn("invented", judged.reason.casefold())
+        urlopen.assert_not_called()
+
+    def test_rt_split_reason_named_return_split_is_fatal(self) -> None:
+        prompt = "LAX-NRT on 2026-11-03 returning 2026-11-12"
+        honest = plan_prompt(prompt)
+        self.assertEqual(honest.trip, "rt")
+        self.assertIsNone(rt_split_reason(prompt, honest))
+        split = replace(
+            honest,
+            trip="one-way",
+            route_specs=("LAX-NRT:2026-11-03", "NRT-LAX:2026-11-12"),
+        )
+        self.assertEqual(rt_split_reason(prompt, split), "plan split a packaged RT")
+        missing_trip = replace(honest, trip="one-way")
+        self.assertEqual(rt_split_reason(prompt, missing_trip), "plan split a packaged RT")
+        sugar = replace(
+            honest,
+            trip="one-way",
+            route_specs=("LAX-NRT:2026-11-03:2026-11-12",),
+        )
+        self.assertEqual(rt_split_reason(prompt, sugar), "plan split a packaged RT")
+
+        case = PromptCase(
+            id="rt-split-named-return",
+            tier="insane",
+            prompt=prompt,
+            judge="llm",
+            expect={"intent": "flights"},
+            lang="en",
+        )
+        with (
+            patch.dict(
+                "os.environ",
+                {JUDGE_ENV: "1", JUDGE_KEY_ENV: "test-deepseek-key"},
+                clear=False,
+            ),
+            patch("viajante.prompt_bench._judge_urlopen") as urlopen,
+        ):
+            judged = judge_case(case, split)
+        self.assertEqual(judged.score_1_100, 0)
+        self.assertEqual(judged.reason, "plan split a packaged RT")
+        urlopen.assert_not_called()
+
+        with patch("viajante.prompt_bench.plan_prompt", return_value=split):
+            evaluated = _evaluate_case(case)
+        self.assertEqual(evaluated.status, "scored")
+        self.assertEqual(evaluated.score_1_100, 0)
+        self.assertEqual(evaluated.reason, "plan split a packaged RT")
+
+    def test_rt_split_reason_explicit_two_one_ways_packaged_is_fatal(self) -> None:
+        prompt = "BOM-DXB on 2026-09-25 returning 2026-09-28 as two one-way, without --trip rt"
+        honest = plan_prompt(prompt)
+        self.assertEqual(honest.trip, "one-way")
+        self.assertIsNone(rt_split_reason(prompt, honest))
+        packaged = replace(
+            honest,
+            trip="rt",
+            route_specs=("BOM-DXB:2026-09-25:2026-09-28",),
+        )
+        self.assertEqual(
+            rt_split_reason(prompt, packaged),
+            "plan packaged a two one-way request as --trip rt",
+        )
+
+        case = PromptCase(
+            id="rt-split-two-one-ways",
+            tier="insane",
+            prompt=prompt,
+            judge="llm",
+            expect={"intent": "flights"},
+            lang="en",
+        )
+        with (
+            patch.dict(
+                "os.environ",
+                {JUDGE_ENV: "1", JUDGE_KEY_ENV: "test-deepseek-key"},
+                clear=False,
+            ),
+            patch("viajante.prompt_bench._judge_urlopen") as urlopen,
+        ):
+            judged = judge_case(case, packaged)
+        self.assertEqual(judged.score_1_100, 0)
+        self.assertEqual(
+            judged.reason,
+            "plan packaged a two one-way request as --trip rt",
+        )
         urlopen.assert_not_called()
 
     def test_stated_price_cap_is_not_invention(self) -> None:
@@ -617,6 +730,8 @@ class JudgeScoreTests(unittest.TestCase):
             "optional, not required for a score of 90 or above",
             body["messages"][0]["content"],
         )
+        user_payload = json.loads(body["messages"][1]["content"])
+        self.assertIn("rt_contract", user_payload)
         self.assertNotIn("gpt-4o", json.dumps(body))
 
     def test_viajante_judge_key_overrides_deepseek_key(self) -> None:
@@ -676,7 +791,15 @@ class HoldoutCorpusTests(unittest.TestCase):
         names = [row["name"] for row in data["files"]]
         self.assertNotIn("holdout.jsonl", names)
         self.assertEqual(
-            names, ["smoke.jsonl", "easy.jsonl", "medium.jsonl", "hard.jsonl", "insane.jsonl"]
+            names,
+            [
+                "smoke.jsonl",
+                "easy.jsonl",
+                "medium.jsonl",
+                "hard.jsonl",
+                "insane.jsonl",
+                "brutal.jsonl",
+            ],
         )
 
     def test_weekday_load_skips_holdout(self) -> None:

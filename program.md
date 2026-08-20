@@ -91,9 +91,13 @@ the quality battery, never mixed into `score_ms`.
 uv run viajante bench --prompts
 ```
 
-Checked-in corpus: `tests/prompts/` (JSONL + README, smoke → insane).
+Checked-in corpus: `tests/prompts/` (JSONL + README, smoke → brutal).
 Prompts are English. Origins are international; no city is the implied
-home hub. Default run is offline deterministic cases. LLM-as-judge is
+home hub. Named outbound+return without "two one-way" / "without --trip rt"
+/ "separate tickets" is packaged `--trip rt`; two one-ways only when the
+user asked for that split. DeepSeek and the pre-judge harness zero a
+plan that splits a packaged RT or packages `--trip rt` when the prompt
+asked for two one-ways. Do not invent fares. Default run is offline deterministic cases. LLM-as-judge is
 `VIAJANTE_BENCH_JUDGE=1` with DeepSeek `deepseek-chat` (`DEEPSEEK_API_KEY`
 outside the repo, or `VIAJANTE_JUDGE_KEY` as override; optional
 `DEEPSEEK_MODEL` / `VIAJANTE_JUDGE_MODEL`). There is no single correct
@@ -101,7 +105,7 @@ answer: record `score_1_100` plus a one-line reason, not pass/fail as
 the only output. Unset key prints `judge: skip`; do not invent a score.
 Judge wall time and live scrapes are never `score_ms`.
 Empty or dropped prompt files fail the prompts run. Holdout is **not**
-in that weekday 90. Do not add `holdout.jsonl` to `manifest.json`.
+in that weekday battery. Do not add `holdout.jsonl` to `manifest.json`.
 Operator-only: `uv run viajante bench --prompts --holdout`.
 
 ## Anti-maxxing

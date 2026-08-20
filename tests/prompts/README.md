@@ -1,6 +1,6 @@
 # Prompt battery
 
-Graded prompts for viajante, ordered smoke → easy → medium → hard → insane.
+Graded prompts for viajante, ordered smoke → easy → medium → hard → insane → brutal.
 This is the **quality** contract. It is not `score_ms`.
 
 All prompts are **English**. Origins and destinations are international
@@ -64,6 +64,16 @@ dest, dates, trip kind, max stops, adults, cabin, refuse reasons).
   Halifax → Fiji via two European airports, one sub-Saharan, one Indian,
   one Chinese, and New Zealand. Other insane rows start in Halifax,
   Vancouver, Boston, Singapore, Auckland, Cairo, São Paulo — not Madrid.
+- **brutal**: one prompt stacks several product surfaces (hotels occupancy,
+  named airports such as LHR vs LGW / EWR vs JFK, cabin only with real
+  collocation, time windows, baggage, work-back-by, layover/stop caps,
+  flights+hotels together, refuse trains/cars/checkout). Includes a
+  handful of unsatisfiable stacks (exclusive airports, nonstop+layover,
+  first+economy, bags both ways, weekday-no-fly+Monday depart, same-day
+  clocks, IST overnight required and forbidden, return-before-out,
+  book-and-don't-book, secret dests with invented fares) so the planner
+  and judge can miss. No invented fares or hotel prices in `expect`.
+  Smoke→insane stay intact.
 
 Humans may later gate easy-tier failures. Do not silently gate insane/llm
-cases.
+or brutal/llm cases.

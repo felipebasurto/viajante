@@ -82,6 +82,26 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertEqual(parsed[0].origin, "NRT")
         self.assertEqual(parsed[1].origin, "ICN")
 
+    def test_named_return_is_packaged_rt(self) -> None:
+        plan = plan_prompt("LAX-NRT on 2026-11-03 returning 2026-11-12")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.route_specs, ("LAX-NRT:2026-11-03:2026-11-12",))
+        parsed = parse_flight_plan(plan.route_specs, trip="rt", max_stops=1)
+        self.assertIsInstance(parsed, RoundTrip)
+        self.assertEqual(parsed.return_date, date(2026, 11, 12))
+
+    def test_explicit_two_one_ways_are_not_rt(self) -> None:
+        plan = plan_prompt(
+            "BOM-DXB on 2026-09-25 returning 2026-09-28 as two one-way, without --trip rt"
+        )
+        self.assertEqual(plan.trip, "one-way")
+        self.assertNotEqual(plan.trip, "rt")
+        self.assertEqual(
+            list(plan.route_specs),
+            ["BOM-DXB:2026-09-25", "DXB-BOM:2026-09-28"],
+        )
+
     def test_explore_from_sin(self) -> None:
         plan = plan_prompt("Explore cheap destinations from SIN starting 2026-09-15, 7 days")
         self.assertEqual(plan.intent, "explore")
@@ -299,6 +319,78 @@ class PromptPlanInsaneTests(unittest.TestCase):
         self.assertIn("max 2 stops", folded_notes)
         self.assertNotIn("€", plan.notes)
         self.assertNotIn("EUR", plan.notes)
+
+
+class PromptPlanBrutalTests(unittest.TestCase):
+    def test_baggage_carry_on_only(self) -> None:
+        plan = plan_prompt("JNB-SIN on 2026-11-03, carry-on only, max 1 stop.")
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertEqual(plan.max_stops, 1)
+
+    def test_baggage_checked_1(self) -> None:
+        plan = plan_prompt("DEL-LHR on 2026-11-10, 1 checked bag, business class, max 1 stop.")
+        self.assertEqual(plan.baggage, "checked_1")
+        self.assertEqual(plan.cabin, "business")
+
+    def test_baggage_no_checked(self) -> None:
+        plan = plan_prompt("ICN-LAX on 2026-09-18, no checked bags, premium economy, max 1 stop.")
+        self.assertEqual(plan.baggage, "no_checked")
+        self.assertEqual(plan.cabin, "premium-economy")
+
+    def test_arrive_before(self) -> None:
+        plan = plan_prompt("SFO-LHR on 2026-11-03, arrive before 09:00, max 1 stop.")
+        self.assertEqual(plan.arrive_before, "09:00")
+
+    def test_depart_after(self) -> None:
+        plan = plan_prompt("ORD-CDG on 2026-11-06, depart after Friday 18:00, max 1 stop.")
+        self.assertEqual(plan.depart_after, "18:00")
+        self.assertEqual(plan.weekday, "friday")
+
+    def test_prefer_airports_lhr_not_lgw(self) -> None:
+        plan = plan_prompt("GRU-LHR on 2026-09-08, use LHR not LGW, max 1 stop.")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertIn("LHR", plan.prefer_airports)
+        self.assertIn("LGW", plan.exclude_airports)
+
+    def test_prefer_airports_ewr_not_jfk(self) -> None:
+        plan = plan_prompt(
+            "From New York to London on 2026-10-09, use EWR not JFK, LHR not LGW, max 1 stop."
+        )
+        self.assertEqual(plan.origin, "EWR")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertIn("EWR", plan.prefer_airports)
+        self.assertIn("JFK", plan.exclude_airports)
+        self.assertIn("LGW", plan.exclude_airports)
+
+    def test_work_back_by_monday(self) -> None:
+        plan = plan_prompt(
+            "YYZ-NRT outbound on 2026-11-06 and return on 2026-11-09 as two one-way, "
+            "without --trip rt, must work Monday 09:00 local."
+        )
+        self.assertEqual(plan.work_back_by, "monday 09:00")
+        self.assertEqual(plan.trip, "one-way")
+
+    def test_flights_and_hotels_same_prompt(self) -> None:
+        plan = plan_prompt(
+            "Fly DUB-JFK on 2026-10-09 returning 2026-10-13 as two one-way, without --trip rt, "
+            "and hotel in New York from 2026-10-09 to 2026-10-13, 2 adults, 1 room, "
+            "free cancellation. Do not invent a fare or a hotel price."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.location.casefold(), "new york")
+        self.assertEqual(plan.rooms, 1)
+        self.assertEqual(plan.adults, 2)
+        self.assertNotIn("€", plan.notes)
+
+    def test_overlay_refuse_keeps_flight_intent(self) -> None:
+        plan = plan_prompt(
+            "CHC-SYD on 2026-11-03, no trains, no rental car, do not complete the booking."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertIn("trains", plan.refuse)
+        self.assertIn("cars", plan.refuse)
+        self.assertIn("booking", plan.refuse)
 
 
 class PromptPlanMatchTests(unittest.TestCase):
