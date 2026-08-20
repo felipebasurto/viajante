@@ -8,7 +8,7 @@ Checked-in `bench-baseline.json` **1603** is a **fossil**, not keep. Do not rewr
 
 ## Tonight shipped (2026-08-20; one row each; not weekday keep unless judged)
 
-Numbers only where recorded. Do not invent a `judge_mean` or p50. `#58` is not in this table.
+Numbers only where recorded. Do not invent a `judge_mean` or p50.
 
 | pr | landed | recorded numbers |
 |---:|--------|------------------|
@@ -27,6 +27,7 @@ Numbers only where recorded. Do not invent a `judge_mean` or p50. `#58` is not i
 | **55** | `stops_compare` cheapest nonstop vs 1-stop from the same eligible set | |
 | **56** | 429: reset TLS + 50 ms, continue remaining jobs on a fresh session. Happy path no sleep. Sequential remesure harness still stops on 429. | See sweep table. Remesure on `3248285` is the #43 row (15/16, p50 1370.504 ms, then 429 JFK-LHR). |
 | **57** | recover nested/broken judge JSON; score+reason required; `JUDGE_SYSTEM_PROMPT` untouched | Judged 181 on `22da78a`: **judge_mean 95.7** (35 scored, 23 skip). Not a keep vs 97.9 on `4faaabd`. |
+| **58** | `--via` / `--exclude-via`: parse then filter on owned `layover_city` / `legs[].layovers`. Unknown layover cannot prove include (drop) or exclude (keep). Nonstops drop for include, stay for exclude. No invented via list. Overnight IST `keep_connect` is still `require_overnight ∪ via`. | Merged as `e8ef10e`. No `judge_mean` recorded. |
 | **59** | planner maps occupancy (omit if no count), alliance (no invented ST), depart-window | |
 | **61** | `viajante trip` / `search_trip` owned total = flight + hotel; omit if either miss / dates / currency | |
 | **62** | planner around/±N → `intent=flex`; cheapest week → `intent=dates`; packaged RT stays | Battery 186, gate fail:0, not judged. Cold `--help` 293→294 (did not veto). Rebased onto `3248285` (keeps #59). |
@@ -84,8 +85,10 @@ Live 429 did not fire on this host, so it did not stop the batch. Unittest cover
 - #5 midnight clocks; nested/sibling RT legs; Google `--rooms`
 - #7 invented price/route = automatic 0; scored rows dump `plan=`
 - #8 GRU dests kept; bare “first” is not cabin
+- #35 keep IST overnight and via constraints instead of dropping them
 - #10 `typical_eur` = same-route calendar median (`below`/`near`/`above`)
 - #52 flex window (`50c772a`): calendar grid in around±N, then one shopping POST on the cheapest legal day. Feature keep. Battery 180, gate fail:0, not judged.
+- #58 `--via` / `--exclude-via` (`e8ef10e`): parse-then-filter on owned layover; unknown cannot prove include/exclude; overnight IST `keep_connect` is still `require_overnight ∪ via`. No `judge_mean` recorded.
 - #62 planner around/±N → `intent=flex` with a real window; cheapest week → `intent=dates`. Rebased onto `3248285` (keeps #59 occupancy/alliance/window). Battery 186, gate fail:0, not judged. Cold `--help` 293→294 (did not veto).
 
 Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last **real keep** `judge_mean`: **97.9** on `60d9ed4` (26 scored). Last judged: **95.7** on `22da78a` (35 scored, 23 skip) — not a keep vs 97.9 on `4faaabd`. Do not invent a mean. Import-path speed PRs did not re-run it. Weekday keep is 97.9, not the `score_ms` table above. Gate is suite + fail:0. `score_ms` is not the product trophy.

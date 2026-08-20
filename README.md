@@ -43,6 +43,7 @@ Seven tools on stdio, no auth: `search_flights`, `search_dates`, `search_flex`, 
 ```bash
 uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
 uv run viajante flights BOS-LHR:2026-09-18 --nearby --fetch sweep
+uv run viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep
 ```
 
 ```text
@@ -61,6 +62,8 @@ Successful queries also print cheapest nonstop vs cheapest 1-stop from that same
 `typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). Packaged `--trip rt` uses that same-stay calendar (same nights). `vs_typical` is `below`, `near` (±10%), or `above`. `vs_typical_pct` is the signed percent versus that median. `typical_deal` is the English one-liner (`below typical 340 € (−15%)`). When that median exists, `cheapest_date` / `cheapest_eur` point at the cheapest owned day in the same window. Typical fields are `null` (cheapest keys absent) when the compact calendar misses, has fewer than three priced days, or the query is multi-city. Never a guessed market average.
 
 Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026-09-15,2026-09-16`. `--nearby` expands origin or destination to owned same-city IATA (London LHR/LGW/STN/LTN/LCY, Tokyo NRT/HND) and searches each as a labeled alternative. Default off, so LHR stays LHR. Named open-jaw airports stay named (LGW stays LGW). Never invents a code.
+
+`--via` / `--exclude-via` parse then filter on owned `layover_city` and `legs[].layovers`. Unknown layover cannot prove include (drop) or exclude (keep). Nonstops drop for `--via` and stay for `--exclude-via`. There is no shopping-POST via slot and no invented via list.
 
 `JFK-NRT:2026-10-09:2026-10-20` without `--trip` is outbound plus return as two one-way searches. `--trip rt` (alias `round-trip`) on that same grammar is one Google package. `--trip multi` takes two to six `ORIGIN-DEST:DATE` legs as one package. Multi-city detail is not supported yet.
 
@@ -281,6 +284,8 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--fetch` | `auto` | `sweep` is HTTP/2 on one Chrome TLS session. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
 | `--max-layover` | off | Drop connecting offers whose layover exceeds this many hours. Nonstops stay. |
 | `--min-layover` | off | Drop connecting offers whose layover is shorter than this many hours. Nonstops stay. |
+| `--via` | off | Keep connecting offers whose parsed layover matches these IATA codes (`IST`). Post-filter on owned `layover_city` / `legs[].layovers`. Unknown layover cannot prove include (drop). Nonstops drop. |
+| `--exclude-via` | off | Drop connecting offers whose parsed layover matches these IATA codes (`DXB`). Unknown layover stays. Nonstops stay. |
 | `--max-duration` | off | Drop offers whose elapsed time exceeds this many hours. |
 | `--save FILE` | off | Write the JSON report atomically. |
 
