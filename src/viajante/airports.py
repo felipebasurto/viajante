@@ -104,6 +104,11 @@ class Airport:
         }
 
 
+_LOOKUP_ROWS: Optional[tuple[tuple[Airport, str, str, str], ...]] = None
+_BY_CODE: Optional[dict[str, Airport]] = None
+_BY_CITY: Optional[dict[str, tuple[Airport, ...]]] = None
+
+
 def _iata_table() -> dict[str, Mapping[str, object]]:
     global _IATA
     if _IATA is None:
@@ -116,8 +121,37 @@ def is_known_iata(code: str) -> bool:
     return len(text) == 3 and text.isalpha() and text in _iata_table()
 
 
+def _lookup_indexes() -> tuple[
+    tuple[tuple[Airport, str, str, str], ...],
+    dict[str, Airport],
+    dict[str, tuple[Airport, ...]],
+]:
+    global _LOOKUP_ROWS, _BY_CODE, _BY_CITY
+    if _LOOKUP_ROWS is None:
+        by_code: dict[str, Airport] = {}
+        by_city: dict[str, list[Airport]] = {}
+        rows: list[tuple[Airport, str, str, str]] = []
+        for code, raw in _iata_table().items():
+            airport = _from_row(code, raw)
+            city_folded = airport.city.casefold()
+            name_folded = airport.name.casefold()
+            by_code[code] = airport
+            by_city.setdefault(city_folded, []).append(airport)
+            rows.append((airport, city_folded, name_folded, airport.iata.casefold()))
+        for airports in by_city.values():
+            airports.sort(key=_lookup_rank)
+        _BY_CODE = by_code
+        _BY_CITY = {city: tuple(airports) for city, airports in by_city.items()}
+        _LOOKUP_ROWS = tuple(rows)
+    assert _BY_CODE is not None
+    assert _BY_CITY is not None
+    return _LOOKUP_ROWS, _BY_CODE, _BY_CITY
+
+
 def get_airport(code: str) -> Optional[Airport]:
     text = code.strip().upper()
+    if _BY_CODE is not None:
+        return _BY_CODE.get(text)
     row = _iata_table().get(text)
     if row is None:
         return None
@@ -128,21 +162,21 @@ def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
     needle = " ".join(query.split()).casefold()
     if not needle:
         raise ValueError("airport query must not be blank")
-    table = _iata_table()
-    exact = get_airport(needle.upper()) if len(needle) == 3 and needle.isalpha() else None
-    if exact is not None:
-        return (exact,)
-    city_hits: list[Airport] = []
-    other_hits: list[Airport] = []
-    for code, row in table.items():
-        airport = _from_row(code, row)
-        city = airport.city.casefold()
-        name = airport.name.casefold()
-        if city == needle:
-            city_hits.append(airport)
-        elif needle in city or needle in name or needle == airport.iata.casefold():
-            other_hits.append(airport)
-    city_hits.sort(key=_lookup_rank)
+    rows, by_code, by_city = _lookup_indexes()
+    if len(needle) == 3 and needle.isalpha():
+        exact = by_code.get(needle.upper())
+        if exact is not None:
+            return (exact,)
+    city_hits = list(by_city.get(needle, ()))
+    if len(city_hits) >= limit:
+        return tuple(city_hits[:limit])
+    taken = {airport.iata for airport in city_hits}
+    other_hits = [
+        airport
+        for airport, city_folded, name_folded, iata_folded in rows
+        if airport.iata not in taken
+        and (needle in city_folded or needle in name_folded or needle == iata_folded)
+    ]
     other_hits.sort(key=_lookup_rank)
     return tuple((city_hits + other_hits)[:limit])
 

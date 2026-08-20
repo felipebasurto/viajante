@@ -31,7 +31,7 @@ from typing import Any, Optional, Sequence
 from viajante.airports import is_known_iata
 from viajante.bench import LIVE_ENV, repo_root
 from viajante.prompt_plan import (
-    _CITY_IATA,
+    _CITY_IATA_PATTERNS,
     PromptPlan,
     _city_pairs_from_text,
     _iata_pairs,
@@ -338,14 +338,17 @@ def _eur_amounts(text: str) -> set[int]:
     return amounts
 
 
+_IATA_TOKEN_UPPER = re.compile(r"\b([A-Z]{3})\b")
+
+
 def _named_iatas(prompt: str) -> set[str]:
     named: set[str] = set()
-    for token in re.findall(r"\b([A-Z]{3})\b", prompt):
+    for token in _IATA_TOKEN_UPPER.findall(prompt):
         if is_known_iata(token):
             named.add(token)
     folded = prompt.casefold()
-    for city, code in _CITY_IATA.items():
-        if re.search(rf"\b{re.escape(city)}\b", folded):
+    for pattern, code in _CITY_IATA_PATTERNS:
+        if pattern.search(folded):
             named.add(code)
     return named
 

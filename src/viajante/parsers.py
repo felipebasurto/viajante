@@ -6,12 +6,18 @@ import re
 
 from viajante.models import CancellationEvidence, LodgingKind, PropertyTypeEvidence
 
+_PRICE_NUMBER = re.compile(r"([\d.,]+)")
+_DURATION_DAYS = re.compile(r"(\d+)\s*(?:d[ií]as?|days?|d)\b")
+_DURATION_HOURS = re.compile(r"(\d+)\s*(?:h|hr|hrs|hours?|horas?)\b")
+_DURATION_MINUTES = re.compile(r"(\d+)\s*(?:min|mins|minutes?|minutos?|m)\b")
+_DIGITS = re.compile(r"(\d+)")
+
 
 def parse_price_eur(price_text: str | None) -> float | None:
     if not price_text:
         return None
     cleaned = price_text.replace("\xa0", "").replace(" ", "").replace("€", "").strip()
-    m = re.search(r"([\d.,]+)", cleaned)
+    m = _PRICE_NUMBER.search(cleaned)
     if not m:
         return None
     num = m.group(1)
@@ -44,9 +50,9 @@ def parse_duration_hours(duration: str | None) -> float | None:
     if not duration:
         return None
     text = duration.replace("\xa0", " ").strip().lower()
-    dm = re.search(r"(\d+)\s*(?:d[ií]as?|days?|d)\b", text)
-    hm = re.search(r"(\d+)\s*(?:h|hr|hrs|hours?|horas?)\b", text)
-    mm = re.search(r"(\d+)\s*(?:min|mins|minutes?|minutos?|m)\b", text)
+    dm = _DURATION_DAYS.search(text)
+    hm = _DURATION_HOURS.search(text)
+    mm = _DURATION_MINUTES.search(text)
     if not (dm or hm or mm):
         return None
     days = float(dm.group(1)) if dm else 0.0
@@ -104,7 +110,7 @@ def parse_stops_count(stops: str | None) -> int | None:
         "sin paradas",
     ):
         return 0
-    m = re.search(r"(\d+)", lower)
+    m = _DIGITS.search(lower)
     if m:
         return int(m.group(1))
     return None

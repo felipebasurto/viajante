@@ -202,6 +202,99 @@ _CAR_PRIMARY = re.compile(
     r"alquiler de coche|rental car|hire a car|coche de alquiler|rent[- ]a[- ]car",
     re.IGNORECASE,
 )
+_CITY_IATA_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"\b{re.escape(name)}\b"), iata)
+    for name, iata in sorted(_CITY_IATA.items(), key=lambda item: len(item[0]), reverse=True)
+)
+_FROM_TO_PAIR = re.compile(
+    r"\b(?:de|desde|from)\s+([a-záéíóúüñ ]+?)\s+(?:a|to|hacia)\s+([a-záéíóúüñ ]+?)"
+    r"(?:\s+(?:el|on|del|al|passing|pasando|,)|$)"
+)
+_TO_FROM_PAIR = re.compile(
+    r"\bto\s+([a-záéíóúüñ ]+?)\s+from\s+([a-záéíóúüñ ]+?)"
+    r"(?:\s+(?:passing|pasando|on|el|,)|$)"
+)
+_HOTEL_LOCATION = re.compile(
+    r"\b(?:hotel|hoteles|alojamiento|stay|stays)\s+(?:en|in|at)\s+([A-Za-zÁÉÍÓÚáéíóúüñ ]+)",
+    re.IGNORECASE,
+)
+_HOTEL_LOCATION_SPLIT = re.compile(r"\b(del|de|from|on|el|al|a|,|\d)")
+_EUROPE_COUNT = re.compile(r"(\d+)\s+(european|europeos?|aeropuertos europeos)")
+_EUROPE_WORD = re.compile(r"\b(european|europeo|europeos|europe)\b")
+_INDIA_WORD = re.compile(r"\b(indian|indio|india)\b")
+_CHINA_WORD = re.compile(r"\b(chinese|chino|china)\b")
+_AIRPORTS_CODE_FOR = re.compile(
+    r"(?:code for|código iata de|codigo iata de|aeropuerto(?:s)? de)\s+"
+    r"([A-Za-zÁÉÍÓÚáéíóúüñ ]+?)(?:\s+airports?)?\??$",
+    re.IGNORECASE,
+)
+_AIRPORTS_QUERY_CITIES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"\b{name}\b"), name)
+    for name in (
+        "london",
+        "tokyo",
+        "halifax",
+        "cairo",
+        "seoul",
+        "vancouver",
+        "singapore",
+        "auckland",
+    )
+)
+_IATA_TOKEN = re.compile(r"\b([A-Za-z]{3})\b")
+_IATA_TOKEN_UPPER = re.compile(r"\b([A-Z]{3})\b")
+_AIRPORTS_LOOKUP = re.compile(
+    r"\b(iata code|código iata|codigo iata|qué aeropuerto|que aeropuerto)\b"
+)
+_EXPLORE_WORDS = re.compile(
+    r"\b(explora|explore|destinos|destinations|dónde ir|donde ir|"
+    r"busca destinos|to everywhere|everywhere from|everywhere under|"
+    r"where is cheap|cheap destinations)\b"
+)
+_DATES_CALENDAR = re.compile(
+    r"\b(calendario|calendar|date grid|cheapest friday|"
+    r"más barato por día|mas barato por dia|qué día es más barato|"
+    r"que dia es mas barato|cheapest day|price calendar)\b"
+)
+_HOTEL_WORDS = re.compile(r"\b(hotel|hoteles|alojamiento)\b")
+_FLIGHT_WORDS = re.compile(
+    r"\b(vuelo|vuelos|volar|flight|flights|one-way|ida|round-trip|open jaws?)\b"
+)
+_BUSINESS_CABIN = re.compile(r"\b(business|preferente)\b")
+_FIRST_CABIN = re.compile(
+    r"\b(?:first(?:-|\s+)(?:class|cabin)|cabin(?:-|\s+)first|primera(?:\s+clase)?)\b"
+)
+_ECONOMY_CABIN = re.compile(r"\b(economy|turista|econ[oó]mica)\b")
+_LISTED_DESTS = re.compile(
+    r"(?:destinations?|destinos)\b[^:\n]{0,120}:\s*"
+    r"((?:[A-Za-z]{3}(?:\s*,\s*)+)+[A-Za-z]{3})"
+)
+_FIXED_DATES_FIRST = re.compile(r"fixed(?: natural)? dates first")
+_PLUS_MINUS_1 = re.compile(r"(?:±|\+/-)\s*1")
+_MAX_2_STOPS = re.compile(r"max(?:imum)?\s+2\s+stops|m[aá]ximo 2 escalas|max 2 stops")
+_MAX_1_STOP = re.compile(r"max(?:imum)?\s+1\s+stop|m[aá]ximo 1 escala")
+_SIN_ESCALAS_MAS = re.compile(r"sin escalas de m[aá]s")
+_ESCALAS_SANAS = re.compile(r"escalas sanas")
+_NONSTOP = re.compile(r"\b(nonstop|directos?|sin escalas)\b")
+_ADULTS_ES = re.compile(r"(\d+|ocho|eight|dos|two|tres|three|cuatro|four)\s+adultos")
+_ADULTS_EN = re.compile(r"(\d+)\s+adults")
+_ROOMS_ES_PLURAL = re.compile(r"(\d+|una|un|one|dos|two)\s+habitaciones")
+_ROOMS_ES_SINGULAR = re.compile(r"(\d+|una|un|one)\s+habitaci[oó]n")
+_ROOMS_EN = re.compile(r"(\d+)\s+rooms?")
+_DAYS_ES = re.compile(r"(\d+)\s*d[ií]as")
+_DAYS_EN = re.compile(r"(\d+)\s+days")
+_NO_ASIA = re.compile(r"\b(no asia|not asia)\b")
+_IST_WORD = re.compile(r"\bist\b")
+_REQUIRE_CLOCK = re.compile(r"mostrar hora|clock not null|hora, no null|arrival(?:s)? must show")
+_NIGHT_WORD = re.compile(r"\b(noche|night|nocturn)")
+_MAX_LAYOVER_H = re.compile(r"(?:como mucho|at most|max(?:imum)?|≤|<=)\s*(\d+(?:\.\d+)?)\s*h")
+_LAYOVER_HORAS = re.compile(r"(\d+(?:\.\d+)?)\s*horas")
+_LAYOVER_DE_MAS = re.compile(r"de m[aá]s de\s*(\d+(?:\.\d+)?)\s*h")
+_LAYOVER_OVER = re.compile(r"(?:more than|over)\s*(\d+(?:\.\d+)?)\s*h")
+_SANE_WORD = re.compile(r"\bsane\b")
+_MAX_DURATION = re.compile(r"max(?:imum)? duration\s*(\d+)")
+_PRICE_CAP_EUR_SIGN = re.compile(r"(?:under|menos de|below|<)\s*(\d+)\s*€")
+_PRICE_CAP_EUR_WORD = re.compile(r"(?:under|menos de|below)\s*(\d+)\s*(?:eur|euros)")
 
 
 def _fold(text: str) -> str:
@@ -384,9 +477,9 @@ def _iata_pairs(text: str) -> list[tuple[str, str]]:
 
 
 def _first_city_iata(folded: str) -> Optional[str]:
-    for name in sorted(_CITY_IATA, key=len, reverse=True):
-        if re.search(rf"\b{re.escape(name)}\b", folded):
-            return _CITY_IATA[name]
+    for pattern, iata in _CITY_IATA_PATTERNS:
+        if pattern.search(folded):
+            return iata
     return None
 
 
@@ -398,21 +491,9 @@ def _resolve_city_iata(name: str) -> Optional[str]:
 def _city_pairs_from_text(text: str) -> list[tuple[str, str]]:
     """Every from/to city pair, in document order. Open jaws keep all of them."""
     folded = _fold(text)
-    patterns = (
-        (
-            r"\b(?:de|desde|from)\s+([a-záéíóúüñ ]+?)\s+(?:a|to|hacia)\s+([a-záéíóúüñ ]+?)"
-            r"(?:\s+(?:el|on|del|al|passing|pasando|,)|$)",
-            False,
-        ),
-        (
-            r"\bto\s+([a-záéíóúüñ ]+?)\s+from\s+([a-záéíóúüñ ]+?)"
-            r"(?:\s+(?:passing|pasando|on|el|,)|$)",
-            True,
-        ),
-    )
     found: list[tuple[int, str, str]] = []
-    for pattern, swapped in patterns:
-        for match in re.finditer(pattern, folded):
+    for pattern, swapped in ((_FROM_TO_PAIR, False), (_TO_FROM_PAIR, True)):
+        for match in pattern.finditer(folded):
             left, right = match.group(1).strip(), match.group(2).strip()
             if swapped:
                 dest_name, origin_name = left, right
@@ -446,21 +527,17 @@ def _lookup_alias(name: str) -> Optional[str]:
 
 
 def _hotel_location(text: str) -> Optional[str]:
-    match = re.search(
-        r"\b(?:hotel|hoteles|alojamiento|stay|stays)\s+(?:en|in|at)\s+([A-Za-zÁÉÍÓÚáéíóúüñ ]+)",
-        text,
-        re.IGNORECASE,
-    )
+    match = _HOTEL_LOCATION.search(text)
     if match is None:
         return None
     raw = match.group(1)
-    raw = re.split(r"\b(del|de|from|on|el|al|a|,|\d)", raw, maxsplit=1)[0].strip(" ,.")
+    raw = _HOTEL_LOCATION_SPLIT.split(raw, maxsplit=1)[0].strip(" ,.")
     return raw or None
 
 
-def _int_after(patterns: Sequence[str], folded: str) -> Optional[int]:
+def _int_after(patterns: Sequence[re.Pattern[str]], folded: str) -> Optional[int]:
     for pattern in patterns:
-        match = re.search(pattern, folded)
+        match = pattern.search(folded)
         if match is None:
             continue
         token = match.group(1)
@@ -473,16 +550,16 @@ def _int_after(patterns: Sequence[str], folded: str) -> Optional[int]:
 
 def _via_regions(folded: str) -> Tuple[str, ...]:
     regions: list[str] = []
-    count_eu = re.search(r"(\d+)\s+(european|europeos?|aeropuertos europeos)", folded)
+    count_eu = _EUROPE_COUNT.search(folded)
     if count_eu:
         regions.extend(["europe"] * int(count_eu.group(1)))
-    elif re.search(r"\b(european|europeo|europeos|europe)\b", folded):
+    elif _EUROPE_WORD.search(folded):
         regions.append("europe")
     if "sub-saharan" in folded or "subsaharian" in folded:
         regions.append("sub_saharan")
-    if re.search(r"\b(indian|indio|india)\b", folded):
+    if _INDIA_WORD.search(folded):
         regions.append("india")
-    if re.search(r"\b(chinese|chino|china)\b", folded):
+    if _CHINA_WORD.search(folded):
         regions.append("china")
     if "new zealand" in folded or "nueva zelanda" in folded:
         regions.append("new_zealand")
@@ -490,34 +567,20 @@ def _via_regions(folded: str) -> Tuple[str, ...]:
 
 
 def _airports_query(text: str, folded: str) -> str:
-    match = re.search(
-        r"(?:code for|código iata de|codigo iata de|aeropuerto(?:s)? de)\s+"
-        r"([A-Za-zÁÉÍÓÚáéíóúüñ ]+?)(?:\s+airports?)?\??$",
-        text.strip(),
-        re.IGNORECASE,
-    )
+    match = _AIRPORTS_CODE_FOR.search(text.strip())
     if match:
         return match.group(1).strip(" ?.")
-    for name in (
-        "london",
-        "tokyo",
-        "halifax",
-        "cairo",
-        "seoul",
-        "vancouver",
-        "singapore",
-        "auckland",
-    ):
-        if re.search(rf"\b{name}\b", folded):
+    for pattern, name in _AIRPORTS_QUERY_CITIES:
+        if pattern.search(folded):
             return name
-    iata = re.search(r"\b([A-Za-z]{3})\b", text)
+    iata = _IATA_TOKEN.search(text)
     if iata and is_known_iata(iata.group(1)):
         return iata.group(1).upper()
     return text.strip()
 
 
 def _is_airports_lookup(folded: str) -> bool:
-    if re.search(r"\b(iata code|código iata|codigo iata|qué aeropuerto|que aeropuerto)\b", folded):
+    if _AIRPORTS_LOOKUP.search(folded):
         return True
     if "lookup" in folded and "airport" in folded:
         return True
@@ -527,38 +590,19 @@ def _is_airports_lookup(folded: str) -> bool:
 
 
 def _is_explore(folded: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(explora|explore|destinos|destinations|dónde ir|donde ir|"
-            r"busca destinos|to everywhere|everywhere from|everywhere under|"
-            r"where is cheap|cheap destinations)\b",
-            folded,
-        )
-    )
+    return bool(_EXPLORE_WORDS.search(folded))
 
 
 def _is_dates_calendar(folded: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(calendario|calendar|date grid|cheapest friday|"
-            r"más barato por día|mas barato por dia|qué día es más barato|"
-            r"que dia es mas barato|cheapest day|price calendar)\b",
-            folded,
-        )
-    )
+    return bool(_DATES_CALENDAR.search(folded))
 
 
 def _is_hotels(folded: str) -> bool:
-    return bool(re.search(r"\b(hotel|hoteles|alojamiento)\b", folded))
+    return bool(_HOTEL_WORDS.search(folded))
 
 
 def _has_flight_words(folded: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(vuelo|vuelos|volar|flight|flights|one-way|ida|round-trip|open jaws?)\b",
-            folded,
-        )
-    )
+    return bool(_FLIGHT_WORDS.search(folded))
 
 
 def _cabin(folded: str, flags: Mapping[str, str]) -> Optional[str]:
@@ -568,30 +612,23 @@ def _cabin(folded: str, flags: Mapping[str, str]) -> Optional[str]:
             return value
     if "premium-economy" in folded or "premium economy" in folded:
         return "premium-economy"
-    if re.search(r"\b(business|preferente)\b", folded):
+    if _BUSINESS_CABIN.search(folded):
         return "business"
     # Bare "first" is an English ordinal ("fixed dates first"), not first class.
-    if re.search(
-        r"\b(?:first(?:-|\s+)(?:class|cabin)|cabin(?:-|\s+)first|primera(?:\s+clase)?)\b",
-        folded,
-    ):
+    if _FIRST_CABIN.search(folded):
         return "first"
-    if re.search(r"\b(economy|turista|econ[oó]mica)\b", folded):
+    if _ECONOMY_CABIN.search(folded):
         return "economy"
     return None
 
 
 def _listed_destinations(text: str, origin: Optional[str]) -> Tuple[str, ...]:
     """IATA shortlist after 'destinations …: SCL, EZE'. Origin is not a dest."""
-    match = re.search(
-        r"(?:destinations?|destinos)\b[^:\n]{0,120}:\s*"
-        r"((?:[A-Za-z]{3}(?:\s*,\s*)+)+[A-Za-z]{3})",
-        text,
-    )
+    match = _LISTED_DESTS.search(text)
     if match is None:
         return ()
     found: list[str] = []
-    for code in re.findall(r"\b([A-Za-z]{3})\b", match.group(1)):
+    for code in _IATA_TOKEN.findall(match.group(1)):
         upper = code.upper()
         if not is_known_iata(upper) or upper == origin or upper in found:
             continue
@@ -600,8 +637,8 @@ def _listed_destinations(text: str, origin: Optional[str]) -> Tuple[str, ...]:
 
 
 def _date_strategy(folded: str) -> Optional[str]:
-    has_fixed_first = bool(re.search(r"fixed(?: natural)? dates first", folded))
-    has_pm1 = bool(re.search(r"(?:±|\+/-)\s*1", folded))
+    has_fixed_first = bool(_FIXED_DATES_FIRST.search(folded))
+    has_pm1 = bool(_PLUS_MINUS_1.search(folded))
     has_finalists = "finalist" in folded
     if has_fixed_first and (has_pm1 or has_finalists):
         return "fixed_then_plus_minus_1"
@@ -616,13 +653,13 @@ def _max_stops(folded: str, flags: Mapping[str, str]) -> Optional[int]:
             value = -1
         if value in (0, 1, 2):
             return value
-    if re.search(r"max(?:imum)?\s+2\s+stops|m[aá]ximo 2 escalas|max 2 stops", folded):
+    if _MAX_2_STOPS.search(folded):
         return 2
-    if re.search(r"max(?:imum)?\s+1\s+stop|m[aá]ximo 1 escala", folded):
+    if _MAX_1_STOP.search(folded):
         return 1
-    if re.search(r"sin escalas de m[aá]s", folded) or re.search(r"escalas sanas", folded):
+    if _SIN_ESCALAS_MAS.search(folded) or _ESCALAS_SANAS.search(folded):
         return None
-    if re.search(r"\b(nonstop|directos?|sin escalas)\b", folded):
+    if _NONSTOP.search(folded):
         return 0
     return None
 
@@ -717,9 +754,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     exclude_airports: list[str] = []
     no_overnight: list[str] = []
 
-    if re.search(r"\b(no asia|not asia)\b", folded) or "tercermundista" in folded:
+    if _NO_ASIA.search(folded) or "tercermundista" in folded:
         exclude_regions.append("asia")
-    if re.search(r"\bist\b", folded) and (
+    if _IST_WORD.search(folded) and (
         "overnight" in folded or "noche" in folded or "never" in folded or "nunca" in folded
     ):
         exclude_airports.append("IST")
@@ -727,10 +764,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
 
     around = "around the world" in folded or "vuelta al mundo" in folded
     rest_of_trip = "resto del viaje" in folded or "rest of the trip" in folded
-    require_clock = bool(
-        re.search(r"mostrar hora|clock not null|hora, no null|arrival(?:s)? must show", folded)
-    )
-    night = bool(re.search(r"\b(noche|night|nocturn)", folded))
+    require_clock = bool(_REQUIRE_CLOCK.search(folded))
+    night = bool(_NIGHT_WORD.search(folded))
     require_return = "return legs" in folded or (
         ("packaged" in folded or "empacada" in folded)
         and ("rt" in folded or "ida y vuelta" in folded)
@@ -740,18 +775,18 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if "max-layover" in flags:
         max_layover = float(flags["max-layover"])
     else:
-        lay = re.search(r"(?:como mucho|at most|max(?:imum)?|≤|<=)\s*(\d+(?:\.\d+)?)\s*h", folded)
+        lay = _MAX_LAYOVER_H.search(folded)
         if lay is None:
-            lay = re.search(r"(\d+(?:\.\d+)?)\s*horas", folded)
+            lay = _LAYOVER_HORAS.search(folded)
         if lay is None:
-            lay = re.search(r"de m[aá]s de\s*(\d+(?:\.\d+)?)\s*h", folded)
+            lay = _LAYOVER_DE_MAS.search(folded)
         if lay is None:
-            lay = re.search(r"(?:more than|over)\s*(\d+(?:\.\d+)?)\s*h", folded)
+            lay = _LAYOVER_OVER.search(folded)
         if lay and (
             "escala" in folded
             or "layover" in folded
             or "sanas" in folded
-            or re.search(r"\bsane\b", folded)
+            or _SANE_WORD.search(folded)
         ):
             max_layover = float(lay.group(1))
 
@@ -762,7 +797,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if "max-duration" in flags:
         max_duration = float(flags["max-duration"])
     else:
-        dur = re.search(r"max(?:imum)? duration\s*(\d+)", folded)
+        dur = _MAX_DURATION.search(folded)
         if dur:
             max_duration = float(dur.group(1))
 
@@ -770,31 +805,21 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if "adults" in flags:
         adults = int(flags["adults"])
     else:
-        adults = _int_after(
-            (r"(\d+|ocho|eight|dos|two|tres|three|cuatro|four)\s+adultos", r"(\d+)\s+adults"),
-            folded,
-        )
+        adults = _int_after((_ADULTS_ES, _ADULTS_EN), folded)
 
     rooms = None
     if "rooms" in flags:
         rooms = int(flags["rooms"])
     else:
-        rooms = _int_after(
-            (
-                r"(\d+|una|un|one|dos|two)\s+habitaciones",
-                r"(\d+|una|un|one)\s+habitaci[oó]n",
-                r"(\d+)\s+rooms?",
-            ),
-            folded,
-        )
+        rooms = _int_after((_ROOMS_ES_PLURAL, _ROOMS_ES_SINGULAR, _ROOMS_EN), folded)
 
     days = None
     if "days" in flags:
         days = int(flags["days"])
     else:
-        days_match = re.search(r"(\d+)\s*d[ií]as", folded)
+        days_match = _DAYS_ES.search(folded)
         if days_match is None:
-            days_match = re.search(r"(\d+)\s+days", folded)
+            days_match = _DAYS_EN.search(folded)
         if days_match:
             days = int(days_match.group(1))
 
@@ -810,9 +835,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         weekday = "friday"
 
     price_cap = None
-    cap = re.search(r"(?:under|menos de|below|<)\s*(\d+)\s*€", folded)
+    cap = _PRICE_CAP_EUR_SIGN.search(folded)
     if cap is None:
-        cap = re.search(r"(?:under|menos de|below)\s*(\d+)\s*(?:eur|euros)", folded)
+        cap = _PRICE_CAP_EUR_WORD.search(folded)
     if cap:
         price_cap = int(cap.group(1))
 
@@ -829,12 +854,12 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     elif around:
         origin = origin or _first_city_iata(folded)
     if origin is None:
-        for match in re.findall(r"\b([A-Z]{3})\b", raw):
+        for match in _IATA_TOKEN_UPPER.findall(raw):
             if is_known_iata(match):
                 origin = match
                 break
     if destination is None:
-        codes = [match for match in re.findall(r"\b([A-Z]{3})\b", raw) if is_known_iata(match)]
+        codes = [match for match in _IATA_TOKEN_UPPER.findall(raw) if is_known_iata(match)]
         if len(codes) >= 2:
             destination = codes[1]
         elif len(codes) == 1 and origin and codes[0] != origin:
