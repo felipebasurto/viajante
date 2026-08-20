@@ -177,6 +177,36 @@ class PromptPlanHardTests(unittest.TestCase):
         self.assertEqual(plan.trip, "rt")
         self.assertTrue(plan.require_return_legs)
 
+    def test_explore_shortlist_does_not_read_first_as_cabin(self) -> None:
+        plan = plan_prompt(
+            "Explore destinations from GRU in September 2026: SCL, EZE, LIM, BOG. "
+            "Do not brute-force the full date matrix; fixed dates first, then ±1 only on finalists."
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "GRU")
+        self.assertEqual(plan.date_from, date(2026, 9, 1))
+        self.assertEqual(plan.date_to, date(2026, 9, 30))
+        self.assertEqual(list(plan.destinations), ["SCL", "EZE", "LIM", "BOG"])
+        self.assertIsNone(plan.cabin)
+        self.assertEqual(plan.date_strategy, "fixed_then_plus_minus_1")
+        ok, reason = plan.matches(
+            {
+                "intent": "explore",
+                "origin": "GRU",
+                "date_from": "2026-09-01",
+                "date_to": "2026-09-30",
+                "destinations": ["SCL", "EZE", "LIM", "BOG"],
+                "date_strategy": "fixed_then_plus_minus_1",
+                "cabin": None,
+            }
+        )
+        self.assertTrue(ok, reason)
+
+    def test_first_cabin_is_still_first_class(self) -> None:
+        plan = plan_prompt("SYD-LAX on 2026-11-03 first cabin")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.cabin, "first")
+
 
 class PromptPlanInsaneTests(unittest.TestCase):
     def test_halifax_fiji_via_continents(self) -> None:

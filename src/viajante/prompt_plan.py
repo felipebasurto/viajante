@@ -222,6 +222,7 @@ class PromptPlan:
     intent: Intent
     origin: Optional[str] = None
     destination: Optional[str] = None
+    destinations: Tuple[str, ...] = ()
     departure_date: Optional[date] = None
     return_date: Optional[date] = None
     date_from: Optional[date] = None
@@ -241,6 +242,7 @@ class PromptPlan:
     airports_query: Optional[str] = None
     fetch: Optional[str] = None
     weekday: Optional[str] = None
+    date_strategy: Optional[str] = None
     price_cap_eur: Optional[int] = None
     require_return_legs: bool = False
     require_arrival_clock: bool = False
@@ -262,6 +264,7 @@ class PromptPlan:
             "intent": self.intent,
             "origin": self.origin,
             "destination": self.destination,
+            "destinations": list(self.destinations),
             "departure_date": iso(self.departure_date),
             "return_date": iso(self.return_date),
             "date_from": iso(self.date_from),
@@ -281,6 +284,7 @@ class PromptPlan:
             "airports_query": self.airports_query,
             "fetch": self.fetch,
             "weekday": self.weekday,
+            "date_strategy": self.date_strategy,
             "price_cap_eur": self.price_cap_eur,
             "require_return_legs": self.require_return_legs,
             "require_arrival_clock": self.require_arrival_clock,
@@ -303,7 +307,7 @@ class PromptPlan:
             "exclude_airports",
             "no_overnight",
         }
-        exact_list_keys = {"via_regions", "route_specs"}
+        exact_list_keys = {"via_regions", "route_specs", "destinations"}
         for key, wanted in expect.items():
             if key in {"notes", "id"}:
                 continue
@@ -566,10 +570,41 @@ def _cabin(folded: str, flags: Mapping[str, str]) -> Optional[str]:
         return "premium-economy"
     if re.search(r"\b(business|preferente)\b", folded):
         return "business"
-    if re.search(r"\b(first|primera)\b", folded):
+    # Bare "first" is an English ordinal ("fixed dates first"), not first class.
+    if re.search(
+        r"\b(?:first(?:-|\s+)(?:class|cabin)|cabin(?:-|\s+)first|primera(?:\s+clase)?)\b",
+        folded,
+    ):
         return "first"
     if re.search(r"\b(economy|turista|econ[oó]mica)\b", folded):
         return "economy"
+    return None
+
+
+def _listed_destinations(text: str, origin: Optional[str]) -> Tuple[str, ...]:
+    """IATA shortlist after 'destinations …: SCL, EZE'. Origin is not a dest."""
+    match = re.search(
+        r"(?:destinations?|destinos)\b[^:\n]{0,120}:\s*"
+        r"((?:[A-Za-z]{3}(?:\s*,\s*)+)+[A-Za-z]{3})",
+        text,
+    )
+    if match is None:
+        return ()
+    found: list[str] = []
+    for code in re.findall(r"\b([A-Za-z]{3})\b", match.group(1)):
+        upper = code.upper()
+        if not is_known_iata(upper) or upper == origin or upper in found:
+            continue
+        found.append(upper)
+    return tuple(found)
+
+
+def _date_strategy(folded: str) -> Optional[str]:
+    has_fixed_first = bool(re.search(r"fixed(?: natural)? dates first", folded))
+    has_pm1 = bool(re.search(r"(?:±|\+/-)\s*1", folded))
+    has_finalists = "finalist" in folded
+    if has_fixed_first and (has_pm1 or has_finalists):
+        return "fixed_then_plus_minus_1"
     return None
 
 
@@ -764,6 +799,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             days = int(days_match.group(1))
 
     cabin = _cabin(folded, flags)
+    date_strategy = _date_strategy(folded)
     max_stops = _max_stops(folded, flags)
     fetch = flags.get("fetch")
     if require_clock or (night and ("hora" in folded or "clock" in folded)):
@@ -809,6 +845,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         origin = "YHZ"
     if destination is None and ("fiji" in folded or "fiyi" in folded or "nadi" in folded):
         destination = "NAN"
+
+    destinations = _listed_destinations(raw, origin)
 
     trip = _trip_kind(folded, flags, len(pairs))
     if trip is None and origin and destination:
@@ -991,12 +1029,14 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         return PromptPlan(
             intent="explore",
             origin=origin,
+            destinations=destinations,
             departure_date=departure,
             date_from=date_from or departure,
             date_to=date_to,
             days=days,
             adults=adults,
             cabin=cabin,
+            date_strategy=date_strategy,
             max_stops=max_stops,
             price_cap_eur=price_cap,
             max_layover=max_layover,
