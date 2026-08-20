@@ -224,7 +224,7 @@ class PromptBenchRunnerTests(unittest.TestCase):
                 },
                 clear=False,
             ),
-            patch("viajante.prompt_bench.urllib.request.urlopen") as urlopen,
+            patch("viajante.prompt_bench._judge_urlopen") as urlopen,
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
@@ -463,7 +463,7 @@ class JudgeScoreTests(unittest.TestCase):
                 {JUDGE_ENV: "1", JUDGE_KEY_ENV: "test-deepseek-key"},
                 clear=False,
             ),
-            patch("viajante.prompt_bench.urllib.request.urlopen") as urlopen,
+            patch("viajante.prompt_bench._judge_urlopen") as urlopen,
         ):
             judged = judge_case(case, fake)
         self.assertEqual(judged.score_1_100, 0)
@@ -515,7 +515,7 @@ class JudgeScoreTests(unittest.TestCase):
                 {JUDGE_ENV: "1", JUDGE_KEY_ENV: "test-deepseek-key"},
                 clear=False,
             ),
-            patch("viajante.prompt_bench.urllib.request.urlopen") as urlopen,
+            patch("viajante.prompt_bench._judge_urlopen") as urlopen,
         ):
             judged = judge_case(case, fake)
         self.assertEqual(judged.score_1_100, 0)
@@ -542,7 +542,7 @@ class JudgeScoreTests(unittest.TestCase):
                 clear=False,
             ),
             patch("viajante.prompt_bench.judge_case", side_effect=fake_judge),
-            patch("viajante.prompt_bench.urllib.request.urlopen") as urlopen,
+            patch("viajante.prompt_bench._judge_urlopen") as urlopen,
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
@@ -588,7 +588,7 @@ class JudgeScoreTests(unittest.TestCase):
                 },
                 clear=False,
             ),
-            patch("viajante.prompt_bench.urllib.request.urlopen", fake_urlopen),
+            patch("viajante.prompt_bench._judge_urlopen", fake_urlopen),
         ):
             result = judge_case(case, plan)
         self.assertEqual(result.score_1_100, 81)
@@ -631,14 +631,12 @@ class JudgeScoreTests(unittest.TestCase):
                 },
                 clear=False,
             ),
-            patch("viajante.prompt_bench.urllib.request.urlopen", fake_urlopen),
+            patch("viajante.prompt_bench._judge_urlopen", fake_urlopen),
         ):
             result = judge_case(case, plan)
         self.assertEqual(result.score_1_100, 70)
         request = captured[0]
-        auth = dict(request.header_items()).get("Authorization") or request.get_header(
-            "Authorization"
-        )
+        auth = request.headers.get("Authorization")
         self.assertEqual(auth, "Bearer override-key")
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["model"], "deepseek-chat")

@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import contextlib
-import gzip
-import ssl
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Mapping, Optional, Protocol
+from typing import Any, Mapping, Optional, Protocol
 from urllib.parse import urlencode
 
 from selectolax.lexbor import LexborHTMLParser
@@ -199,12 +195,29 @@ def looks_blocked(html: str, final_url: str = "") -> bool:
     return any(marker in lowered for marker in BLOCK_BODY_MARKERS)
 
 
+def _gzip():
+    # Live/deflate bodies only: unittest HTML fixtures are already decoded.
+    import gzip
+
+    return gzip
+
+
+def _stdlib_urllib():
+    # Live urllib fallback only: opener tests and card parse must not pay for
+    # urllib.request / ssl (curl_cffi is the production sweep client).
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    return urllib.request, urllib.error, ssl
+
+
 def _decode_http_body(raw: bytes, content_encoding: str) -> str:
     encoding = content_encoding.casefold()
     if "gzip" in encoding or raw[:2] == b"\x1f\x8b":
-        raw = gzip.decompress(raw)
+        raw = _gzip().decompress(raw)
     elif "deflate" in encoding:
-        raw = gzip.decompress(raw, wbits=-15)
+        raw = _gzip().decompress(raw, wbits=-15)
     return raw.decode("utf-8", errors="replace")
 
 
@@ -276,10 +289,18 @@ class ChromeSweepClient:
         self._session.close()
 
 
+@dataclass(frozen=True)
+class _OpenerRequest:
+    """Stand-in for urllib.request.Request so opener tests skip urllib.request."""
+
+    full_url: str
+    headers: Mapping[str, str]
+
+
 class _OpenerSweepClient:
     """Test hook: urllib opener for HTML GET. POST is treated as a compact miss."""
 
-    def __init__(self, opener: urllib.request.OpenerDirector) -> None:
+    def __init__(self, opener: Any) -> None:
         self._opener = opener
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
@@ -311,13 +332,18 @@ def _raise_if_blocked(status: int, body: str, final_url: str, fallback_url: str)
         )
 
 
+def _http_error_code(exc: BaseException) -> Optional[int]:
+    code = getattr(exc, "code", None)
+    return code if isinstance(code, int) else None
+
+
 def _opener_get(
     url: str,
     *,
-    opener: urllib.request.OpenerDirector,
+    opener: Any,
     timeout: float,
 ) -> tuple[str, str, int]:
-    request = urllib.request.Request(url, headers=URLLIB_HEADERS)
+    request = _OpenerRequest(url, URLLIB_HEADERS)
     try:
         response = opener.open(request, timeout=timeout)
         with response:
@@ -325,9 +351,10 @@ def _opener_get(
             encoding = response.headers.get("Content-Encoding", "")
             final_url = response.geturl()
             status = getattr(response, "status", 200)
-    except urllib.error.HTTPError as exc:
-        if exc.code in {403, 429, 503}:
-            raise GoogleFlightsBlocked(f"Google Flights HTTP {exc.code} from {url}") from exc
+    except Exception as exc:
+        code = _http_error_code(exc)
+        if code in {403, 429, 503}:
+            raise GoogleFlightsBlocked(f"Google Flights HTTP {code} from {url}") from exc
         raise
     return _decode_http_body(raw, encoding), final_url, status
 
@@ -335,7 +362,7 @@ def _opener_get(
 def fetch_search_html(
     url: str,
     *,
-    opener: Optional[urllib.request.OpenerDirector] = None,
+    opener: Optional[Any] = None,
     client: Optional[SweepHttpClient] = None,
     timeout: float = HTTP_TIMEOUT_SECONDS,
 ) -> tuple[str, str]:
@@ -343,20 +370,22 @@ def fetch_search_html(
         response = client.get(url, timeout=timeout)
         _raise_if_blocked(response.status, response.text, response.url, url)
         return response.text, response.url
-    request = urllib.request.Request(url, headers=URLLIB_HEADERS)
+    if opener is not None:
+        html, final_url, status = _opener_get(url, opener=opener, timeout=timeout)
+        _raise_if_blocked(status, html, final_url, url)
+        return html, final_url
+    urllib_request, urllib_error, ssl_mod = _stdlib_urllib()
+    request = urllib_request.Request(url, headers=URLLIB_HEADERS)
     try:
-        if opener is None:
-            response = urllib.request.urlopen(
-                request, timeout=timeout, context=ssl.create_default_context()
-            )
-        else:
-            response = opener.open(request, timeout=timeout)
+        response = urllib_request.urlopen(
+            request, timeout=timeout, context=ssl_mod.create_default_context()
+        )
         with response:
             raw = response.read()
             encoding = response.headers.get("Content-Encoding", "")
             final_url = response.geturl()
             status = getattr(response, "status", 200)
-    except urllib.error.HTTPError as exc:
+    except urllib_error.HTTPError as exc:
         if exc.code in {403, 429, 503}:
             raise GoogleFlightsBlocked(f"Google Flights HTTP {exc.code} from {url}") from exc
         raise
@@ -397,7 +426,7 @@ class GoogleFlightsHttpSource:
         *,
         html_lang: str = SCRAPE_LANGUAGE,
         currency: str = SCRAPE_CURRENCY,
-        opener: Optional[urllib.request.OpenerDirector] = None,
+        opener: Optional[Any] = None,
         client: Optional[SweepHttpClient] = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
     ) -> None:

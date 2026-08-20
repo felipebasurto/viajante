@@ -21,12 +21,10 @@ import os
 import re
 import sys
 import time
-import urllib.error
-import urllib.request
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from viajante.airports import is_known_iata
 from viajante.bench import LIVE_ENV, repo_root
@@ -289,6 +287,26 @@ def _ms_since(started: float) -> int:
     return max(0, int(round((time.perf_counter() - started) * 1000)))
 
 
+@dataclass(frozen=True)
+class _JudgeHttpRequest:
+    full_url: str
+    data: bytes
+    headers: Mapping[str, str]
+
+
+def _judge_urlopen(request: _JudgeHttpRequest, timeout: int = 30) -> Any:
+    # Live DeepSeek only. Unittest patches this hook so urllib.request stays cold.
+    import urllib.request
+
+    req = urllib.request.Request(
+        request.full_url,
+        data=request.data,
+        headers=dict(request.headers),
+        method="POST",
+    )
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 def _env_value(*names: str) -> Optional[str]:
     for name in names:
         raw = os.environ.get(name)
@@ -505,19 +523,18 @@ def judge_case(case: PromptCase, plan: PromptPlan) -> JudgeResult:
             },
         ],
     }
-    request = urllib.request.Request(
-        JUDGE_URL,
+    request = _JudgeHttpRequest(
+        full_url=JUDGE_URL,
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         },
-        method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with _judge_urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError):
+    except (OSError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError):
         return JudgeResult(None, "judge: skip (request failed)")
     return parse_judge_verdict(payload)
 
