@@ -659,8 +659,10 @@ def parse_score_1_100(raw: object) -> Optional[int]:
         score = raw
     elif isinstance(raw, float) and raw.is_integer():
         score = int(raw)
-    elif isinstance(raw, str) and raw.strip().isdigit():
-        score = int(raw.strip())
+    elif isinstance(raw, str):
+        score = _int_score_token(raw.strip())
+        if score is None:
+            return None
     else:
         return None
     if 1 <= score <= 100:
@@ -668,31 +670,373 @@ def parse_score_1_100(raw: object) -> Optional[int]:
     return None
 
 
-def _judge_verdict_from_text(text: str) -> Optional[JudgeResult]:
+def _int_score_token(token: str) -> Optional[int]:
+    """Parse a numeric token that is already an integer 1–100 candidate."""
+    if not token:
+        return None
+    try:
+        if token.isdigit():
+            return int(token)
+        if token.count(".") == 1:
+            left, right = token.split(".")
+            if left.isdigit() and right.isdigit() and set(right) <= {"0"}:
+                return int(left)
+    except ValueError:
+        return None
+    return None
+
+
+_REASON_KEYS = frozenset(
+    {
+        "reason",
+        "rationale",
+        "explanation",
+        "comment",
+        "justification",
+        "raison",
+        "motivo",
+        "razón",
+        "razao",
+        "razão",
+        "grund",
+        "begründung",
+        "begruendung",
+        "理由",
+        "原因",
+        "이유",
+        "사유",
+        "سبب",
+        "السبب",
+        "sababu",
+        "ìdí",
+        "idi",
+        "ástæða",
+        "rheswm",
+        "arrazoia",
+        "isizathu",
+        "rason",
+        "шалтгаан",
+        "ምክንያት",
+        "მიზეზი",
+        "காரணம்",
+        "មូលហេតុ",
+    }
+)
+_NOT_REASON_KEYS = frozenset(
+    {
+        "score_1_100",
+        "language",
+        "lang",
+        "notes",
+        "id",
+        "prompt",
+        "expect",
+        "plan",
+        "rt_contract",
+        "model",
+        "type",
+        "locale",
+    }
+)
+_SMART_QUOTES = str.maketrans(
+    {
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "‟": '"',
+        "«": '"',
+        "»": '"',
+        "「": '"',
+        "」": '"',
+        "『": '"',
+        "』": '"',
+        "〝": '"',
+        "〞": '"',
+        "｛": "{",
+        "｝": "}",
+    }
+)
+_SCORE_KV_RE = re.compile(
+    r"""["']?score_1_100["']?\s*:\s*["']?(\d{1,3}(?:\.0+)?)["']?""",
+    re.IGNORECASE,
+)
+_REASON_KEY_RE = re.compile(
+    r"""["']?("""
+    + "|".join(re.escape(key) for key in sorted(_REASON_KEYS, key=len, reverse=True))
+    + r""")["']?\s*:""",
+    re.IGNORECASE,
+)
+
+
+def _normalize_judge_text(text: str) -> str:
+    return text.lstrip("\ufeff").translate(_SMART_QUOTES)
+
+
+def _reason_line(text: str) -> str:
+    return text.strip().splitlines()[0].strip().strip("\"'")[:200]
+
+
+def _reason_from_mapping(obj: Mapping[str, Any]) -> str:
+    by_lower: dict[str, Any] = {}
+    for key, value in obj.items():
+        if isinstance(key, str):
+            by_lower.setdefault(key.lower(), value)
+    for key in ("reason", *sorted(k for k in _REASON_KEYS if k != "reason")):
+        raw = obj.get(key)
+        if raw is None:
+            raw = by_lower.get(key.lower())
+        if isinstance(raw, str) and raw.strip():
+            return _reason_line(raw)
+    best = ""
+    for key, value in obj.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        if key.lower() in _NOT_REASON_KEYS:
+            continue
+        candidate = value.strip()
+        if len(candidate) > len(best):
+            best = candidate
+    return _reason_line(best) if len(best) >= 10 else ""
+
+
+def _verdict_from_obj(obj: object, *, depth: int = 0) -> Optional[JudgeResult]:
+    """Walk a decoded object for score_1_100 + a non-empty reason. No invention."""
+    if depth > 6 or obj is None:
+        return None
+    if isinstance(obj, dict):
+        score = parse_score_1_100(obj.get("score_1_100"))
+        if score is None:
+            lowered = {str(key).lower(): value for key, value in obj.items()}
+            score = parse_score_1_100(lowered.get("score_1_100"))
+        reason = _reason_from_mapping(obj)
+        if score is not None and reason:
+            return JudgeResult(score, reason)
+        for value in obj.values():
+            found = _verdict_from_obj(value, depth=depth + 1)
+            if found is not None:
+                return found
+        return None
+    if isinstance(obj, list):
+        for item in obj:
+            found = _verdict_from_obj(item, depth=depth + 1)
+            if found is not None:
+                return found
+        return None
+    if isinstance(obj, str) and "{" in obj and depth < 4:
+        return _judge_verdict_from_text(obj, depth=depth + 1)
+    return None
+
+
+def _unescape_raw_newlines_in_strings(blob: str) -> str:
+    out: list[str] = []
+    in_str = False
+    esc = False
+    quote = ""
+    for ch in blob:
+        if in_str:
+            if esc:
+                out.append(ch)
+                esc = False
+                continue
+            if ch == "\\":
+                out.append(ch)
+                esc = True
+                continue
+            if ch == quote:
+                out.append(ch)
+                in_str = False
+                continue
+            if ch == "\n":
+                out.append("\\n")
+                continue
+            if ch == "\r":
+                continue
+            out.append(ch)
+            continue
+        if ch in "'\"":
+            in_str = True
+            quote = ch
+        out.append(ch)
+    return "".join(out)
+
+
+def _object_slice(text: str, start: int) -> Optional[str]:
+    if start >= len(text) or text[start] != "{":
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    quote = ""
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == quote:
+                in_str = False
+            continue
+        if ch in "'\"":
+            in_str = True
+            quote = ch
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def _quote_unquoted_keys(blob: str) -> str:
+    return re.sub(
+        r"([{\[,]\s*)([A-Za-z_][\w]*)\s*:",
+        r'\1"\2":',
+        blob,
+    )
+
+
+def _loads_repaired(blob: str) -> Optional[object]:
+    candidates = [blob, _unescape_raw_newlines_in_strings(blob)]
+    stripped_commas = re.sub(r",(\s*[}\]])", r"\1", blob)
+    candidates.append(stripped_commas)
+    candidates.append(_quote_unquoted_keys(stripped_commas))
+    if "'" in blob and '"' not in blob:
+        candidates.append(blob.replace("'", '"'))
+        candidates.append(_unescape_raw_newlines_in_strings(blob.replace("'", '"')))
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _verdict_from_keyvals(text: str) -> Optional[JudgeResult]:
+    """Last resort: score_1_100 + reason keys in broken JSON or YAML-like prose."""
+    for score_match in _SCORE_KV_RE.finditer(text):
+        score = parse_score_1_100(score_match.group(1))
+        if score is None:
+            continue
+        window_start = max(0, score_match.start() - 400)
+        window_end = min(len(text), score_match.end() + 800)
+        window = text[window_start:window_end]
+        reason_match = _REASON_KEY_RE.search(window)
+        if reason_match is None:
+            continue
+        reason = _reason_value_at(window, reason_match.end())
+        if reason:
+            return JudgeResult(score, reason)
+    return None
+
+
+def _reason_value_at(text: str, value_start: int) -> str:
+    idx = value_start
+    while idx < len(text) and text[idx] in " \t":
+        idx += 1
+    if idx >= len(text):
+        return ""
+    if text[idx] in "'\"":
+        quote = text[idx]
+        idx += 1
+        raw: list[str] = []
+        esc = False
+        while idx < len(text):
+            ch = text[idx]
+            if esc:
+                raw.append(ch)
+                esc = False
+                idx += 1
+                continue
+            if ch == "\\":
+                esc = True
+                idx += 1
+                continue
+            if ch == quote:
+                break
+            if ch == "\n":
+                break
+            raw.append(ch)
+            idx += 1
+        return _reason_line("".join(raw))
+    raw = []
+    while idx < len(text) and text[idx] not in ",}\n":
+        raw.append(text[idx])
+        idx += 1
+    return _reason_line("".join(raw))
+
+
+def _judge_verdict_from_text(text: str, *, depth: int = 0) -> Optional[JudgeResult]:
     """Recover score_1_100 + reason from model text. None if nothing parses.
 
-    DeepSeek often wraps the JSON object (markdown fence, leading prose, extra
-    keys, trailing chatter). Extra keys are ignored. Garbage is not scored.
+    DeepSeek wraps JSON (fences, leading/trailing prose, nested objects, extra
+    keys, rare-language reason keys, trailing commas). Garbage is not scored.
     """
+    if depth > 4:
+        return None
+    text = _normalize_judge_text(text)
     decoder = json.JSONDecoder()
     idx = 0
     while idx < len(text):
         start = text.find("{", idx)
         if start < 0:
-            return None
+            break
+        obj: Optional[object] = None
+        end = start + 1
         try:
             obj, end = decoder.raw_decode(text, start)
         except json.JSONDecodeError:
-            idx = start + 1
-            continue
+            blob = _object_slice(text, start)
+            if blob is not None:
+                obj = _loads_repaired(blob)
+                end = start + len(blob)
         idx = max(end, start + 1)
-        if not isinstance(obj, dict):
-            continue
-        score = parse_score_1_100(obj.get("score_1_100"))
-        reason = str(obj.get("reason") or "").strip()
-        if score is None or not reason:
-            continue
-        return JudgeResult(score, reason.splitlines()[0][:200])
+        found = _verdict_from_obj(obj) if obj is not None else None
+        if found is not None:
+            return found
+    stripped = text.strip()
+    if stripped and stripped[0] in '[{"':
+        try:
+            whole = json.loads(stripped)
+        except json.JSONDecodeError:
+            whole = None
+        if whole is not None:
+            found = _verdict_from_obj(whole)
+            if found is not None:
+                return found
+    return _verdict_from_keyvals(text)
+
+
+def _message_content(payload: Mapping[str, Any]) -> Optional[object]:
+    try:
+        message = payload["choices"][0]["message"]
+    except (KeyError, TypeError, IndexError):
+        return None
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if not isinstance(text, str):
+                    text = part.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        content = "".join(parts)
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, dict):
+        return content
     return None
 
 
@@ -701,13 +1045,13 @@ def parse_judge_verdict(payload: object) -> JudgeResult:
     skip = JudgeResult(None, "judge: skip (malformed verdict)")
     if not isinstance(payload, dict):
         return skip
-    try:
-        content = payload["choices"][0]["message"]["content"]
-    except (KeyError, TypeError, IndexError):
+    content = _message_content(payload)
+    if content is None:
         return skip
-    if not isinstance(content, str) or not content.strip():
-        return skip
-    recovered = _judge_verdict_from_text(content)
+    if isinstance(content, dict):
+        recovered = _verdict_from_obj(content)
+    else:
+        recovered = _judge_verdict_from_text(content)
     return recovered if recovered is not None else skip
 
 

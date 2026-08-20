@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import shutil
@@ -56,6 +57,19 @@ from viajante.prompt_bench import (
     validate_prompt_corpus,
 )
 from viajante.prompt_plan import plan_prompt
+
+
+def _load_verdict_fixtures() -> tuple[list[tuple[str, int, str, str]], list[tuple[str, str]]]:
+    path = Path(__file__).with_name("judge_verdict_fixtures.py")
+    spec = importlib.util.spec_from_file_location("judge_verdict_fixtures", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"missing verdict fixtures at {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.RECOVER, module.SKIP
+
+
+RECOVER, SKIP = _load_verdict_fixtures()
 
 
 class _FakeJudgeResponse:
@@ -430,6 +444,8 @@ class JudgeScoreTests(unittest.TestCase):
         self.assertEqual(parse_score_1_100(1), 1)
         self.assertEqual(parse_score_1_100(100), 100)
         self.assertEqual(parse_score_1_100("81"), 81)
+        self.assertEqual(parse_score_1_100("81.0"), 81)
+        self.assertIsNone(parse_score_1_100("81.5"))
         self.assertIsNone(parse_score_1_100(0))
         self.assertIsNone(parse_score_1_100(101))
         self.assertIsNone(parse_score_1_100(True))
@@ -522,6 +538,43 @@ class JudgeScoreTests(unittest.TestCase):
             self.assertTrue(skipped.skipped, content)
             self.assertIsNone(skipped.score_1_100, content)
             self.assertEqual(skipped.reason, "judge: skip (malformed verdict)", content)
+
+    def test_verdict_fixtures_recover_malformed_without_inventing(self) -> None:
+        def payload(content: object) -> dict[str, object]:
+            return {"choices": [{"message": {"content": content}}]}
+
+        self.assertGreaterEqual(len(RECOVER), 10)
+        self.assertGreaterEqual(len(SKIP), 6)
+        for case_id, score, reason, content in RECOVER:
+            scored = parse_judge_verdict(payload(content))
+            self.assertFalse(scored.skipped, case_id)
+            self.assertEqual(scored.score_1_100, score, case_id)
+            self.assertEqual(scored.reason, reason, case_id)
+        for case_id, content in SKIP:
+            skipped = parse_judge_verdict(payload(content))
+            self.assertTrue(skipped.skipped, case_id)
+            self.assertIsNone(skipped.score_1_100, case_id)
+            self.assertEqual(skipped.reason, "judge: skip (malformed verdict)", case_id)
+
+        parts = parse_judge_verdict(
+            payload(
+                [
+                    {"type": "text", "text": "Verdict for YVR-LHR-LGW:\n"},
+                    {
+                        "type": "text",
+                        "text": '{"score_1_100": 100, "reason": "Open-jaw keeps LHR and LGW."}',
+                    },
+                ]
+            )
+        )
+        self.assertEqual(parts.score_1_100, 100)
+        self.assertEqual(parts.reason, "Open-jaw keeps LHR and LGW.")
+
+        already = parse_judge_verdict(
+            payload({"score_1_100": 77, "raison": "Nested parsed object, not a string."})
+        )
+        self.assertEqual(already.score_1_100, 77)
+        self.assertEqual(already.reason, "Nested parsed object, not a string.")
 
     def test_judge_instructions_do_not_punish_omitted_prices(self) -> None:
         prompt = JUDGE_SYSTEM_PROMPT
