@@ -146,12 +146,25 @@ def _load_iata_airports_from_csv() -> dict[str, Airport]:
     return by_code
 
 
+def _by_code() -> dict[str, Airport]:
+    """Code → Airport. Does not build the city/name scan tables."""
+    global _BY_CODE
+    loaded = _BY_CODE
+    if loaded is None:
+        loaded = _load_iata_airports()
+        _BY_CODE = loaded
+    return loaded
+
+
 def is_known_iata(code: str) -> bool:
-    text = code.strip().upper()
-    if len(text) != 3 or not text.isalpha():
-        return False
-    _rows, by_code, _by_city = _lookup_indexes()
-    return text in by_code
+    # Known-code checks skip the city/name scan tables used by lookup_airports.
+    if len(code) == 3 and code.isalpha():
+        text = code if code.isupper() else code.upper()
+    else:
+        text = code.strip().upper()
+        if len(text) != 3 or not text.isalpha():
+            return False
+    return text in _by_code()
 
 
 def _lookup_indexes() -> tuple[
@@ -159,9 +172,9 @@ def _lookup_indexes() -> tuple[
     dict[str, Airport],
     dict[str, tuple[Airport, ...]],
 ]:
-    global _LOOKUP_ROWS, _BY_CODE, _BY_CITY
+    global _LOOKUP_ROWS, _BY_CITY
+    by_code = _by_code()
     if _LOOKUP_ROWS is None:
-        by_code = _load_iata_airports()
         by_city: dict[str, list[Airport]] = {}
         rows: list[tuple[Airport, str, str, str]] = []
         for airport in by_code.values():
@@ -171,18 +184,15 @@ def _lookup_indexes() -> tuple[
             rows.append((airport, city_folded, name_folded, airport.iata.casefold()))
         for airports in by_city.values():
             airports.sort(key=_lookup_rank)
-        _BY_CODE = by_code
         _BY_CITY = {city: tuple(airports) for city, airports in by_city.items()}
         _LOOKUP_ROWS = tuple(rows)
-    assert _BY_CODE is not None
     assert _BY_CITY is not None
-    return _LOOKUP_ROWS, _BY_CODE, _BY_CITY
+    return _LOOKUP_ROWS, by_code, _BY_CITY
 
 
 def get_airport(code: str) -> Optional[Airport]:
     text = code.strip().upper()
-    _rows, by_code, _by_city = _lookup_indexes()
-    return by_code.get(text)
+    return _by_code().get(text)
 
 
 def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
