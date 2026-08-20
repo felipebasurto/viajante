@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
+from importlib.resources import files
 from typing import Mapping, Optional, Tuple
-
-import airportsdata
-
-_IATA: Optional[dict[str, Mapping[str, object]]] = None
 
 # Passenger airports that should outrank general-aviation / municipal fields
 # when a city name matches several codes (London: LHR before BQH).
@@ -109,16 +107,37 @@ _BY_CODE: Optional[dict[str, Airport]] = None
 _BY_CITY: Optional[dict[str, tuple[Airport, ...]]] = None
 
 
-def _iata_table() -> dict[str, Mapping[str, object]]:
-    global _IATA
-    if _IATA is None:
-        _IATA = airportsdata.load("IATA")
-    return _IATA
+def _load_iata_airports() -> dict[str, Airport]:
+    """Read only the fields we publish. Skip DictReader and numeric columns."""
+    source = files("airportsdata").joinpath("airports.csv")
+    by_code: dict[str, Airport] = {}
+    with source.open(encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        header = next(reader)
+        iata_i = header.index("iata")
+        name_i = header.index("name")
+        city_i = header.index("city")
+        country_i = header.index("country")
+        for raw in reader:
+            code = raw[iata_i]
+            if not code:
+                continue
+            name = raw[name_i] or code
+            by_code[code] = Airport(
+                iata=code,
+                name=name,
+                city=raw[city_i],
+                country=raw[country_i],
+            )
+    return by_code
 
 
 def is_known_iata(code: str) -> bool:
     text = code.strip().upper()
-    return len(text) == 3 and text.isalpha() and text in _iata_table()
+    if len(text) != 3 or not text.isalpha():
+        return False
+    _rows, by_code, _by_city = _lookup_indexes()
+    return text in by_code
 
 
 def _lookup_indexes() -> tuple[
@@ -128,14 +147,12 @@ def _lookup_indexes() -> tuple[
 ]:
     global _LOOKUP_ROWS, _BY_CODE, _BY_CITY
     if _LOOKUP_ROWS is None:
-        by_code: dict[str, Airport] = {}
+        by_code = _load_iata_airports()
         by_city: dict[str, list[Airport]] = {}
         rows: list[tuple[Airport, str, str, str]] = []
-        for code, raw in _iata_table().items():
-            airport = _from_row(code, raw)
+        for airport in by_code.values():
             city_folded = airport.city.casefold()
             name_folded = airport.name.casefold()
-            by_code[code] = airport
             by_city.setdefault(city_folded, []).append(airport)
             rows.append((airport, city_folded, name_folded, airport.iata.casefold()))
         for airports in by_city.values():
@@ -150,12 +167,8 @@ def _lookup_indexes() -> tuple[
 
 def get_airport(code: str) -> Optional[Airport]:
     text = code.strip().upper()
-    if _BY_CODE is not None:
-        return _BY_CODE.get(text)
-    row = _iata_table().get(text)
-    if row is None:
-        return None
-    return _from_row(text, row)
+    _rows, by_code, _by_city = _lookup_indexes()
+    return by_code.get(text)
 
 
 def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
@@ -186,12 +199,3 @@ def _lookup_rank(airport: Airport) -> tuple[int, int, str, str]:
     minor = 1 if any(marker in name for marker in _MINOR_NAME_MARKERS) else 0
     major = 0 if airport.iata in _MAJOR_IATA else 1
     return (major, minor, airport.iata, airport.name)
-
-
-def _from_row(code: str, row: Mapping[str, object]) -> Airport:
-    return Airport(
-        iata=code,
-        name=str(row.get("name") or code),
-        city=str(row.get("city") or ""),
-        country=str(row.get("country") or ""),
-    )
