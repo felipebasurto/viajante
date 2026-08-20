@@ -4,7 +4,33 @@ Read this before picking a hypothesis. Do **not** redo a listed keep or loss.
 Do **not** plot `score_ms` across PRs (different VMs). Only same-host deltas count.
 Checked-in `bench-baseline.json` **1603** is a **fossil**, not keep. Do not rewrite it.
 
-- **Operator lock 2026-08-20 16:05 CEST:** Keep is only `judge_mean` (already #34). Last real mean **97.9** on `60d9ed4` (26 scored). Fossil 1603 is not keep. Import/IATA/unittest-cache/FastMCP-off-tests a MCP user cannot feel = veto; do not launch. `bench.py` / `prompt_bench.py` / `tests/bench/` / `tests/prompts/` read-only. Replay/2×MAD not weekday keep. Cold `--help` worse = veto. Weekday launches planner / honest parse / English fetch / savage hardness.
+- **Operator lock 2026-08-20 16:05 CEST:** Keep is only `judge_mean` (already #34). Last real keep **97.9** on `60d9ed4` (26 scored). Last judged **95.7** on `22da78a` (35 scored, 23 skip) is **not** a keep vs 97.9 on `4faaabd`. Fossil 1603 is not keep. Import/IATA/unittest-cache/FastMCP-off-tests a MCP user cannot feel = veto; do not launch. `bench.py` / `prompt_bench.py` / `tests/bench/` / `tests/prompts/` read-only. Replay/2×MAD not weekday keep. Cold `--help` worse = veto. Weekday launches planner / honest parse / English fetch / savage hardness. Gate is suite + `fail:0`. `score_ms` is not the product trophy.
+
+## Tonight shipped (2026-08-20; one row each; not weekday keep unless judged)
+
+Numbers only where recorded. Do not invent a `judge_mean` or p50. `#58` is not in this table.
+
+| pr | landed | recorded numbers |
+|---:|--------|------------------|
+| **43** | HTTP/2 multiplex + TLS reuse | Live remesure on `0e28305`: p50 **1330 ms** (113/118) then 429. Later remesure on `3248285` (#56 tip): plan p50 **0.356 ms** (n=184); sweep 15/16 ok, p50 **1370.504 ms**, then harness stop on HTTP 429 JFK-LHR. Not the same sample. |
+| **44** | 50 ms retry empty/drift/5xx | Happy path no sleep. |
+| **45** | `--depart-window` + sort | |
+| **46** | `search_dates` + `--nights` | |
+| **47** | kids/infants + currency/country | |
+| **48** | packaged open-jaw `--trip rt` | |
+| **49** | airline/alliance on the shopping request | |
+| **50** | dates sparkline / `summary` | |
+| **51** | multi-city tfs from owned legs | |
+| **52** | `viajante flex` / `search_flex`: calendar then one shop; miss = empty | Battery 180, gate fail:0, not judged. Feature keep (`50c772a`). |
+| **53** | packaged RT typical + `vs_typical_pct` from same-stay calendar; omit on miss | |
+| **54** | owned `google_flights_url`; `booking_token` wins; omit if cannot encode | |
+| **55** | `stops_compare` cheapest nonstop vs 1-stop from the same eligible set | |
+| **56** | 429: reset TLS + 50 ms, continue remaining jobs on a fresh session. Happy path no sleep. Sequential remesure harness still stops on 429. | See sweep table. Remesure on `3248285` is the #43 row (15/16, p50 1370.504 ms, then 429 JFK-LHR). |
+| **57** | recover nested/broken judge JSON; score+reason required; `JUDGE_SYSTEM_PROMPT` untouched | Judged 181 on `22da78a`: **judge_mean 95.7** (35 scored, 23 skip). Not a keep vs 97.9 on `4faaabd`. |
+| **59** | planner maps occupancy (omit if no count), alliance (no invented ST), depart-window | |
+| **61** | `viajante trip` / `search_trip` owned total = flight + hotel; omit if either miss / dates / currency | |
+| **62** | planner around/±N → `intent=flex`; cheapest week → `intent=dates`; packaged RT stays | Battery 186, gate fail:0, not judged. Cold `--help` 293→294 (did not veto). Rebased onto `3248285` (keeps #59). |
+| **60** | optional `--nearby` same-city IATA; default off; no invented codes; open-jaw not rewritten | |
 
 ## Speed keep-or-revert (`score_ms` history; not weekday keep)
 
@@ -46,7 +72,7 @@ Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
 |---:|--------|------|-----:|---------:|--------------:|------|-------------|
 | **56** | keep | ok | 0 | 1189 | 287.7→287.6 | 16/16 then 60/64 (4 rejected, 0×429) | 429 resets TLS and continues remaining; no happy-path sleep; multiplex kept |
 
-Live 429 did not fire on this host, so it did not stop the batch. Unittest covers continue-after-429. No p50 invented.
+Live 429 did not fire on this host, so it did not stop the batch. Unittest covers continue-after-429. Operator remesure on `3248285` (#56 tip, not this host): plan p50 0.356 ms (n=184); sweep 15/16 ok, p50 1370.504 ms, then harness stop on HTTP 429 JFK-LHR. Not the same sample as `0e28305` (p50 1330 ms, 113/118, then 429). No extra p50 invented.
 
 ## Quality keep (weekday)
 
@@ -62,11 +88,12 @@ Live 429 did not fire on this host, so it did not stop the batch. Unittest cover
 - #52 flex window (`50c772a`): calendar grid in around±N, then one shopping POST on the cheapest legal day. Feature keep. Battery 180, gate fail:0, not judged.
 - #62 planner around/±N → `intent=flex` with a real window; cheapest week → `intent=dates`. Rebased onto `3248285` (keeps #59 occupancy/alliance/window). Battery 186, gate fail:0, not judged. Cold `--help` 293→294 (did not veto).
 
-Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last **real** `judge_mean`: **97.9** on `60d9ed4` (26 scored). Do not invent a mean. Import-path speed PRs did not re-run it. Weekday keep is this number, not the `score_ms` table above.
+Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last **real keep** `judge_mean`: **97.9** on `60d9ed4` (26 scored). Last judged: **95.7** on `22da78a` (35 scored, 23 skip) — not a keep vs 97.9 on `4faaabd`. Do not invent a mean. Import-path speed PRs did not re-run it. Weekday keep is 97.9, not the `score_ms` table above. Gate is suite + fail:0. `score_ms` is not the product trophy.
 
 ## Honesty leftovers (leave them)
 
 - Compact `--trip rt` with only the outbound in the bytes still has one leg. Do not invent the return.
 - Typical is omitted when the calendar is thin or the trip is multi-city. Packaged RT uses the same-stay grid.
 - Booking challenge timeout. Untouched.
-- Do not shorten Playwright detail delays. No peer-scraper names. No live Google as the reward.
+- Do not shorten Playwright detail delays. No live Google as the reward.
+- Never invent a fare, typical, token, or via list.

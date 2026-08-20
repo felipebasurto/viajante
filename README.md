@@ -27,7 +27,7 @@ Chromium is only for `--fetch detail` and Booking hotels:
 uv run playwright install chromium
 ```
 
-Sweep, `dates`, `explore`, and `--source google` do not start a browser.
+Sweep, `dates`, `flex`, `explore`, and `--source google` do not start a browser.
 
 Optional MCP extra:
 
@@ -36,12 +36,13 @@ uv sync --extra mcp
 uv run viajante-mcp
 ```
 
-Seven tools. Stdio, no auth. One process lock, so two searches cannot overlap. `lookup_airports` stays unlocked. Hotel search defaults to Google on MCP; Booking stays opt-in. `viajante-mcp --help` prints the tool list.
+Seven tools on stdio, no auth: `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`. One process lock, so two searches cannot overlap. `lookup_airports` stays unlocked. Hotel search defaults to Google on MCP; Booking stays opt-in. `viajante-mcp --help` prints the tool list.
 
 ## Flights
 
 ```bash
 uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
+uv run viajante flights BOS-LHR:2026-09-18 --nearby --fetch sweep
 ```
 
 ```text
@@ -63,7 +64,7 @@ Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026
 
 `JFK-NRT:2026-10-09:2026-10-20` without `--trip` is outbound plus return as two one-way searches. `--trip rt` (alias `round-trip`) on that same grammar is one Google package. `--trip multi` takes two to six `ORIGIN-DEST:DATE` legs as one package. Multi-city detail is not supported yet.
 
-`--fetch sweep` is one Chrome TLS session and viajante's shopping RPC. No Chromium. `--fetch detail` is the Playwright scrape. `--fetch auto` uses sweep for 3 or more queries and detail for 1 or 2. Empty or blocked sweep falls back to detail once for those legs.
+`--fetch sweep` is one Chrome TLS session (HTTP/2 multiplex) and viajante's shopping RPC. No Chromium. Empty/drift/5xx gets one 50 ms retry; the happy path does not sleep. HTTP 429 resets that TLS session, waits 50 ms, and continues remaining jobs on a fresh session (happy path still no sleep). A sequential remesure harness may still stop on 429. `--fetch detail` is the Playwright scrape. `--fetch auto` uses sweep for 3 or more queries and detail for 1 or 2. Empty or blocked sweep falls back to detail once for those legs.
 
 A successful offer includes a Google Flights URL built from the owned route, dates, trip kind, cabin, occupancy, and currency. When a `booking_token` is present in the compact shopping body, the offer URL is the deeper itinerary link. The query carries the search URL. Multi-city uses the owned tfs encoder (#51); the field is omitted only when that encode cannot run and there is no token. No passenger fields, no booking POST. Nothing is written to disk unless you pass `--save`.
 
@@ -166,7 +167,7 @@ When a search names flights and a hotel on overlapping dates, viajante prints th
   <img src="docs/assets/how-viajante-works.svg" alt="viajante search path: validate, then sweep HTTP or detail Chromium, then typed offers with raw card text" width="100%">
 </p>
 
-The CLI validates the route before anything starts. HTTP paths reuse one keep-alive session. Chromium paths sleep 4.5 to 6 seconds between queries on purpose. Consent cookies stay in your state directory, not in this checkout.
+The CLI validates the route before anything starts. HTTP sweep reuses one Chrome TLS session with HTTP/2 multiplex. Empty/drift/5xx retries once after 50 ms; HTTP 429 resets TLS, waits 50 ms, and continues remaining jobs on a fresh session. Happy path does not sleep. Chromium paths sleep 4.5 to 6 seconds between queries on purpose. Consent cookies stay in your state directory, not in this checkout.
 
 ## Save JSON
 
@@ -268,6 +269,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--country` | unset | ISO country sent as Google `gl`. Omitted when unset; not a home-hub default. |
 | `--bags` | unset | Checked bags on the shopping request. Omit to leave the slot empty. |
 | `--carry-on` | unset | Ask the shopping request for one carry-on. Omit to leave the slot empty. |
+| `--nearby` | off | Expand origin or dest to owned same-city IATA and search each as a labeled alternative. Default off. Named open-jaw airports stay. Never invents a code. |
 | `--top` | `8` | Offers kept per query after ranking and deduplication. |
 | `--baggage-buffer` | `70` | EUR added to low-cost fares when ranking. `0` ranks on fare alone. |
 | `--sort` | `ranked` | `ranked` uses fare+buffer for `--top` and hides very slow connections. `fare` / `price` use cabin fare. `duration` uses elapsed time. `departure` / `arrival` use local clocks. |
@@ -276,11 +278,9 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--alliance` | off | Restrict the shopping request to these alliances (`oneworld`, `skyteam`, `star`). Uses IATA designators, not a member list. |
 | `--exclude-alliance` | off | Exclude these alliances from the shopping request. |
 | `--depart-window` | off | Keep local departures in `START-END` inclusive. Hours (`6-20`) keep the whole end hour. Clocks (`06:00-20:00`) are exact. |
-| `--fetch` | `auto` | `sweep` is HTTP. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
+| `--fetch` | `auto` | `sweep` is HTTP/2 on one Chrome TLS session. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
 | `--max-layover` | off | Drop connecting offers whose layover exceeds this many hours. Nonstops stay. |
 | `--min-layover` | off | Drop connecting offers whose layover is shorter than this many hours. Nonstops stay. |
-| `--via` | off | Keep connecting offers whose parsed layover matches these IATA codes (`IST`). Post-filter only. Unknown layover cannot prove a via. |
-| `--exclude-via` | off | Drop connecting offers whose parsed layover matches these IATA codes (`DXB`). Unknown layover stays. |
 | `--max-duration` | off | Drop offers whose elapsed time exceeds this many hours. |
 | `--save FILE` | off | Write the JSON report atomically. |
 
@@ -372,13 +372,13 @@ for result in report.queries:
 
 ## Limits
 
-- Flights default to one-way. `--trip rt` / `round-trip` and `--trip multi` POST one package. `--max-stops` is `0`, `1`, or `2`. `--trip multi` cannot use `--fetch detail` yet. There is no flag to shorten Chromium delays or to parallelize requests.
-- Quotes are requested in EUR so fares from different regions compare. That is a quote currency, not an audience. Flight and hotel cards render in English (`hl=en` / `lang=en`, `locale=en-US`).
+- Flights default to one-way. `--trip rt` / `round-trip` and `--trip multi` POST one package. `--max-stops` is `0`, `1`, or `2`. `--trip multi` cannot use `--fetch detail` yet. There is no flag to shorten Chromium delays or to parallelize requests. Sweep HTTP/2 multiplexes on one TLS session. HTTP 429 resets TLS and continues remaining jobs; a sequential remesure harness may still stop on 429.
+- Quotes are requested in EUR so fares from different regions compare. That is a quote currency, not an audience. Flight and hotel cards render in English (`hl=en` / `lang=en`, `locale=en-US`). Planner prompts may be any language; fetch queries stay English.
 - Flight ranking adds a flat estimate for known low-cost carriers, not a fare quote. The low-cost list is partial. An airline missing from it is not evidence of a bag-inclusive fare. Confirm the checked bag on Google Flights before booking.
 - Hotel cancellation, lodging kind, and bed counts are observed evidence. `unknown` means the card did not say. `--entire-home` therefore cannot remove every non-home. Confirm the final total and the cancellation terms on the site you book.
 - Finding nothing eligible still exits `0` and prints `(no eligible offers)` or `(no eligible stays)`. Widen the filters or check the route.
 - If Chromium is missing you get `browser_unavailable`. Run `uv run playwright install chromium`.
-- After repeated failures, stop for 30 to 60 minutes and retry a small query set.
+- After repeated failures, stop for 30 to 60 minutes and retry a small query set. Never invent a fare, a typical median, a booking token, or a via list.
 
 ## Browser state
 
@@ -413,7 +413,9 @@ The graded prompt battery is a separate quality contract, not `score_ms`:
 uv run viajante bench --prompts
 ```
 
-180 prompts, smoke → savage (includes `i18n.jsonl` on brutal). Smoke→insane stay English; savage and i18n add multilingual hardness while the plan still emits English IATA and English flight fetch locale. International origins. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy). Each row prints `plan_ms`; the summary prints `plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. That is not `score_ms` and not `judge_mean`. `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1–100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Optional live find-flights timer: `VIAJANTE_BENCH_SWEEP=1` or `viajante bench --prompts --timeit-sweep` (first 8 planned IATA+date flights, HTTP sweep, no Playwright). Off by default; skipped print is `sweep_ms:` blank. Live Google is never the keep metric. Do not delete `tests/prompts/` to “win” the speed loop. Holdout (`viajante bench --prompts --holdout`) is not in that weekday battery.
+Graded battery (smoke → savage, includes `i18n.jsonl` on brutal). #62 counted **186**. Smoke→insane stay English; savage and i18n add multilingual hardness while the plan still emits English IATA and English flight fetch locale. International origins. No implied home hub. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy / alliance / depart-window). Around/±N plans `intent=flex`; cheapest week plans `intent=dates`; packaged RT stays. Occupancy is omitted when the prompt has no count. Alliance codes are not invented. Each row prints `plan_ms`; the summary prints `plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. That is not `score_ms` and not `judge_mean`. `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1–100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Nested or broken judge JSON is recovered when `score` and `reason` are present (`JUDGE_SYSTEM_PROMPT` is untouched). Optional live find-flights timer: `VIAJANTE_BENCH_SWEEP=1` or `viajante bench --prompts --timeit-sweep` (first 8 planned IATA+date flights, HTTP sweep, no Playwright). Off by default; skipped print is `sweep_ms:` blank. Live Google is never the keep metric. Do not delete `tests/prompts/` to “win” the speed loop. Holdout (`viajante bench --prompts --holdout`) is not in that weekday battery.
+
+Keep baseline remains **97.9** (`60d9ed4`, 26 scored). Last judged **95.7** on `22da78a` (35 scored, 23 skip) is not a keep versus 97.9 on `4faaabd`. Gate is suite + `fail:0`. `score_ms` is not the product trophy.
 
 ## Privacy
 
