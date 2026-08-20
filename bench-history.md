@@ -18,8 +18,11 @@ Checked-in `bench-baseline.json` is still **1603**. Do not rewrite it.
 | 15 | keep | 1028 | 1002 | −26 | lazy urllib/ssl/gzip |
 | 16 | keep | 996 | 967 | −29 | marshal IATA blob |
 | **17** | **keep** | **1006** | **560** | **−446** | FastMCP off unittest; help without `build_server` |
+| 21 | **loss** | 561 | 571 | +10 | Path IATA marshal; `importlib.resources` off unittest |
 
 #17 is the large one: unittest was importing the MCP SDK.
+Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
+#21 re-run after #20: score_ms 561→578/571 (not strictly below warm). Cold `--help` 278→267 (did not veto). Reverted.
 
 ## Quality already landed (do not redo)
 
