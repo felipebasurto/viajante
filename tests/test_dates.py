@@ -227,6 +227,48 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(report.days[1].price_eur, 38.0)
         self.assertTrue(source.closed)
 
+    def test_calendar_miss_uses_fetch_many_when_the_source_has_it(self) -> None:
+        class MuxSource(FakeCalendarSource):
+            def __init__(self) -> None:
+                super().__init__(
+                    CompactParseMiss("no wrb.fr calendar payload"),
+                    cards={
+                        date(2026, 9, 1): (
+                            RawFlightCard(
+                                airline="Iberia",
+                                departure="07:00",
+                                arrival="08:20",
+                                duration="1 hr 20 min",
+                                stops="Nonstop",
+                                price="€45",
+                            ),
+                        ),
+                        date(2026, 9, 2): (
+                            RawFlightCard(
+                                airline="Vueling",
+                                departure="09:00",
+                                arrival="10:20",
+                                duration="1 hr 20 min",
+                                stops="Nonstop",
+                                price="€38",
+                            ),
+                        ),
+                    },
+                )
+                self.fetch_many_calls = 0
+
+            def fetch_many(self, trips):
+                self.fetch_many_calls += 1
+                return [self.fetch(trip) for trip in trips]
+
+        source = MuxSource()
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertEqual(source.fetch_many_calls, 1)
+        self.assertEqual(source.fetch_calls, 2)
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].price_eur, 38.0)
+
     def test_round_trip_calendar_fills_return_dates_and_does_not_invent_fares(self) -> None:
         source = FakeCalendarSource(
             (

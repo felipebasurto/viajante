@@ -919,56 +919,74 @@ def _run_search(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
     results: list[QueryResult] = []
     typical_cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[float]] = {}
-    for index, trip in enumerate(trips):
-        report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
+
+    def _success_from_cards(trip: Trip, cards: Sequence[RawFlightCard]) -> QuerySuccess:
+        eligible = [
+            offer
+            for raw in cards
+            if (
+                offer := _normalize_offer(
+                    raw,
+                    _trip_max_stops(trip),
+                    buffer_eur=buffer_eur,
+                    max_layover_hours=max_layover_hours,
+                    min_layover_hours=min_layover_hours,
+                    max_duration_hours=max_duration_hours,
+                    airlines=airlines if airlines is not None else trip.airlines,
+                    exclude_airlines=(
+                        exclude_airlines if exclude_airlines is not None else trip.exclude_airlines
+                    ),
+                    depart_window=depart_window,
+                    bags=trip.bags,
+                    carry_on=trip.carry_on,
+                )
+            )
+            is not None
+        ]
+        ranked = _rank_offers(eligible, top=top, sort=sort)
+        return QuerySuccess(
+            query=trip,
+            raw_count=len(cards),
+            eligible_count=len(eligible),
+            offers=_stamp_typical(trip, ranked, source, typical_cache),
+        )
+
+    def _maybe_reset(failure: SearchError) -> None:
+        # Empty/rejected/markup are owned outcomes. Drop TLS only when a
+        # retry might succeed, or when the session may be poisoned (blocked).
+        if failure.code not in NON_RETRIABLE_CODES or failure.code == SearchErrorCode.BLOCKED:
+            source.reset()
+
+    def _search_one(trip: Trip, *, start_attempt: int = 0) -> QueryResult:
         outcome: Optional[QueryResult] = None
         failure: Optional[SearchError] = None
-        for attempt in range(MAX_ATTEMPTS):
+        for attempt in range(start_attempt, MAX_ATTEMPTS):
             try:
-                cards = source.fetch(trip)
-                eligible = [
-                    offer
-                    for raw in cards
-                    if (
-                        offer := _normalize_offer(
-                            raw,
-                            _trip_max_stops(trip),
-                            buffer_eur=buffer_eur,
-                            max_layover_hours=max_layover_hours,
-                            min_layover_hours=min_layover_hours,
-                            max_duration_hours=max_duration_hours,
-                            airlines=airlines if airlines is not None else trip.airlines,
-                            exclude_airlines=(
-                                exclude_airlines
-                                if exclude_airlines is not None
-                                else trip.exclude_airlines
-                            ),
-                            depart_window=depart_window,
-                            bags=trip.bags,
-                            carry_on=trip.carry_on,
-                        )
+                fetch_pair = getattr(source, "fetch_with_calendar", None)
+                if callable(fetch_pair) and isinstance(trip, FlightQuery):
+                    start, end = _typical_window(trip.departure_date)
+                    cards, days = fetch_pair(trip, start, end)
+                    typical_cache[_typical_cache_key(trip)] = typical_eur_from_daily_prices(
+                        [row.price_eur for row in days] if days is not None else ()
                     )
-                    is not None
-                ]
-                ranked = _rank_offers(eligible, top=top, sort=sort)
-                outcome = QuerySuccess(
-                    query=trip,
-                    raw_count=len(cards),
-                    eligible_count=len(eligible),
-                    offers=_stamp_typical(trip, ranked, source, typical_cache),
-                )
+                else:
+                    cards = source.fetch(trip)
+                outcome = _success_from_cards(trip, cards)
                 break
             except Exception as exc:
                 failure = classify_failure(exc)
-                source.reset()
+                _maybe_reset(failure)
                 if failure.code in NON_RETRIABLE_CODES:
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
-                    sleep(retry_backoff_seconds(attempt, random_gen))
+                    delay = retry_backoff(attempt, random_gen)
+                    if delay > 0:
+                        sleep(delay)
         if outcome is None:
             outcome = QueryFailure(
                 query=trip,
@@ -979,7 +997,52 @@ def _run_search(
                 ),
             )
             report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
-        results.append(outcome)
+        return outcome
+
+    fetch_batch = getattr(source, "fetch_many_with_calendar", None)
+    if (
+        callable(fetch_batch)
+        and len(trips) > 1
+        and all(isinstance(trip, FlightQuery) for trip in trips)
+    ):
+        for index, trip in enumerate(trips):
+            report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
+        jobs = []
+        for trip in trips:
+            start, end = _typical_window(trip.departure_date)
+            jobs.append((trip, start, end))
+        try:
+            batch_rows = fetch_batch(jobs)
+        except Exception:
+            batch_rows = None
+        if batch_rows is not None:
+            for trip, (cards_or_exc, days) in zip(trips, batch_rows, strict=True):
+                if not isinstance(cards_or_exc, BaseException):
+                    typical_cache[_typical_cache_key(trip)] = typical_eur_from_daily_prices(
+                        [row.price_eur for row in days] if days is not None else ()
+                    )
+                    results.append(_success_from_cards(trip, cards_or_exc))
+                    continue
+                failure = classify_failure(cards_or_exc)
+                if failure.code in NON_RETRIABLE_CODES:
+                    _maybe_reset(failure)
+                    outcome = QueryFailure(query=trip, error=failure)
+                    report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
+                    results.append(outcome)
+                    continue
+                results.append(_search_one(trip, start_attempt=1))
+            return SearchReport(
+                searched_at=now(),
+                queries=tuple(results),
+                locale=locale,
+                currency=currency,
+                fetch_backend=fetch_backend,
+                fetch_ms=fetch_ms,
+            )
+
+    for index, trip in enumerate(trips):
+        report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
+        results.append(_search_one(trip))
         if index + 1 < len(trips):
             sleep(inter_query_delay(random_gen))
     return SearchReport(
@@ -1023,6 +1086,7 @@ def _search_with_source(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
 ) -> SearchReport:
     try:
         return _run_search(
@@ -1044,6 +1108,7 @@ def _search_with_source(
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             depart_window=depart_window,
+            retry_backoff=retry_backoff,
         )
     finally:
         source.close()
@@ -1125,6 +1190,7 @@ def search_flights(
             progress=progress,
             sort=sort,
             inter_query_delay=sweep_inter_query_delay_seconds,
+            retry_backoff=lambda _attempt, _rng: 0.0,
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,

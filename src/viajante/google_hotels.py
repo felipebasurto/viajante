@@ -6,7 +6,11 @@ from types import SimpleNamespace
 from typing import Optional
 from urllib.parse import urlencode
 
-from viajante.google_flights import ChromeSweepClient, SweepHttpClient
+from viajante.google_flights import (
+    SweepHttpClient,
+    reset_shared_chrome_sweep_client,
+    shared_chrome_sweep_client,
+)
 from viajante.google_hotels_rpc import (
     HOTELS_POST_HEADERS,
     HOTELS_SEARCH_URL,
@@ -58,7 +62,6 @@ class GoogleHotelsSource:
         self._html_lang = html_lang
         self._currency = currency
         self._injected_client = client
-        self._owned_client: Optional[ChromeSweepClient] = None
         self._timeout = timeout
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency)
 
@@ -85,22 +88,16 @@ class GoogleHotelsSource:
         return HotelPage(cards=cards[:limit])
 
     def reset(self) -> None:
-        self._close_owned_client()
+        if self._injected_client is None:
+            reset_shared_chrome_sweep_client()
 
     def close(self) -> None:
-        self._close_owned_client()
+        return None
 
     def _ensure_client(self) -> SweepHttpClient:
         if self._injected_client is not None:
             return self._injected_client
-        if self._owned_client is None:
-            self._owned_client = ChromeSweepClient()
-        return self._owned_client
-
-    def _close_owned_client(self) -> None:
-        if self._owned_client is not None:
-            self._owned_client.close()
-            self._owned_client = None
+        return shared_chrome_sweep_client()
 
 
 def _looks_blocked(body: str, final_url: str) -> bool:

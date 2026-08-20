@@ -195,24 +195,35 @@ class NonRetriableFailureTests(unittest.TestCase):
     def test_no_results_is_not_retried(self) -> None:
         outcome, source, sleeps = self._run(NoFlightsFound())
         self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
         self.assertEqual(sleeps, [])
         self.assertEqual(outcome.error.code, SearchErrorCode.NO_RESULTS)
 
     def test_missing_browser_is_not_retried(self) -> None:
         outcome, source, sleeps = self._run(RuntimeError("Executable doesn't exist"))
         self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
         self.assertEqual(sleeps, [])
         self.assertEqual(outcome.error.code, SearchErrorCode.BROWSER_UNAVAILABLE)
 
     def test_markup_errors_are_not_retried(self) -> None:
         outcome, source, sleeps = self._run(GoogleFlightsMarkupError("selectors rotted"))
         self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
         self.assertEqual(sleeps, [])
         self.assertEqual(outcome.error.code, SearchErrorCode.MARKUP_DRIFT)
+
+    def test_rejected_queries_do_not_reset_tls(self) -> None:
+        outcome, source, sleeps = self._run(GoogleFlightsRejected("unknown airport"))
+        self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(outcome.error.code, SearchErrorCode.REJECTED)
 
     def test_http_blocks_are_not_retried(self) -> None:
         outcome, source, sleeps = self._run(GoogleFlightsBlocked("consent wall"))
         self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(source.reset_calls, 1)
         self.assertEqual(sleeps, [])
         self.assertEqual(outcome.error.code, SearchErrorCode.BLOCKED)
 
@@ -286,6 +297,67 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertAlmostEqual(sleeps[0], inter_query)
         for got, want in zip(sleeps[1:], expected_backoffs, strict=True):
             self.assertAlmostEqual(got, want)
+
+    def test_zero_retry_backoff_skips_sleep_on_transient_failure(self) -> None:
+        source = FakeSource({("MAD", "BCN", "2026-09-01", 1): RuntimeError("network")})
+        sleeps: list[float] = []
+        report = _run_search(
+            (FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1),),
+            top=8,
+            source=source,
+            sleep=sleeps.append,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            retry_backoff=lambda _attempt, _rng: 0.0,
+        )
+        self.assertEqual(source.fetch_calls, MAX_ATTEMPTS)
+        self.assertEqual(source.reset_calls, MAX_ATTEMPTS)
+        self.assertEqual(sleeps, [])
+        self.assertIsInstance(report.queries[0], QueryFailure)
+        self.assertEqual(report.queries[0].error.code.value, "fetch_failed")
+
+    def test_many_one_ways_use_one_calendar_batch_when_source_offers_it(self) -> None:
+        q1 = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        q2 = FlightQuery("MAD", "LHR", date(2026, 9, 2), max_stops=1)
+
+        class BatchSource(FakeSource):
+            def __init__(self) -> None:
+                super().__init__(
+                    {
+                        ("MAD", "BCN", "2026-09-01", 1): (card(airline="Iberia"),),
+                        ("MAD", "LHR", "2026-09-02", 1): (card(airline="British Airways"),),
+                    }
+                )
+                self.batch_calls = 0
+
+            def fetch(self, query):  # type: ignore[no-untyped-def]
+                raise AssertionError("batched one-ways should not call fetch")
+
+            def fetch_many_with_calendar(self, jobs):
+                self.batch_calls += 1
+                rows = []
+                for query, _start, _end in jobs:
+                    cards = FakeSource.fetch(self, query)
+                    rows.append((cards, ()))
+                return rows
+
+        source = BatchSource()
+        sleeps: list[float] = []
+        report = _run_search(
+            (q1, q2),
+            top=8,
+            source=source,
+            sleep=sleeps.append,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+        )
+        self.assertEqual(source.batch_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
+        self.assertIsInstance(report.queries[0], QuerySuccess)
+        self.assertIsInstance(report.queries[1], QuerySuccess)
+        self.assertEqual(report.queries[0].offers[0].airline, "Iberia")
+        self.assertEqual(report.queries[1].offers[0].airline, "British Airways")
 
     def test_max_stops_zero_keeps_only_nonstop(self) -> None:
         nonstop = card(stops="Nonstop", price="100 €")

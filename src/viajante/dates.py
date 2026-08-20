@@ -220,6 +220,46 @@ def _rows_from_calendar(
     return tuple(rows)
 
 
+def _row_from_day_cards(
+    cursor: date,
+    query: FlightQuery | RoundTrip,
+    cards: Sequence[RawFlightCard],
+    returning: Optional[date],
+) -> DatePriceRow:
+    offers = [
+        offer
+        for raw in cards
+        if (offer := _normalize_offer(raw, query.legs[0].max_stops, buffer_eur=0)) is not None
+    ]
+    if not offers:
+        return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
+    best = min(offers, key=lambda offer: offer.price_eur)
+    return DatePriceRow(
+        departure_date=cursor,
+        price_eur=best.price_eur,
+        airline=best.airline,
+        stops_count=best.stops_count,
+        return_date=returning,
+        status="ok",
+    )
+
+
+def _row_from_day_error(
+    cursor: date,
+    exc: BaseException,
+    returning: Optional[date],
+) -> DatePriceRow:
+    error = classify_failure(exc)
+    if error.code in {SearchErrorCode.NO_RESULTS, SearchErrorCode.REJECTED}:
+        return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
+    return DatePriceRow(
+        departure_date=cursor,
+        return_date=returning,
+        status="error",
+        error=error,
+    )
+
+
 def _sweep_per_day(
     source: CalendarSource,
     seed: FlightQuery | RoundTrip,
@@ -228,63 +268,50 @@ def _sweep_per_day(
     nights: Optional[int],
     progress: Callable[[str], None],
 ) -> tuple[DatePriceRow, ...]:
-    rows: list[DatePriceRow] = []
+    day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
     span = date_window_days(start, end)
     index = 0
     while cursor <= end:
         index += 1
         progress(f"[{index}/{span}] {seed.origin} -> {seed.destination} {cursor.isoformat()}")
-        day_query = calendar_trip(
-            seed.origin,
-            seed.destination,
-            cursor,
-            max_stops=seed.legs[0].max_stops,
-            adults=seed.adults,
-            cabin=seed.cabin,
-            nights=nights,
+        day_queries.append(
+            (
+                cursor,
+                calendar_trip(
+                    seed.origin,
+                    seed.destination,
+                    cursor,
+                    max_stops=seed.legs[0].max_stops,
+                    adults=seed.adults,
+                    cabin=seed.cabin,
+                    nights=nights,
+                ),
+            )
         )
+        cursor = shift_day(cursor, 1)
+
+    fetch_many = getattr(source, "fetch_many", None)
+    if callable(fetch_many):
+        results = fetch_many([day_query for _cursor, day_query in day_queries])
+        rows = []
+        for (cursor, day_query), result in zip(day_queries, results, strict=True):
+            returning = _return_for(cursor, nights)
+            if isinstance(result, BaseException):
+                rows.append(_row_from_day_error(cursor, result, returning))
+            else:
+                rows.append(_row_from_day_cards(cursor, day_query, result, returning))
+        return tuple(rows)
+
+    rows: list[DatePriceRow] = []
+    for cursor, day_query in day_queries:
         returning = _return_for(cursor, nights)
         try:
             cards = source.fetch(day_query)
         except Exception as exc:
-            error = classify_failure(exc)
-            if error.code in {SearchErrorCode.NO_RESULTS, SearchErrorCode.REJECTED}:
-                rows.append(
-                    DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
-                )
-            else:
-                rows.append(
-                    DatePriceRow(
-                        departure_date=cursor,
-                        return_date=returning,
-                        status="error",
-                        error=error,
-                    )
-                )
-            cursor = shift_day(cursor, 1)
+            rows.append(_row_from_day_error(cursor, exc, returning))
             continue
-        offers = [
-            offer
-            for raw in cards
-            if (offer := _normalize_offer(raw, day_query.legs[0].max_stops, buffer_eur=0))
-            is not None
-        ]
-        if not offers:
-            rows.append(DatePriceRow(departure_date=cursor, return_date=returning, status="empty"))
-        else:
-            best = min(offers, key=lambda offer: offer.price_eur)
-            rows.append(
-                DatePriceRow(
-                    departure_date=cursor,
-                    price_eur=best.price_eur,
-                    airline=best.airline,
-                    stops_count=best.stops_count,
-                    return_date=returning,
-                    status="ok",
-                )
-            )
-        cursor = shift_day(cursor, 1)
+        rows.append(_row_from_day_cards(cursor, day_query, cards, returning))
     return tuple(rows)
 
 

@@ -319,6 +319,51 @@ class TypicalSearchTests(unittest.TestCase):
         )
         self.assertEqual(source.calendar_calls, [])
 
+    def test_fetch_with_calendar_stamps_typical_without_a_second_fetch(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
+
+        class PairSource(FakeCalendarFlightSource):
+            def __init__(self) -> None:
+                super().__init__(
+                    {
+                        ("JFK", "LHR", "2026-09-15", 1): (
+                            card(airline="Norse Atlantic", price="289 €"),
+                        )
+                    },
+                    (
+                        CompactCalendarDay(date(2026, 9, 15), 300.0),
+                        CompactCalendarDay(date(2026, 9, 16), 340.0),
+                        CompactCalendarDay(date(2026, 9, 17), 360.0),
+                    ),
+                )
+                self.pair_calls = 0
+
+            def fetch(self, query):  # type: ignore[no-untyped-def]
+                raise AssertionError("search should use fetch_with_calendar")
+
+            def fetch_with_calendar(self, query: FlightQuery, start: date, end: date):
+                self.pair_calls += 1
+                cards = FakeSource.fetch(self, query)
+                days = FakeCalendarFlightSource.fetch_calendar(self, query, start, end)
+                return cards, days
+
+        source = PairSource()
+        report = _run_search(
+            (query,),
+            top=1,
+            source=source,
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 20),
+        )
+        self.assertEqual(source.pair_calls, 1)
+        self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(len(source.calendar_calls), 1)
+        assert isinstance(report.queries[0], QuerySuccess)
+        offer = report.queries[0].offers[0]
+        self.assertEqual(offer.typical_eur, 340.0)
+        self.assertEqual(offer.vs_typical, "below")
+
 
 class TypicalModelTests(unittest.TestCase):
     def test_typical_fields_must_be_paired(self) -> None:
