@@ -2,9 +2,11 @@
 
 Read this before picking a hypothesis. Do **not** redo a listed keep or loss.
 Do **not** plot `score_ms` across PRs (different VMs). Only same-host deltas count.
-Checked-in `bench-baseline.json` is still **1603**. Do not rewrite it.
+Checked-in `bench-baseline.json` **1603** is a **fossil**, not keep. Do not rewrite it.
 
-## Speed keep-or-revert
+- **Operator lock 2026-08-20 16:05 CEST:** Keep is only `judge_mean` (already #34). Last real mean **97.9** on `60d9ed4` (26 scored). Fossil 1603 is not keep. Import/IATA/unittest-cache/FastMCP-off-tests a MCP user cannot feel = veto; do not launch. `bench.py` / `prompt_bench.py` / `tests/bench/` / `tests/prompts/` read-only. Replay/2×MAD not weekday keep. Cold `--help` worse = veto. Weekday launches planner / honest parse / English fetch / savage hardness.
+
+## Speed keep-or-revert (`score_ms` history; not weekday keep)
 
 | pr | result | warm | best after | Δ | do not redo |
 |---:|--------|-----:|-----------:|--:|-------------|
@@ -50,7 +52,7 @@ Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
 - #8 GRU dests kept; bare “first” is not cabin
 - #10 `typical_eur` = same-route calendar median (`below`/`near`/`above`)
 
-Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last run after #7+#10. Import-path speed PRs did not re-run it.
+Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last **real** `judge_mean`: **97.9** on `60d9ed4` (26 scored). Do not invent a mean. Import-path speed PRs did not re-run it. Weekday keep is this number, not the `score_ms` table above.
 
 ## Honesty leftovers (leave them)
 

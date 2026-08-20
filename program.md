@@ -20,17 +20,47 @@ may not delete `tests/prompts/` (or drop cases below the floors) to “win”.
 Do not edit the judge or pad easy prompts. Humans may later make easy-tier
 failures part of the gate; do not silently do that for insane/llm cases.
 
+## Operator lock (2026-08-20 16:05 CEST)
+
+Keep is **only** `judge_mean`. The print landed in #34 (`3ee5b8e`).
+Do not restate that print by editing `bench.py` / `prompt_bench.py`.
+This lock is the rest of the weekday law #34 did not copy:
+
+- Last real mean: **97.9** on `60d9ed4` (26 scored). Same prompt set.
+  Do not invent a mean. Checked-in `bench-baseline.json` **1603** is a
+  **fossil**, not keep. Do not plot `score_ms` across VMs.
+- `bench.py`, `prompt_bench.py`, `tests/bench/`, `tests/prompts/` are
+  **read-only** to the looping agent (`prepare.py` style).
+- Import-only / unittest-cache / FastMCP-off-tests / IATA-regex keeps
+  a MCP user cannot feel = automatic **veto**. Do not launch those.
+- parse+rank replay / 2×MAD / live `sweep_ms` are **not** weekday keep.
+  Replay may be a later loop. Never mash quality and speed into one
+  number.
+- Weekday loop launches planner / honest parse / English fetch /
+  savage hardness — not another IATA frozenset.
+- Cold `--help` worse = revert (**veto**, not score).
+
 ## One experiment
 
 1. Read this file, `AGENTS.md`, and the current `bench-baseline.json`.
-2. Pick **one** small hypothesis. Examples that fit this tree:
-   - planner follows a named contract the judge already scores
-   - packaged `--trip rt` vs two one-ways the user asked for
-   - refuse rest-of-trip / trains / cars without inventing a fare
-   - occupancy, cabin, or dests the prompt named
+   Fossil 1603 is not the keep baseline. Keep baseline is this host's
+   last `judge_mean` on the same prompt set (**97.9** on `60d9ed4`,
+   26 scored, until a later judged keep lands).
+2. Pick **one** small hypothesis. Weekday launches:
+   - planner: any-language prompt → English query
+   - honest parse: bags on the RPC, `typical_eur` calendar median, clocks
+   - English fetch locale
+   - savage hardness (without rewriting old expects or padding easy rows)
+   Also still in tree: packaged `--trip rt` vs two one-ways the user
+   asked for; refuse rest-of-trip / trains / cars without inventing a
+   fare; occupancy, cabin, or dests the prompt named.
+   Do **not** launch import-only / unittest-cache / FastMCP-off-tests /
+   IATA-regex work a MCP user cannot feel.
 3. Change only the files that test that hypothesis. Keep the diff small.
    Do not edit `JUDGE_SYSTEM_PROMPT`, `invention_reason`, or existing
    prompt `expect` fields. Do not rewrite old easy prompts to be easier.
+   Do **not** edit `bench.py`, `prompt_bench.py`, `tests/bench/`, or
+   `tests/prompts/`.
 4. Run the gate and the keep metric from the checkout root:
 
    ```bash
@@ -75,6 +105,7 @@ invent one. Do not keep the change.
 `VIAJANTE_BENCH_LIVE=1` (off by default). That optional path may print
 `sweep_ms` as extra. `sweep_ms` is **never** the keep/revert score.
 `score_ms` is also **not** the keep; it is the speed loop's number only.
+Replay p50 and 2×MAD are not weekday keep.
 
 Gate (must pass or exit non-zero):
 
@@ -85,7 +116,8 @@ KEEP METRIC (one number, higher is better):
 
 - `judge_mean` = arithmetic mean of `score_1_100` on `judge=llm` scored
   rows when the judge ran. Blank / omitted when the judge skipped or
-  there are no llm scores. Never invent.
+  there are no llm scores. Never invent. Deterministic passes are not
+  mixed in.
 
 `score_ms` = wall ms of the unittest suite + wall ms of the checked-in
 corpus in `tests/bench/` (owned compact-shopping / `wrb.fr` / HTML card
@@ -94,7 +126,8 @@ parse). Not a network call. Record it if you like; do not keep on it.
 The bench has no flags to skip tests, subset the parse corpus, or change
 `--top`. Product defaults stay `DEFAULT_TOP = 8` and
 `DEFAULT_BAGGAGE_BUFFER_EUR = 70`. `--prompts` is the quality battery,
-never mixed into `score_ms`.
+never mixed into `score_ms`. `bench.py`, `prompt_bench.py`,
+`tests/bench/`, and `tests/prompts/` are read-only to the looping agent.
 
 ## Prompt battery (quality keep: judge_mean)
 
@@ -134,6 +167,14 @@ KEEP METRIC is `judge_mean`, not `score_ms`. Do not edit
 fields to raise the 1–100 mean. Do not pad easy prompts. Invented
 price/route stays automatic 0.
 
+Import-only / unittest-cache / FastMCP-off-tests / IATA-regex keeps
+that a MCP user cannot feel = automatic **veto**. Do not launch those.
+After BEFORE/AFTER gate runs, time a COLD CLI on this host:
+`uv run viajante --help` twice, discard the first, keep the second wall
+ms. If that cold help is strictly worse than this host's pre-change cold
+help, REVERT even if `judge_mean` won. Record both numbers in the PR.
+This veto is not score.
+
 Existing smoke→insane rows are frozen except to fix a real planner bug
 (wrong IATA, dropped dests). New hardness goes in new files
 (brutal/holdout/savage), not by rewriting old prompts to be easier.
@@ -141,7 +182,9 @@ Existing smoke→insane rows are frozen except to fix a real planner bug
 Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
 coverage, drop a fixture from `manifest.json`, add empty fixtures, lower
 `--top` or the baggage buffer, or stub parsers. Do not count `sweep_ms`,
-live Google, or LLM-judge latency as the keep.
+live Google, replay p50, 2×MAD, or LLM-judge latency as the keep.
+Do not edit `src/viajante/bench.py`, `src/viajante/prompt_bench.py`,
+`tests/bench/`, or `tests/prompts/`.
 
 Looping agents read this file and `bench-history.md` only. They
 must not open `tests/prompts/holdout.jsonl` when choosing a hypothesis.
@@ -180,7 +223,9 @@ honest.
 ## After the run
 
 - Write the recorded `judge_mean` in the PR body next to this host's
-  last keep. `score_ms` may be noted; it is not the keep.
+  last keep (**97.9** on `60d9ed4` / 26 scored until replaced).
+  `score_ms` may be noted; it is not the keep. If Δ < 3, record the
+  second run. Record cold `viajante --help` ms; worse `--help` is a veto.
 - If it is a win, say so. A human merges and may run holdout as veto.
 - If it is a loss or a fail, the PR should show the revert, or not exist.
 - Stop. The scheduler starts the next experiment, not this checkout.
