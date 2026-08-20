@@ -279,6 +279,8 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--fetch` | `auto` | `sweep` is HTTP. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
 | `--max-layover` | off | Drop connecting offers whose layover exceeds this many hours. Nonstops stay. |
 | `--min-layover` | off | Drop connecting offers whose layover is shorter than this many hours. Nonstops stay. |
+| `--via` | off | Keep connecting offers whose parsed layover matches these IATA codes (`IST`). Post-filter only. Unknown layover cannot prove a via. |
+| `--exclude-via` | off | Drop connecting offers whose parsed layover matches these IATA codes (`DXB`). Unknown layover stays. |
 | `--max-duration` | off | Drop offers whose elapsed time exceeds this many hours. |
 | `--save FILE` | off | Write the JSON report atomically. |
 

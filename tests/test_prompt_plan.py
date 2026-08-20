@@ -807,6 +807,8 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIn("IST", plan.no_overnight)
         self.assertIn("IST", plan.prefer_airports)
         self.assertNotIn("IST", plan.exclude_airports)
+        self.assertEqual(plan.via_airports, ())
+        self.assertEqual(plan.exclude_via, ())
         folded_notes = plan.notes.casefold()
         self.assertIn("required", folded_notes)
         self.assertIn("forbidden", folded_notes)
@@ -831,8 +833,8 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIn("IST", plan.prefer_airports)
         self.assertIn("IST", plan.no_overnight)
         self.assertNotIn("IST", plan.exclude_airports)
-
-    def test_georgian_via_ist_long_connect_keeps_no_overnight(self) -> None:
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ())
         plan = plan_prompt(
             "მინდა გავფრინდე თბილისიდან სინგაპურში TBS-SIN 2026-11-03, "
             "აუცილებლად გადავჯდე IST-ში, მინიმუმ 12 საათიანი გადაჯდომა, "
@@ -847,8 +849,29 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIn("IST", plan.prefer_airports)
         self.assertIn("IST", plan.no_overnight)
         self.assertNotIn("IST", plan.exclude_airports)
+        self.assertEqual(plan.via_airports, ("IST",))
         self.assertEqual(plan.locale, "en")
         self.assertNotIn("€", plan.notes)
+
+    def test_via_ist_not_via_dxb_sets_include_and_exclude(self) -> None:
+        plan = plan_prompt(
+            "JFK-SIN on 2026-11-03 via IST, not via DXB, max 1 stop. Do not invent a fare."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "JFK")
+        self.assertEqual(plan.destination, "SIN")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ("DXB",))
+        self.assertIn("IST", plan.prefer_airports)
+        self.assertNotIn("DXB", plan.prefer_airports)
+        self.assertNotIn("DXB", plan.exclude_airports)
+        self.assertNotIn("IST", plan.exclude_airports)
+
+    def test_via_flags_set_include_and_exclude(self) -> None:
+        plan = plan_prompt("JFK-SIN on 2026-11-03 --via IST --exclude-via DXB")
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ("DXB",))
 
 
 class PromptPlanMatchTests(unittest.TestCase):

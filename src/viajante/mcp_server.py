@@ -51,6 +51,8 @@ def build_server():
         max_duration: float | None = None,
         min_layover: float | None = None,
         max_layover: float | None = None,
+        via: str | None = None,
+        exclude_via: str | None = None,
         baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
         sort: str = "ranked",
         bags: int | None = None,
@@ -79,6 +81,8 @@ def build_server():
                 max_duration=max_duration,
                 min_layover=min_layover,
                 max_layover=max_layover,
+                via=via,
+                exclude_via=exclude_via,
                 baggage_buffer=baggage_buffer,
                 sort=sort,  # type: ignore[arg-type]
                 bags=bags,

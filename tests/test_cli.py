@@ -619,6 +619,22 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["max_duration_hours"], 4)
         self.assertEqual(search.call_args.kwargs["min_layover_hours"], 1)
 
+    def test_via_flags_reach_the_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(
+                    [
+                        "flights",
+                        ROUTE,
+                        "--via",
+                        "IST",
+                        "--exclude-via",
+                        "DXB",
+                    ]
+                )
+        self.assertEqual(search.call_args.kwargs["via"], ("IST",))
+        self.assertEqual(search.call_args.kwargs["exclude_via"], ("DXB",))
+
     def test_layover_is_visible_on_one_stop_rows(self) -> None:
         output = _rendered(
             _report(
@@ -827,6 +843,8 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--fetch sweep", help_text)
         self.assertIn("--max-layover", help_text)
         self.assertIn("--min-layover", help_text)
+        self.assertIn("--via", help_text)
+        self.assertIn("--exclude-via", help_text)
         self.assertIn("--max-duration", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--exclude-airlines", help_text)

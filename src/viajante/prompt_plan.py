@@ -21,7 +21,12 @@ from viajante.carriers import (
     parse_airline_codes,
     parse_alliances,
 )
-from viajante.flights import FlightPlan, expand_nearby_trips, parse_flight_plan
+from viajante.flights import (
+    FlightPlan,
+    expand_nearby_trips,
+    parse_flight_plan,
+    parse_via_airports,
+)
 from viajante.models import FETCH_LANGUAGE, FlightCabin, HotelQuery
 
 Intent = str
@@ -316,7 +321,7 @@ _FLAG = re.compile(
     r"--(trip|max-stops|adults|children|infants-in-seat|infants-on-lap|cabin|rooms|"
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|currency|country|airlines|exclude-airlines|alliance|"
-    r"exclude-alliance)\s+(\S+)",
+    r"exclude-alliance|exclude-via|via)\s+(\S+)",
     re.IGNORECASE,
 )
 _BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
@@ -617,6 +622,14 @@ _VIA_AIRPORT_IATA = re.compile(
     r"([A-Z]{3})\b",
     re.IGNORECASE,
 )
+_EXCLUDE_VIA_IATA = re.compile(
+    r"\b(?:not|never|no|avoid|without|don'?t|rather than|instead of)\s+"
+    r"(?:(?:a|any)\s+)?"
+    r"(?:via|through|connecting?\s+(?:in|via|at)|"
+    r"transfer(?:ring)?\s+(?:in|at)|stop(?:over|ping)?\s+(?:in|at))\s+"
+    r"([A-Z]{3})\b",
+    re.IGNORECASE,
+)
 _KA_VIA_IATA = re.compile(r"გადავჯდ[^\s,]*\s+([A-Z]{3})")
 _REQUIRE_OVERNIGHT_IATA = re.compile(
     r"\b(?:must|need(?:s)? to|required to)\s+overnight\s+(?:in|at)\s+([A-Z]{3})\b",
@@ -686,6 +699,8 @@ class PromptPlan:
     exclude_regions: Tuple[str, ...] = ()
     exclude_airports: Tuple[str, ...] = ()
     via_regions: Tuple[str, ...] = ()
+    via_airports: Tuple[str, ...] = ()
+    exclude_via: Tuple[str, ...] = ()
     no_overnight: Tuple[str, ...] = ()
     require_overnight: Tuple[str, ...] = ()
     refuse: Tuple[str, ...] = ()
@@ -747,6 +762,8 @@ class PromptPlan:
             "exclude_regions": list(self.exclude_regions),
             "exclude_airports": list(self.exclude_airports),
             "via_regions": list(self.via_regions),
+            "via_airports": list(self.via_airports),
+            "exclude_via": list(self.exclude_via),
             "no_overnight": list(self.no_overnight),
             "require_overnight": list(self.require_overnight),
             "refuse": list(self.refuse),
@@ -781,6 +798,8 @@ class PromptPlan:
         }
         exact_list_keys = {
             "via_regions",
+            "via_airports",
+            "exclude_via",
             "route_specs",
             "destinations",
             "include_airlines",
@@ -1596,9 +1615,18 @@ def _extend_unique(dst: list[str], src: Sequence[str]) -> None:
 
 def _via_airports(raw: str) -> list[str]:
     found: list[str] = []
-    _extend_unique(found, _iata_group_hits(_VIA_AIRPORT_IATA, raw))
+    for match in _VIA_AIRPORT_IATA.finditer(raw):
+        if _match_is_negated(raw, match.start()):
+            continue
+        code = match.group(1).upper()
+        if is_known_iata(code) and code not in found:
+            found.append(code)
     _extend_unique(found, _iata_group_hits(_KA_VIA_IATA, raw))
     return found
+
+
+def _exclude_via_airports(raw: str) -> list[str]:
+    return _iata_group_hits(_EXCLUDE_VIA_IATA, raw)
 
 
 def _require_overnight_airports(raw: str) -> list[str]:
@@ -1680,7 +1708,16 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     exclude_airports: list[str] = []
     require_overnight = _require_overnight_airports(raw)
     via_airports = _via_airports(raw)
+    exclude_via = _exclude_via_airports(raw)
     no_overnight = _no_overnight_codes(raw, folded)
+    if "via" in flags:
+        _extend_unique(via_airports, parse_via_airports(flags["via"]) or ())
+    if "exclude-via" in flags:
+        _extend_unique(
+            exclude_via,
+            parse_via_airports(flags["exclude-via"], role="exclude-via") or (),
+        )
+    via_airports = [code for code in via_airports if code not in exclude_via]
 
     if _NO_ASIA.search(folded) or "tercermundista" in folded:
         exclude_regions.append("asia")
@@ -1870,6 +1907,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             pairs = [(origin, destination)]
 
     via_airports = [code for code in via_airports if code not in {origin, destination}]
+    exclude_via = [code for code in exclude_via if code not in {origin, destination}]
 
     destinations = _listed_destinations(raw, origin)
 
@@ -2260,6 +2298,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         exclude_regions=tuple(exclude_regions),
         exclude_airports=tuple(exclude_airports),
         via_regions=via_regions,
+        via_airports=tuple(via_airports),
+        exclude_via=tuple(exclude_via),
         no_overnight=tuple(no_overnight),
         require_overnight=tuple(require_overnight),
         refuse=all_refuse,

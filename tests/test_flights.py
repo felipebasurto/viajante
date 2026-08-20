@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Sequence
 from unittest.mock import patch
 
+from viajante.airports import get_airport
 from viajante.flights import (
     _normalize_offer,
     _rank_offers,
@@ -20,6 +21,7 @@ from viajante.flights import (
     parse_depart_window,
     parse_flight_plan,
     parse_route_specs,
+    parse_via_airports,
     plan_unit_count,
     resolve_fetch_mode,
     search_flights,
@@ -39,6 +41,9 @@ from viajante.models import (
     MultiCity,
     QueryFailure,
     QuerySuccess,
+    RawJourneyLeg,
+    RawLayover,
+    RawSegment,
     RoundTrip,
     SearchErrorCode,
     SearchReport,
@@ -68,6 +73,7 @@ def card(
     checked_bags: int | None = None,
     carry_on: int | None = None,
     booking_token: str | None = None,
+    legs: tuple[RawJourneyLeg, ...] = (),
 ) -> RawFlightCard:
     return RawFlightCard(
         airline=airline,
@@ -83,6 +89,7 @@ def card(
         checked_bags=checked_bags,
         carry_on=carry_on,
         booking_token=booking_token,
+        legs=legs,
     )
 
 
@@ -1051,6 +1058,105 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(nonstop, 1, min_layover_hours=1))
         self.assertIsNone(_normalize_offer(short_hop, 1, min_layover_hours=1))
         self.assertIsNotNone(_normalize_offer(long_hop, 1, min_layover_hours=1))
+
+    def test_via_keeps_parsed_layover_city_or_iata(self) -> None:
+        lis = get_airport("LIS")
+        assert lis is not None
+        city = card(
+            stops="1 stop",
+            layover_city=lis.city,
+            layover_hours=18.0,
+            price="74 €",
+        )
+        iata = card(
+            stops="1 stop",
+            layover_city="LIS",
+            layover_hours=3.0,
+            price="70 €",
+        )
+        other = card(
+            stops="1 stop",
+            layover_city="DXB",
+            layover_hours=4.0,
+            price="80 €",
+        )
+        nonstop = card(stops="Nonstop", price="90 €")
+        silent = card(stops="1 stop", price="60 €")
+        self.assertIsNotNone(_normalize_offer(city, 1, via=("LIS",)))
+        self.assertIsNotNone(_normalize_offer(iata, 1, via=("LIS",)))
+        self.assertIsNone(_normalize_offer(other, 1, via=("LIS",)))
+        self.assertIsNone(_normalize_offer(nonstop, 1, via=("LIS",)))
+        self.assertIsNone(_normalize_offer(silent, 1, via=("LIS",)))
+
+    def test_exclude_via_drops_known_layover_and_keeps_unknown(self) -> None:
+        dxb = get_airport("DXB")
+        assert dxb is not None
+        city = card(
+            stops="1 stop",
+            layover_city=dxb.city,
+            layover_hours=5.0,
+            price="80 €",
+        )
+        code = card(
+            stops="1 stop",
+            layover_city="DXB",
+            layover_hours=5.0,
+            price="82 €",
+        )
+        other = card(
+            stops="1 stop",
+            layover_city="LIS",
+            layover_hours=3.0,
+            price="70 €",
+        )
+        silent = card(stops="1 stop", price="60 €")
+        nonstop = card(stops="Nonstop", price="90 €")
+        self.assertIsNone(_normalize_offer(city, 1, exclude_via=("DXB",)))
+        self.assertIsNone(_normalize_offer(code, 1, exclude_via=("DXB",)))
+        self.assertIsNotNone(_normalize_offer(other, 1, exclude_via=("DXB",)))
+        self.assertIsNotNone(_normalize_offer(silent, 1, exclude_via=("DXB",)))
+        self.assertIsNotNone(_normalize_offer(nonstop, 1, exclude_via=("DXB",)))
+
+    def test_via_and_exclude_via_use_leg_layovers(self) -> None:
+        silent = card(stops="2 stops", price="120 €")
+        ist = get_airport("IST")
+        doh = get_airport("DOH")
+        assert ist is not None and doh is not None
+        with_legs = card(
+            stops="2 stops",
+            price="120 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="08:00",
+                    arrival="22:00",
+                    duration="14 h",
+                    stops="2 stops",
+                    segments=(
+                        RawSegment(origin="JFK", destination="IST"),
+                        RawSegment(origin="IST", destination="DOH"),
+                        RawSegment(origin="DOH", destination="SIN"),
+                    ),
+                    layovers=(
+                        RawLayover(city=ist.city, hours=2.0),
+                        RawLayover(city=doh.city, hours=1.5),
+                    ),
+                ),
+            ),
+        )
+        self.assertIsNotNone(_normalize_offer(with_legs, 2, via=("IST",)))
+        self.assertIsNone(_normalize_offer(with_legs, 2, exclude_via=("IST",)))
+        self.assertIsNone(_normalize_offer(with_legs, 2, via=("DXB",)))
+        self.assertIsNotNone(_normalize_offer(silent, 2, exclude_via=("IST",)))
+
+    def test_parse_via_airports_rejects_unknown_and_overlap(self) -> None:
+        self.assertEqual(parse_via_airports("IST,DXB"), ("IST", "DXB"))
+        with self.assertRaises(ValueError):
+            parse_via_airports("ZZZ")
+        with self.assertRaises(ValueError):
+            parse_via_airports("")
+        query = FlightQuery("JFK", "SIN", date(2026, 11, 3), max_stops=1)
+        with self.assertRaises(ValueError):
+            search_flights((query,), top=1, via=("IST",), exclude_via=("IST",))
 
     def test_duration_sort_orders_by_hours_then_fare(self) -> None:
         slow = FlightOffer(

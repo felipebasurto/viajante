@@ -75,6 +75,8 @@ class McpHandlerTests(unittest.TestCase):
                 max_duration=8,
                 min_layover=1,
                 max_layover=6,
+                via="IST",
+                exclude_via="DXB",
                 baggage_buffer=0,
                 sort="duration",
             )
@@ -86,6 +88,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["max_duration_hours"], 8)
         self.assertEqual(kwargs["min_layover_hours"], 1)
         self.assertEqual(kwargs["max_layover_hours"], 6)
+        self.assertEqual(kwargs["via"], ("IST",))
+        self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["buffer_eur"], 0)
         self.assertEqual(kwargs["sort"], "duration")
 

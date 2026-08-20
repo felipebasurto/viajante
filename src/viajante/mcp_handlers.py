@@ -25,6 +25,7 @@ from viajante.flights import (
     expand_nearby_trips,
     parse_depart_window,
     parse_flight_plan,
+    parse_via_airports,
     search_flights,
 )
 from viajante.hotels import HotelSourceName, search_hotels
@@ -86,6 +87,8 @@ def search_flights_tool(
     max_duration: Optional[float] = None,
     min_layover: Optional[float] = None,
     max_layover: Optional[float] = None,
+    via: Optional[str] = None,
+    exclude_via: Optional[str] = None,
     baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
@@ -124,6 +127,8 @@ def search_flights_tool(
             max_duration_hours=max_duration,
             min_layover_hours=min_layover,
             max_layover_hours=max_layover,
+            via=parse_via_airports(via),
+            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
             buffer_eur=baggage_buffer,
             sort=sort,
             currency=currency,

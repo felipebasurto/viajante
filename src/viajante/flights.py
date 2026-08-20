@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple
 
-from viajante.airports import get_airport, same_city_iata
+from viajante.airports import get_airport, is_known_iata, same_city_iata
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
     GoogleFlightsBlocked,
@@ -670,6 +670,92 @@ def parse_depart_window(text: Optional[str]) -> Optional[Tuple[int, int]]:
     return start_hour * 60, end_hour * 60 + 59
 
 
+def parse_via_airports(text: Optional[str], *, role: str = "via") -> Optional[Tuple[str, ...]]:
+    """Parse comma-separated IATA codes for a via / exclude-via post-filter."""
+    if text is None:
+        return None
+    codes = tuple(part.strip().upper() for part in text.split(",") if part.strip())
+    if not codes:
+        raise ValueError(f"{role} list must not be empty")
+    parsed: list[str] = []
+    for code in codes:
+        if len(code) != 3 or not code.isalpha() or not is_known_iata(code):
+            raise ValueError(f"unknown {role} IATA code: {code!r}")
+        if code not in parsed:
+            parsed.append(code)
+    return tuple(parsed)
+
+
+def _via_aliases(code: str) -> Tuple[str, ...]:
+    aliases = [code.casefold()]
+    airport = get_airport(code)
+    if airport is not None and airport.city:
+        city = airport.city.strip().casefold()
+        if city and city not in aliases:
+            aliases.append(city)
+    return tuple(aliases)
+
+
+def _token_matches_via(token: str, code: str) -> bool:
+    folded = token.strip().casefold()
+    if not folded:
+        return False
+    return folded in _via_aliases(code)
+
+
+def _connection_tokens(raw: RawFlightCard) -> Tuple[str, ...]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: Optional[str]) -> None:
+        if not value:
+            return
+        text = value.strip()
+        if not text:
+            return
+        key = text.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        tokens.append(text)
+
+    add(raw.layover_city)
+    for leg in raw.legs:
+        for layover in leg.layovers:
+            add(layover.city)
+        airports: list[str] = []
+        for segment in leg.segments:
+            if segment.origin:
+                airports.append(segment.origin)
+            if segment.destination:
+                airports.append(segment.destination)
+        if len(airports) >= 3:
+            for code in airports[1:-1]:
+                add(code)
+    return tuple(tokens)
+
+
+def _passes_via_filters(
+    raw: RawFlightCard,
+    *,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
+) -> bool:
+    if not via and not exclude_via:
+        return True
+    tokens = _connection_tokens(raw)
+    if exclude_via and tokens:
+        for code in exclude_via:
+            if any(_token_matches_via(token, code) for token in tokens):
+                return False
+    if via:
+        if not tokens:
+            return False
+        if not any(any(_token_matches_via(token, code) for token in tokens) for code in via):
+            return False
+    return True
+
+
 def _overlay_carrier_filters(
     trips: Sequence[Trip],
     *,
@@ -795,6 +881,8 @@ def _normalize_offer(
     depart_window: Optional[Tuple[int, int]] = None,
     max_duration_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
 ) -> Optional[FlightOffer]:
@@ -809,6 +897,8 @@ def _normalize_offer(
     if not _passes_depart_window(raw, depart_window):
         return None
     if not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
+        return None
+    if not _passes_via_filters(raw, via=via, exclude_via=exclude_via):
         return None
     stops_count = parse_stops_count(raw.stops)
     layover_hours = raw.layover_hours
@@ -1111,6 +1201,8 @@ def _run_search(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
@@ -1134,6 +1226,8 @@ def _run_search(
                         exclude_airlines if exclude_airlines is not None else trip.exclude_airlines
                     ),
                     depart_window=depart_window,
+                    via=via,
+                    exclude_via=exclude_via,
                     bags=trip.bags,
                     carry_on=trip.carry_on,
                 )
@@ -1305,6 +1399,8 @@ def _search_with_source(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
 ) -> SearchReport:
     try:
@@ -1327,6 +1423,8 @@ def _search_with_source(
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             depart_window=depart_window,
+            via=via,
+            exclude_via=exclude_via,
             retry_backoff=retry_backoff,
         )
     finally:
@@ -1349,6 +1447,8 @@ def search_flights(
     alliances: Optional[Sequence[str]] = None,
     exclude_alliances: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
     currency: str = "EUR",
     country: Optional[str] = None,
 ) -> SearchReport:
@@ -1370,6 +1470,12 @@ def search_flights(
         and min_layover_hours > max_layover_hours
     ):
         raise ValueError("min layover must be at or below max layover")
+    via = parse_via_airports(",".join(via), role="via") if via else None
+    exclude_via = (
+        parse_via_airports(",".join(exclude_via), role="exclude-via") if exclude_via else None
+    )
+    if via and exclude_via and set(via) & set(exclude_via):
+        raise ValueError("via and exclude-via must not share a code")
     if sort not in FLIGHT_SORTS:
         raise ValueError(
             "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
@@ -1416,6 +1522,8 @@ def search_flights(
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             depart_window=depart_window,
+            via=via,
+            exclude_via=exclude_via,
         )
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
@@ -1437,6 +1545,8 @@ def search_flights(
                 airlines=airlines,
                 exclude_airlines=exclude_airlines,
                 depart_window=depart_window,
+                via=via,
+                exclude_via=exclude_via,
             )
             merged = list(report.queries)
             for index, detail_result in zip(retry_indexes, detail_report.queries, strict=True):
@@ -1467,6 +1577,8 @@ def search_flights(
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             depart_window=depart_window,
+            via=via,
+            exclude_via=exclude_via,
         )
         backend = "detail"
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))

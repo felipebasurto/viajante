@@ -46,6 +46,7 @@ from viajante.flights import (
     normalize_trip_kind,
     parse_depart_window,
     parse_flight_plan,
+    parse_via_airports,
     search_flights,
     write_report_atomic,
 )
@@ -99,6 +100,7 @@ Examples:
   viajante flights JFK-LHR:2026-09-15 --airlines BA,AA --sort duration
   viajante flights JFK-LHR:2026-09-15 --bags 1 --carry-on --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --max-duration 16 --min-layover 1 --max-layover 8
+  viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep
 """
 
 DATES_EXAMPLES = """\
@@ -190,6 +192,13 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     parse_alliances(args.alliance)
     parse_alliances(args.exclude_alliance)
     parse_depart_window(args.depart_window)
+    parse_via_airports(args.via)
+    parse_via_airports(args.exclude_via, role="exclude-via")
+    if args.via and args.exclude_via:
+        include = parse_via_airports(args.via) or ()
+        exclude = parse_via_airports(args.exclude_via, role="exclude-via") or ()
+        if set(include) & set(exclude):
+            raise ValueError("--via and --exclude-via must not share a code")
     plan = parse_flight_plan(
         args.routes,
         trip=args.trip,
@@ -734,6 +743,8 @@ def _run_flights(args: argparse.Namespace) -> int:
         alliances=parse_alliances(args.alliance),
         exclude_alliances=parse_alliances(args.exclude_alliance),
         depart_window=parse_depart_window(args.depart_window),
+        via=parse_via_airports(args.via),
+        exclude_via=parse_via_airports(args.exclude_via, role="exclude-via"),
         currency=args.currency,
         country=args.country,
     )
@@ -800,6 +811,8 @@ def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
         "alliance": None,
         "exclude_alliance": None,
         "depart_window": None,
+        "via": None,
+        "exclude_via": None,
     }
     for key, value in defaults.items():
         if not hasattr(args, key):
@@ -1331,6 +1344,26 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="HOURS",
         dest="min_layover",
         help="Drop 1-stop offers whose layover is shorter than HOURS",
+    )
+    flights.add_argument(
+        "--via",
+        default=None,
+        metavar="CODES",
+        dest="via",
+        help=(
+            "Keep connecting offers whose parsed layover matches these IATA codes "
+            "(comma-separated). Post-filter only; unknown layover cannot prove a via"
+        ),
+    )
+    flights.add_argument(
+        "--exclude-via",
+        default=None,
+        metavar="CODES",
+        dest="exclude_via",
+        help=(
+            "Drop connecting offers whose parsed layover matches these IATA codes "
+            "(comma-separated). Unknown layover stays"
+        ),
     )
     flights.add_argument(
         "--max-duration",
