@@ -150,15 +150,16 @@ def build_server():
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {"-h", "--help"}:
+        # Help must work without the mcp extra.
+        print(_HELP.strip())
+        return
     try:
         server = build_server()
     except ImportError as exc:
         raise SystemExit(
             "viajante-mcp requires the mcp extra. Install with: uv sync --extra mcp"
         ) from exc
-    if args and args[0] in {"-h", "--help"}:
-        print(_HELP.strip())
-        return
     server.run()
 
 

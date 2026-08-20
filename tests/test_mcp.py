@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import sys
 import threading
+import types
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -159,21 +161,80 @@ class McpHandlerTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
 
 
+class _FakeFastMCP:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.tools: list[str] = []
+
+    def tool(self, *_args: object, **_kwargs: object):
+        def deco(fn: Any) -> Any:
+            self.tools.append(fn.__name__)
+            return fn
+
+        return deco
+
+
+def _sdk_module_names() -> tuple[str, ...]:
+    return ("mcp", "mcp.server", "mcp.server.fastmcp")
+
+
 class McpServerImportTests(unittest.TestCase):
-    def test_build_server_imports_fastmcp(self) -> None:
-        from mcp.server.fastmcp import FastMCP
+    def test_mcp_server_keeps_fastmcp_off_module_import(self) -> None:
+        text = Path("src/viajante/mcp_server.py").read_text(encoding="utf-8")
+        self.assertFalse(text.startswith("from mcp") or text.startswith("import mcp"))
+        self.assertNotIn("\nfrom mcp", text)
+        self.assertNotIn("\nimport mcp", text)
+        self.assertIn("    from mcp.server.fastmcp import FastMCP", text)
 
-        from viajante.mcp_server import build_server, main
+    def test_help_does_not_import_fastmcp(self) -> None:
+        from viajante.mcp_server import main
 
-        server = build_server()
-        self.assertIsInstance(server, FastMCP)
+        for name in _sdk_module_names():
+            self.assertNotIn(name, sys.modules)
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
             main(["--help"])
         help_text = buffer.getvalue()
+        for name in _sdk_module_names():
+            self.assertNotIn(name, sys.modules)
         self.assertIn("viajante-mcp", help_text)
         self.assertIn("search_flights", help_text)
         self.assertIn("stdio", help_text)
+
+    def test_build_server_registers_tools_without_sdk(self) -> None:
+        for name in _sdk_module_names():
+            self.assertNotIn(name, sys.modules)
+        fake_mcp = types.ModuleType("mcp")
+        fake_server = types.ModuleType("mcp.server")
+        fake_fastmcp = types.ModuleType("mcp.server.fastmcp")
+        fake_fastmcp.FastMCP = _FakeFastMCP
+        fake_mcp.server = fake_server
+        fake_server.fastmcp = fake_fastmcp
+        sys.modules["mcp"] = fake_mcp
+        sys.modules["mcp.server"] = fake_server
+        sys.modules["mcp.server.fastmcp"] = fake_fastmcp
+
+        def _drop_fakes() -> None:
+            for name in _sdk_module_names():
+                sys.modules.pop(name, None)
+
+        self.addCleanup(_drop_fakes)
+
+        from viajante.mcp_server import build_server
+
+        server = build_server()
+        self.assertIsInstance(server, _FakeFastMCP)
+        self.assertEqual(server.name, "viajante")
+        self.assertEqual(
+            server.tools,
+            [
+                "search_flights",
+                "search_dates",
+                "search_explore",
+                "search_hotels",
+                "lookup_airports",
+            ],
+        )
 
 
 if __name__ == "__main__":
