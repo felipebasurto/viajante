@@ -142,6 +142,26 @@ class JsonContractTests(unittest.TestCase):
         query = self.data["queries"][0]["query"]
         self.assertNotIn("bags", query)
         self.assertNotIn("carry_on", query)
+        self.assertNotIn("children", query)
+        self.assertNotIn("infants_in_seat", query)
+        self.assertNotIn("infants_on_lap", query)
+
+    def test_occupancy_counts_are_extra_query_keys(self) -> None:
+        query = FlightQuery(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        data = query.to_dict()
+        self.assertEqual(data["adults"], 2)
+        self.assertEqual(data["children"], 1)
+        self.assertEqual(data["infants_in_seat"], 1)
+        self.assertEqual(data["infants_on_lap"], 1)
+        self.assertEqual(set(data), QUERY_KEYS | {"children", "infants_in_seat", "infants_on_lap"})
 
     def test_parsed_bag_counts_are_extra_offer_keys(self) -> None:
         offer = FlightOffer(

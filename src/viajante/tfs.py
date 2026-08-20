@@ -31,6 +31,9 @@ _SEAT: Mapping[FlightCabin, int] = {
 _TRIP_ONE_WAY = 2
 _TRIP_ROUND_TRIP = 1
 _PASSENGER_ADULT = 1
+_PASSENGER_CHILD = 2
+_PASSENGER_INFANT_IN_SEAT = 3
+_PASSENGER_INFANT_ON_LAP = 4
 
 
 def encode_tfs(trip: Trip) -> str:
@@ -40,6 +43,9 @@ def encode_tfs(trip: Trip) -> str:
     return _encode_legs(
         trip.legs,
         adults=trip.adults,
+        children=trip.children,
+        infants_in_seat=trip.infants_in_seat,
+        infants_on_lap=trip.infants_on_lap,
         cabin=trip.cabin,
         trip_kind=_tfs_trip_kind(trip),
     )
@@ -105,8 +111,16 @@ def _encode_legs(
     adults: int,
     cabin: FlightCabin,
     trip_kind: int,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> str:
-    passengers = (_PASSENGER_ADULT,) * adults
+    passengers = (
+        (_PASSENGER_ADULT,) * adults
+        + (_PASSENGER_CHILD,) * children
+        + (_PASSENGER_INFANT_IN_SEAT,) * infants_in_seat
+        + (_PASSENGER_INFANT_ON_LAP,) * infants_on_lap
+    )
     flights = b"".join(_len_delim(_INFO_DATA, _flight_data(leg)) for leg in legs)
     payload = (
         flights

@@ -50,6 +50,11 @@ def build_server():
         sort: str = "ranked",
         bags: int | None = None,
         carry_on: int | None = None,
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
+        currency: str = "EUR",
+        country: str | None = None,
     ) -> dict:
         return dict(
             search_flights_tool(
@@ -70,6 +75,11 @@ def build_server():
                 sort=sort,  # type: ignore[arg-type]
                 bags=bags,
                 carry_on=carry_on,
+                children=children,
+                infants_in_seat=infants_in_seat,
+                infants_on_lap=infants_on_lap,
+                currency=currency,
+                country=country,
             )
         )
 

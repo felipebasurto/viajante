@@ -20,7 +20,7 @@ After `uv sync` and `uv run playwright install chromium`, the entry point is ava
 ## Commands
 
 ```bash
-uv run viajante flights ORIGIN-DEST:YYYY-MM-DD[,YYYY-MM-DD...] [--trip {one-way,rt,multi}] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--bags N] [--carry-on] [--top N] [--baggage-buffer EUR] [--sort {ranked,fare,price,duration,departure,arrival}] [--airlines CODES] [--exclude-airlines CODES] [--depart-window START-END] [--fetch {auto,sweep,detail}] [--max-layover HOURS] [--min-layover HOURS] [--max-duration HOURS] [--save FILE]
+uv run viajante flights ORIGIN-DEST:YYYY-MM-DD[,YYYY-MM-DD...] [--trip {one-way,rt,multi}] [--max-stops {0,1,2}] [--adults N] [--children N] [--infants-in-seat N] [--infants-on-lap N] [--cabin CABIN] [--currency CODE] [--country CC] [--bags N] [--carry-on] [--top N] [--baggage-buffer EUR] [--sort {ranked,fare,price,duration,departure,arrival}] [--airlines CODES] [--exclude-airlines CODES] [--depart-window START-END] [--fetch {auto,sweep,detail}] [--max-layover HOURS] [--min-layover HOURS] [--max-duration HOURS] [--save FILE]
 uv run viajante dates ORIGIN-DEST --from YYYY-MM-DD --to YYYY-MM-DD [--trip {one-way,rt}] [--nights N] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--fetch {auto,sweep,detail}] [--save FILE]
 uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [--top N] [--adults N] [--cabin CABIN] [--max-stops {0,1}] [--save FILE]
 uv run viajante airports QUERY

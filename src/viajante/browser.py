@@ -25,6 +25,7 @@ class BrowserSessionConfig:
     locale: str
     html_lang: str
     currency: str = "EUR"
+    country: Optional[str] = None
     viewport: Optional[Mapping[str, int]] = None
     user_agent: Optional[str] = None
     blocked_resource_types: Optional[frozenset[str]] = None

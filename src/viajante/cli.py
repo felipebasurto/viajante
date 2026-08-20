@@ -59,6 +59,8 @@ from viajante.models import (
     QuerySuccess,
     RoundTrip,
     Trip,
+    normalize_country,
+    normalize_currency,
 )
 from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
 
@@ -125,6 +127,16 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         raise ValueError("--baggage-buffer must not be negative")
     if args.adults < 1:
         raise ValueError("--adults must be at least 1")
+    if args.children < 0:
+        raise ValueError("--children must not be negative")
+    if args.infants_in_seat < 0:
+        raise ValueError("--infants-in-seat must not be negative")
+    if args.infants_on_lap < 0:
+        raise ValueError("--infants-on-lap must not be negative")
+    if args.infants_on_lap > args.adults:
+        raise ValueError("--infants-on-lap cannot exceed --adults")
+    args.currency = normalize_currency(args.currency)
+    args.country = normalize_country(args.country)
     if args.bags is not None and args.bags < 0:
         raise ValueError("--bags must not be negative")
     carry_on = 1 if args.carry_on else None
@@ -148,6 +160,9 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         trip=args.trip,
         max_stops=args.max_stops,
         adults=args.adults,
+        children=args.children,
+        infants_in_seat=args.infants_in_seat,
+        infants_on_lap=args.infants_on_lap,
         cabin=args.cabin,
         bags=args.bags,
         carry_on=carry_on,
@@ -605,6 +620,8 @@ def _run_flights(args: argparse.Namespace) -> int:
         airlines=parse_airline_codes(args.airlines),
         exclude_airlines=parse_airline_codes(args.exclude_airlines),
         depart_window=parse_depart_window(args.depart_window),
+        currency=args.currency,
+        country=args.country,
     )
     _print_report(report, sort=args.sort)
 
@@ -852,10 +869,42 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Number of adults (default 1)",
     )
     flights.add_argument(
+        "--children",
+        type=int,
+        default=0,
+        help="Children aged 2-11 (default 0)",
+    )
+    flights.add_argument(
+        "--infants-in-seat",
+        type=int,
+        default=0,
+        dest="infants_in_seat",
+        help="Infants in their own seat (default 0)",
+    )
+    flights.add_argument(
+        "--infants-on-lap",
+        type=int,
+        default=0,
+        dest="infants_on_lap",
+        help="Infants on lap (default 0)",
+    )
+    flights.add_argument(
         "--cabin",
         default="economy",
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
+    )
+    flights.add_argument(
+        "--currency",
+        default="EUR",
+        metavar="CODE",
+        help="ISO 4217 currency for Google params (default EUR)",
+    )
+    flights.add_argument(
+        "--country",
+        default=None,
+        metavar="CC",
+        help="ISO country for Google gl (omit to leave unset; not a home-hub default)",
     )
     flights.add_argument(
         "--bags",

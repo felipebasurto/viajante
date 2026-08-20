@@ -212,7 +212,7 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
 }
 ```
 
-A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
+A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
 
 ## CLI reference
 
@@ -223,7 +223,12 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--trip` | `one-way` | `one-way`, `rt` / `round-trip`, or `multi`. `rt` and `multi` POST one package. |
 | `--max-stops` | `1` | `0` direct only, `1` one stop, `2` two or fewer. |
 | `--adults` | `1` | Adults on the search. |
+| `--children` | `0` | Children aged 2–11. Omitted from JSON while 0. |
+| `--infants-in-seat` | `0` | Infants with their own seat. Omitted from JSON while 0. |
+| `--infants-on-lap` | `0` | Infants on lap (cannot exceed `--adults`). Omitted from JSON while 0. |
 | `--cabin` | `economy` | `economy`, `premium-economy`, `business`, or `first`. |
+| `--currency` | `EUR` | ISO 4217 code sent as Google `curr`. |
+| `--country` | unset | ISO country sent as Google `gl`. Omitted when unset; not a home-hub default. |
 | `--bags` | unset | Checked bags on the shopping request. Omit to leave the slot empty. |
 | `--carry-on` | unset | Ask the shopping request for one carry-on. Omit to leave the slot empty. |
 | `--top` | `8` | Offers kept per query after ranking and deduplication. |

@@ -33,6 +33,26 @@ def _require_adults(adults: int) -> None:
         raise ValueError("adults must be at least 1")
 
 
+def _require_non_negative(value: int, *, role: str) -> None:
+    if value < 0:
+        raise ValueError(f"{role} must not be negative")
+
+
+def _require_occupancy(
+    *,
+    adults: int,
+    children: int,
+    infants_in_seat: int,
+    infants_on_lap: int,
+) -> None:
+    _require_adults(adults)
+    _require_non_negative(children, role="children")
+    _require_non_negative(infants_in_seat, role="infants_in_seat")
+    _require_non_negative(infants_on_lap, role="infants_on_lap")
+    if infants_on_lap > adults:
+        raise ValueError("infants_on_lap cannot exceed adults")
+
+
 def _require_cabin(cabin: FlightCabin) -> None:
     if cabin not in _CABINS:
         raise ValueError(f"invalid cabin: {cabin!r}")
@@ -52,6 +72,39 @@ def _optional_bag_fields(bags: Optional[int], carry_on: Optional[int]) -> dict[s
     if carry_on is not None:
         payload["carry_on"] = carry_on
     return payload
+
+
+def _optional_occupancy_fields(
+    children: int,
+    infants_in_seat: int,
+    infants_on_lap: int,
+) -> dict[str, int]:
+    payload: dict[str, int] = {}
+    if children:
+        payload["children"] = children
+    if infants_in_seat:
+        payload["infants_in_seat"] = infants_in_seat
+    if infants_on_lap:
+        payload["infants_on_lap"] = infants_on_lap
+    return payload
+
+
+def normalize_currency(value: str) -> str:
+    text = value.strip().upper()
+    if len(text) != 3 or not text.isalpha():
+        raise ValueError(f"invalid currency code: {value!r}")
+    return text
+
+
+def normalize_country(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = value.strip().upper()
+    if not text:
+        return None
+    if len(text) != 2 or not text.isalpha():
+        raise ValueError(f"invalid country code: {value!r}")
+    return text
 
 
 @dataclass(frozen=True)
@@ -79,6 +132,9 @@ class FlightQuery:
     departure_date: date
     max_stops: int = 1
     adults: int = 1
+    children: int = 0
+    infants_in_seat: int = 0
+    infants_on_lap: int = 0
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
@@ -88,7 +144,12 @@ class FlightQuery:
         destination = _normalize_iata(self.destination, role="destination")
         if self.max_stops not in (0, 1, 2):
             raise ValueError("max_stops must be 0, 1, or 2")
-        _require_adults(self.adults)
+        _require_occupancy(
+            adults=self.adults,
+            children=self.children,
+            infants_in_seat=self.infants_in_seat,
+            infants_on_lap=self.infants_on_lap,
+        )
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
@@ -116,6 +177,9 @@ class FlightQuery:
             "adults": self.adults,
             "cabin": self.cabin,
         }
+        payload.update(
+            _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
+        )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
         return payload
 
@@ -128,6 +192,9 @@ class RoundTrip:
     return_date: date
     max_stops: int = 1
     adults: int = 1
+    children: int = 0
+    infants_in_seat: int = 0
+    infants_on_lap: int = 0
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
@@ -141,7 +208,12 @@ class RoundTrip:
             raise ValueError("return_date must be after departure_date")
         if self.max_stops not in (0, 1, 2):
             raise ValueError("max_stops must be 0, 1, or 2")
-        _require_adults(self.adults)
+        _require_occupancy(
+            adults=self.adults,
+            children=self.children,
+            infants_in_seat=self.infants_in_seat,
+            infants_on_lap=self.infants_on_lap,
+        )
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
@@ -159,6 +231,9 @@ class RoundTrip:
             "adults": self.adults,
             "cabin": self.cabin,
         }
+        payload.update(
+            _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
+        )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
         return payload
 
@@ -174,6 +249,9 @@ class RoundTrip:
 class MultiCity:
     legs: Tuple[FlightLeg, ...]
     adults: int = 1
+    children: int = 0
+    infants_in_seat: int = 0
+    infants_on_lap: int = 0
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
@@ -184,7 +262,12 @@ class MultiCity:
         dates = [leg.departure_date for leg in self.legs]
         if dates != sorted(dates):
             raise ValueError("multi-city dates must be non-decreasing")
-        _require_adults(self.adults)
+        _require_occupancy(
+            adults=self.adults,
+            children=self.children,
+            infants_in_seat=self.infants_in_seat,
+            infants_on_lap=self.infants_on_lap,
+        )
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
@@ -208,6 +291,9 @@ class MultiCity:
                 for leg in self.legs
             ],
         }
+        payload.update(
+            _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
+        )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
         return payload
 

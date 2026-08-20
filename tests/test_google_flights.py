@@ -152,6 +152,23 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertEqual(encoded, GOLDEN_TFS_TWO_STOP)
         self.assertIn(b"\x28\x02", base64.b64decode(encoded))
 
+    def test_child_and_lap_infant_use_distinct_passenger_types(self) -> None:
+        encoded = _encode_legs(
+            (FlightLeg("MAD", "BCN", date(2026, 12, 4), max_stops=0),),
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+            cabin="economy",
+            trip_kind=2,
+        )
+        packed = base64.b64decode(encoded)
+        # Field 8 packed enums: adult=1, child=2, infant in seat=3, infant on lap=4.
+        self.assertIn(b"\x42\x05\x01\x01\x02\x03\x04", packed)
+        two_adults = base64.b64decode(GOLDEN_TFS_TWO_ADULTS)
+        self.assertIn(b"\x42\x02\x01\x01", two_adults)
+        self.assertNotIn(b"\x02\x03\x04", two_adults)
+
     def test_round_trip_repeats_flight_data_and_sets_trip_kind(self) -> None:
         trip = RoundTrip("MAD", "OPO", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
         self.assertEqual(encode_tfs(trip), GOLDEN_TFS_ROUND_TRIP)
@@ -175,6 +192,18 @@ class QueryEncodingTests(unittest.TestCase):
         )
         self.assertEqual(params["hl"], "en")
         self.assertEqual(params["curr"], "USD")
+        self.assertNotIn("gl", params)
+
+    def test_country_arg_reaches_url_params(self) -> None:
+        params = build_search_params(
+            FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0),
+            html_lang="en",
+            currency="GBP",
+            country="GB",
+        )
+        self.assertEqual(params["hl"], "en")
+        self.assertEqual(params["curr"], "GBP")
+        self.assertEqual(params["gl"], "GB")
 
 
 class OwnedCardParserTests(unittest.TestCase):
@@ -454,6 +483,21 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(inner[1][6], [2, 0, 0, 0])
         self.assertIsNone(inner[1][7])
 
+    def test_occupancy_slot_is_adults_children_seat_lap(self) -> None:
+        query = FlightQuery(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        inner = build_shopping_inner(query)
+        self.assertEqual(inner[1][6], [2, 1, 1, 1])
+        default = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1)))
+        self.assertEqual(default[1][6], [1, 0, 0, 0])
+
     def test_bags_pair_fills_constraints_index_10(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=1, carry_on=1)
         inner = build_shopping_inner(query)
@@ -524,12 +568,21 @@ class ShoppingRpcTests(unittest.TestCase):
         params = parse_qs(parsed.query)
         self.assertEqual(params["hl"], ["en"])
         self.assertEqual(params["curr"], ["EUR"])
+        self.assertNotIn("gl", params)
         self.assertEqual(params["rt"], ["c"])
         self.assertTrue(body.startswith("f.req="))
         envelope = json.loads(unquote(body[len("f.req=") :]))
         self.assertIsNone(envelope[0])
         inner = json.loads(envelope[1])
         self.assertEqual(inner[1][13][0][1], [[["OPO", 0]]])
+
+    def test_currency_and_country_reach_rpc_params(self) -> None:
+        query = FlightQuery("MAD", "OPO", date(2026, 10, 9), max_stops=0)
+        url, _body = build_shopping_request(query, html_lang="en", currency="USD", country="US")
+        params = parse_qs(urlparse(url).query)
+        self.assertEqual(params["hl"], ["en"])
+        self.assertEqual(params["curr"], ["USD"])
+        self.assertEqual(params["gl"], ["US"])
 
     def test_journey_list_keeps_outbound_clocks_and_package_price(self) -> None:
         outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]

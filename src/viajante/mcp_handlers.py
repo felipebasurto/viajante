@@ -78,12 +78,20 @@ def search_flights_tool(
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+    currency: str = "EUR",
+    country: Optional[str] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         routes,
         trip=trip,
         max_stops=max_stops,
         adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
@@ -103,6 +111,8 @@ def search_flights_tool(
             max_layover_hours=max_layover,
             buffer_eur=baggage_buffer,
             sort=sort,
+            currency=currency,
+            country=country,
         )
     )
     return dict(report.to_dict())

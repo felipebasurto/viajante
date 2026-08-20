@@ -107,6 +107,26 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(trip.bags, 1)
         self.assertEqual(trip.carry_on, 1)
 
+    def test_search_flights_accepts_occupancy_and_locale_params(self) -> None:
+        fake = _report(queries=[], currency="USD")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool(
+                [f"MAD-BCN:{FUTURE}"],
+                adults=2,
+                children=1,
+                infants_in_seat=1,
+                infants_on_lap=1,
+                currency="usd",
+                country="us",
+            )
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.adults, 2)
+        self.assertEqual(trip.children, 1)
+        self.assertEqual(trip.infants_in_seat, 1)
+        self.assertEqual(trip.infants_on_lap, 1)
+        self.assertEqual(search.call_args.kwargs["currency"], "usd")
+        self.assertEqual(search.call_args.kwargs["country"], "us")
+
     def test_past_flight_date_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_flights") as search:
             with self.assertRaises(ValueError):

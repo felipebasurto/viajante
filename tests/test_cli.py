@@ -201,6 +201,51 @@ class CliTests(unittest.TestCase):
         self.assertEqual(queries[0].adults, 2)
         self.assertEqual(queries[0].cabin, "business")
 
+    def test_children_and_infants_reach_parsed_queries(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                code = main(
+                    [
+                        "flights",
+                        ROUTE,
+                        "--adults",
+                        "2",
+                        "--children",
+                        "1",
+                        "--infants-in-seat",
+                        "1",
+                        "--infants-on-lap",
+                        "1",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        queries = search.call_args.args[0]
+        self.assertEqual(queries[0].adults, 2)
+        self.assertEqual(queries[0].children, 1)
+        self.assertEqual(queries[0].infants_in_seat, 1)
+        self.assertEqual(queries[0].infants_on_lap, 1)
+
+    def test_currency_and_country_reach_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                code = main(["flights", ROUTE, "--currency", "usd", "--country", "us"])
+        self.assertEqual(code, 0)
+        self.assertEqual(search.call_args.kwargs["currency"], "USD")
+        self.assertEqual(search.call_args.kwargs["country"], "US")
+
+    def test_lap_infants_over_adults_is_rejected_before_searching(self) -> None:
+        with patch("viajante.cli.search_flights") as search:
+            self.assertEqual(
+                main(["flights", ROUTE, "--adults", "1", "--infants-on-lap", "2"]),
+                1,
+            )
+            search.assert_not_called()
+
+    def test_invalid_currency_is_rejected_before_searching(self) -> None:
+        with patch("viajante.cli.search_flights") as search:
+            self.assertEqual(main(["flights", ROUTE, "--currency", "euro"]), 1)
+            search.assert_not_called()
+
     def test_bags_flags_reach_parsed_queries(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):

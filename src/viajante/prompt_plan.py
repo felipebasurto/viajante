@@ -278,8 +278,9 @@ _MONTHS = {
 _IATA_PAIR = re.compile(r"(?<![A-Za-z0-9])([A-Z]{3})-([A-Z]{3})(?![A-Za-z0-9])")
 _ISO_DATE = re.compile(r"(?<![0-9])(20\d{2}-\d{2}-\d{2})(?![0-9])")
 _FLAG = re.compile(
-    r"--(trip|max-stops|adults|cabin|rooms|max-layover|min-layover|max-duration|"
-    r"from|days|nights|fetch|sort|depart-window)\s+(\S+)",
+    r"--(trip|max-stops|adults|children|infants-in-seat|infants-on-lap|cabin|rooms|"
+    r"max-layover|min-layover|max-duration|from|days|nights|fetch|sort|"
+    r"depart-window|currency|country)\s+(\S+)",
     re.IGNORECASE,
 )
 _SPANISH_DATE = re.compile(
@@ -399,6 +400,10 @@ _ESCALAS_SANAS = re.compile(r"escalas sanas")
 _NONSTOP = re.compile(r"\b(nonstop|directos?|sin escalas)\b")
 _ADULTS_ES = re.compile(r"(\d+|ocho|eight|dos|two|tres|three|cuatro|four)\s+adultos")
 _ADULTS_EN = re.compile(r"(\d+)\s+adults?")
+_CHILDREN_EN = re.compile(r"(\d+)\s+(?:children|child|kids|kid)\b")
+_INFANTS_IN_SEAT_EN = re.compile(r"(\d+)\s+infants?\s+in[- ]seats?")
+_INFANTS_ON_LAP_EN = re.compile(r"(\d+)\s+infants?\s+on[- ]laps?")
+_INFANTS_EN = re.compile(r"(\d+)\s+infants?\b(?!\s+in[- ]seats?)(?!\s+on[- ]laps?)")
 _ROOMS_ES_PLURAL = re.compile(r"(\d+|una|un|one|dos|two)\s+habitaciones")
 _ROOMS_ES_SINGULAR = re.compile(r"(\d+|una|un|one)\s+habitaci[oó]n")
 _ROOMS_EN = re.compile(r"(\d+)\s+rooms?")
@@ -547,6 +552,9 @@ class PromptPlan:
     trip: Optional[str] = None
     max_stops: Optional[int] = None
     adults: Optional[int] = None
+    children: Optional[int] = None
+    infants_in_seat: Optional[int] = None
+    infants_on_lap: Optional[int] = None
     cabin: Optional[str] = None
     rooms: Optional[int] = None
     days: Optional[int] = None
@@ -599,6 +607,9 @@ class PromptPlan:
             "trip": self.trip,
             "max_stops": self.max_stops,
             "adults": self.adults,
+            "children": self.children,
+            "infants_in_seat": self.infants_in_seat,
+            "infants_on_lap": self.infants_on_lap,
             "cabin": self.cabin,
             "rooms": self.rooms,
             "days": self.days,
@@ -1245,6 +1256,9 @@ def plan_to_trips(plan: PromptPlan) -> FlightPlan:
         trip=plan.trip or "one-way",
         max_stops=plan.max_stops if plan.max_stops is not None else 1,
         adults=plan.adults if plan.adults is not None else 1,
+        children=plan.children if plan.children is not None else 0,
+        infants_in_seat=plan.infants_in_seat if plan.infants_in_seat is not None else 0,
+        infants_on_lap=plan.infants_on_lap if plan.infants_on_lap is not None else 0,
         cabin=cabin,
     )
 
@@ -1336,6 +1350,26 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         adults = int(flags["adults"])
     else:
         adults = _int_after((_ADULTS_ES, _ADULTS_EN), folded)
+
+    children = None
+    if "children" in flags:
+        children = int(flags["children"])
+    else:
+        children = _int_after((_CHILDREN_EN,), folded)
+
+    infants_in_seat = None
+    if "infants-in-seat" in flags:
+        infants_in_seat = int(flags["infants-in-seat"])
+    else:
+        infants_in_seat = _int_after((_INFANTS_IN_SEAT_EN,), folded)
+
+    infants_on_lap = None
+    if "infants-on-lap" in flags:
+        infants_on_lap = int(flags["infants-on-lap"])
+    else:
+        infants_on_lap = _int_after((_INFANTS_ON_LAP_EN,), folded)
+        if infants_on_lap is None:
+            infants_on_lap = _int_after((_INFANTS_EN,), folded)
 
     rooms = None
     if "rooms" in flags:
@@ -1677,6 +1711,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             check_in=check_in,
             check_out=check_out,
             adults=adults,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
             rooms=rooms,
             hotels=True,
             refuse=all_refuse,
@@ -1692,6 +1729,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             date_to=date_to,
             days=days,
             adults=adults,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
             cabin=cabin,
             date_strategy=date_strategy,
             max_stops=max_stops,
@@ -1716,6 +1756,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             trip=date_trip,
             weekday=weekday,
             adults=adults,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
             cabin=cabin,
             max_stops=max_stops,
             days=nights_stay if nights_stay is not None else days,
@@ -1749,6 +1792,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         trip=trip,
         max_stops=max_stops,
         adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
         cabin=cabin,
         rooms=rooms if plan_hotels else None,
         days=days,

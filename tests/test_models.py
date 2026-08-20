@@ -24,6 +24,8 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    normalize_country,
+    normalize_currency,
 )
 
 
@@ -45,6 +47,36 @@ class ModelTests(unittest.TestCase):
             FlightQuery("XXX", "BCN", date(2026, 9, 1))
         with self.assertRaises(ValueError):
             FlightQuery("MAD", "XXX", date(2026, 9, 1))
+        with self.assertRaises(ValueError):
+            FlightQuery("MAD", "BCN", date(2026, 9, 1), children=-1)
+        with self.assertRaises(ValueError):
+            FlightQuery("MAD", "BCN", date(2026, 9, 1), infants_on_lap=2)
+
+    def test_flight_query_occupancy_is_omitted_until_nonzero(self) -> None:
+        data = FlightQuery(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            adults=2,
+            children=1,
+            infants_in_seat=0,
+            infants_on_lap=1,
+        ).to_dict()
+        self.assertEqual(data["adults"], 2)
+        self.assertEqual(data["children"], 1)
+        self.assertEqual(data["infants_on_lap"], 1)
+        self.assertNotIn("infants_in_seat", data)
+        self.assertNotIn("children", FlightQuery("MAD", "BCN", date(2026, 9, 1)).to_dict())
+
+    def test_currency_and_country_codes(self) -> None:
+        self.assertEqual(normalize_currency("eur"), "EUR")
+        self.assertEqual(normalize_country("us"), "US")
+        self.assertIsNone(normalize_country(None))
+        self.assertIsNone(normalize_country("  "))
+        with self.assertRaises(ValueError):
+            normalize_currency("euro")
+        with self.assertRaises(ValueError):
+            normalize_country("USA")
 
     def test_flight_query_legs_are_a_single_owned_leg(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=0)

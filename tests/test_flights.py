@@ -511,6 +511,8 @@ class FlightsOrchestrationTests(unittest.TestCase):
             ["YVR-LHR:2026-10-09", "LGW-YVR:2026-10-13"],
             trip="rt",
             max_stops=1,
+            adults=2,
+            children=1,
         )
         self.assertIsInstance(plan, MultiCity)
         assert isinstance(plan, MultiCity)
@@ -521,6 +523,8 @@ class FlightsOrchestrationTests(unittest.TestCase):
                 ("LGW", "YVR", date(2026, 10, 13)),
             ],
         )
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.children, 1)
         self.assertEqual(plan_unit_count(plan), 1)
         mirrored = parse_flight_plan(
             ["YVR-LHR:2026-10-09:2026-10-13"],
@@ -531,6 +535,23 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(mirrored, RoundTrip)
         self.assertEqual(mirrored.destination, "LHR")
         self.assertEqual(mirrored.legs[1].origin, "LHR")
+
+    def test_parse_flight_plan_occupancy(self) -> None:
+        plan = parse_flight_plan(
+            ["MAD-OPO:2026-10-09:2026-10-12"],
+            trip="rt",
+            max_stops=1,
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        self.assertIsInstance(plan, RoundTrip)
+        assert isinstance(plan, RoundTrip)
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.children, 1)
+        self.assertEqual(plan.infants_in_seat, 1)
+        self.assertEqual(plan.infants_on_lap, 1)
 
     def test_parse_flight_plan_multi(self) -> None:
         plan = parse_flight_plan(

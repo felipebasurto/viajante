@@ -152,6 +152,7 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertEqual(one.rooms, 1)
         self.assertEqual(two.rooms, 2)
         self.assertNotEqual(one.rooms, two.rooms)
+        self.assertIsNone(one.children)
 
     def test_open_jaw_is_multi(self) -> None:
         plan = plan_prompt(
@@ -508,6 +509,37 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(plan.destination, "NRT")
         self.assertEqual(plan.locale, "en")
         self.assertNotIn("€", plan.notes)
+
+    def test_two_adults_one_child_keeps_english_iata(self) -> None:
+        plan = plan_prompt("Flights BOS-LHR on 2026-09-01, 2 adults 1 child")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.children, 1)
+        self.assertEqual(plan.locale, "en")
+        parsed = parse_flight_plan(
+            plan.route_specs,
+            trip=plan.trip or "one-way",
+            max_stops=plan.max_stops if plan.max_stops is not None else 1,
+            adults=plan.adults or 1,
+            children=plan.children or 0,
+        )
+        self.assertEqual(parsed[0].origin, "BOS")
+        self.assertEqual(parsed[0].destination, "LHR")
+        self.assertEqual(parsed[0].adults, 2)
+        self.assertEqual(parsed[0].children, 1)
+
+    def test_infant_in_seat_vs_on_lap(self) -> None:
+        seated = plan_prompt("Flights BOS-LHR on 2026-09-01, 2 adults, 1 infant in seat")
+        self.assertEqual(seated.infants_in_seat, 1)
+        self.assertIsNone(seated.infants_on_lap)
+        lap = plan_prompt("Flights BOS-LHR on 2026-09-01, 2 adults, 1 infant on lap")
+        self.assertEqual(lap.infants_on_lap, 1)
+        self.assertIsNone(lap.infants_in_seat)
+        bare = plan_prompt("Flights BOS-LHR on 2026-09-01, 1 adult, 1 infant")
+        self.assertEqual(bare.infants_on_lap, 1)
+        self.assertIsNone(bare.infants_in_seat)
 
     def test_overnight_ist_required_and_forbidden_keeps_both(self) -> None:
         plan = plan_prompt(

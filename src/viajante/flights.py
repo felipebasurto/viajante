@@ -34,6 +34,8 @@ from viajante.models import (
     SearchErrorCode,
     SearchReport,
     Trip,
+    normalize_country,
+    normalize_currency,
 )
 from viajante.orchestration import (
     MAX_ATTEMPTS,
@@ -221,9 +223,21 @@ def parse_route_specs(
     cabin: FlightCabin = "economy",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> Tuple[FlightQuery, ...]:
     if max_stops not in (0, 1, 2):
         raise ValueError("max_stops must be 0, 1, or 2")
+    occupancy = {
+        "adults": adults,
+        "children": children,
+        "infants_in_seat": infants_in_seat,
+        "infants_on_lap": infants_on_lap,
+        "cabin": cabin,
+        "bags": bags,
+        "carry_on": carry_on,
+    }
     queries: list[FlightQuery] = []
     for spec in specs:
         try:
@@ -252,10 +266,7 @@ def parse_route_specs(
                     destination=destination,
                     departure_date=outbound,
                     max_stops=max_stops,
-                    adults=adults,
-                    cabin=cabin,
-                    bags=bags,
-                    carry_on=carry_on,
+                    **occupancy,
                 )
             )
             queries.append(
@@ -264,10 +275,7 @@ def parse_route_specs(
                     destination=origin,
                     departure_date=inbound,
                     max_stops=max_stops,
-                    adults=adults,
-                    cabin=cabin,
-                    bags=bags,
-                    carry_on=carry_on,
+                    **occupancy,
                 )
             )
             continue
@@ -285,10 +293,7 @@ def parse_route_specs(
                     destination=destination,
                     departure_date=departure_date,
                     max_stops=max_stops,
-                    adults=adults,
-                    cabin=cabin,
-                    bags=bags,
-                    carry_on=carry_on,
+                    **occupancy,
                 )
             )
         if not any(part.strip() for part in stripped.split(",")):
@@ -313,33 +318,36 @@ def parse_flight_plan(
     cabin: FlightCabin = "economy",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> FlightPlan:
     kind = normalize_trip_kind(trip)
+    occupancy = {
+        "adults": adults,
+        "children": children,
+        "infants_in_seat": infants_in_seat,
+        "infants_on_lap": infants_on_lap,
+        "cabin": cabin,
+        "bags": bags,
+        "carry_on": carry_on,
+    }
     if kind == "one-way":
         return parse_route_specs(
             specs,
             max_stops=max_stops,
-            adults=adults,
-            cabin=cabin,
-            bags=bags,
-            carry_on=carry_on,
+            **occupancy,
         )
     if kind == "rt":
         return _parse_round_trip_plan(
             specs,
             max_stops=max_stops,
-            adults=adults,
-            cabin=cabin,
-            bags=bags,
-            carry_on=carry_on,
+            **occupancy,
         )
     return _parse_multi_city_plan(
         specs,
         max_stops=max_stops,
-        adults=adults,
-        cabin=cabin,
-        bags=bags,
-        carry_on=carry_on,
+        **occupancy,
     )
 
 
@@ -362,6 +370,9 @@ def _parse_round_trip_plan(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> RoundTrip | MultiCity:
     if len(specs) == 2:
         return _parse_open_jaw_rt_package(
@@ -371,6 +382,9 @@ def _parse_round_trip_plan(
             cabin=cabin,
             bags=bags,
             carry_on=carry_on,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
         )
     if len(specs) != 1:
         raise ValueError(f"--trip rt expects exactly one {RT_GRAMMAR}")
@@ -390,6 +404,9 @@ def _parse_round_trip_plan(
         inbound,
         max_stops=max_stops,
         adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
@@ -404,6 +421,9 @@ def _parse_open_jaw_rt_package(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> MultiCity:
     """Two DATE legs under --trip rt are one open-jaw package, not a mirrored RT.
 
@@ -418,6 +438,9 @@ def _parse_open_jaw_rt_package(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
     )
 
 
@@ -429,6 +452,9 @@ def _parse_multi_city_plan(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> MultiCity:
     if not 2 <= len(specs) <= 6:
         raise ValueError(f"--trip multi expects 2 to 6 {MULTI_GRAMMAR} routes")
@@ -449,7 +475,16 @@ def _parse_multi_city_plan(
                 max_stops=max_stops,
             )
         )
-    return MultiCity(tuple(legs), adults=adults, cabin=cabin, bags=bags, carry_on=carry_on)
+    return MultiCity(
+        tuple(legs),
+        adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+    )
 
 
 _AIRLINE_STRIP = re.compile(r"[^a-z0-9 ]+")
@@ -813,15 +848,27 @@ def _typical_window(start: date) -> tuple[date, date]:
     return start, end
 
 
-def _typical_cache_key(query: FlightQuery) -> tuple[str, str, date, int, int, str]:
+def _typical_cache_key(
+    query: FlightQuery,
+) -> tuple[str, str, date, int, int, int, int, int, str]:
     start, _end = _typical_window(query.departure_date)
-    return (query.origin, query.destination, start, query.max_stops, query.adults, query.cabin)
+    return (
+        query.origin,
+        query.destination,
+        start,
+        query.max_stops,
+        query.adults,
+        query.children,
+        query.infants_in_seat,
+        query.infants_on_lap,
+        query.cabin,
+    )
 
 
 def _typical_eur_from_source(
     source: _FlightSource,
     query: FlightQuery,
-    cache: dict[tuple[str, str, date, int, int, str], Optional[float]],
+    cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[float]],
 ) -> Optional[float]:
     fetch_calendar = getattr(source, "fetch_calendar", None)
     if not callable(fetch_calendar):
@@ -881,7 +928,7 @@ def _run_search(
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
     results: list[QueryResult] = []
-    typical_cache: dict[tuple[str, str, date, int, int, str], Optional[float]] = {}
+    typical_cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[float]] = {}
     for index, trip in enumerate(trips):
         report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
         outcome: Optional[QueryResult] = None
@@ -1018,6 +1065,8 @@ def search_flights(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    currency: str = "EUR",
+    country: Optional[str] = None,
 ) -> SearchReport:
     if not queries:
         raise ValueError("at least one query is required")
@@ -1043,6 +1092,8 @@ def search_flights(
         )
     if fetch not in ("auto", "sweep", "detail"):
         raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
+    currency = normalize_currency(currency)
+    country = normalize_country(country)
     trips = tuple(queries)
     planned = resolve_fetch_mode(fetch, len(trips))
     if any(isinstance(trip, MultiCity) for trip in trips) and planned == "detail":
@@ -1057,7 +1108,7 @@ def search_flights(
         report_progress(f"fetch: sweep ({len(trips)} {noun})")
         report = _search_with_source(
             trips,
-            source=GoogleFlightsHttpSource(),
+            source=GoogleFlightsHttpSource(currency=currency, country=country),
             top=top,
             buffer_eur=buffer_eur,
             progress=progress,
@@ -1078,7 +1129,7 @@ def search_flights(
             retry_trips = tuple(trips[index] for index in retry_indexes)
             detail_report = _search_with_source(
                 retry_trips,
-                source=GoogleFlightsSource(default_state_dir()),
+                source=GoogleFlightsSource(default_state_dir(), currency=currency, country=country),
                 top=top,
                 buffer_eur=buffer_eur,
                 progress=progress,
@@ -1108,7 +1159,7 @@ def search_flights(
         report_progress(f"fetch: detail ({len(trips)} {noun})")
         report = _search_with_source(
             trips,
-            source=GoogleFlightsSource(default_state_dir()),
+            source=GoogleFlightsSource(default_state_dir(), currency=currency, country=country),
             top=top,
             buffer_eur=buffer_eur,
             progress=progress,

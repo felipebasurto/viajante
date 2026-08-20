@@ -123,13 +123,17 @@ def build_search_params(
     *,
     html_lang: str = SCRAPE_LANGUAGE,
     currency: str = SCRAPE_CURRENCY,
+    country: Optional[str] = None,
 ) -> dict[str, str]:
-    return {
+    params = {
         "tfs": encode_tfs(trip),
         "hl": html_lang,
         "tfu": RESULT_TABS,
         "curr": currency,
     }
+    if country:
+        params["gl"] = country
+    return params
 
 
 def build_search_url(
@@ -137,8 +141,9 @@ def build_search_url(
     *,
     html_lang: str = SCRAPE_LANGUAGE,
     currency: str = SCRAPE_CURRENCY,
+    country: Optional[str] = None,
 ) -> str:
-    params = build_search_params(trip, html_lang=html_lang, currency=currency)
+    params = build_search_params(trip, html_lang=html_lang, currency=currency, country=country)
     return f"{SEARCH_URL}?{urlencode(params)}"
 
 
@@ -147,11 +152,15 @@ def build_itinerary_url(
     *,
     html_lang: str = SCRAPE_LANGUAGE,
     currency: str = SCRAPE_CURRENCY,
+    country: Optional[str] = None,
 ) -> str:
     token = booking_token.strip()
     if not token:
         raise ValueError("booking_token must not be blank")
-    return f"{SEARCH_URL}?" + urlencode({"hl": html_lang, "curr": currency, "booking_token": token})
+    params = {"hl": html_lang, "curr": currency, "booking_token": token}
+    if country:
+        params["gl"] = country
+    return f"{SEARCH_URL}?" + urlencode(params)
 
 
 def _text_or_none(node) -> Optional[str]:
@@ -455,6 +464,7 @@ class GoogleFlightsHttpSource:
         *,
         html_lang: str = SCRAPE_LANGUAGE,
         currency: str = SCRAPE_CURRENCY,
+        country: Optional[str] = None,
         opener: Optional[Any] = None,
         client: Optional[SweepHttpClient] = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
@@ -462,12 +472,13 @@ class GoogleFlightsHttpSource:
     ) -> None:
         self._html_lang = html_lang
         self._currency = currency
+        self._country = country
         self._injected_client = client
         self._opener = opener
         self._owned_client: Optional[ChromeSweepClient] = None
         self._timeout = timeout
         self._sleep = time.sleep if sleep is None else sleep
-        self.config = SimpleNamespace(html_lang=html_lang, currency=currency)
+        self.config = SimpleNamespace(html_lang=html_lang, currency=currency, country=country)
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
         try:
@@ -507,12 +518,22 @@ class GoogleFlightsHttpSource:
             raise
         except CompactParseMiss:
             pass
-        url = build_search_url(trip, html_lang=self._html_lang, currency=self._currency)
+        url = build_search_url(
+            trip,
+            html_lang=self._html_lang,
+            currency=self._currency,
+            country=self._country,
+        )
         html, _final_url = fetch_search_html(url, client=client, timeout=self._timeout)
         return parse_http_flight_cards(html)
 
     def _fetch_compact(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
-        url, body = build_shopping_request(trip, html_lang=self._html_lang, currency=self._currency)
+        url, body = build_shopping_request(
+            trip,
+            html_lang=self._html_lang,
+            currency=self._currency,
+            country=self._country,
+        )
         try:
             response = client.post(
                 url, data=body, headers=SHOPPING_POST_HEADERS, timeout=self._timeout
@@ -549,6 +570,7 @@ class GoogleFlightsHttpSource:
             end,
             html_lang=self._html_lang,
             currency=self._currency,
+            country=self._country,
         )
         response = self._post_rpc(client, url, body)
         try:
@@ -572,6 +594,7 @@ class GoogleFlightsHttpSource:
             cabin=cabin,
             html_lang=self._html_lang,
             currency=self._currency,
+            country=self._country,
         )
         response = self._post_rpc(client, url, body)
         try:
@@ -601,12 +624,16 @@ class GoogleFlightsSource:
         state_dir: Path,
         session: Optional[ChromiumSession] = None,
         config: Optional[BrowserSessionConfig] = None,
+        *,
+        currency: str = SCRAPE_CURRENCY,
+        country: Optional[str] = None,
     ) -> None:
         self._config = config or BrowserSessionConfig(
             state_filename=STATE_FILENAME,
             locale=FETCH_LOCALE,
             html_lang=SCRAPE_LANGUAGE,
-            currency=SCRAPE_CURRENCY,
+            currency=currency,
+            country=country,
         )
         self._session = session or ChromiumSession(state_dir, self._config)
         self._http: Optional[GoogleFlightsHttpSource] = None
@@ -622,6 +649,7 @@ class GoogleFlightsSource:
                     trip,
                     html_lang=self._config.html_lang,
                     currency=self._config.currency,
+                    country=self._config.country,
                 )
             )
         )
@@ -636,6 +664,7 @@ class GoogleFlightsSource:
             self._http = GoogleFlightsHttpSource(
                 html_lang=self._config.html_lang,
                 currency=self._config.currency,
+                country=self._config.country,
             )
         return self._http.fetch_calendar(trip, start, end)
 

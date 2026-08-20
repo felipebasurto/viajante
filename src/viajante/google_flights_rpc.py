@@ -153,6 +153,17 @@ def _bags_constraint(*, bags: Optional[int], carry_on: Optional[int]) -> Any:
     return [0 if bags is None else bags, 0 if carry_on is None else carry_on]
 
 
+def _occupancy_slot(
+    *,
+    adults: int,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+) -> list[int]:
+    # Shopping constraints[6]: adults, children 2–11, infants in seat, infants on lap.
+    return [adults, children, infants_in_seat, infants_on_lap]
+
+
 def _constraints_from_segments(
     segments: list[list[Any]],
     *,
@@ -161,6 +172,9 @@ def _constraints_from_segments(
     trip_kind: int = _TRIP_ONE_WAY,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> list[Any]:
     return [
         None,
@@ -169,7 +183,12 @@ def _constraints_from_segments(
         None,
         [],
         _SEAT[cabin],
-        [adults, 0, 0, 0],
+        _occupancy_slot(
+            adults=adults,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
+        ),
         None,
         None,
         None,
@@ -202,6 +221,9 @@ def build_search_constraints(
             for index, leg in enumerate(trip.legs)
         ],
         adults=trip.adults,
+        children=trip.children,
+        infants_in_seat=trip.infants_in_seat,
+        infants_on_lap=trip.infants_on_lap,
         cabin=trip.cabin,
         trip_kind=_shopping_trip_kind(trip),
         bags=trip.bags,
@@ -220,8 +242,12 @@ def build_shopping_inner(trip: Trip, token: Optional[str] = None) -> list[Any]:
     ]
 
 
-def _rpc_params(html_lang: str, currency: str) -> dict[str, str]:
-    return {
+def _rpc_params(
+    html_lang: str,
+    currency: str,
+    country: Optional[str] = None,
+) -> dict[str, str]:
+    params = {
         "hl": html_lang,
         "curr": currency,
         "soc-app": "162",
@@ -229,6 +255,9 @@ def _rpc_params(html_lang: str, currency: str) -> dict[str, str]:
         "soc-device": "1",
         "rt": "c",
     }
+    if country:
+        params["gl"] = country
+    return params
 
 
 def _rpc_body(inner: list[Any]) -> str:
@@ -244,8 +273,9 @@ def build_shopping_request(
     *,
     html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
+    country: Optional[str] = None,
 ) -> tuple[str, str]:
-    url = f"{SHOPPING_RESULTS_URL}?{urlencode(_rpc_params(html_lang, currency))}"
+    url = f"{SHOPPING_RESULTS_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
     return url, _rpc_body(build_shopping_inner(trip))
 
 
@@ -265,8 +295,9 @@ def build_calendar_request(
     *,
     html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
+    country: Optional[str] = None,
 ) -> tuple[str, str]:
-    url = f"{CALENDAR_GRID_URL}?{urlencode(_rpc_params(html_lang, currency))}"
+    url = f"{CALENDAR_GRID_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
     return url, _rpc_body(build_calendar_inner(trip, start, end))
 
 
@@ -276,6 +307,9 @@ def build_explore_inner(
     *,
     adults: int = 1,
     cabin: FlightCabin = "economy",
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> list[Any]:
     constraints = _constraints_from_segments(
         [
@@ -287,6 +321,9 @@ def build_explore_inner(
             )
         ],
         adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
         cabin=cabin,
     )
     return [None, None, None, constraints]
@@ -300,9 +337,23 @@ def build_explore_request(
     cabin: FlightCabin = "economy",
     html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
+    country: Optional[str] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
 ) -> tuple[str, str]:
-    url = f"{EXPLORE_DESTINATIONS_URL}?{urlencode(_rpc_params(html_lang, currency))}"
-    return url, _rpc_body(build_explore_inner(origin, departure_date, adults=adults, cabin=cabin))
+    url = f"{EXPLORE_DESTINATIONS_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
+    return url, _rpc_body(
+        build_explore_inner(
+            origin,
+            departure_date,
+            adults=adults,
+            cabin=cabin,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
+        )
+    )
 
 
 SHOPPING_POST_HEADERS = {
