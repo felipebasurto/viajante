@@ -102,7 +102,9 @@ never mixed into `score_ms`.
 uv run viajante bench --prompts
 ```
 
-Checked-in corpus: `tests/prompts/` (JSONL + README, smoke → brutal).
+Checked-in corpus: `tests/prompts/` (JSONL + README, smoke → savage).
+Smoke→brutal prompts are English. Savage may be other languages; the
+plan still emits English IATA and English flight fetch locale (`hl=en`).
 User prompts may be any language. Planned Google Flights / Google Hotels /
 Booking queries and fetch locale stay English (`en` / `en-US`). Do not grow
 card-evidence regexes per language; English cards generalize. Origins are
@@ -134,7 +136,7 @@ price/route stays automatic 0.
 
 Existing smoke→insane rows are frozen except to fix a real planner bug
 (wrong IATA, dropped dests). New hardness goes in new files
-(brutal/holdout), not by rewriting old prompts to be easier.
+(brutal/holdout/savage), not by rewriting old prompts to be easier.
 
 Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
 coverage, drop a fixture from `manifest.json`, add empty fixtures, lower

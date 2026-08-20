@@ -2,7 +2,7 @@
 
 Operator overfitting check. Not in the weekday 90.
 
-`viajante bench --prompts` loads smoke → insane via `manifest.json`. This
+`viajante bench --prompts` loads smoke → savage via `manifest.json`. This
 file is **not** listed there. After a quality PR, the operator runs:
 
 ```bash

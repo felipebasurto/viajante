@@ -1,7 +1,7 @@
 """Graded prompt battery: quality contract, not the keep-or-revert score.
 
 `viajante bench --prompts` (or VIAJANTE_BENCH_PROMPTS=1) loads the weekday
-corpus via tests/prompts/manifest.json (smoke → brutal). `--holdout` loads
+corpus via tests/prompts/manifest.json (smoke → savage). `--holdout` loads
 only holdout.jsonl, which is not in that manifest. Deterministic contracts
 are offline. LLM-as-judge is opt-in via VIAJANTE_BENCH_JUDGE=1, scores
 quality 1–100 with DeepSeek (`deepseek-chat`), and is never folded into
@@ -92,6 +92,7 @@ MIN_TIER_CASES = {
     "hard": 20,
     "insane": 8,
     "brutal": 25,
+    "savage": 30,
 }
 MIN_INSANE = MIN_TIER_CASES["insane"]
 MIN_UNIQUE_ORIGINS = 12
@@ -103,6 +104,7 @@ REQUIRED_PROMPT_FILES = (
     "insane.jsonl",
     "brutal.jsonl",
     "i18n.jsonl",
+    "savage.jsonl",
 )
 REQUIRED_PROMPT_IDS = frozenset(
     {
@@ -115,10 +117,28 @@ REQUIRED_PROMPT_IDS = frozenset(
         "hard-refuse-cars",
         "insane-eight-adults-one-room",
         "insane-contradictory-dates",
+        "savage-yo-los-jnb-rt-hotel",
     }
 )
-TIER_ORDER = ("smoke", "easy", "medium", "hard", "insane", "brutal")
+TIER_ORDER = ("smoke", "easy", "medium", "hard", "insane", "brutal", "savage")
 VALID_TIERS = (*TIER_ORDER, HOLDOUT_TIER)
+REQUIRED_SAVAGE_LANGS = frozenset(
+    {
+        "yo",
+        "sw",
+        "am",
+        "ka",
+        "eu",
+        "is",
+        "km",
+        "ta",
+        "qu",
+        "cy",
+        "zu",
+        "mn",
+    }
+)
+VALID_SAVAGE_LANGS = REQUIRED_SAVAGE_LANGS | {"ar", "de", "en", "fr", "ja", "ko", "pt"}
 MIN_HOLDOUT_CASES = 8
 MAX_HOLDOUT_CASES = 12
 
@@ -296,6 +316,13 @@ def validate_prompt_corpus(root: Optional[Path] = None) -> list[PromptCase]:
         origin = row.expect.get("origin")
         if isinstance(origin, str) and len(origin) == 3:
             origins.append(origin)
+        if row.tier == "savage":
+            if not row.id.startswith("savage-"):
+                raise PromptCorpusError(f"{row.id} must use savage- prefix")
+            if row.lang not in VALID_SAVAGE_LANGS:
+                raise PromptCorpusError(f"{row.id} invalid savage lang {row.lang!r}")
+        elif row.tier in {"smoke", "easy", "medium", "hard", "insane"} and row.lang != "en":
+            raise PromptCorpusError(f"{row.id} must be English (lang=en)")
         if row.judge == "deterministic":
             intent = row.expect.get("intent")
             if intent in {"flights", "dates", "explore"}:
@@ -308,6 +335,12 @@ def validate_prompt_corpus(root: Optional[Path] = None) -> list[PromptCase]:
                 refuse = row.expect.get("refuse")
                 if not refuse:
                     raise PromptCorpusError(f"{row.id} refuse case needs expected refuse reasons")
+    savage_langs = {row.lang for row in cases if row.tier == "savage"}
+    missing_langs = REQUIRED_SAVAGE_LANGS - savage_langs
+    if missing_langs:
+        raise PromptCorpusError(
+            f"savage prompt slice missing required langs: {sorted(missing_langs)}"
+        )
     for tier, floor in MIN_TIER_CASES.items():
         if by_tier[tier] < floor:
             raise PromptCorpusError(
@@ -329,7 +362,7 @@ def validate_prompt_corpus(root: Optional[Path] = None) -> list[PromptCase]:
     for row in cases:
         rank = ranks[row.tier]
         if rank < previous:
-            raise PromptCorpusError("prompt corpus must be ordered smoke → brutal")
+            raise PromptCorpusError("prompt corpus must be ordered smoke → savage")
         previous = rank
     return cases
 

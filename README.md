@@ -365,7 +365,7 @@ The graded prompt battery is a separate quality contract, not `score_ms`:
 uv run viajante bench --prompts
 ```
 
-132 prompts, smoke → brutal, English, international origins. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy). `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1–100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Do not delete `tests/prompts/` to “win” the speed loop. Holdout (`viajante bench --prompts --holdout`) is not in that weekday battery.
+178 prompts, smoke → savage (includes `i18n.jsonl` on brutal). Smoke→insane stay English; savage and i18n add multilingual hardness while the plan still emits English IATA and English flight fetch locale. International origins. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy). `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1–100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Do not delete `tests/prompts/` to “win” the speed loop. Holdout (`viajante bench --prompts --holdout`) is not in that weekday battery.
 
 ## Privacy
 

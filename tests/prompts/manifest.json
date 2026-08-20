@@ -27,6 +27,10 @@
     {
       "name": "i18n.jsonl",
       "tier": "brutal"
+    },
+    {
+      "name": "savage.jsonl",
+      "tier": "savage"
     }
   ]
 }

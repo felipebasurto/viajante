@@ -28,6 +28,8 @@ from viajante.prompt_bench import (
     MIN_UNIQUE_ORIGINS,
     PROMPTS_ENV,
     REQUIRED_PROMPT_IDS,
+    REQUIRED_SAVAGE_LANGS,
+    VALID_SAVAGE_LANGS,
     JudgeResult,
     PromptCase,
     PromptCorpusError,
@@ -92,12 +94,17 @@ class PromptCorpusIntegrityTests(unittest.TestCase):
         self.assertGreaterEqual(len(insane), MIN_INSANE)
         brutal = [row for row in cases if row.tier == "brutal"]
         self.assertGreaterEqual(len(brutal), MIN_TIER_CASES["brutal"])
+        savage = [row for row in cases if row.tier == "savage"]
+        self.assertGreaterEqual(len(savage), MIN_TIER_CASES["savage"])
 
     def test_no_empty_prompts_or_blank_ids(self) -> None:
         for row in load_prompt_cases():
             self.assertTrue(row.id.strip())
             self.assertTrue(row.prompt.strip())
-            self.assertIn(row.tier, {"smoke", "easy", "medium", "hard", "insane", "brutal"})
+            self.assertIn(
+                row.tier,
+                {"smoke", "easy", "medium", "hard", "insane", "brutal", "savage"},
+            )
             self.assertIn(row.judge, {"deterministic", "llm"})
 
     def test_deterministic_flight_cases_have_expected_iata(self) -> None:
@@ -200,9 +207,49 @@ class PromptCorpusIntegrityTests(unittest.TestCase):
         self.assertLessEqual(origins.count("MAD"), 2)
         self.assertTrue({"BOS", "NRT", "GRU", "YHZ", "SIN"} & unique)
 
+    def test_savage_rare_languages_emit_english_plan_fields(self) -> None:
+        rows = [row for row in load_prompt_cases() if row.tier == "savage"]
+        self.assertGreaterEqual(len(rows), MIN_TIER_CASES["savage"])
+        langs = {row.lang for row in rows}
+        self.assertTrue(REQUIRED_SAVAGE_LANGS.issubset(langs), langs)
+        self.assertTrue(langs.issubset(VALID_SAVAGE_LANGS), langs)
+        yoruba = next(row for row in rows if row.id == "savage-yo-los-jnb-one-date")
+        self.assertEqual(yoruba.lang, "yo")
+        self.assertIn("ọkọ̀", yoruba.prompt)
+        self.assertEqual(yoruba.expect.get("origin"), "LOS")
+        self.assertEqual(yoruba.expect.get("destination"), "JNB")
+        self.assertEqual(yoruba.expect.get("intent"), "flights")
+        plan = plan_prompt(yoruba.prompt)
+        self.assertEqual(plan.origin, "LOS")
+        self.assertEqual(plan.destination, "JNB")
+        self.assertEqual(plan.trip, "one-way")
+        self.assertEqual(plan.locale, "en")
+        for row in rows:
+            self.assertTrue(row.id.startswith("savage-"), row.id)
+            if row.lang != "en":
+                self.assertEqual(row.expect.get("locale"), "en", row.id)
+            origin = row.expect.get("origin")
+            if isinstance(origin, str):
+                self.assertEqual(origin, origin.upper(), row.id)
+                self.assertEqual(len(origin), 3, row.id)
+            dest = row.expect.get("destination")
+            if isinstance(dest, str):
+                self.assertEqual(dest, dest.upper(), row.id)
+            notes = str(row.expect.get("notes") or "")
+            self.assertNotRegex(notes, r"\d+\s*€")
+            self.assertNotRegex(row.prompt, r"\bMAD\b")
+
     def test_corpus_is_ordered_easy_to_insane(self) -> None:
         cases = load_prompt_cases()
-        order = {"smoke": 0, "easy": 1, "medium": 2, "hard": 3, "insane": 4, "brutal": 5}
+        order = {
+            "smoke": 0,
+            "easy": 1,
+            "medium": 2,
+            "hard": 3,
+            "insane": 4,
+            "brutal": 5,
+            "savage": 6,
+        }
         ranks = [order[row.tier] for row in cases]
         self.assertEqual(ranks, sorted(ranks))
 
@@ -881,6 +928,7 @@ class HoldoutCorpusTests(unittest.TestCase):
                 "insane.jsonl",
                 "brutal.jsonl",
                 "i18n.jsonl",
+                "savage.jsonl",
             ],
         )
 
