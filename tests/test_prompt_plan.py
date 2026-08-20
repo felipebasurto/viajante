@@ -163,6 +163,25 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertEqual(plan.locale, "en")
         self.assertEqual(plan.route_specs, ())
 
+    def test_dates_command_with_nights_is_calendar_not_legs(self) -> None:
+        plan = plan_prompt("viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5")
+        self.assertEqual(plan.intent, "dates")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.date_from, date(2026, 11, 1))
+        self.assertEqual(plan.date_to, date(2026, 11, 30))
+        self.assertEqual(plan.days, 5)
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.locale, "en")
+        self.assertEqual(plan.route_specs, ())
+
+    def test_hyphenated_nights_stay_on_cheapest_dates(self) -> None:
+        plan = plan_prompt("cheapest dates BOS-LHR in November 2026, 5-night stay")
+        self.assertEqual(plan.intent, "dates")
+        self.assertEqual(plan.days, 5)
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.route_specs, ())
+
     def test_hotels_tokyo_nights(self) -> None:
         plan = plan_prompt("Hotel in Tokyo from 2026-12-04 to 2026-12-07")
         self.assertEqual(plan.intent, "hotels")
@@ -333,6 +352,38 @@ class PromptPlanHardTests(unittest.TestCase):
         self.assertEqual(list(plan.include_airlines), [])
         self.assertEqual(list(plan.exclude_airlines), [])
 
+    def test_single_code_only_sets_include_airlines(self) -> None:
+        plan = plan_prompt("MAD-LHR on 2026-09-15 BA only")
+        self.assertEqual(list(plan.include_airlines), ["BA"])
+        self.assertEqual(list(plan.exclude_airlines), [])
+
+    def test_code_or_named_airline(self) -> None:
+        plan = plan_prompt("MAD-LHR on 2026-09-15 BA or Iberia")
+        self.assertEqual(list(plan.include_airlines), ["IB", "BA"])
+        slash = plan_prompt("MAD-LHR on 2026-09-15 BA/IB only")
+        self.assertEqual(list(slash.include_airlines), ["BA", "IB"])
+
+    def test_no_code_sets_exclude_airlines(self) -> None:
+        plan = plan_prompt("MAD-BCN on 2026-09-01, no FR")
+        self.assertEqual(list(plan.exclude_airlines), ["FR"])
+        self.assertEqual(list(plan.include_airlines), [])
+
+    def test_do_not_use_named_airline_is_exclude(self) -> None:
+        plan = plan_prompt("MAD-BCN on 2026-09-01, don't use Ryanair")
+        self.assertIn("FR", plan.exclude_airlines)
+        self.assertNotIn("FR", plan.include_airlines)
+        spanish = plan_prompt("MAD-BCN el 2026-09-01, sin Ryanair")
+        self.assertIn("FR", spanish.exclude_airlines)
+        self.assertNotIn("FR", spanish.include_airlines)
+
+    def test_star_alliance_only_does_not_invent_airline_code(self) -> None:
+        plan = plan_prompt("MAD-JFK on 2026-09-15, Star Alliance only")
+        self.assertEqual(list(plan.alliance), ["star"])
+        self.assertEqual(list(plan.include_airlines), [])
+        sky = plan_prompt("MAD-JFK on 2026-09-15, only skyteam")
+        self.assertEqual(list(sky.alliance), ["skyteam"])
+        self.assertEqual(list(sky.include_airlines), [])
+
 
 class PromptPlanInsaneTests(unittest.TestCase):
     def test_halifax_fiji_via_continents(self) -> None:
@@ -498,6 +549,26 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(plan.depart_window, "6-20")
         self.assertEqual(plan.sort, "arrival")
 
+    def test_hour_depart_window_and_cheapest_first(self) -> None:
+        plan = plan_prompt("JFK-LHR on 2026-09-15, leave 6-20, cheapest first")
+        self.assertEqual(plan.depart_window, "6-20")
+        self.assertEqual(plan.sort, "price")
+        between = plan_prompt("JFK-LHR on 2026-09-15, leave between 6-20")
+        self.assertEqual(between.depart_window, "6-20")
+        departing = plan_prompt("JFK-LHR on 2026-09-15, departing between 6:00 and 20:00")
+        self.assertEqual(departing.depart_window, "06:00-20:00")
+
+    def test_sort_shortest_first_and_bare_sort_duration(self) -> None:
+        shortest = plan_prompt("SIN-NRT on 2026-10-09, shortest first")
+        self.assertEqual(shortest.sort, "duration")
+        bare = plan_prompt("SIN-NRT on 2026-10-09, sort duration")
+        self.assertEqual(bare.sort, "duration")
+
+    def test_morning_vibe_does_not_invent_a_depart_window(self) -> None:
+        plan = plan_prompt("JFK-LHR on 2026-09-15, leave in the morning")
+        self.assertIsNone(plan.depart_window)
+        self.assertIsNone(plan.sort)
+
     def test_prefer_airports_lhr_not_lgw(self) -> None:
         plan = plan_prompt("GRU-LHR on 2026-09-08, use LHR not LGW, max 1 stop.")
         self.assertEqual(plan.destination, "LHR")
@@ -591,6 +662,32 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(parsed[0].destination, "LHR")
         self.assertEqual(parsed[0].adults, 2)
         self.assertEqual(parsed[0].children, 1)
+
+    def test_word_number_adults_and_children(self) -> None:
+        plan = plan_prompt("Flights BOS-LHR on 2026-09-01, two adults and one child")
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.children, 1)
+        self.assertEqual(plan.locale, "en")
+        family = plan_prompt("Flights BOS-LHR on 2026-09-01 for a family")
+        self.assertIsNone(family.children)
+
+    def test_i18n_children_keep_english_iata(self) -> None:
+        spanish = plan_prompt("Vuelos MAD-BCN el 2026-09-01, 2 adultos y 1 niño")
+        self.assertEqual(spanish.origin, "MAD")
+        self.assertEqual(spanish.destination, "BCN")
+        self.assertEqual(spanish.adults, 2)
+        self.assertEqual(spanish.children, 1)
+        self.assertEqual(spanish.locale, "en")
+        french = plan_prompt("Vols CDG-NRT le 2026-10-09, deux adultes et un enfant")
+        self.assertEqual(french.origin, "CDG")
+        self.assertEqual(french.destination, "NRT")
+        self.assertEqual(french.adults, 2)
+        self.assertEqual(french.children, 1)
+        german = plan_prompt("Flüge FRA-SIN am 2026-10-12, 2 Erwachsene und 1 Kind")
+        self.assertEqual(german.origin, "FRA")
+        self.assertEqual(german.destination, "SIN")
+        self.assertEqual(german.adults, 2)
+        self.assertEqual(german.children, 1)
 
     def test_infant_in_seat_vs_on_lap(self) -> None:
         seated = plan_prompt("Flights BOS-LHR on 2026-09-01, 2 adults, 1 infant in seat")

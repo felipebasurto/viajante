@@ -53,6 +53,7 @@ ALLIANCE_ALIASES = {
 ALLIANCE_PHRASES: tuple[tuple[str, str], ...] = (
     ("star alliance", "star"),
     ("star-alliance", "star"),
+    ("staralliance", "star"),
     ("one world", "oneworld"),
     ("oneworld", "oneworld"),
     ("sky team", "skyteam"),

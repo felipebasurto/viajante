@@ -236,12 +236,26 @@ _IATA_TO_ENGLISH = {
 _WORD_NUMBERS = {
     "un": 1,
     "una": 1,
+    "uma": 1,
+    "ein": 1,
+    "eine": 1,
     "one": 1,
     "dos": 2,
+    "dois": 2,
+    "duas": 2,
+    "deux": 2,
+    "zwei": 2,
+    "due": 2,
     "two": 2,
     "tres": 3,
+    "trois": 3,
+    "drei": 3,
+    "tre": 3,
     "three": 3,
     "cuatro": 4,
+    "quatre": 4,
+    "vier": 4,
+    "quattro": 4,
     "four": 4,
     "cinco": 5,
     "five": 5,
@@ -410,6 +424,7 @@ _DATES_CALENDAR = re.compile(
     r"que dia es mas barato|cheapest days?|cheapest dates|"
     r"price calendar)\b"
 )
+_DATES_COMMAND = re.compile(r"(?:^|\bviajante\s+)?dates\s+[a-z]{3}-[a-z]{3}\b")
 _HOTEL_WORDS = re.compile(r"(?<![a-z0-9_])(hotels?|hoteles|alojamiento)(?![a-z0-9_])")
 _FLIGHT_WORDS = re.compile(
     r"\b(vuelo|vuelos|volar|fly|flight|flights|one-way|ida|round-trip|open jaws?)\b"
@@ -433,18 +448,27 @@ _MAX_1_STOP = re.compile(
 _SIN_ESCALAS_MAS = re.compile(r"sin escalas de m[aá]s")
 _ESCALAS_SANAS = re.compile(r"escalas sanas")
 _NONSTOP = re.compile(r"\b(nonstop|directos?|sin escalas)\b")
-_ADULTS_ES = re.compile(r"(\d+|ocho|eight|dos|two|tres|three|cuatro|four)\s+adultos")
-_ADULTS_EN = re.compile(r"(\d+)\s+adults?")
-_CHILDREN_EN = re.compile(r"(\d+)\s+(?:children|child|kids|kid)\b")
-_INFANTS_IN_SEAT_EN = re.compile(r"(\d+)\s+infants?\s+in[- ]seats?")
-_INFANTS_ON_LAP_EN = re.compile(r"(\d+)\s+infants?\s+on[- ]laps?")
-_INFANTS_EN = re.compile(r"(\d+)\s+infants?\b(?!\s+in[- ]seats?)(?!\s+on[- ]laps?)")
+_COUNT = (
+    r"(\d+|eight|ocho|seven|siete|six|seis|five|cinco|"
+    r"four|cuatro|quatre|vier|quattro|"
+    r"three|trois|drei|tres|tre|"
+    r"two|dois|duas|deux|zwei|due|dos|"
+    r"one|eine|uma|una|ein|un)"
+)
+_ADULTS = re.compile(_COUNT + r"\s+(?:adults?|adultos?|adultes?|adulti|erwachsene)\b")
+_CHILDREN = re.compile(
+    _COUNT + r"\s+(?:children|child|kids|kid|ninos?|hijos?|criancas?|enfants?|"
+    r"kinder|kind(?! of)|bambin[oi]|filhos?)\b"
+)
+_INFANTS_IN_SEAT_EN = re.compile(_COUNT + r"\s+infants?\s+in[- ]seats?")
+_INFANTS_ON_LAP_EN = re.compile(_COUNT + r"\s+infants?\s+on[- ]laps?")
+_INFANTS_EN = re.compile(_COUNT + r"\s+infants?\b(?!\s+in[- ]seats?)(?!\s+on[- ]laps?)")
 _ROOMS_ES_PLURAL = re.compile(r"(\d+|una|un|one|dos|two)\s+habitaciones")
 _ROOMS_ES_SINGULAR = re.compile(r"(\d+|una|un|one)\s+habitaci[oó]n")
 _ROOMS_EN = re.compile(r"(\d+)\s+rooms?")
 _DAYS_ES = re.compile(r"(\d+)\s*d[ií]as")
 _DAYS_EN = re.compile(r"(\d+)\s+days")
-_NIGHTS = re.compile(r"(\d+)\s*(?:nights?|noches?)")
+_NIGHTS = re.compile(r"(\d+)\s*-?\s*(?:nights?|noches?)\b")
 _FLEX_DAYS = re.compile(r"\bflex\s+(\d+)(?:\s+days?)?\b")
 _NO_ASIA = re.compile(r"\b(no asia|not asia)\b")
 _REQUIRE_CLOCK = re.compile(r"mostrar hora|clock not null|hora, no null|arrival(?:s)? must show")
@@ -507,19 +531,61 @@ _DEPART_AFTER = re.compile(
     r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
     re.IGNORECASE,
 )
-_CLOCK_TOKEN = r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)"
+_CLOCK_TOKEN = r"(\d{1,2}(?::\d{2})?h?\s*(?:am|pm)?)"
+_DEPART_WINDOW_VERBS = r"(?:leave|depart(?:ure|ing)?s?|salir|salida|partir|abflug)"
 _DEPART_WINDOW_BETWEEN = re.compile(
-    r"\b(?:leave|depart(?:ure)?s?)\s+between\s+" + _CLOCK_TOKEN + r"\s+and\s+" + _CLOCK_TOKEN,
+    rf"\b{_DEPART_WINDOW_VERBS}\s+(?:between|entre|zwischen)\s+"
+    + _CLOCK_TOKEN
+    + r"\s+(?:and|y|et|und|e)\s+"
+    + _CLOCK_TOKEN,
+    re.IGNORECASE,
+)
+_DEPART_WINDOW_BETWEEN_DASH = re.compile(
+    rf"\b{_DEPART_WINDOW_VERBS}\s+(?:between|entre|zwischen)\s+"
+    r"(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)(?!:)(?!-\d)",
     re.IGNORECASE,
 )
 _DEPART_WINDOW_DASH = re.compile(
-    r"\b(?:leave|depart(?:ure)?s?)\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})",
+    rf"\b{_DEPART_WINDOW_VERBS}\s+(\d{{1,2}}(?::\d{{2}})?)\s*-\s*(\d{{1,2}}(?::\d{{2}})?)"
+    r"(?!:)(?!-\d)",
     re.IGNORECASE,
 )
 _SORT_BY = re.compile(
-    r"\b(?:sort(?:ed)?|order)\s+by\s+(price|fare|duration|departure|arrival|ranked)\b",
+    r"\b(?:sort(?:ed)?|order)\s+by\s+"
+    r"(price|fare|duration|(?:departure|arrival)(?:\s+time)?|ranked)\b",
     re.IGNORECASE,
 )
+_SORT_BARE = re.compile(
+    r"\b(?:sort(?:ed)?|order)\s+(price|fare|duration|departure|arrival|ranked)\b",
+    re.IGNORECASE,
+)
+_SORT_CHEAPEST_FIRST = re.compile(r"\bcheapest\s+first\b", re.IGNORECASE)
+_SORT_SHORTEST_FIRST = re.compile(
+    r"\bshortest(?:\s+(?:flight|duration|travel(?:\s+time)?))?\s+first\b",
+    re.IGNORECASE,
+)
+_SORT_EARLIEST_FIRST = re.compile(r"\bearliest(?:\s+departure)?\s+first\b", re.IGNORECASE)
+_SORT_I18N = re.compile(
+    r"\b(?:ordenar\s+por|trier\s+par|nach)\s+"
+    r"(precio|tarifa|prix|preis|duracion|duree|dauer|salida|depart|abflug|"
+    r"llegada|arrivee|ankunft)\b",
+    re.IGNORECASE,
+)
+_SORT_I18N_ALIASES = {
+    "precio": "price",
+    "tarifa": "fare",
+    "prix": "price",
+    "preis": "price",
+    "duracion": "duration",
+    "duree": "duration",
+    "dauer": "duration",
+    "salida": "departure",
+    "depart": "departure",
+    "abflug": "departure",
+    "llegada": "arrival",
+    "arrivee": "arrival",
+    "ankunft": "arrival",
+}
 _WORK_BACK_BY = re.compile(
     r"\b(?:must work|work|back(?:\s+in)?|in the office)\s+"
     r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
@@ -967,7 +1033,7 @@ def _is_explore(folded: str) -> bool:
 
 
 def _is_dates_calendar(folded: str) -> bool:
-    return bool(_DATES_CALENDAR.search(folded))
+    return bool(_DATES_CALENDAR.search(folded) or _DATES_COMMAND.search(folded))
 
 
 def _flex_days_value(folded: str, flags: Mapping[str, str]) -> Optional[int]:
@@ -1177,7 +1243,7 @@ def _build_route_specs(
 
 
 def _hhmm(raw: str) -> Optional[str]:
-    match = re.fullmatch(r"\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*", raw, re.IGNORECASE)
+    match = re.fullmatch(r"\s*(\d{1,2})(?::(\d{2}))?h?\s*(am|pm)?\s*", raw, re.IGNORECASE)
     if match is None:
         return None
     hour = int(match.group(1))
@@ -1190,6 +1256,18 @@ def _hhmm(raw: str) -> Optional[str]:
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         return None
     return f"{hour:02d}:{minute:02d}"
+
+
+def _window_side(raw: str) -> Optional[tuple[str, bool]]:
+    """Canonical bound plus whether the prompt used a bare hour (CLI 6-20)."""
+    text = raw.strip()
+    clock = _hhmm(text)
+    if clock is None:
+        return None
+    hour_only = bool(re.fullmatch(r"\d{1,2}h?", text, re.IGNORECASE))
+    if hour_only:
+        return str(int(clock[:2])), True
+    return clock, False
 
 
 _SORT_ALIASES = {
@@ -1206,24 +1284,44 @@ def _depart_window(folded: str, flags: Mapping[str, str]) -> Optional[str]:
     flagged = flags.get("depart-window")
     if flagged:
         return flagged
-    hit = _DEPART_WINDOW_BETWEEN.search(folded) or _DEPART_WINDOW_DASH.search(folded)
+    hit = (
+        _DEPART_WINDOW_BETWEEN.search(folded)
+        or _DEPART_WINDOW_BETWEEN_DASH.search(folded)
+        or _DEPART_WINDOW_DASH.search(folded)
+    )
     if hit is None:
         return None
-    start = _hhmm(hit.group(1))
-    end = _hhmm(hit.group(2))
-    if start is None or end is None or start > end:
+    start = _window_side(hit.group(1))
+    end = _window_side(hit.group(2))
+    if start is None or end is None:
         return None
-    return f"{start}-{end}"
+    start_clock = _hhmm(hit.group(1))
+    end_clock = _hhmm(hit.group(2))
+    if start_clock is None or end_clock is None or start_clock > end_clock:
+        return None
+    if start[1] and end[1]:
+        return f"{start[0]}-{end[0]}"
+    return f"{start_clock}-{end_clock}"
 
 
 def _sort_key(folded: str, flags: Mapping[str, str]) -> Optional[str]:
     flagged = flags.get("sort")
     if flagged:
         return _SORT_ALIASES.get(flagged.strip().casefold())
-    hit = _SORT_BY.search(folded)
-    if hit is None:
-        return None
-    return _SORT_ALIASES.get(hit.group(1).casefold())
+    hit = _SORT_BY.search(folded) or _SORT_BARE.search(folded)
+    if hit is not None:
+        token = hit.group(1).casefold().split()[0]
+        return _SORT_ALIASES.get(token)
+    if _SORT_CHEAPEST_FIRST.search(folded):
+        return "price"
+    if _SORT_SHORTEST_FIRST.search(folded):
+        return "duration"
+    if _SORT_EARLIEST_FIRST.search(folded):
+        return "departure"
+    i18n = _SORT_I18N.search(folded)
+    if i18n is not None:
+        return _SORT_I18N_ALIASES.get(i18n.group(1).casefold())
+    return None
 
 
 def _match_is_negated(text: str, start: int) -> bool:
@@ -1272,23 +1370,27 @@ _ENGLISH_IATA_WORDS = frozenset(
     }
 )
 _CARRIER_NEGATION = re.compile(
-    r"(?:do not|don'?t|never|without|not|except|excluding|no)\s+$",
+    r"(?:do not|don'?t)(?:\s+\w+){0,2}\s+$"
+    r"|(?:never|without|not|except|excluding|no|sin|sans|ohne|sem|senza|keine)\s+$",
     re.IGNORECASE,
 )
-_CODE_SPLIT = re.compile(r"\s+(?:or|and|/)\s+")
+_CODE_JOIN = r"\s*(?:or|and|/|o|ou|oder)\s*"
+_CODE_SPLIT = re.compile(_CODE_JOIN)
 _ONLY_CODES = re.compile(
-    r"(?:only|just|exclusively)\s+((?:[a-z0-9]{2}\s+(?:or|and|/)\s+)*[a-z0-9]{2})"
-    r"|((?:[a-z0-9]{2}\s+(?:or|and|/)\s+)+[a-z0-9]{2})\s+only",
+    r"(?:only|just|exclusively)\s+((?:[a-z0-9]{2}" + _CODE_JOIN + r")*[a-z0-9]{2})\b"
+    r"|(?<![a-z0-9])((?:[a-z0-9]{2}" + _CODE_JOIN + r")*[a-z0-9]{2})\s+only",
     re.IGNORECASE,
 )
 _NOT_CODE = re.compile(
-    r"\b(?:not|except|excluding|without)\s+([a-z0-9]{2})\b",
+    r"\b(?:not|except|excluding|without|no)\s+([a-z0-9]{2})\b",
     re.IGNORECASE,
 )
 _OR_CODES = re.compile(
-    r"\b([a-z0-9]{2}(?:\s+(?:or|and)\s+[a-z0-9]{2})+)\b",
+    r"\b([a-z0-9]{2}(?:" + _CODE_JOIN + r"[a-z0-9]{2})+)\b",
     re.IGNORECASE,
 )
+_PREFIX_CODE = re.compile(r"\b([a-z]{2})\s*(?:or|and|/|o|ou|oder|e)\s+$")
+_SUFFIX_CODE = re.compile(r"^\s*(?:or|and|/|o|ou|oder|e)\s*([a-z]{2})\b")
 _AIRLINE_NAME_TABLE = airline_names_longest_first()
 
 
@@ -1317,6 +1419,30 @@ def _codes_from_blob(blob: str) -> tuple[str, ...]:
     return tuple(codes)
 
 
+def _mask_alliance_phrases(folded: str) -> str:
+    masked = folded
+    for phrase, _canonical in ALLIANCE_PHRASES:
+        masked = re.sub(
+            rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])",
+            lambda match: " " * (match.end() - match.start()),
+            masked,
+        )
+    return masked
+
+
+def _adjacent_airline_codes(folded: str, start: int, name: str) -> tuple[str, ...]:
+    prefix = folded[max(0, start - 12) : start]
+    suffix = folded[start + len(name) :]
+    found: list[str] = []
+    pre = _PREFIX_CODE.search(prefix)
+    if pre:
+        _add_unique(found, _codes_from_blob(pre.group(1)))
+    post = _SUFFIX_CODE.match(suffix)
+    if post:
+        _add_unique(found, _codes_from_blob(post.group(1)))
+    return tuple(found)
+
+
 def _carriers_from_prompt(
     folded: str, flags: Mapping[str, str]
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -1340,16 +1466,20 @@ def _carriers_from_prompt(
                 _add_unique(alliance, (canonical,))
     for name, codes in _AIRLINE_NAME_TABLE:
         for start in _phrase_starts(folded, name):
+            neighbors = _adjacent_airline_codes(folded, start, name)
             if _carrier_is_negated(folded, start):
                 _add_unique(exclude, codes)
+                _add_unique(exclude, neighbors)
             else:
                 _add_unique(include, codes)
-    for match in _ONLY_CODES.finditer(folded):
+                _add_unique(include, neighbors)
+    carrier_text = _mask_alliance_phrases(folded)
+    for match in _ONLY_CODES.finditer(carrier_text):
         blob = match.group(1) or match.group(2)
         _add_unique(include, _codes_from_blob(blob))
-    for match in _NOT_CODE.finditer(folded):
+    for match in _NOT_CODE.finditer(carrier_text):
         _add_unique(exclude, _codes_from_blob(match.group(1)))
-    for match in _OR_CODES.finditer(folded):
+    for match in _OR_CODES.finditer(carrier_text):
         _add_unique(include, _codes_from_blob(match.group(1)))
     include = [code for code in include if code not in exclude]
     alliance = [name for name in alliance if name not in exclude_alliance]
@@ -1550,13 +1680,13 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if "adults" in flags:
         adults = int(flags["adults"])
     else:
-        adults = _int_after((_ADULTS_ES, _ADULTS_EN), folded)
+        adults = _int_after((_ADULTS,), folded)
 
     children = None
     if "children" in flags:
         children = int(flags["children"])
     else:
-        children = _int_after((_CHILDREN_EN,), folded)
+        children = _int_after((_CHILDREN,), folded)
 
     infants_in_seat = None
     if "infants-in-seat" in flags:
