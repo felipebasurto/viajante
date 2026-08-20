@@ -197,6 +197,7 @@ class FlightQuery:
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
     exclude_alliances: Optional[Tuple[str, ...]] = None
+    nearby_label: Optional[str] = None
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -218,6 +219,8 @@ class FlightQuery:
         _require_alliances(self.exclude_alliances, role="exclude_alliances")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
+        label = self.nearby_label.strip() if self.nearby_label else None
+        object.__setattr__(self, "nearby_label", label or None)
 
     @property
     def legs(self) -> Tuple[FlightLeg, ...]:
@@ -273,6 +276,7 @@ class RoundTrip:
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
     exclude_alliances: Optional[Tuple[str, ...]] = None
+    nearby_label: Optional[str] = None
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -298,6 +302,8 @@ class RoundTrip:
         _require_alliances(self.exclude_alliances, role="exclude_alliances")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
+        label = self.nearby_label.strip() if self.nearby_label else None
+        object.__setattr__(self, "nearby_label", label or None)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {

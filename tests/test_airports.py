@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from datetime import date
 from unittest.mock import patch
 
-from viajante.airports import get_airport, is_known_iata, lookup_airports
+from viajante.airports import get_airport, is_known_iata, lookup_airports, same_city_iata
 from viajante.cli import main
 from viajante.models import FlightQuery
 
@@ -43,6 +43,21 @@ class AirportLookupTests(unittest.TestCase):
     def test_blank_query_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             lookup_airports("   ")
+
+    def test_same_city_iata_expands_london_and_tokyo_majors(self) -> None:
+        london = same_city_iata("LHR")
+        self.assertEqual(london[0], "LHR")
+        self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= set(london))
+        self.assertNotIn("BQH", london)
+        self.assertNotIn("NHT", london)
+        gatwick = same_city_iata("LGW")
+        self.assertEqual(gatwick[0], "LGW")
+        self.assertIn("LHR", gatwick)
+        tokyo = same_city_iata("NRT")
+        self.assertEqual(tokyo[0], "NRT")
+        self.assertEqual(set(tokyo), {"NRT", "HND"})
+        self.assertEqual(same_city_iata("MAD"), ("MAD",))
+        self.assertEqual(same_city_iata("XXX"), ())
 
 
 class AirportCliTests(unittest.TestCase):

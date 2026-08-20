@@ -59,7 +59,7 @@ Successful queries also print cheapest nonstop vs cheapest 1-stop from that same
 
 `typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). Packaged `--trip rt` uses that same-stay calendar (same nights). `vs_typical` is `below`, `near` (±10%), or `above`. `vs_typical_pct` is the signed percent versus that median. `typical_deal` is the English one-liner (`below typical 340 € (−15%)`). When that median exists, `cheapest_date` / `cheapest_eur` point at the cheapest owned day in the same window. Typical fields are `null` (cheapest keys absent) when the compact calendar misses, has fewer than three priced days, or the query is multi-city. Never a guessed market average.
 
-Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026-09-15,2026-09-16`.
+Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026-09-15,2026-09-16`. `--nearby` expands origin or destination to owned same-city IATA (London LHR/LGW/STN/LTN/LCY, Tokyo NRT/HND) and searches each as a labeled alternative. Default off, so LHR stays LHR. Named open-jaw airports stay named (LGW stays LGW). Never invents a code.
 
 `JFK-NRT:2026-10-09:2026-10-20` without `--trip` is outbound plus return as two one-way searches. `--trip rt` (alias `round-trip`) on that same grammar is one Google package. `--trip multi` takes two to six `ORIGIN-DEST:DATE` legs as one package. Multi-city detail is not supported yet.
 

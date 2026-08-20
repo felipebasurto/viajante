@@ -22,6 +22,7 @@ from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
     FlightSort,
+    expand_nearby_trips,
     parse_depart_window,
     parse_flight_plan,
     search_flights,
@@ -94,6 +95,7 @@ def search_flights_tool(
     infants_on_lap: int = 0,
     currency: str = "EUR",
     country: Optional[str] = None,
+    nearby: bool = False,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         routes,
@@ -107,7 +109,7 @@ def search_flights_tool(
         bags=bags,
         carry_on=carry_on,
     )
-    trips = _as_trips(plan)
+    trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     report = _with_search_lock(
         lambda: search_flights(

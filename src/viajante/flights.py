@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple
 
+from viajante.airports import get_airport, same_city_iata
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
     GoogleFlightsBlocked,
@@ -218,10 +219,110 @@ def _trip_max_stops(trip: Trip) -> int:
 
 def _progress_label(trip: Trip) -> str:
     if isinstance(trip, FlightQuery):
-        return f"{trip.origin} -> {trip.destination} {trip.departure_date.isoformat()}"
+        base = f"{trip.origin} -> {trip.destination} {trip.departure_date.isoformat()}"
+        return f"{base} ({trip.nearby_label})" if trip.nearby_label else base
+    if isinstance(trip, RoundTrip):
+        base = (
+            f"{trip.origin} -> {trip.destination} {trip.departure_date.isoformat()}"
+            f" / {trip.return_date.isoformat()}"
+        )
+        return f"{base} ({trip.nearby_label})" if trip.nearby_label else base
     return " / ".join(
         f"{leg.origin} -> {leg.destination} {leg.departure_date.isoformat()}" for leg in trip.legs
     )
+
+
+def _nearby_city(code: str) -> Optional[str]:
+    airport = get_airport(code)
+    if airport is None or not airport.city.strip():
+        return None
+    return airport.city
+
+
+def _nearby_pair_label(
+    origin: str,
+    dest: str,
+    origin_codes: Tuple[str, ...],
+    dest_codes: Tuple[str, ...],
+) -> Optional[str]:
+    parts: list[str] = []
+    if len(origin_codes) > 1:
+        city = _nearby_city(origin)
+        parts.append(f"nearby {city} {origin}" if city else f"nearby {origin}")
+    if len(dest_codes) > 1:
+        city = _nearby_city(dest)
+        parts.append(f"nearby {city} {dest}" if city else f"nearby {dest}")
+    return "; ".join(parts) if parts else None
+
+
+def nearby_notes(trips: Sequence[Trip]) -> Tuple[str, ...]:
+    """Stderr legend for `--nearby` expands. Named open-jaw is not expanded."""
+    notes: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for trip in trips:
+        if isinstance(trip, MultiCity) or not getattr(trip, "nearby_label", None):
+            continue
+        for code in (trip.origin, trip.destination):
+            airport = get_airport(code)
+            if airport is None or not airport.city.strip():
+                continue
+            key = (airport.city, airport.country)
+            codes = same_city_iata(code)
+            if len(codes) < 2 or key in seen:
+                continue
+            seen.add(key)
+            notes.append(f"nearby {airport.city}: {', '.join(sorted(codes))}")
+    return tuple(notes)
+
+
+def _expand_flight_query(query: FlightQuery) -> Tuple[FlightQuery, ...]:
+    origin_codes = same_city_iata(query.origin) or (query.origin,)
+    dest_codes = same_city_iata(query.destination) or (query.destination,)
+    expanded: list[FlightQuery] = []
+    for origin in origin_codes:
+        for destination in dest_codes:
+            if origin == destination:
+                continue
+            label = _nearby_pair_label(origin, destination, origin_codes, dest_codes)
+            expanded.append(
+                replace(query, origin=origin, destination=destination, nearby_label=label)
+            )
+    return tuple(expanded) if expanded else (query,)
+
+
+def _expand_round_trip(trip: RoundTrip) -> Tuple[RoundTrip, ...]:
+    origin_codes = same_city_iata(trip.origin) or (trip.origin,)
+    dest_codes = same_city_iata(trip.destination) or (trip.destination,)
+    expanded: list[RoundTrip] = []
+    for origin in origin_codes:
+        for destination in dest_codes:
+            if origin == destination:
+                continue
+            label = _nearby_pair_label(origin, destination, origin_codes, dest_codes)
+            expanded.append(
+                replace(trip, origin=origin, destination=destination, nearby_label=label)
+            )
+    return tuple(expanded) if expanded else (trip,)
+
+
+def expand_nearby_trips(trips: Sequence[Trip], *, nearby: bool = False) -> Tuple[Trip, ...]:
+    """Fan out one-way and mirrored RT queries to owned same-city IATA.
+
+    Default off. Packaged open-jaw / multi-city keeps every named airport
+    (LGW stays LGW). Does not invent codes or mix a mirrored RT into an
+    open jaw.
+    """
+    if not nearby:
+        return tuple(trips)
+    expanded: list[Trip] = []
+    for trip in trips:
+        if isinstance(trip, FlightQuery):
+            expanded.extend(_expand_flight_query(trip))
+        elif isinstance(trip, RoundTrip):
+            expanded.extend(_expand_round_trip(trip))
+        else:
+            expanded.append(trip)
+    return tuple(expanded) if expanded else tuple(trips)
 
 
 def parse_route_specs(

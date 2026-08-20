@@ -299,6 +299,43 @@ class PromptPlanMediumTests(unittest.TestCase):
         )
         self.assertEqual(plan_unit_count(parsed), 1)
 
+    def test_any_london_airport_sets_nearby_and_keeps_heathrow(self) -> None:
+        plan = plan_prompt("One-way BOS to any London airport on 2026-09-18. Do not invent a fare.")
+        self.assertEqual(plan.intent, "flights")
+        self.assertTrue(plan.nearby)
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.departure_date, date(2026, 9, 18))
+        parsed = plan_to_trips(plan)
+        dests = {query.destination for query in parsed}
+        self.assertEqual(parsed[0].destination, "LHR")
+        self.assertTrue({"LHR", "LGW", "STN"} <= dests)
+        city = plan_prompt("I want to fly from Boston to London on 2026-09-04")
+        self.assertFalse(city.nearby)
+        self.assertEqual(city.destination, "LHR")
+        flagged = plan_prompt("BOS-LHR on 2026-09-18 --nearby")
+        self.assertTrue(flagged.nearby)
+        tokyo = plan_prompt("Flights LAX to any Tokyo airport on 2026-11-03")
+        self.assertTrue(tokyo.nearby)
+        self.assertEqual(tokyo.origin, "LAX")
+        self.assertEqual(tokyo.destination, "NRT")
+        named = plan_prompt(
+            "YVR-LHR on 2026-10-09 and LGW-YVR on 2026-10-13 as a packaged "
+            "round-trip --trip rt --nearby. Do not invent a fare."
+        )
+        self.assertTrue(named.nearby)
+        self.assertEqual(
+            list(named.route_specs),
+            ["YVR-LHR:2026-10-09", "LGW-YVR:2026-10-13"],
+        )
+        kept = plan_to_trips(named)
+        self.assertIsInstance(kept, MultiCity)
+        assert isinstance(kept, MultiCity)
+        self.assertEqual(
+            [(leg.origin, leg.destination) for leg in kept.legs],
+            [("YVR", "LHR"), ("LGW", "YVR")],
+        )
+
 
 class PromptPlanHardTests(unittest.TestCase):
     def test_refuse_booking(self) -> None:

@@ -41,6 +41,8 @@ from viajante.flights import (
     FLIGHT_SORTS,
     FlightSort,
     _clock_minutes,
+    expand_nearby_trips,
+    nearby_notes,
     normalize_trip_kind,
     parse_depart_window,
     parse_flight_plan,
@@ -84,6 +86,7 @@ from viajante.trip import (
 FLIGHTS_EXAMPLES = """\
 Examples:
   viajante flights JFK-LHR:2026-09-15
+  viajante flights BOS-LHR:2026-09-18 --nearby --fetch sweep
   viajante flights JFK-NRT:2026-10-09:2026-10-20
   viajante flights --trip rt LAX-NRT:2026-10-12:2026-10-26 --fetch sweep
   viajante flights SYD-AKL:2026-11-03 AKL-SYD:2026-11-10 --max-stops 0
@@ -203,7 +206,8 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     for departure in _plan_departure_dates(plan):
         if departure < today:
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
-    return _as_trips(plan)
+    trips = _as_trips(plan)
+    return expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
 
 
 def _as_trips(plan: object) -> Tuple[Trip, ...]:
@@ -399,11 +403,15 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
 
 
 def _query_header(query: Trip) -> str:
+    nearby = ""
+    label = getattr(query, "nearby_label", None)
+    if label:
+        nearby = f"; {label}"
     if isinstance(query, RoundTrip):
         return (
             f"\n=== {query.origin} -> {query.destination}  "
             f"{query.departure_date.isoformat()} / {query.return_date.isoformat()} "
-            f"(round-trip, max {query.max_stops} stop(s)) ==="
+            f"(round-trip, max {query.max_stops} stop(s){nearby}) ==="
         )
     if isinstance(query, MultiCity):
         path = " / ".join(
@@ -413,7 +421,7 @@ def _query_header(query: Trip) -> str:
         return f"\n=== {path} (multi-city) ==="
     return (
         f"\n=== {query.origin} -> {query.destination}  "
-        f"{query.departure_date.isoformat()} (max {query.max_stops} stop(s)) ==="
+        f"{query.departure_date.isoformat()} (max {query.max_stops} stop(s){nearby}) ==="
     )
 
 
@@ -706,6 +714,10 @@ def _run_flights(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if getattr(args, "nearby", False):
+        for note in nearby_notes(queries):
+            print(note, file=sys.stderr)
 
     report = search_flights(
         queries,
@@ -1226,6 +1238,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="carry_on",
         help="Ask the shopping request for one carry-on (omit to leave unset)",
+    )
+    flights.add_argument(
+        "--nearby",
+        action="store_true",
+        default=False,
+        help=(
+            "Expand origin/dest to owned same-city IATA and search each as a "
+            "labeled alternative (default off; named open-jaw airports stay)"
+        ),
     )
     flights.add_argument(
         "--top",

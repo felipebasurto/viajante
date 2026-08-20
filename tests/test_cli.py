@@ -274,6 +274,55 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(queries[0].bags)
         self.assertIsNone(queries[0].carry_on)
 
+    def test_nearby_expands_london_and_keeps_named_open_jaw(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    code = main(
+                        [
+                            "flights",
+                            f"BOS-LHR:{FUTURE_DATE.isoformat()}",
+                            "--nearby",
+                        ]
+                    )
+        self.assertEqual(code, 0)
+        queries = search.call_args.args[0]
+        dests = {query.destination for query in queries}
+        self.assertGreater(len(queries), 1)
+        self.assertEqual(queries[0].origin, "BOS")
+        self.assertEqual(queries[0].destination, "LHR")
+        self.assertTrue({"LHR", "LGW", "STN"} <= dests)
+        self.assertIn("nearby London", err.getvalue())
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                code = main(
+                    [
+                        "flights",
+                        f"YVR-LHR:{FUTURE_DATE.isoformat()}",
+                        f"LGW-YVR:{(FUTURE_DATE + timedelta(days=4)).isoformat()}",
+                        "--trip",
+                        "rt",
+                        "--nearby",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        trips = search.call_args.args[0]
+        self.assertEqual(len(trips), 1)
+        self.assertEqual(
+            [(leg.origin, leg.destination) for leg in trips[0].legs],
+            [("YVR", "LHR"), ("LGW", "YVR")],
+        )
+
+    def test_nearby_default_keeps_named_heathrow(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(["flights", f"BOS-LHR:{FUTURE_DATE.isoformat()}"])
+        queries = search.call_args.args[0]
+        self.assertEqual(len(queries), 1)
+        self.assertEqual(queries[0].destination, "LHR")
+        self.assertIsNone(queries[0].nearby_label)
+
     def test_negative_bags_is_rejected_before_searching(self) -> None:
         with patch("viajante.cli.search_flights") as search:
             self.assertEqual(main(["flights", ROUTE, "--bags", "-1"]), 1)
@@ -786,6 +835,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--depart-window", help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--carry-on", help_text)
+        self.assertIn("--nearby", help_text)
         self.assertIn("duration", help_text)
         self.assertIn("departure", help_text)
         self.assertIn("06:00-20:00", help_text)

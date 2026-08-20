@@ -60,6 +60,7 @@ def build_server():
         infants_on_lap: int = 0,
         currency: str = "EUR",
         country: str | None = None,
+        nearby: bool = False,
     ) -> dict:
         return dict(
             search_flights_tool(
@@ -87,6 +88,7 @@ def build_server():
                 infants_on_lap=infants_on_lap,
                 currency=currency,
                 country=country,
+                nearby=nearby,
             )
         )
 

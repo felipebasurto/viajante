@@ -21,7 +21,7 @@ from viajante.carriers import (
     parse_airline_codes,
     parse_alliances,
 )
-from viajante.flights import FlightPlan, parse_flight_plan
+from viajante.flights import FlightPlan, expand_nearby_trips, parse_flight_plan
 from viajante.models import FETCH_LANGUAGE, FlightCabin, HotelQuery
 
 Intent = str
@@ -318,6 +318,10 @@ _FLAG = re.compile(
     r"depart-window|currency|country|airlines|exclude-airlines|alliance|"
     r"exclude-alliance)\s+(\S+)",
     re.IGNORECASE,
+)
+_BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
+_ANY_CITY_AIRPORT = re.compile(
+    r"\bany\s+(?:of\s+(?:the\s+)?)?([a-z]+(?:\s+[a-z]+){0,3})\s+airports?\b"
 )
 _SPANISH_DATE = re.compile(
     r"\b(\d{1,2})\s+de\s+([a-záéíóú]+)\s+(?:de\s+)?(20\d{2})\b",
@@ -698,6 +702,7 @@ class PromptPlan:
     prefer_airports: Tuple[str, ...] = ()
     work_back_by: Optional[str] = None
     route_specs: Tuple[str, ...] = ()
+    nearby: bool = False
     notes: str = ""
     locale: str = FETCH_LANGUAGE
     flex_days: Optional[int] = None
@@ -758,6 +763,7 @@ class PromptPlan:
             "prefer_airports": list(self.prefer_airports),
             "work_back_by": self.work_back_by,
             "route_specs": list(self.route_specs),
+            "nearby": self.nearby,
             "notes": self.notes,
             "locale": self.locale,
             "flex_days": self.flex_days,
@@ -817,6 +823,19 @@ def _flag_map(text: str) -> dict[str, str]:
             continue
         found[match.group(1).casefold()] = match.group(2).strip(" ,.")
     return found
+
+
+def _wants_nearby(raw: str, folded: str) -> bool:
+    for match in _BARE_NEARBY.finditer(raw):
+        prefix = raw[max(0, match.start() - 9) : match.start()].casefold()
+        if prefix.endswith("sin ") or prefix.endswith("without "):
+            continue
+        return True
+    hit = _ANY_CITY_AIRPORT.search(folded)
+    if hit is None:
+        return False
+    city = " ".join(hit.group(1).split())
+    return city in _CITY_IATA
 
 
 def _iso_dates(text: str) -> list[date]:
@@ -897,8 +916,17 @@ def _first_city_iata(folded: str) -> Optional[str]:
     return best
 
 
+_ANY_CITY_PREFIX = re.compile(r"^any\s+(?:of\s+(?:the\s+)?)?")
+_AIRPORT_SUFFIX = re.compile(r"\s+airports?$")
+
+
 def _resolve_city_iata(name: str) -> Optional[str]:
     cleaned = " ".join(name.split())
+    cleaned = _ANY_CITY_PREFIX.sub("", cleaned)
+    cleaned = _AIRPORT_SUFFIX.sub("", cleaned)
+    cleaned = " ".join(cleaned.split())
+    if not cleaned:
+        return None
     return _CITY_IATA.get(cleaned) or _CITY_IATA.get(cleaned.split()[0]) or _lookup_alias(cleaned)
 
 
@@ -1600,7 +1628,7 @@ def plan_to_trips(plan: PromptPlan) -> FlightPlan:
         FlightCabin,
         plan.cabin if plan.cabin in _PLAN_CABINS else "economy",
     )
-    return parse_flight_plan(
+    parsed = parse_flight_plan(
         plan.route_specs,
         trip=plan.trip or "one-way",
         max_stops=plan.max_stops if plan.max_stops is not None else 1,
@@ -1610,6 +1638,9 @@ def plan_to_trips(plan: PromptPlan) -> FlightPlan:
         infants_on_lap=plan.infants_on_lap if plan.infants_on_lap is not None else 0,
         cabin=cabin,
     )
+    if not plan.nearby or not isinstance(parsed, tuple):
+        return parsed
+    return expand_nearby_trips(parsed, nearby=True)
 
 
 def plan_to_hotel_query(plan: PromptPlan) -> HotelQuery:
@@ -1635,6 +1666,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     raw = " ".join(text.split())
     folded = _fold(raw)
     flags = _flag_map(raw)
+    nearby = _wants_nearby(raw, folded)
     dates = _iso_dates(raw)
     pairs = _iata_pairs(raw)
     if not pairs:
@@ -1808,6 +1840,12 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             destination = codes[1]
         elif len(codes) == 1 and origin and codes[0] != origin:
             destination = codes[0]
+    if destination is None:
+        any_city = _ANY_CITY_AIRPORT.search(folded)
+        if any_city is not None:
+            dest = _resolve_city_iata(any_city.group(0))
+            if dest and dest != origin:
+                destination = dest
 
     # "to Fiji from Halifax" already handled; city aliases for dest-only fantasy
     if origin is None and "halifax" in folded:
@@ -1916,6 +1954,12 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_regions=exclude_regions,
             max_layover=max_layover,
         )
+    if nearby:
+        extra = (
+            "Expand origin or dest with --nearby to owned same-city IATA; "
+            "keep named airports. Do not invent a fare."
+        )
+        notes = f"{notes} {extra}".strip() if notes else extra
 
     departure = dates[0] if dates else None
     returning = dates[1] if len(dates) >= 2 else None
@@ -2232,5 +2276,6 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         prefer_airports=prefer_airports,
         work_back_by=work_back_by,
         route_specs=route_specs,
+        nearby=nearby,
         notes=notes,
     )

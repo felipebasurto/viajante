@@ -13,7 +13,9 @@ from viajante.flights import (
     _run_search,
     classify_failure,
     compare_nonstop_vs_one_stop,
+    expand_nearby_trips,
     is_low_cost,
+    nearby_notes,
     normalize_trip_kind,
     parse_depart_window,
     parse_flight_plan,
@@ -613,6 +615,68 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(mirrored, RoundTrip)
         self.assertEqual(mirrored.destination, "LHR")
         self.assertEqual(mirrored.legs[1].origin, "LHR")
+
+    def test_nearby_expands_one_way_and_skips_named_open_jaw(self) -> None:
+        queries = parse_route_specs(["BOS-LHR:2026-09-18"], max_stops=1)
+        off = expand_nearby_trips(queries, nearby=False)
+        self.assertEqual([(item.origin, item.destination) for item in off], [("BOS", "LHR")])
+        expanded = expand_nearby_trips(queries, nearby=True)
+        pairs = [(item.origin, item.destination) for item in expanded]
+        self.assertEqual(pairs[0], ("BOS", "LHR"))
+        dests = {dest for _origin, dest in pairs}
+        self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= dests)
+        self.assertTrue(all(origin == "BOS" for origin, _dest in pairs))
+        self.assertNotIn("BQH", dests)
+        self.assertTrue(all(item.nearby_label for item in expanded))
+        self.assertIn("nearby London LGW", [item.nearby_label for item in expanded])
+        notes = nearby_notes(expanded)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("London", notes[0])
+        self.assertIn("LHR", notes[0])
+        self.assertIn("LGW", notes[0])
+
+        tokyo = expand_nearby_trips(
+            parse_route_specs(["LAX-NRT:2026-11-03"], max_stops=1),
+            nearby=True,
+        )
+        tokyo_dests = {item.destination for item in tokyo}
+        self.assertEqual(tokyo[0].destination, "NRT")
+        self.assertEqual(tokyo_dests, {"NRT", "HND"})
+
+        mad = expand_nearby_trips(
+            parse_route_specs(["MAD-BCN:2026-09-01"], max_stops=1),
+            nearby=True,
+        )
+        self.assertEqual([(item.origin, item.destination) for item in mad], [("MAD", "BCN")])
+        self.assertIsNone(mad[0].nearby_label)
+
+        packaged = parse_flight_plan(
+            ["BOS-LHR:2026-10-09:2026-10-12"],
+            trip="rt",
+            max_stops=1,
+        )
+        rt_alts = expand_nearby_trips((packaged,), nearby=True)
+        self.assertGreater(len(rt_alts), 1)
+        self.assertIsInstance(rt_alts[0], RoundTrip)
+        self.assertEqual(
+            (rt_alts[0].origin, rt_alts[0].destination),
+            ("BOS", "LHR"),
+        )
+        self.assertTrue({"LHR", "LGW"} <= {item.destination for item in rt_alts})
+        self.assertTrue(all(item.origin == "BOS" for item in rt_alts))
+
+        open_jaw = parse_flight_plan(
+            ["YVR-LHR:2026-10-09", "LGW-YVR:2026-10-13"],
+            trip="rt",
+            max_stops=1,
+        )
+        kept = expand_nearby_trips((open_jaw,), nearby=True)
+        self.assertEqual(len(kept), 1)
+        self.assertIsInstance(kept[0], MultiCity)
+        self.assertEqual(
+            [(leg.origin, leg.destination) for leg in kept[0].legs],
+            [("YVR", "LHR"), ("LGW", "YVR")],
+        )
 
     def test_parse_flight_plan_occupancy(self) -> None:
         plan = parse_flight_plan(

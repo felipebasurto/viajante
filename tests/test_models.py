@@ -100,6 +100,14 @@ class ModelTests(unittest.TestCase):
             },
         )
         self.assertEqual(data["trip"], "one-way")
+        labeled = FlightQuery(
+            "BOS",
+            "LHR",
+            date(2026, 9, 18),
+            nearby_label="nearby London LHR",
+        )
+        self.assertEqual(labeled.nearby_label, "nearby London LHR")
+        self.assertNotIn("nearby_label", labeled.to_dict())
         self.assertNotIn("return_date", data)
         self.assertNotIn("legs", data)
         self.assertNotIn("bags", data)

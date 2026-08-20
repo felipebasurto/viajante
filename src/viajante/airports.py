@@ -106,6 +106,8 @@ class Airport:
 _LOOKUP_ROWS: Optional[tuple[tuple[Airport, str, str, str], ...]] = None
 _BY_CODE: Optional[dict[str, Airport]] = None
 _BY_CITY: Optional[dict[str, tuple[Airport, ...]]] = None
+_BY_CITY_COUNTRY: Optional[dict[tuple[str, str], tuple[Airport, ...]]] = None
+NEARBY_MAX = 5
 
 
 def _load_iata_airports() -> dict[str, Airport]:
@@ -193,6 +195,46 @@ def _lookup_indexes() -> tuple[
 def get_airport(code: str) -> Optional[Airport]:
     text = code.strip().upper()
     return _by_code().get(text)
+
+
+def _by_city_country() -> dict[tuple[str, str], tuple[Airport, ...]]:
+    """City+country → airports. Built from the code table; no city-name scan."""
+    global _BY_CITY_COUNTRY
+    cached = _BY_CITY_COUNTRY
+    if cached is None:
+        groups: dict[tuple[str, str], list[Airport]] = {}
+        for airport in _by_code().values():
+            if airport.city.strip():
+                groups.setdefault((airport.city, airport.country), []).append(airport)
+        cached = {key: tuple(rows) for key, rows in groups.items()}
+        _BY_CITY_COUNTRY = cached
+    return cached
+
+
+def same_city_iata(code: str) -> Tuple[str, ...]:
+    """Owned same-city passenger codes for optional `--nearby` expand.
+
+    Groups by the table's ``city`` and ``country``. Returns the named seed
+    alone when there is no second major in that group. Never invents a code.
+    """
+    airport = get_airport(code)
+    if airport is None:
+        return ()
+    seed = airport.iata
+    if not airport.city.strip():
+        return (seed,)
+    peers = _by_city_country().get((airport.city, airport.country), (airport,))
+    majors = [row for row in peers if row.iata in _MAJOR_IATA]
+    chosen = {row.iata for row in majors}
+    chosen.add(seed)
+    if len(chosen) < 2:
+        return (seed,)
+    rest = [
+        row.iata
+        for row in sorted(peers, key=_lookup_rank)
+        if row.iata in chosen and row.iata != seed
+    ]
+    return (seed, *rest)[:NEARBY_MAX]
 
 
 def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:

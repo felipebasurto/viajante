@@ -101,6 +101,28 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
         self.assertEqual(kwargs["sort"], "price")
 
+    def test_search_flights_nearby_expands_before_search(self) -> None:
+        fake = _report(queries=[], currency="EUR")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool([f"BOS-LHR:{FUTURE}"], nearby=True)
+        trips = search.call_args.args[0]
+        dests = {trip.destination for trip in trips}
+        self.assertGreater(len(trips), 1)
+        self.assertEqual(trips[0].destination, "LHR")
+        self.assertTrue({"LHR", "LGW", "STN"} <= dests)
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool(
+                [f"YVR-LHR:{FUTURE}", f"LGW-YVR:{FUTURE_OUT}"],
+                trip="rt",
+                nearby=True,
+            )
+        packed = search.call_args.args[0]
+        self.assertEqual(len(packed), 1)
+        self.assertEqual(
+            [(leg.origin, leg.destination) for leg in packed[0].legs],
+            [("YVR", "LHR"), ("LGW", "YVR")],
+        )
+
     def test_search_flights_accepts_alliance_filters(self) -> None:
         fake = _report(queries=[], currency="EUR")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
