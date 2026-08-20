@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Mapping, Optional, Protocol
+from typing import Any, Callable, Mapping, Optional, Protocol
 from urllib.parse import urlencode
 
 from selectolax.lexbor import LexborHTMLParser
@@ -43,6 +44,9 @@ PAGE_TIMEOUT_MS = 60_000
 CONSENT_CLICK_TIMEOUT_MS = 5_000
 CONSENT_SETTLE_MS = 1_500
 HTTP_TIMEOUT_SECONDS = 30
+# One replay on empty/drift/5xx. Happy path does not sleep. Not an anti-bot pause.
+SWEEP_RETRY_LIMIT = 1
+SWEEP_RETRY_BACKOFF_SECONDS = 0.05
 # Current Linux Chrome; do not spoof a stale Chrome/macOS UA.
 HTTP_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -104,6 +108,10 @@ class GoogleFlightsMarkupError(RuntimeError):
 
 class GoogleFlightsBlocked(RuntimeError):
     """HTTP sweep hit a consent wall, captcha, or traffic block."""
+
+    def __init__(self, message: str = "", *, status: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class GoogleFlightsRejected(RuntimeError):
@@ -323,13 +331,28 @@ class _OpenerSweepClient:
 
 def _raise_if_blocked(status: int, body: str, final_url: str, fallback_url: str) -> None:
     if status in {403, 429, 503}:
-        raise GoogleFlightsBlocked(f"Google Flights HTTP {status} from {fallback_url}")
+        raise GoogleFlightsBlocked(
+            f"Google Flights HTTP {status} from {fallback_url}",
+            status=status,
+        )
     if status >= 400:
-        raise GoogleFlightsBlocked(f"Google Flights HTTP {status} from {final_url or fallback_url}")
+        raise GoogleFlightsBlocked(
+            f"Google Flights HTTP {status} from {final_url or fallback_url}",
+            status=status,
+        )
     if looks_blocked(body, final_url):
         raise GoogleFlightsBlocked(
             f"Google Flights blocked the sweep at {final_url or fallback_url}"
         )
+
+
+def _is_retriable_sweep_failure(exc: BaseException) -> bool:
+    if isinstance(exc, (NoFlightsFound, GoogleFlightsMarkupError)):
+        return True
+    if isinstance(exc, GoogleFlightsBlocked):
+        status = exc.status
+        return isinstance(status, int) and status >= 500
+    return False
 
 
 def _http_error_code(exc: BaseException) -> Optional[int]:
@@ -354,7 +377,10 @@ def _opener_get(
     except Exception as exc:
         code = _http_error_code(exc)
         if code in {403, 429, 503}:
-            raise GoogleFlightsBlocked(f"Google Flights HTTP {code} from {url}") from exc
+            raise GoogleFlightsBlocked(
+                f"Google Flights HTTP {code} from {url}",
+                status=code,
+            ) from exc
         raise
     return _decode_http_body(raw, encoding), final_url, status
 
@@ -387,7 +413,10 @@ def fetch_search_html(
             status = getattr(response, "status", 200)
     except urllib_error.HTTPError as exc:
         if exc.code in {403, 429, 503}:
-            raise GoogleFlightsBlocked(f"Google Flights HTTP {exc.code} from {url}") from exc
+            raise GoogleFlightsBlocked(
+                f"Google Flights HTTP {exc.code} from {url}",
+                status=exc.code,
+            ) from exc
         raise
     html = _decode_http_body(raw, encoding)
     _raise_if_blocked(status, html, final_url, url)
@@ -429,6 +458,7 @@ class GoogleFlightsHttpSource:
         opener: Optional[Any] = None,
         client: Optional[SweepHttpClient] = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
+        sleep: Optional[Callable[[float], None]] = None,
     ) -> None:
         self._html_lang = html_lang
         self._currency = currency
@@ -436,19 +466,18 @@ class GoogleFlightsHttpSource:
         self._opener = opener
         self._owned_client: Optional[ChromeSweepClient] = None
         self._timeout = timeout
+        self._sleep = time.sleep if sleep is None else sleep
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency)
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        client = self._ensure_client()
         try:
-            return self._fetch_compact(client, trip)
-        except (GoogleFlightsBlocked, NoFlightsFound, GoogleFlightsRejected):
-            raise
-        except CompactParseMiss:
-            pass
-        url = build_search_url(trip, html_lang=self._html_lang, currency=self._currency)
-        html, _final_url = fetch_search_html(url, client=client, timeout=self._timeout)
-        return parse_http_flight_cards(html)
+            return self._fetch_once(trip)
+        except Exception as exc:
+            if SWEEP_RETRY_LIMIT < 1 or not _is_retriable_sweep_failure(exc):
+                raise
+            if SWEEP_RETRY_BACKOFF_SECONDS > 0:
+                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+            return self._fetch_once(trip)
 
     def reset(self) -> None:
         self._close_owned_client()
@@ -470,6 +499,18 @@ class GoogleFlightsHttpSource:
             self._owned_client.close()
             self._owned_client = None
 
+    def _fetch_once(self, trip: Trip) -> tuple[RawFlightCard, ...]:
+        client = self._ensure_client()
+        try:
+            return self._fetch_compact(client, trip)
+        except (GoogleFlightsBlocked, NoFlightsFound, GoogleFlightsRejected):
+            raise
+        except CompactParseMiss:
+            pass
+        url = build_search_url(trip, html_lang=self._html_lang, currency=self._currency)
+        html, _final_url = fetch_search_html(url, client=client, timeout=self._timeout)
+        return parse_http_flight_cards(html)
+
     def _fetch_compact(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
         url, body = build_shopping_request(trip, html_lang=self._html_lang, currency=self._currency)
         try:
@@ -480,7 +521,11 @@ class GoogleFlightsHttpSource:
             raise
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
-        if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
+        if (
+            response.status in {403, 429}
+            or response.status >= 500
+            or looks_blocked(response.text, response.url)
+        ):
             _raise_if_blocked(response.status, response.text, response.url, url)
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")

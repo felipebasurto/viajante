@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from viajante.flights import _normalize_offer
 from viajante.google_flights import (
     EMPTY_STATE_TEXT,
+    SWEEP_RETRY_BACKOFF_SECONDS,
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
     GoogleFlightsMarkupError,
@@ -402,6 +403,8 @@ class _FakeSweepClient:
         get_text: str = "",
         get_status: int = 200,
         get_url: str = "https://www.google.com/travel/flights?hl=en",
+        post_replies: tuple[SweepHttpResponse, ...] = (),
+        get_replies: tuple[SweepHttpResponse, ...] = (),
     ) -> None:
         self.post_text = post_text
         self.post_status = post_status
@@ -409,6 +412,8 @@ class _FakeSweepClient:
         self.get_text = get_text
         self.get_status = get_status
         self.get_url = get_url
+        self._post_replies = list(post_replies)
+        self._get_replies = list(get_replies)
         self.posts: list[str] = []
         self.gets: list[str] = []
 
@@ -422,10 +427,14 @@ class _FakeSweepClient:
     ) -> SweepHttpResponse:
         self.posts.append(url)
         self.last_post_data = data
+        if self._post_replies:
+            return self._post_replies.pop(0)
         return SweepHttpResponse(self.post_status, self.post_text, self.post_url)
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
         self.gets.append(url)
+        if self._get_replies:
+            return self._get_replies.pop(0)
         return SweepHttpResponse(self.get_status, self.get_text, self.get_url)
 
     def close(self) -> None:
@@ -730,37 +739,148 @@ class ShoppingRpcTests(unittest.TestCase):
             parse_shopping_body("not a shopping payload")
 
     def test_source_uses_compact_post_not_html(self) -> None:
+        sleeps: list[float] = []
         client = _FakeSweepClient(post_text=_compact_body(_itinerary(price=88, airline="Iberia")))
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€88")
         self.assertEqual(len(client.posts), 1)
         self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [])
 
     def test_source_falls_back_to_html_when_compact_misses(self) -> None:
+        sleeps: list[float] = []
         html = _http_page(build_results_page(build_card(price="€39", airline="Vueling")))
         client = _FakeSweepClient(post_text="totally unrelated", get_text=html)
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Vueling")
         self.assertEqual(cards[0].price, "€39")
         self.assertEqual(len(client.posts), 1)
         self.assertEqual(len(client.gets), 1)
+        self.assertEqual(sleeps, [])
 
     def test_empty_compact_does_not_download_html(self) -> None:
+        sleeps: list[float] = []
         client = _FakeSweepClient(post_text=_compact_body())
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(NoFlightsFound):
             source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(len(client.posts), 2)
         self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
 
     def test_source_raises_blocked_on_shopping_403(self) -> None:
+        sleeps: list[float] = []
         client = _FakeSweepClient(post_status=403, post_text="no")
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(GoogleFlightsBlocked):
             source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(len(client.posts), 1)
         self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [])
+
+
+class HttpSweepRetryTests(unittest.TestCase):
+    def test_retry_backoff_is_under_200ms_not_an_anti_bot_pause(self) -> None:
+        self.assertGreater(SWEEP_RETRY_BACKOFF_SECONDS, 0.0)
+        self.assertLess(SWEEP_RETRY_BACKOFF_SECONDS, 0.2)
+
+    def test_tiny_html_drift_replays_once_and_keeps_compact_cards(self) -> None:
+        sleeps: list[float] = []
+        tiny = _http_page("<div>loading</div>")
+        client = _FakeSweepClient(
+            post_replies=(
+                SweepHttpResponse(200, "not shopping"),
+                SweepHttpResponse(200, _compact_body(_itinerary(price=77, airline="Iberia"))),
+            ),
+            get_replies=(SweepHttpResponse(200, tiny),),
+        )
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(cards[0].airline, "Iberia")
+        self.assertEqual(cards[0].price, "€77")
+        self.assertEqual(len(client.posts), 2)
+        self.assertEqual(len(client.gets), 1)
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_drift_twice_is_still_markup_error_after_one_retry(self) -> None:
+        sleeps: list[float] = []
+        tiny = _http_page("<div>loading</div>")
+        client = _FakeSweepClient(post_text="not shopping", get_text=tiny)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        with self.assertRaises(GoogleFlightsMarkupError):
+            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(len(client.posts), 2)
+        self.assertEqual(len(client.gets), 2)
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_empty_compact_then_cards_replays_on_the_same_client(self) -> None:
+        sleeps: list[float] = []
+        client = _FakeSweepClient(
+            post_replies=(
+                SweepHttpResponse(200, _compact_body()),
+                SweepHttpResponse(200, _compact_body(_itinerary(price=64, airline="Ryanair"))),
+            )
+        )
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(cards[0].airline, "Ryanair")
+        self.assertEqual(len(client.posts), 2)
+        self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_shopping_503_then_cards_retries_once(self) -> None:
+        sleeps: list[float] = []
+        client = _FakeSweepClient(
+            post_replies=(
+                SweepHttpResponse(503, "upstream"),
+                SweepHttpResponse(200, _compact_body(_itinerary(price=91, airline="Iberia"))),
+            )
+        )
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(cards[0].price, "€91")
+        self.assertEqual(len(client.posts), 2)
+        self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_shopping_500_retries_once_then_stays_blocked(self) -> None:
+        sleeps: list[float] = []
+        client = _FakeSweepClient(post_status=500, post_text="no")
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(caught.exception.status, 500)
+        self.assertEqual(len(client.posts), 2)
+        self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_shopping_reject_is_not_retried(self) -> None:
+        sleeps: list[float] = []
+        client = _FakeSweepClient(post_text=_error_response_body())
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        with self.assertRaises(GoogleFlightsRejected):
+            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(len(client.posts), 1)
+        self.assertEqual(client.gets, [])
+        self.assertEqual(sleeps, [])
+
+    def test_consent_block_is_not_retried(self) -> None:
+        sleeps: list[float] = []
+        client = _FakeSweepClient(
+            post_text="not shopping",
+            get_url="https://consent.google.com/ml",
+            get_text="<html></html>",
+        )
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        self.assertIsNone(caught.exception.status)
+        self.assertEqual(len(client.posts), 1)
+        self.assertEqual(len(client.gets), 1)
+        self.assertEqual(sleeps, [])
 
 
 def _live_leg(
