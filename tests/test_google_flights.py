@@ -482,6 +482,7 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(inner[1][5], 3)
         self.assertEqual(inner[1][6], [2, 0, 0, 0])
         self.assertIsNone(inner[1][7])
+        self.assertIsNone(flight[7])
 
     def test_occupancy_slot_is_adults_children_seat_lap(self) -> None:
         query = FlightQuery(
@@ -514,6 +515,59 @@ class ShoppingRpcTests(unittest.TestCase):
         default = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1)))
         self.assertIsNone(default[1][7])
         self.assertIsNone(default[1][10])
+
+    def test_airline_include_fills_segment_index_7(self) -> None:
+        query = FlightQuery(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            airlines=("BA", "KL"),
+        )
+        inner = build_shopping_inner(query)
+        flight = inner[1][13][0]
+        self.assertEqual(flight[7], [None, [["BA"], ["KL"]]])
+        self.assertIsNone(inner[1][7])
+        self.assertIsNone(inner[1][10])
+
+    def test_airline_exclude_fills_segment_index_7(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), exclude_airlines=("DL",))
+        flight = build_shopping_inner(query)[1][13][0]
+        self.assertEqual(flight[7], [1, [["DL"]]])
+
+    def test_alliance_include_and_exclude_use_iata_designators(self) -> None:
+        oneworld = FlightQuery("MAD", "LHR", date(2026, 9, 1), alliances=("oneworld",))
+        self.assertEqual(
+            build_shopping_inner(oneworld)[1][13][0][7],
+            [None, [["*O"]]],
+        )
+        not_star = FlightQuery("MAD", "FRA", date(2026, 9, 1), exclude_alliances=("star",))
+        self.assertEqual(
+            build_shopping_inner(not_star)[1][13][0][7],
+            [1, [["*A"]]],
+        )
+        mixed = FlightQuery(
+            "MAD",
+            "JFK",
+            date(2026, 9, 1),
+            airlines=("BA",),
+            exclude_alliances=("star",),
+        )
+        self.assertEqual(
+            build_shopping_inner(mixed)[1][13][0][7],
+            [None, [["BA"]], [["*A"]]],
+        )
+
+    def test_round_trip_carrier_filter_applies_to_both_segments(self) -> None:
+        trip = RoundTrip(
+            "MAD",
+            "LHR",
+            date(2026, 10, 9),
+            date(2026, 10, 12),
+            airlines=("BA",),
+        )
+        outbound, inbound = build_shopping_inner(trip)[1][13]
+        self.assertEqual(outbound[7], [None, [["BA"]]])
+        self.assertEqual(inbound[7], [None, [["BA"]]])
 
     def test_shopping_stop_table_is_not_the_tfs_integer(self) -> None:
         self.assertEqual(shopping_stop_code(0), 1)

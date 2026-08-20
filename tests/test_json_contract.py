@@ -145,6 +145,8 @@ class JsonContractTests(unittest.TestCase):
         self.assertNotIn("children", query)
         self.assertNotIn("infants_in_seat", query)
         self.assertNotIn("infants_on_lap", query)
+        self.assertNotIn("airlines", query)
+        self.assertNotIn("alliances", query)
 
     def test_occupancy_counts_are_extra_query_keys(self) -> None:
         query = FlightQuery(
@@ -162,6 +164,26 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(data["infants_in_seat"], 1)
         self.assertEqual(data["infants_on_lap"], 1)
         self.assertEqual(set(data), QUERY_KEYS | {"children", "infants_in_seat", "infants_on_lap"})
+
+    def test_carrier_filters_are_extra_query_keys(self) -> None:
+        query = FlightQuery(
+            "MAD",
+            "LHR",
+            date(2026, 9, 1),
+            airlines=("BA", "KL"),
+            exclude_airlines=("DL",),
+            alliances=("oneworld",),
+            exclude_alliances=("star",),
+        )
+        data = query.to_dict()
+        self.assertEqual(data["airlines"], ["BA", "KL"])
+        self.assertEqual(data["exclude_airlines"], ["DL"])
+        self.assertEqual(data["alliances"], ["oneworld"])
+        self.assertEqual(data["exclude_alliances"], ["star"])
+        self.assertEqual(
+            set(data),
+            QUERY_KEYS | {"airlines", "exclude_airlines", "alliances", "exclude_alliances"},
+        )
 
     def test_parsed_bag_counts_are_extra_offer_keys(self) -> None:
         offer = FlightOffer(

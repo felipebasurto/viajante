@@ -8,12 +8,12 @@ from datetime import date
 from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports
+from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.dates import parse_route_pair, resolve_date_trip, search_dates, validate_date_window
 from viajante.explore import DEFAULT_EXPLORE_TOP, search_explore, validate_explore_window
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
     FlightSort,
-    parse_airline_codes,
     parse_depart_window,
     parse_flight_plan,
     search_flights,
@@ -70,6 +70,8 @@ def search_flights_tool(
     fetch: str = "auto",
     airlines: Optional[str] = None,
     exclude_airlines: Optional[str] = None,
+    alliance: Optional[str] = None,
+    exclude_alliance: Optional[str] = None,
     depart_window: Optional[str] = None,
     max_duration: Optional[float] = None,
     min_layover: Optional[float] = None,
@@ -105,6 +107,8 @@ def search_flights_tool(
             fetch=fetch,  # type: ignore[arg-type]
             airlines=parse_airline_codes(airlines),
             exclude_airlines=parse_airline_codes(exclude_airlines),
+            alliances=parse_alliances(alliance),
+            exclude_alliances=parse_alliances(exclude_alliance),
             depart_window=parse_depart_window(depart_window),
             max_duration_hours=max_duration,
             min_layover_hours=min_layover,

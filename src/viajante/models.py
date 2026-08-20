@@ -107,6 +107,43 @@ def normalize_country(value: Optional[str]) -> Optional[str]:
     return text
 
 
+_ALLIANCES = frozenset({"oneworld", "skyteam", "star"})
+
+
+def _require_airline_codes(codes: Optional[Tuple[str, ...]], *, role: str) -> None:
+    if codes is None:
+        return
+    for code in codes:
+        if not (2 <= len(code) <= 3 and str(code).isalnum()):
+            raise ValueError(f"invalid {role} code: {code!r}")
+
+
+def _require_alliances(names: Optional[Tuple[str, ...]], *, role: str) -> None:
+    if names is None:
+        return
+    for name in names:
+        if name not in _ALLIANCES:
+            raise ValueError(f"invalid {role}: {name!r}")
+
+
+def _optional_carrier_fields(
+    airlines: Optional[Tuple[str, ...]],
+    exclude_airlines: Optional[Tuple[str, ...]],
+    alliances: Optional[Tuple[str, ...]],
+    exclude_alliances: Optional[Tuple[str, ...]],
+) -> dict[str, list[str]]:
+    payload: dict[str, list[str]] = {}
+    if airlines:
+        payload["airlines"] = list(airlines)
+    if exclude_airlines:
+        payload["exclude_airlines"] = list(exclude_airlines)
+    if alliances:
+        payload["alliances"] = list(alliances)
+    if exclude_alliances:
+        payload["exclude_alliances"] = list(exclude_alliances)
+    return payload
+
+
 @dataclass(frozen=True)
 class FlightLeg:
     origin: str
@@ -138,6 +175,10 @@ class FlightQuery:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
+    airlines: Optional[Tuple[str, ...]] = None
+    exclude_airlines: Optional[Tuple[str, ...]] = None
+    alliances: Optional[Tuple[str, ...]] = None
+    exclude_alliances: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -153,6 +194,10 @@ class FlightQuery:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
+        _require_airline_codes(self.airlines, role="airlines")
+        _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
+        _require_alliances(self.alliances, role="alliances")
+        _require_alliances(self.exclude_alliances, role="exclude_alliances")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
 
@@ -181,6 +226,14 @@ class FlightQuery:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        payload.update(
+            _optional_carrier_fields(
+                self.airlines,
+                self.exclude_airlines,
+                self.alliances,
+                self.exclude_alliances,
+            )
+        )
         return payload
 
 
@@ -198,6 +251,10 @@ class RoundTrip:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
+    airlines: Optional[Tuple[str, ...]] = None
+    exclude_airlines: Optional[Tuple[str, ...]] = None
+    alliances: Optional[Tuple[str, ...]] = None
+    exclude_alliances: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -217,6 +274,10 @@ class RoundTrip:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
+        _require_airline_codes(self.airlines, role="airlines")
+        _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
+        _require_alliances(self.alliances, role="alliances")
+        _require_alliances(self.exclude_alliances, role="exclude_alliances")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
 
@@ -235,6 +296,14 @@ class RoundTrip:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        payload.update(
+            _optional_carrier_fields(
+                self.airlines,
+                self.exclude_airlines,
+                self.alliances,
+                self.exclude_alliances,
+            )
+        )
         return payload
 
     @property
@@ -255,6 +324,10 @@ class MultiCity:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
+    airlines: Optional[Tuple[str, ...]] = None
+    exclude_airlines: Optional[Tuple[str, ...]] = None
+    alliances: Optional[Tuple[str, ...]] = None
+    exclude_alliances: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
         if len(self.legs) < 2:
@@ -271,6 +344,10 @@ class MultiCity:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
+        _require_airline_codes(self.airlines, role="airlines")
+        _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
+        _require_alliances(self.alliances, role="alliances")
+        _require_alliances(self.exclude_alliances, role="exclude_alliances")
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -295,6 +372,14 @@ class MultiCity:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        payload.update(
+            _optional_carrier_fields(
+                self.airlines,
+                self.exclude_airlines,
+                self.alliances,
+                self.exclude_alliances,
+            )
+        )
         return payload
 
 

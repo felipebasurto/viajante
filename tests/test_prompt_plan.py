@@ -271,6 +271,36 @@ class PromptPlanHardTests(unittest.TestCase):
         self.assertEqual(plan.intent, "flights")
         self.assertEqual(plan.cabin, "first")
 
+    def test_ba_or_kl_only_sets_include_airlines(self) -> None:
+        plan = plan_prompt("LHR-AMS on 2026-09-15, BA or KL only")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(list(plan.include_airlines), ["BA", "KL"])
+        self.assertEqual(list(plan.exclude_airlines), [])
+
+    def test_not_dl_sets_exclude_airlines(self) -> None:
+        plan = plan_prompt("JFK-LHR on 2026-09-15, not DL")
+        self.assertEqual(list(plan.exclude_airlines), ["DL"])
+        self.assertEqual(list(plan.include_airlines), [])
+
+    def test_oneworld_and_not_star_alliance(self) -> None:
+        oneworld = plan_prompt("MAD-JFK on 2026-09-15 oneworld")
+        self.assertEqual(list(oneworld.alliance), ["oneworld"])
+        not_star = plan_prompt("MAD-FRA on 2026-09-15 not star alliance")
+        self.assertEqual(list(not_star.exclude_alliance), ["star"])
+        self.assertEqual(list(not_star.alliance), [])
+
+    def test_named_airline_and_flags(self) -> None:
+        named = plan_prompt("MAD-LHR on 2026-09-15 british airways only")
+        self.assertEqual(list(named.include_airlines), ["BA"])
+        flagged = plan_prompt("MAD-AMS on 2026-09-15 --airlines BA,KL --exclude-alliance star")
+        self.assertEqual(list(flagged.include_airlines), ["BA", "KL"])
+        self.assertEqual(list(flagged.exclude_alliance), ["star"])
+
+    def test_english_to_is_not_transavia(self) -> None:
+        plan = plan_prompt("Flights BOS-LHR on 2026-09-01 to London")
+        self.assertEqual(list(plan.include_airlines), [])
+        self.assertEqual(list(plan.exclude_airlines), [])
+
 
 class PromptPlanInsaneTests(unittest.TestCase):
     def test_halifax_fiji_via_continents(self) -> None:

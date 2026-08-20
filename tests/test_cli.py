@@ -512,6 +512,22 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
+    def test_alliance_flags_reach_the_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(
+                    [
+                        "flights",
+                        ROUTE,
+                        "--alliance",
+                        "oneworld",
+                        "--exclude-alliance",
+                        "star",
+                    ]
+                )
+        self.assertEqual(search.call_args.kwargs["alliances"], ("oneworld",))
+        self.assertEqual(search.call_args.kwargs["exclude_alliances"], ("star",))
+
     def test_fetch_flag_reaches_the_search(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
@@ -642,6 +658,8 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--max-duration", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--exclude-airlines", help_text)
+        self.assertIn("--alliance", help_text)
+        self.assertIn("--exclude-alliance", help_text)
         self.assertIn("--depart-window", help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--carry-on", help_text)

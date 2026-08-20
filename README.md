@@ -234,8 +234,10 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--top` | `8` | Offers kept per query after ranking and deduplication. |
 | `--baggage-buffer` | `70` | EUR added to low-cost fares when ranking. `0` ranks on fare alone. |
 | `--sort` | `ranked` | `ranked` uses fare+buffer for `--top` and hides very slow connections. `fare` / `price` use cabin fare. `duration` uses elapsed time. `departure` / `arrival` use local clocks. |
-| `--airlines` | off | Keep only these airline IATA codes (`BA,AA` or `JL,NH`). After parse, before `--top`. |
-| `--exclude-airlines` | off | Drop these airline IATA codes (`F9,NK`). |
+| `--airlines` | off | Restrict the shopping request to these airline IATA codes (`BA,KL`). Detail still post-filters parsed cards. |
+| `--exclude-airlines` | off | Exclude these airline IATA codes from the shopping request (`DL`). |
+| `--alliance` | off | Restrict the shopping request to these alliances (`oneworld`, `skyteam`, `star`). Uses IATA designators, not a member list. |
+| `--exclude-alliance` | off | Exclude these alliances from the shopping request. |
 | `--depart-window` | off | Keep local departures in `START-END` inclusive. Hours (`6-20`) keep the whole end hour. Clocks (`06:00-20:00`) are exact. |
 | `--fetch` | `auto` | `sweep` is HTTP. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
 | `--max-layover` | off | Drop connecting offers whose layover exceeds this many hours. Nonstops stay. |

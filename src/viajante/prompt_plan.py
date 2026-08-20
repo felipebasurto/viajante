@@ -15,6 +15,12 @@ from datetime import date
 from typing import Any, Mapping, Optional, Sequence, Tuple, cast
 
 from viajante.airports import is_known_iata
+from viajante.carriers import (
+    ALLIANCE_PHRASES,
+    airline_names_longest_first,
+    parse_airline_codes,
+    parse_alliances,
+)
 from viajante.flights import FlightPlan, parse_flight_plan
 from viajante.models import FETCH_LANGUAGE, FlightCabin
 
@@ -280,7 +286,8 @@ _ISO_DATE = re.compile(r"(?<![0-9])(20\d{2}-\d{2}-\d{2})(?![0-9])")
 _FLAG = re.compile(
     r"--(trip|max-stops|adults|children|infants-in-seat|infants-on-lap|cabin|rooms|"
     r"max-layover|min-layover|max-duration|from|days|nights|fetch|sort|"
-    r"depart-window|currency|country)\s+(\S+)",
+    r"depart-window|currency|country|airlines|exclude-airlines|alliance|"
+    r"exclude-alliance)\s+(\S+)",
     re.IGNORECASE,
 )
 _SPANISH_DATE = re.compile(
@@ -581,6 +588,10 @@ class PromptPlan:
     refuse: Tuple[str, ...] = ()
     hotels: bool = False
     baggage: Optional[str] = None
+    include_airlines: Tuple[str, ...] = ()
+    exclude_airlines: Tuple[str, ...] = ()
+    alliance: Tuple[str, ...] = ()
+    exclude_alliance: Tuple[str, ...] = ()
     arrive_before: Optional[str] = None
     depart_after: Optional[str] = None
     depart_window: Optional[str] = None
@@ -636,6 +647,10 @@ class PromptPlan:
             "refuse": list(self.refuse),
             "hotels": self.hotels,
             "baggage": self.baggage,
+            "include_airlines": list(self.include_airlines),
+            "exclude_airlines": list(self.exclude_airlines),
+            "alliance": list(self.alliance),
+            "exclude_alliance": list(self.exclude_alliance),
             "arrive_before": self.arrive_before,
             "depart_after": self.depart_after,
             "depart_window": self.depart_window,
@@ -657,7 +672,15 @@ class PromptPlan:
             "require_overnight",
             "prefer_airports",
         }
-        exact_list_keys = {"via_regions", "route_specs", "destinations"}
+        exact_list_keys = {
+            "via_regions",
+            "route_specs",
+            "destinations",
+            "include_airlines",
+            "exclude_airlines",
+            "alliance",
+            "exclude_alliance",
+        }
         for key, wanted in expect.items():
             if key in {"notes", "id"}:
                 continue
@@ -1155,6 +1178,121 @@ def _baggage(folded: str) -> Optional[str]:
     return None
 
 
+_ENGLISH_IATA_WORDS = frozenset(
+    {
+        "to",
+        "or",
+        "in",
+        "at",
+        "be",
+        "me",
+        "no",
+        "do",
+        "so",
+        "ok",
+        "if",
+        "as",
+        "an",
+        "by",
+        "up",
+        "of",
+        "on",
+        "it",
+        "is",
+        "am",
+        "we",
+        "us",
+        "he",
+        "my",
+        "go",
+        "re",
+    }
+)
+_CARRIER_NEGATION = re.compile(
+    r"(?:do not|don'?t|never|without|not|except|excluding|no)\s+$",
+    re.IGNORECASE,
+)
+_CODE_SPLIT = re.compile(r"\s+(?:or|and|/)\s+")
+_ONLY_CODES = re.compile(
+    r"(?:only|just|exclusively)\s+((?:[a-z0-9]{2}\s+(?:or|and|/)\s+)*[a-z0-9]{2})"
+    r"|((?:[a-z0-9]{2}\s+(?:or|and|/)\s+)+[a-z0-9]{2})\s+only",
+    re.IGNORECASE,
+)
+_NOT_CODE = re.compile(
+    r"\b(?:not|except|excluding|without)\s+([a-z0-9]{2})\b",
+    re.IGNORECASE,
+)
+_OR_CODES = re.compile(
+    r"\b([a-z0-9]{2}(?:\s+(?:or|and)\s+[a-z0-9]{2})+)\b",
+    re.IGNORECASE,
+)
+_AIRLINE_NAME_TABLE = airline_names_longest_first()
+
+
+def _carrier_is_negated(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 28) : start]
+    return bool(_CARRIER_NEGATION.search(prefix))
+
+
+def _phrase_starts(folded: str, phrase: str) -> list[int]:
+    pattern = re.compile(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])")
+    return [match.start() for match in pattern.finditer(folded)]
+
+
+def _add_unique(dst: list[str], codes: Sequence[str]) -> None:
+    for code in codes:
+        if code not in dst:
+            dst.append(code)
+
+
+def _codes_from_blob(blob: str) -> tuple[str, ...]:
+    codes: list[str] = []
+    for part in _CODE_SPLIT.split(blob.strip()):
+        token = part.strip().upper()
+        if len(token) == 2 and token.isalpha() and token.casefold() not in _ENGLISH_IATA_WORDS:
+            _add_unique(codes, (token,))
+    return tuple(codes)
+
+
+def _carriers_from_prompt(
+    folded: str, flags: Mapping[str, str]
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    include: list[str] = []
+    exclude: list[str] = []
+    alliance: list[str] = []
+    exclude_alliance: list[str] = []
+    if "airlines" in flags:
+        _add_unique(include, parse_airline_codes(flags["airlines"]) or ())
+    if "exclude-airlines" in flags:
+        _add_unique(exclude, parse_airline_codes(flags["exclude-airlines"]) or ())
+    if "alliance" in flags:
+        _add_unique(alliance, parse_alliances(flags["alliance"]) or ())
+    if "exclude-alliance" in flags:
+        _add_unique(exclude_alliance, parse_alliances(flags["exclude-alliance"]) or ())
+    for phrase, canonical in ALLIANCE_PHRASES:
+        for start in _phrase_starts(folded, phrase):
+            if _carrier_is_negated(folded, start):
+                _add_unique(exclude_alliance, (canonical,))
+            else:
+                _add_unique(alliance, (canonical,))
+    for name, codes in _AIRLINE_NAME_TABLE:
+        for start in _phrase_starts(folded, name):
+            if _carrier_is_negated(folded, start):
+                _add_unique(exclude, codes)
+            else:
+                _add_unique(include, codes)
+    for match in _ONLY_CODES.finditer(folded):
+        blob = match.group(1) or match.group(2)
+        _add_unique(include, _codes_from_blob(blob))
+    for match in _NOT_CODE.finditer(folded):
+        _add_unique(exclude, _codes_from_blob(match.group(1)))
+    for match in _OR_CODES.finditer(folded):
+        _add_unique(include, _codes_from_blob(match.group(1)))
+    include = [code for code in include if code not in exclude]
+    alliance = [name for name in alliance if name not in exclude_alliance]
+    return tuple(include), tuple(exclude), tuple(alliance), tuple(exclude_alliance)
+
+
 def _work_back_by(folded: str) -> Optional[str]:
     match = _BACK_DAY_BEFORE.search(folded) or _WORK_BACK_BY.search(folded)
     if match is None:
@@ -1399,6 +1537,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     cabin = _cabin(folded, flags)
     date_strategy = _date_strategy(folded)
     max_stops = _max_stops(folded, flags)
+    include_airlines, exclude_airlines, alliance, exclude_alliance = _carriers_from_prompt(
+        folded, flags
+    )
     fetch = flags.get("fetch")
     if require_clock or (night and ("hora" in folded or "clock" in folded)):
         fetch = fetch or "detail"
@@ -1819,6 +1960,10 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         refuse=all_refuse,
         hotels=plan_hotels,
         baggage=baggage,
+        include_airlines=include_airlines,
+        exclude_airlines=exclude_airlines,
+        alliance=alliance,
+        exclude_alliance=exclude_alliance,
         arrive_before=arrive_before,
         depart_after=depart_after,
         depart_window=depart_window,

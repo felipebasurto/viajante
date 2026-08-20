@@ -13,6 +13,7 @@ from typing import Optional, Sequence, Tuple
 
 from viajante.airports import is_known_iata, lookup_airports
 from viajante.bench import run_bench
+from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
     parse_route_pair,
@@ -34,7 +35,6 @@ from viajante.flights import (
     FlightSort,
     _clock_minutes,
     normalize_trip_kind,
-    parse_airline_codes,
     parse_depart_window,
     parse_flight_plan,
     search_flights,
@@ -154,6 +154,8 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         raise ValueError("--min-layover must be at or below --max-layover")
     parse_airline_codes(args.airlines)
     parse_airline_codes(args.exclude_airlines)
+    parse_alliances(args.alliance)
+    parse_alliances(args.exclude_alliance)
     parse_depart_window(args.depart_window)
     plan = parse_flight_plan(
         args.routes,
@@ -619,6 +621,8 @@ def _run_flights(args: argparse.Namespace) -> int:
         max_duration_hours=args.max_duration,
         airlines=parse_airline_codes(args.airlines),
         exclude_airlines=parse_airline_codes(args.exclude_airlines),
+        alliances=parse_alliances(args.alliance),
+        exclude_alliances=parse_alliances(args.exclude_alliance),
         depart_window=parse_depart_window(args.depart_window),
         currency=args.currency,
         country=args.country,
@@ -948,14 +952,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "--airlines",
         default=None,
         metavar="CODES",
-        help="Keep only these airline IATA codes (comma-separated, e.g. IB,I2)",
+        help="Airline IATA codes on the shopping request (comma-separated, e.g. BA,KL)",
     )
     flights.add_argument(
         "--exclude-airlines",
         default=None,
         dest="exclude_airlines",
         metavar="CODES",
-        help="Drop these airline IATA codes (comma-separated, e.g. FR,RK)",
+        help="Airline IATA codes to exclude from shopping (comma-separated, e.g. DL)",
+    )
+    flights.add_argument(
+        "--alliance",
+        default=None,
+        metavar="NAMES",
+        help="Restrict the shopping request to these alliances (oneworld, skyteam, star)",
+    )
+    flights.add_argument(
+        "--exclude-alliance",
+        default=None,
+        dest="exclude_alliance",
+        metavar="NAMES",
+        help="Exclude these alliances from the shopping request (oneworld, skyteam, star)",
     )
     flights.add_argument(
         "--depart-window",

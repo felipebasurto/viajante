@@ -793,6 +793,32 @@ class FetchModeTests(unittest.TestCase):
         self.assertTrue(sweep_needs_fallback(empty))
 
 
+class CarrierShoppingOverlayTests(unittest.TestCase):
+    def test_search_stamps_airline_filters_on_the_fetched_trip(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        source = FakeSource({("MAD", "BCN", "2026-09-01", 1): (card(airline="Iberia"),)})
+        seen: list[object] = []
+        original = source.fetch
+
+        def fetch(trip):
+            seen.append(trip)
+            return original(trip)
+
+        source.fetch = fetch  # type: ignore[method-assign]
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            search_flights((query,), top=1, fetch="sweep", airlines=("BA", "KL"))
+        self.assertEqual(seen[0].airlines, ("BA", "KL"))  # type: ignore[attr-defined]
+
+    def test_auto_uses_sweep_when_carrier_filters_are_set(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        source = FakeSource({("MAD", "BCN", "2026-09-01", 1): (card(),)})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            with patch("viajante.flights.GoogleFlightsSource") as detail:
+                report = search_flights((query,), top=1, airlines=("BA",))
+        detail.assert_not_called()
+        self.assertEqual(report.fetch_backend, "sweep")
+
+
 class OfferFilterTests(unittest.TestCase):
     def test_include_airlines_keeps_matching_codes(self) -> None:
         iberia = card(airline="Iberia", airline_codes=("IB",), price="100 €")

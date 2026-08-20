@@ -5,10 +5,12 @@ from __future__ import annotations
 import random
 import re
 import time
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Optional, Protocol, Sequence, Tuple
 
+from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
@@ -503,36 +505,6 @@ def is_low_cost(airline_text: str) -> bool:
     return _LOW_COST_PATTERN.search(_normalize_airline(airline_text)) is not None
 
 
-AIRLINE_CODE_ALIASES = {
-    "AF": ("air france",),
-    "BA": ("british airways",),
-    "FR": ("ryanair",),
-    "I2": ("iberia express",),
-    "IB": ("iberia",),
-    "KL": ("klm",),
-    "LH": ("lufthansa",),
-    "RK": ("ryanair",),
-    "TO": ("transavia",),
-    "TP": ("tap", "tap air portugal"),
-    "U2": ("easyjet", "easy jet"),
-    "UX": ("air europa",),
-    "VY": ("vueling",),
-    "W6": ("wizz", "wizz air"),
-}
-
-
-def parse_airline_codes(text: Optional[str]) -> Optional[Tuple[str, ...]]:
-    if text is None:
-        return None
-    codes = tuple(part.strip().upper() for part in text.split(",") if part.strip())
-    if not codes:
-        raise ValueError("airline list must not be empty")
-    for code in codes:
-        if not (2 <= len(code) <= 3 and code.isalnum()):
-            raise ValueError(f"invalid airline code: {code!r}")
-    return codes
-
-
 def _clock_token_minutes(text: str) -> Optional[int]:
     match = _CLOCK_TOKEN.fullmatch(text.strip())
     if match is None:
@@ -588,6 +560,28 @@ def parse_depart_window(text: Optional[str]) -> Optional[Tuple[int, int]]:
     if start_hour > end_hour:
         raise ValueError("depart window start must be at or before the end hour")
     return start_hour * 60, end_hour * 60 + 59
+
+
+def _overlay_carrier_filters(
+    trips: Sequence[Trip],
+    *,
+    airlines: Optional[Sequence[str]] = None,
+    exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
+) -> Tuple[Trip, ...]:
+    overlay: dict[str, Tuple[str, ...]] = {}
+    if airlines:
+        overlay["airlines"] = tuple(airlines)
+    if exclude_airlines:
+        overlay["exclude_airlines"] = tuple(exclude_airlines)
+    if alliances:
+        overlay["alliances"] = tuple(alliances)
+    if exclude_alliances:
+        overlay["exclude_alliances"] = tuple(exclude_alliances)
+    if not overlay:
+        return tuple(trips)
+    return tuple(replace(trip, **overlay) for trip in trips)
 
 
 def _airline_filter_hit(raw: RawFlightCard, token: str) -> bool:
@@ -947,8 +941,12 @@ def _run_search(
                             max_layover_hours=max_layover_hours,
                             min_layover_hours=min_layover_hours,
                             max_duration_hours=max_duration_hours,
-                            airlines=airlines,
-                            exclude_airlines=exclude_airlines,
+                            airlines=airlines if airlines is not None else trip.airlines,
+                            exclude_airlines=(
+                                exclude_airlines
+                                if exclude_airlines is not None
+                                else trip.exclude_airlines
+                            ),
                             depart_window=depart_window,
                             bags=trip.bags,
                             carry_on=trip.carry_on,
@@ -1064,6 +1062,8 @@ def search_flights(
     max_duration_hours: Optional[float] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     currency: str = "EUR",
     country: Optional[str] = None,
@@ -1094,8 +1094,19 @@ def search_flights(
         raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
     currency = normalize_currency(currency)
     country = normalize_country(country)
-    trips = tuple(queries)
+    trips = _overlay_carrier_filters(
+        tuple(queries),
+        airlines=airlines,
+        exclude_airlines=exclude_airlines,
+        alliances=alliances,
+        exclude_alliances=exclude_alliances,
+    )
     planned = resolve_fetch_mode(fetch, len(trips))
+    if fetch == "auto" and any(
+        trip.airlines or trip.exclude_airlines or trip.alliances or trip.exclude_alliances
+        for trip in trips
+    ):
+        planned = "sweep"
     if any(isinstance(trip, MultiCity) for trip in trips) and planned == "detail":
         if fetch == "auto":
             planned = "sweep"

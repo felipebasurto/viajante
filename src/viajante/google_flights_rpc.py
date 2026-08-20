@@ -9,6 +9,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
+from viajante.carriers import carrier_filter_payload, shopping_carrier_codes
 from viajante.models import (
     FETCH_LANGUAGE,
     FlightCabin,
@@ -126,6 +127,7 @@ def _shopping_segment(
     max_stops: int,
     classifier: int = _SEGMENT_OUTBOUND,
     selected_flight: Any = None,
+    carriers: Any = None,
 ) -> list[Any]:
     dest_field: Any = [[[destination, 0]]] if destination else []
     return [
@@ -136,7 +138,7 @@ def _shopping_segment(
         None,
         None,
         departure_date.isoformat(),
-        None,
+        carriers,
         selected_flight,
         None,
         None,
@@ -208,6 +210,7 @@ def build_search_constraints(
     *,
     selected_flight: Any = None,
 ) -> list[Any]:
+    carriers = carrier_filter_payload(*shopping_carrier_codes(trip))
     return _constraints_from_segments(
         [
             _shopping_segment(
@@ -217,6 +220,7 @@ def build_search_constraints(
                 max_stops=leg.max_stops,
                 classifier=_segment_classifier(trip, index),
                 selected_flight=selected_flight if index == 0 else None,
+                carriers=carriers,
             )
             for index, leg in enumerate(trip.legs)
         ],

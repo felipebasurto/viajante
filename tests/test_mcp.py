@@ -99,6 +99,18 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
         self.assertEqual(kwargs["sort"], "price")
 
+    def test_search_flights_accepts_alliance_filters(self) -> None:
+        fake = _report(queries=[], currency="EUR")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool(
+                [f"MAD-LHR:{FUTURE}"],
+                alliance="oneworld",
+                exclude_alliance="star",
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["alliances"], ("oneworld",))
+        self.assertEqual(kwargs["exclude_alliances"], ("star",))
+
     def test_search_flights_accepts_bags_and_carry_on(self) -> None:
         fake = _report(queries=[], currency="EUR")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
