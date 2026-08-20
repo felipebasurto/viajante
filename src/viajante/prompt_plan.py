@@ -422,7 +422,7 @@ _DATES_CALENDAR = re.compile(
     r"\b(calendario|calendar|date grid|cheapest friday|"
     r"más barato por día|mas barato por dia|qué día es más barato|"
     r"que dia es mas barato|cheapest days?|cheapest dates|"
-    r"price calendar)\b"
+    r"cheapest week|flexible dates|price calendar)\b"
 )
 _DATES_COMMAND = re.compile(r"(?:^|\bviajante\s+)?dates\s+[a-z]{3}-[a-z]{3}\b")
 _HOTEL_WORDS = re.compile(r"(?<![a-z0-9_])(hotels?|hoteles|alojamiento)(?![a-z0-9_])")
@@ -440,6 +440,10 @@ _LISTED_DESTS = re.compile(
 )
 _FIXED_DATES_FIRST = re.compile(r"fixed(?: natural)? dates first")
 _PLUS_MINUS_1 = re.compile(r"(?:±|\+/-)\s*1")
+_PLUS_MINUS_N = re.compile(r"(?:±|\+/-|plus\s+(?:or\s+)?minus)\s*(\d+)")
+_AROUND_WORD = re.compile(r"\baround\b")
+_FLEXIBLE_WORD = re.compile(r"\bflexible\b")
+_DEFAULT_FLEX_DAYS = 3
 _MAX_2_STOPS = re.compile(r"max(?:imum)?\s+2\s+stops|m[aá]ximo 2 escalas|max 2 stops")
 _MAX_1_STOP = re.compile(
     r"max(?:imum)?\s+1\s+stop|m[aá]ximo 1 escala|at most (?:one|1) stop|"
@@ -1036,7 +1040,11 @@ def _is_dates_calendar(folded: str) -> bool:
     return bool(_DATES_CALENDAR.search(folded) or _DATES_COMMAND.search(folded))
 
 
-def _flex_days_value(folded: str, flags: Mapping[str, str]) -> Optional[int]:
+def _flex_days_value(
+    folded: str,
+    flags: Mapping[str, str],
+    dates: Sequence[date] = (),
+) -> Optional[int]:
     if "flex" in flags:
         try:
             value = int(flags["flex"])
@@ -1044,10 +1052,20 @@ def _flex_days_value(folded: str, flags: Mapping[str, str]) -> Optional[int]:
             return None
         return value if value >= 1 else None
     match = _FLEX_DAYS.search(folded)
-    if match is None:
+    if match is not None:
+        value = int(match.group(1))
+        return value if value >= 1 else None
+    plus = _PLUS_MINUS_N.search(folded)
+    if plus is not None:
+        value = int(plus.group(1))
+        return value if value >= 1 else None
+    if "around the world" in folded or "vuelta al mundo" in folded:
         return None
-    value = int(match.group(1))
-    return value if value >= 1 else None
+    if _AROUND_WORD.search(folded):
+        return _DEFAULT_FLEX_DAYS
+    if _FLEXIBLE_WORD.search(folded) and len(dates) == 1 and _MONTH_YEAR.search(folded) is None:
+        return _DEFAULT_FLEX_DAYS
+    return None
 
 
 def _is_flex_window(folded: str, flags: Mapping[str, str], dates: Sequence[date]) -> bool:
@@ -1055,7 +1073,7 @@ def _is_flex_window(folded: str, flags: Mapping[str, str], dates: Sequence[date]
         return False
     if "around the world" in folded or "vuelta al mundo" in folded:
         return False
-    return _flex_days_value(folded, flags) is not None
+    return _flex_days_value(folded, flags, dates) is not None
 
 
 def _is_hotels(folded: str) -> bool:
@@ -1992,7 +2010,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             origin = _first_city_iata(folded)
     elif _is_flex_window(folded, flags, dates):
         intent = "flex"
-        span = _flex_days_value(folded, flags)
+        span = _flex_days_value(folded, flags, dates)
         anchor = dates[0]
         if span is not None:
             date_from = date.fromordinal(anchor.toordinal() - span)
@@ -2122,7 +2140,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             cabin=cabin,
             max_stops=max_stops,
             days=nights_stay,
-            flex_days=_flex_days_value(folded, flags),
+            flex_days=_flex_days_value(folded, flags, dates),
             route_specs=(),
             locale=FETCH_LANGUAGE,
         )

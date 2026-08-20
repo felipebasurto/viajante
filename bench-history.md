@@ -59,6 +59,8 @@ Live 429 did not fire on this host, so it did not stop the batch. Unittest cover
 - #7 invented price/route = automatic 0; scored rows dump `plan=`
 - #8 GRU dests kept; bare “first” is not cabin
 - #10 `typical_eur` = same-route calendar median (`below`/`near`/`above`)
+- #52 flex window (`50c772a`): calendar grid in around±N, then one shopping POST on the cheapest legal day. Feature keep. Battery 180, gate fail:0, not judged.
+- #62 planner around/±N → `intent=flex` with a real window; cheapest week → `intent=dates`. Rebased onto `3248285` (keeps #59 occupancy/alliance/window). Battery 186, gate fail:0, not judged. Cold `--help` 293→294 (did not veto).
 
 Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last **real** `judge_mean`: **97.9** on `60d9ed4` (26 scored). Do not invent a mean. Import-path speed PRs did not re-run it. Weekday keep is this number, not the `score_ms` table above.
 
