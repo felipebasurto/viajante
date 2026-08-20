@@ -70,6 +70,24 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertIsInstance(parsed, RoundTrip)
         self.assertEqual(parsed.return_date, date(2026, 10, 12))
 
+    def test_packaged_round_trip_typical_prompt_stays_rt(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip YYZ-LIS on 2026-10-09 returning 2026-10-16, --trip rt. "
+            "Is the fare cheap, typical, or expensive versus typical_eur? Stamp "
+            "typical_eur / vs_typical when the same-stay grid has at least 3 priced days; "
+            "omit both on a miss. Do not invent a fare or a typical."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.origin, "YYZ")
+        self.assertEqual(plan.destination, "LIS")
+        self.assertEqual(plan.departure_date, date(2026, 10, 9))
+        self.assertEqual(plan.return_date, date(2026, 10, 16))
+        self.assertEqual(plan.locale, "en")
+        self.assertTrue(plan.require_return_legs)
+        parsed = parse_flight_plan(plan.route_specs, trip="rt", max_stops=1)
+        self.assertIsInstance(parsed, RoundTrip)
+
     def test_two_one_ways_sugar(self) -> None:
         plan = plan_prompt(
             "NRT-ICN outbound on 2026-10-09 and return on 2026-10-12 as two one-way, "

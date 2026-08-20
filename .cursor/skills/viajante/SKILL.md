@@ -130,7 +130,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 - The low-cost list is partial. Never tell the user an airline includes a bag because it is absent from the list.
 - Remind the user to verify checked baggage on Google Flights before booking.
 - Successful flight JSON includes `google_flights_url` on the query and each offer when viajante can build it from owned route/date/cabin/occupancy/currency (or an owned `booking_token`). Multi-city uses the owned tfs encoder. Omit the field only when that encode cannot run and there is no token. Do not invent a token or a fare.
-- When an offer has `typical_eur` / `vs_typical`, that number is the median of owned cheapest-per-day calendar prices for the same origin-destination. `cheapest_date` / `cheapest_eur` (when present) are the cheapest owned day in that same window. If those fields are null or omitted, skip the comparison. Do not invent a market average.
+- When an offer has `typical_eur` / `vs_typical` / `vs_typical_pct`, print the English `typical_deal` line (e.g. `below typical 340 € (−15%)`). Packaged round-trip uses the same-stay calendar median (same origin/destination and nights). `cheapest_date` / `cheapest_eur` (when present) are the cheapest owned day in that same window. If those fields are null or omitted, skip the comparison. Do not invent a market average.
 
 ### Hotels
 

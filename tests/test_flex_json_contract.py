@@ -52,6 +52,7 @@ def _offer() -> FlightOffer:
         needs_bag_verify=False,
         typical_eur=440.0,
         vs_typical="below",
+        vs_typical_pct=-20,
     )
 
 

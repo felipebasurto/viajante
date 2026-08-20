@@ -109,6 +109,8 @@ _CLOCK_TOKEN = re.compile(
 FetchMode = Literal["auto", "sweep", "detail"]
 TripKind = Literal["one-way", "rt", "multi"]
 FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | MultiCity
+TypicalTrip = FlightQuery | RoundTrip
+TypicalCacheKey = tuple[str, str, date, Optional[int], int, int, int, int, int, str]
 SWEEP_BATCH_THRESHOLD = 3
 ROUTE_GRAMMAR = "ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK"
 RT_GRAMMAR = "ORIGIN-DESTINATION:OUT:BACK"
@@ -845,20 +847,31 @@ def _typical_window(start: date) -> tuple[date, date]:
     return start, end
 
 
-def _typical_cache_key(
-    query: FlightQuery,
-) -> tuple[str, str, date, int, int, int, int, int, str]:
-    start, _end = _typical_window(query.departure_date)
+def _typical_nights(trip: Trip) -> Optional[int]:
+    if isinstance(trip, RoundTrip):
+        return (trip.return_date - trip.departure_date).days
+    return None
+
+
+def _typical_trip(trip: Trip) -> Optional[TypicalTrip]:
+    if isinstance(trip, (FlightQuery, RoundTrip)):
+        return trip
+    return None
+
+
+def _typical_cache_key(trip: TypicalTrip) -> TypicalCacheKey:
+    start, _end = _typical_window(trip.departure_date)
     return (
-        query.origin,
-        query.destination,
+        trip.origin,
+        trip.destination,
         start,
-        query.max_stops,
-        query.adults,
-        query.children,
-        query.infants_in_seat,
-        query.infants_on_lap,
-        query.cabin,
+        _typical_nights(trip),
+        trip.max_stops,
+        trip.adults,
+        trip.children,
+        trip.infants_in_seat,
+        trip.infants_on_lap,
+        trip.cabin,
     )
 
 
@@ -877,18 +890,18 @@ def _summary_from_calendar_days(
 
 def _calendar_summary_from_source(
     source: _FlightSource,
-    query: FlightQuery,
-    cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[DateCalendarSummary]],
+    trip: TypicalTrip,
+    cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]],
 ) -> Optional[DateCalendarSummary]:
     fetch_calendar = getattr(source, "fetch_calendar", None)
     if not callable(fetch_calendar):
         return None
-    key = _typical_cache_key(query)
+    key = _typical_cache_key(trip)
     if key in cache:
         return cache[key]
-    start, end = _typical_window(query.departure_date)
+    start, end = _typical_window(trip.departure_date)
     try:
-        days = fetch_calendar(query, start, end)
+        days = fetch_calendar(trip, start, end)
     except Exception:
         cache[key] = None
         return None
@@ -929,11 +942,12 @@ def _stamp_typical(
     trip: Trip,
     offers: Tuple[FlightOffer, ...],
     source: _FlightSource,
-    cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[DateCalendarSummary]],
+    cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]],
 ) -> Tuple[FlightOffer, ...]:
-    if not offers or not isinstance(trip, FlightQuery):
+    seed = _typical_trip(trip)
+    if not offers or seed is None:
         return offers
-    summary = _calendar_summary_from_source(source, trip, cache)
+    summary = _calendar_summary_from_source(source, seed, cache)
     if summary is None:
         return offers
     return tuple(
@@ -973,9 +987,7 @@ def _run_search(
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
     results: list[QueryResult] = []
-    typical_cache: dict[
-        tuple[str, str, date, int, int, int, int, int, str], Optional[DateCalendarSummary]
-    ] = {}
+    typical_cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]] = {}
 
     def _success_from_cards(trip: Trip, cards: Sequence[RawFlightCard]) -> QuerySuccess:
         eligible = [
@@ -1020,10 +1032,11 @@ def _run_search(
         for attempt in range(start_attempt, MAX_ATTEMPTS):
             try:
                 fetch_pair = getattr(source, "fetch_with_calendar", None)
-                if callable(fetch_pair) and isinstance(trip, FlightQuery):
-                    start, end = _typical_window(trip.departure_date)
-                    cards, days = fetch_pair(trip, start, end)
-                    typical_cache[_typical_cache_key(trip)] = _summary_from_calendar_days(
+                seed = _typical_trip(trip)
+                if callable(fetch_pair) and seed is not None:
+                    start, end = _typical_window(seed.departure_date)
+                    cards, days = fetch_pair(seed, start, end)
+                    typical_cache[_typical_cache_key(seed)] = _summary_from_calendar_days(
                         days, start, end
                     )
                 else:
@@ -1060,25 +1073,30 @@ def _run_search(
     if (
         callable(fetch_batch)
         and len(trips) > 1
-        and all(isinstance(trip, FlightQuery) for trip in trips)
+        and all(_typical_trip(trip) is not None for trip in trips)
     ):
         for index, trip in enumerate(trips):
             report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
         jobs = []
         for trip in trips:
-            start, end = _typical_window(trip.departure_date)
-            jobs.append((trip, start, end))
+            seed = _typical_trip(trip)
+            if seed is None:
+                continue
+            start, end = _typical_window(seed.departure_date)
+            jobs.append((seed, start, end))
         try:
             batch_rows = fetch_batch(jobs)
         except Exception:
             batch_rows = None
         if batch_rows is not None:
             for trip, (cards_or_exc, days) in zip(trips, batch_rows, strict=True):
+                seed = _typical_trip(trip)
                 if not isinstance(cards_or_exc, BaseException):
-                    start, end = _typical_window(trip.departure_date)
-                    typical_cache[_typical_cache_key(trip)] = _summary_from_calendar_days(
-                        days, start, end
-                    )
+                    if seed is not None:
+                        start, end = _typical_window(seed.departure_date)
+                        typical_cache[_typical_cache_key(seed)] = _summary_from_calendar_days(
+                            days, start, end
+                        )
                     results.append(
                         _stamp_google_flights_urls(
                             _success_from_cards(trip, cards_or_exc),

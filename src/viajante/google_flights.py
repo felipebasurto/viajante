@@ -30,7 +30,7 @@ from viajante.google_flights_rpc import (
     parse_explore_body,
     parse_shopping_body,
 )
-from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, FlightQuery, Trip
+from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, Trip
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
@@ -640,7 +640,7 @@ class GoogleFlightsHttpSource:
 
     def fetch_with_calendar(
         self,
-        query: FlightQuery,
+        query: Trip,
         start: date,
         end: date,
     ) -> tuple[tuple[RawFlightCard, ...], tuple[CompactCalendarDay, ...]]:
@@ -679,9 +679,9 @@ class GoogleFlightsHttpSource:
 
     def fetch_many_with_calendar(
         self,
-        jobs: Sequence[tuple[FlightQuery, date, date]],
+        jobs: Sequence[tuple[Trip, date, date]],
     ) -> list[tuple[tuple[RawFlightCard, ...] | BaseException, tuple[CompactCalendarDay, ...]]]:
-        """Shopping + typical calendar for many one-ways on one multiplexed round-trip."""
+        """Shopping + typical calendar for many stays on one multiplexed round-trip."""
         if not jobs:
             return []
         if len(jobs) == 1:
@@ -793,7 +793,7 @@ class GoogleFlightsHttpSource:
 
     def _fetch_with_calendar_once(
         self,
-        query: FlightQuery,
+        query: Trip,
         start: date,
         end: date,
     ) -> tuple[tuple[RawFlightCard, ...], tuple[CompactCalendarDay, ...]]:

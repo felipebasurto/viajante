@@ -267,9 +267,10 @@ def _format_ranking_columns(offer: FlightOffer) -> str:
 
 
 def _format_typical(offer: FlightOffer) -> str:
-    if offer.typical_eur is None or offer.vs_typical is None:
+    line = offer.typical_deal()
+    if not line:
         return ""
-    text = f"  {offer.vs_typical} typical {offer.typical_eur:.0f} €"
+    text = f"  {line}"
     if offer.cheapest_date is not None and offer.cheapest_eur is not None:
         text += f"  cheapest {offer.cheapest_date.isoformat()} {offer.cheapest_eur:.0f} €"
     return text

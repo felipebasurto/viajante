@@ -1,9 +1,10 @@
-"""Typical fare for one origin-destination from owned daily prices.
+"""Typical fare from owned daily prices for the same trip shape.
 
-The number is a median over cheapest-per-day calendar prices for that
-same route. Missing or thin owned data means no comparison — never a
-guessed market average, never a third-party fare history, never a
-hardcoded city fare.
+One-way: median of cheapest-per-day calendar prices on that origin-destination.
+Packaged round-trip: median of that same-stay calendar (same origin/destination
+and the same number of nights). Missing or thin owned data means no comparison
+— never a guessed market average, never a third-party fare history, never a
+hardcoded city fare. Multi-city has no honest same-stay grid, so it stays omitted.
 """
 
 from __future__ import annotations
@@ -42,6 +43,13 @@ def vs_typical(price_eur: float, typical_eur: Optional[float]) -> Optional[VsTyp
     return "near"
 
 
+def vs_typical_pct(price_eur: float, typical_eur: Optional[float]) -> Optional[int]:
+    """Signed percent of the fare versus an owned typical. None without a typical."""
+    if typical_eur is None or typical_eur <= 0:
+        return None
+    return int(round((price_eur / typical_eur - 1.0) * 100.0))
+
+
 def with_typical(
     offer: FlightOffer,
     typical_eur: Optional[float],
@@ -50,14 +58,21 @@ def with_typical(
     cheapest_eur: Optional[float] = None,
 ) -> FlightOffer:
     label = vs_typical(offer.price_eur, typical_eur)
-    if typical_eur is None or label is None:
+    pct = vs_typical_pct(offer.price_eur, typical_eur)
+    if typical_eur is None or label is None or pct is None:
         return offer
     if cheapest_date is None or cheapest_eur is None or cheapest_eur <= 0:
-        return replace(offer, typical_eur=typical_eur, vs_typical=label)
+        return replace(
+            offer,
+            typical_eur=typical_eur,
+            vs_typical=label,
+            vs_typical_pct=pct,
+        )
     return replace(
         offer,
         typical_eur=typical_eur,
         vs_typical=label,
+        vs_typical_pct=pct,
         cheapest_date=cheapest_date,
         cheapest_eur=cheapest_eur,
     )

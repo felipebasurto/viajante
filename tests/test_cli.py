@@ -60,6 +60,7 @@ def _offer(
     booking_token: Optional[str] = None,
     typical_eur: Optional[float] = None,
     vs_typical: Optional[VsTypical] = None,
+    vs_typical_pct: Optional[int] = None,
     cheapest_date: Optional[date] = None,
     cheapest_eur: Optional[float] = None,
     checked_bags: Optional[int] = None,
@@ -82,6 +83,7 @@ def _offer(
         booking_token=booking_token,
         typical_eur=typical_eur,
         vs_typical=vs_typical,
+        vs_typical_pct=vs_typical_pct,
         cheapest_date=cheapest_date,
         cheapest_eur=cheapest_eur,
         checked_bags=checked_bags,
@@ -334,9 +336,16 @@ class ReportRenderingTests(unittest.TestCase):
 
     def test_typical_label_prints_only_when_owned(self) -> None:
         with_typical = _rendered(
-            _report(_offer(price_eur=289.0, typical_eur=340.0, vs_typical="below"))
+            _report(
+                _offer(
+                    price_eur=289.0,
+                    typical_eur=340.0,
+                    vs_typical="below",
+                    vs_typical_pct=-15,
+                )
+            )
         )
-        self.assertIn("below typical 340 €", with_typical)
+        self.assertIn("below typical 340 € (−15%)", with_typical)
         silent = _rendered(_report(_offer(price_eur=289.0)))
         self.assertNotIn("typical", silent)
 
@@ -347,12 +356,13 @@ class ReportRenderingTests(unittest.TestCase):
                     price_eur=289.0,
                     typical_eur=340.0,
                     vs_typical="below",
+                    vs_typical_pct=-15,
                     cheapest_date=date(2026, 9, 16),
                     cheapest_eur=300.0,
                 )
             )
         )
-        self.assertIn("below typical 340 €", output)
+        self.assertIn("below typical 340 € (−15%)", output)
         self.assertIn("cheapest 2026-09-16 300 €", output)
         self.assertNotIn("cheapest", _rendered(_report(_offer(price_eur=289.0))))
 

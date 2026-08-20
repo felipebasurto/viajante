@@ -46,14 +46,14 @@ uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
 
 ```text
 === JFK -> LHR  2026-09-15 (max 1 stop(s)) ===
-      412 €  above typical 340 €  7 hr 10 min  direct  19:30 -> 07:40     British Airways
-      289 €      359 € ranked  below typical 340 €  7 hr 25 min  direct  21:15 -> 09:40     Norse Atlantic
-      355 €  near typical 340 €  11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
+      412 €  above typical 340 € (+21%)  7 hr 10 min  direct  19:30 -> 07:40     British Airways
+      289 €      359 € ranked  below typical 340 € (−15%)  7 hr 25 min  direct  21:15 -> 09:40     Norse Atlantic
+      355 €  near typical 340 € (+4%)  11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
 ```
 
 One adult, one-way, economy. Up to eight offers, ordered by ranked total. That is fare plus a 70 EUR buffer on known low-cost carriers, and connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. Norse is 289 € on fare. The buffer puts it behind British Airways at 359 € ranked. `--sort fare` or `--sort price` or `--baggage-buffer 0` turns the buffer off. `--sort duration` orders by elapsed time. `--sort departure` / `--sort arrival` order by local clocks. `--bags N` and `--carry-on` put those counts on the shopping request so returned prices are for that bag selection. Default is unset (same prices as before). If a compact card includes checked/carry counts, they are parsed onto the offer; missing bag data stays omitted. Offers whose parsed counts contradict the request are dropped. The 70 EUR buffer is a guess used only when bag counts are still unknown.
 
-`typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). `vs_typical` is `below`, `near` (±10%), or `above`. When that median exists, `cheapest_date` / `cheapest_eur` point at the cheapest owned day in the same window. All four are omitted (typical/vs_typical `null`; cheapest keys absent) when the compact calendar misses, has fewer than three priced days, or the query is a packaged round-trip / multi-city. Never a guessed market average.
+`typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). Packaged `--trip rt` uses that same-stay calendar (same nights). `vs_typical` is `below`, `near` (±10%), or `above`. `vs_typical_pct` is the signed percent versus that median. `typical_deal` is the English one-liner (`below typical 340 € (−15%)`). When that median exists, `cheapest_date` / `cheapest_eur` point at the cheapest owned day in the same window. Typical fields are `null` (cheapest keys absent) when the compact calendar misses, has fewer than three priced days, or the query is multi-city. Never a guessed market average.
 
 Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026-09-15,2026-09-16`.
 
@@ -205,6 +205,8 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
           "price_eur": 289.0,
           "typical_eur": 340.0,
           "vs_typical": "below",
+          "vs_typical_pct": -15,
+          "typical_deal": "below typical 340 € (−15%)",
           "cheapest_date": "2026-09-16",
           "cheapest_eur": 300.0,
           "duration": "7 hr 25 min",
@@ -235,7 +237,7 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
 }
 ```
 
-A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. `cheapest_date` / `cheapest_eur` appear only when that median exists and the cheapest owned day is in the grid; they are omitted, not invented, when the grid missed. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `google_flights_url` is on the query and each offer when viajante can build it from owned route/date/cabin/occupancy/currency bytes, or from an owned `booking_token`. Multi-city uses the owned tfs encoder; the field is omitted only when that encode cannot run and there is no token. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
+A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` / `vs_typical_pct` / `typical_deal` are filled from that same-route date-grid median when it exists (packaged RT uses the same-stay grid). Otherwise they are `null`. `cheapest_date` / `cheapest_eur` appear only when that median exists and the cheapest owned day is in the grid; they are omitted, not invented, when the grid missed. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `google_flights_url` is on the query and each offer when viajante can build it from owned route/date/cabin/occupancy/currency bytes, or from an owned `booking_token`. Multi-city uses the owned tfs encoder; the field is omitted only when that encode cannot run and there is no token. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
 
 ## CLI reference
 

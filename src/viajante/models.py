@@ -20,6 +20,23 @@ VsTypical = Literal["below", "near", "above"]
 _VS_TYPICAL: tuple[VsTypical, ...] = ("below", "near", "above")
 
 
+def format_typical_deal(
+    vs: Optional[VsTypical],
+    typical_eur: Optional[float],
+    pct: Optional[int],
+) -> Optional[str]:
+    """English one-liner, or None when typical is omitted."""
+    if vs is None or typical_eur is None or pct is None:
+        return None
+    if pct > 0:
+        shown = f"+{pct}%"
+    elif pct < 0:
+        shown = f"−{abs(pct)}%"
+    else:
+        shown = "0%"
+    return f"{vs} typical {typical_eur:.0f} € ({shown})"
+
+
 def _normalize_iata(code: str, *, role: str) -> str:
     normalized = code.strip().upper()
     if len(normalized) != 3 or not normalized.isalpha():
@@ -457,6 +474,7 @@ class FlightOffer:
     legs: Tuple[RawJourneyLeg, ...] = ()
     typical_eur: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
+    vs_typical_pct: Optional[int] = None
     cheapest_date: Optional[date] = None
     cheapest_eur: Optional[float] = None
     checked_bags: Optional[int] = None
@@ -469,8 +487,15 @@ class FlightOffer:
             raise ValueError("baggage_buffer_eur must not be negative")
         if self.baggage_buffer_eur > 0 and not self.needs_bag_verify:
             raise ValueError("a baggage buffer only applies to a carrier flagged for verification")
-        if (self.typical_eur is None) != (self.vs_typical is None):
-            raise ValueError("typical_eur and vs_typical must both be set or both omitted")
+        have_typical = (
+            self.typical_eur is None,
+            self.vs_typical is None,
+            self.vs_typical_pct is None,
+        )
+        if len(set(have_typical)) != 1:
+            raise ValueError(
+                "typical_eur, vs_typical, and vs_typical_pct must all be set or all omitted"
+            )
         if self.typical_eur is not None and self.typical_eur <= 0:
             raise ValueError("typical_eur must be positive")
         if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
@@ -501,6 +526,9 @@ class FlightOffer:
                 ),
             )
 
+    def typical_deal(self) -> Optional[str]:
+        return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
+
     def to_dict(self) -> Mapping[str, object]:
         lead = self.legs[0]
         two_stop = self.stops_count is not None and self.stops_count >= 2
@@ -512,6 +540,8 @@ class FlightOffer:
             "price_eur": self.price_eur,
             "typical_eur": self.typical_eur,
             "vs_typical": self.vs_typical,
+            "vs_typical_pct": self.vs_typical_pct,
+            "typical_deal": self.typical_deal(),
             "duration": self.duration,
             "duration_hours": self.duration_hours,
             "stops": self.stops,

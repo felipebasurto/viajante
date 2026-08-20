@@ -76,7 +76,9 @@ Non-English prompts must plan English fetch `locale` / city strings.
 - **smoke / easy**: one city pair, one date (BOS–LHR, NRT–ICN, GRU–SCL, …),
   airports lookup, cheapest Friday, invalid IATA, missing date.
 - **medium**: packaged RT vs two one-ways, open jaw, max-stops, cabin,
-  adults, explore, dates calendar, hotel nights / rooms.
+- **medium**: packaged RT vs two one-ways, open jaw, max-stops, cabin,
+  adults, explore, dates calendar, hotel nights / rooms, packaged RT
+  typical omit-on-miss.
 - **hard**: flexible dates, flex around-date window, layover caps, night-arrival clocks, packaged
   RT return legs, rooms occupancy, refuse booking/trains/cars, destinations
   and prices only.

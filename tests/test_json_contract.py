@@ -48,6 +48,8 @@ OFFER_KEYS = {
     "price_eur",
     "typical_eur",
     "vs_typical",
+    "vs_typical_pct",
+    "typical_deal",
     "duration",
     "duration_hours",
     "stops",
@@ -156,6 +158,8 @@ class JsonContractTests(unittest.TestCase):
         offer = self.data["queries"][0]["offers"][0]
         self.assertIsNone(offer["typical_eur"])
         self.assertIsNone(offer["vs_typical"])
+        self.assertIsNone(offer["vs_typical_pct"])
+        self.assertIsNone(offer["typical_deal"])
 
     def test_missing_bag_counts_are_omitted_not_invented(self) -> None:
         offer = self.data["queries"][0]["offers"][0]
@@ -243,10 +247,13 @@ class JsonContractTests(unittest.TestCase):
             needs_bag_verify=True,
             typical_eur=340.0,
             vs_typical="below",
+            vs_typical_pct=-15,
         )
         data = offer.to_dict()
         self.assertEqual(data["typical_eur"], 340.0)
         self.assertEqual(data["vs_typical"], "below")
+        self.assertEqual(data["vs_typical_pct"], -15)
+        self.assertEqual(data["typical_deal"], "below typical 340 € (−15%)")
         self.assertEqual(set(data), OFFER_KEYS)
         self.assertNotIn("cheapest_date", data)
         self.assertNotIn("cheapest_eur", data)
@@ -266,6 +273,7 @@ class JsonContractTests(unittest.TestCase):
             needs_bag_verify=True,
             typical_eur=340.0,
             vs_typical="below",
+            vs_typical_pct=-15,
             cheapest_date=date(2026, 9, 16),
             cheapest_eur=300.0,
         )

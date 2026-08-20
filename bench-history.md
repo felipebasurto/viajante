@@ -57,6 +57,6 @@ Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last *
 ## Honesty leftovers (leave them)
 
 - Compact `--trip rt` with only the outbound in the bytes still has one leg. Do not invent the return.
-- Typical is omitted when the calendar is thin or the trip is packaged RT / multi.
+- Typical is omitted when the calendar is thin or the trip is multi-city. Packaged RT uses the same-stay grid.
 - Booking challenge timeout. Untouched.
 - Do not shorten Playwright detail delays. No peer-scraper names. No live Google as the reward.
