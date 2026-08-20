@@ -116,17 +116,22 @@ def parse_stops_count(stops: str | None) -> int | None:
     return None
 
 
+_RATING_PATTERNS = (
+    re.compile(
+        r"(?:puntuaci[oó]n|valoraci[oó]n|rating|scored)\s*:?\s*(\d+[.,]\d+|\d+)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^(\d+[.,]\d{1,2}|\d+)$", re.IGNORECASE),
+    re.compile(r"(?<!\d)(\d+[.,]\d{1,2})(?!\d)", re.IGNORECASE),
+)
+
+
 def parse_rating(rating_text: str | None) -> float | None:
     if not rating_text:
         return None
     text = rating_text.replace("\xa0", " ")
-    label_patterns = (
-        r"(?:puntuaci[oó]n|valoraci[oó]n|rating|scored)\s*:?\s*(\d+[.,]\d+|\d+)",
-        r"^(\d+[.,]\d{1,2}|\d+)$",
-        r"(?<!\d)(\d+[.,]\d{1,2})(?!\d)",
-    )
-    for pattern in label_patterns:
-        m = re.search(pattern, text, flags=re.IGNORECASE)
+    for pattern in _RATING_PATTERNS:
+        m = pattern.search(text)
         if m:
             score = float(m.group(1).replace(",", "."))
             if 0.0 <= score <= 10.0:
@@ -135,17 +140,16 @@ def parse_rating(rating_text: str | None) -> float | None:
     return None
 
 
-_FREE_CANCEL_PATTERNS = (
-    r"(?<!\bno\s)(?<!\bsin\s)cancelaci[oó]n\s+gratuita",
-    r"(?<!\bno\s)(?<!\bsin\s)cancelaci[oó]n\s+gratis",
-    r"(?<!\bno\s)free\s+cancell?ation",
+_FREE_CANCEL = re.compile(
+    r"(?<!\bno\s)(?<!\bsin\s)cancelaci[oó]n\s+gratuita|"
+    r"(?<!\bno\s)(?<!\bsin\s)cancelaci[oó]n\s+gratis|"
+    r"(?<!\bno\s)free\s+cancell?ation"
 )
-
-_NON_REFUNDABLE_PATTERNS = (
-    r"no\s+reembolsable",
-    r"non[\s-]?refundable",
-    r"no\s+cancell?ation(?!\s+(?:fees?|charges?|costs?))",
-    r"no\s+se\s+puede\s+cancelar",
+_NON_REFUNDABLE = re.compile(
+    r"no\s+reembolsable|"
+    r"non[\s-]?refundable|"
+    r"no\s+cancell?ation(?!\s+(?:fees?|charges?|costs?))|"
+    r"no\s+se\s+puede\s+cancelar"
 )
 
 
@@ -153,31 +157,20 @@ def parse_cancellation_evidence(card_text: str | None) -> CancellationEvidence:
     if not card_text:
         return CancellationEvidence.UNKNOWN
     text = card_text.replace("\xa0", " ").lower()
-    has_free = any(re.search(pat, text) for pat in _FREE_CANCEL_PATTERNS)
-    has_non_refundable = any(re.search(pat, text) for pat in _NON_REFUNDABLE_PATTERNS)
-    if has_non_refundable:
+    if _NON_REFUNDABLE.search(text):
         return CancellationEvidence.NON_REFUNDABLE
-    if has_free:
+    if _FREE_CANCEL.search(text):
         return CancellationEvidence.FREE
     return CancellationEvidence.UNKNOWN
 
 
-_ENTIRE_HOME_PATTERNS = (
-    r"apartamento\s+entero",
-    r"alojamiento\s+entero",
-    r"entire\s+home",
-    r"entire\s+apartment",
-    r"whole\s+place",
-    r"casa\s+entera",
+_ENTIRE_HOME = re.compile(
+    r"apartamento\s+entero|alojamiento\s+entero|entire\s+home|"
+    r"entire\s+apartment|whole\s+place|casa\s+entera"
 )
-
-_NOT_ENTIRE_HOME_PATTERNS = (
-    r"habitaci[oó]n\s+privada",
-    r"private\s+room",
-    r"shared\s+room",
-    r"habitaci[oó]n\s+compartida",
-    r"hotel\s+room",
-    r"habitaci[oó]n\s+de\s+hotel",
+_NOT_ENTIRE_HOME = re.compile(
+    r"habitaci[oó]n\s+privada|private\s+room|shared\s+room|"
+    r"habitaci[oó]n\s+compartida|hotel\s+room|habitaci[oó]n\s+de\s+hotel"
 )
 
 
@@ -185,81 +178,61 @@ def parse_property_type_evidence(card_text: str | None) -> PropertyTypeEvidence:
     if not card_text:
         return PropertyTypeEvidence.UNKNOWN
     text = card_text.replace("\xa0", " ").lower()
-    if any(re.search(pat, text) for pat in _NOT_ENTIRE_HOME_PATTERNS):
+    if _NOT_ENTIRE_HOME.search(text):
         return PropertyTypeEvidence.NOT_ENTIRE_HOME
-    if any(re.search(pat, text) for pat in _ENTIRE_HOME_PATTERNS):
+    if _ENTIRE_HOME.search(text):
         return PropertyTypeEvidence.ENTIRE_HOME
     return PropertyTypeEvidence.UNKNOWN
 
 
-_PRIVATE_ROOM_PATTERNS = (
-    r"habitaci[oó]n\s+privada",
-    r"private\s+room",
-    r"shared\s+room",
-    r"habitaci[oó]n\s+compartida",
+_PRIVATE_ROOM = re.compile(
+    r"habitaci[oó]n\s+privada|private\s+room|shared\s+room|habitaci[oó]n\s+compartida"
 )
-
-_HOTEL_ROOM_PATTERNS = (
-    r"hotel\s+room",
-    r"habitaci[oó]n\s+de\s+hotel",
-)
-
-
-_TITLE_ENTIRE_HOME_PATTERNS = (
-    r"apartamentos?\b",
-    r"apartments?\b",
-    r"\bcasa\b",
-)
+_HOTEL_ROOM = re.compile(r"hotel\s+room|habitaci[oó]n\s+de\s+hotel")
+_TITLE_ENTIRE_HOME = re.compile(r"apartamentos?\b|apartments?\b|\bcasa\b")
 
 
 def parse_lodging_kind(card_text: str | None, *, title: str | None = None) -> LodgingKind:
     text = (card_text or "").replace("\xa0", " ").lower()
     if text:
-        if any(re.search(pat, text) for pat in _PRIVATE_ROOM_PATTERNS):
+        if _PRIVATE_ROOM.search(text):
             return LodgingKind.PRIVATE_ROOM
-        if any(re.search(pat, text) for pat in _HOTEL_ROOM_PATTERNS):
+        if _HOTEL_ROOM.search(text):
             return LodgingKind.HOTEL
-        if any(re.search(pat, text) for pat in _ENTIRE_HOME_PATTERNS):
+        if _ENTIRE_HOME.search(text):
             return LodgingKind.ENTIRE_HOME
     title_text = (title or "").replace("\xa0", " ").lower()
-    if title_text and any(re.search(pat, title_text) for pat in _TITLE_ENTIRE_HOME_PATTERNS):
+    if title_text and _TITLE_ENTIRE_HOME.search(title_text):
         return LodgingKind.ENTIRE_HOME
     return LodgingKind.UNKNOWN
 
 
+# Pattern order is load-bearing: first pattern that matches anywhere wins.
+_BATHROOM_PATTERNS = (re.compile(r"(\d+)\s*baños?"), re.compile(r"(\d+)\s*bathrooms?"))
+_BEDROOM_PATTERNS = (
+    re.compile(r"(\d+)\s*dormitorios?"),
+    re.compile(r"(\d+)\s*habitaci[oó]n(?:es)?"),
+    re.compile(r"(\d+)\s*bedrooms?"),
+)
+_BED_PATTERNS = (
+    re.compile(r"(\d+)\s*camas?\b"),
+    re.compile(r"(\d+)\s*beds\b"),
+    re.compile(r"(\d+)\s*bed\b"),
+)
+
+
+def _first_int(text: str, patterns: tuple[re.Pattern[str], ...]) -> int | None:
+    for pattern in patterns:
+        m = pattern.search(text)
+        if m:
+            return int(m.group(1))
+    return None
+
+
 def parse_unit_hints(card_text: str | None) -> dict[str, int | None]:
     text = (card_text or "").replace("\xa0", " ").lower()
-    bathrooms = None
-    bedrooms = None
-    beds = None
-
-    for pat in (
-        r"(\d+)\s*baños?",
-        r"(\d+)\s*bathrooms?",
-    ):
-        m = re.search(pat, text)
-        if m:
-            bathrooms = int(m.group(1))
-            break
-
-    for pat in (
-        r"(\d+)\s*dormitorios?",
-        r"(\d+)\s*habitaci[oó]n(?:es)?",
-        r"(\d+)\s*bedrooms?",
-    ):
-        m = re.search(pat, text)
-        if m:
-            bedrooms = int(m.group(1))
-            break
-
-    for pat in (
-        r"(\d+)\s*camas?\b",
-        r"(\d+)\s*beds\b",
-        r"(\d+)\s*bed\b",
-    ):
-        m = re.search(pat, text)
-        if m:
-            beds = int(m.group(1))
-            break
-
-    return {"bedrooms": bedrooms, "bathrooms": bathrooms, "beds": beds}
+    return {
+        "bedrooms": _first_int(text, _BEDROOM_PATTERNS),
+        "bathrooms": _first_int(text, _BATHROOM_PATTERNS),
+        "beds": _first_int(text, _BED_PATTERNS),
+    }
