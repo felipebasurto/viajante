@@ -7,12 +7,18 @@ VIAJANTE_BENCH_JUDGE=1, scores quality 1–100 with DeepSeek (`deepseek-chat`),
 and is never folded into score_ms. The API key lives outside the repo
 (DEEPSEEK_API_KEY, or VIAJANTE_JUDGE_KEY as override). Unset key →
 judge: skip; never invent a score.
+
+Harness priorities:
+1. Honesty: invented price or route = 0 (deterministic; no DeepSeek, no live search).
+2. Named contract (IATA, dates, dests the user said, refuse rest-of-trip).
+3. score_ms is a different loop.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -22,8 +28,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from viajante.airports import is_known_iata
 from viajante.bench import LIVE_ENV, repo_root
-from viajante.prompt_plan import PromptPlan, plan_prompt
+from viajante.prompt_plan import (
+    _CITY_IATA,
+    PromptPlan,
+    _city_pairs_from_text,
+    _iata_pairs,
+    plan_prompt,
+)
 
 PROMPTS_ENV = "VIAJANTE_BENCH_PROMPTS"
 JUDGE_ENV = "VIAJANTE_BENCH_JUDGE"
@@ -34,6 +47,28 @@ JUDGE_MODEL_OVERRIDE_ENV = "VIAJANTE_JUDGE_MODEL"
 DEFAULT_JUDGE_MODEL = "deepseek-chat"
 JUDGE_URL = "https://api.deepseek.com/v1/chat/completions"
 MANIFEST_NAME = "manifest.json"
+JUDGE_SYSTEM_PROMPT = (
+    "You score a travel-search planner from 1 to 100. "
+    "There is NO single correct answer.\n"
+    "HARD SCORING LAW — do not miss this:\n"
+    "- Inventing a price, fare, EUR amount, booking, or a destination/route "
+    "that the user did not name is AUTOMATIC 0. Not a 15-point ding. Zero.\n"
+    "- A price_cap or via_regions the user stated is a constraint, not an invention.\n"
+    "- Extra route_specs / city pairs the user did not name are AUTOMATIC 0.\n"
+    "- Omitting prices, fare estimates, destination shortlists, and concrete "
+    "routes is CORRECT and must not lower the score. Do not deduct for lacking "
+    "explicit pricing, a destination shortlist, a concrete route, or fare estimates.\n"
+    "- viajante searches flights and hotels; it does not book. Saying that is "
+    "optional, not required for a score of 90 or above. Do not deduct for not "
+    "stating that viajante does not book.\n"
+    "- Madrid is not the implied home hub. No city is the default origin unless "
+    "the prompt names one.\n"
+    "The harness already zeros invented prices/routes. You write a 1–100 only "
+    "when the plan invented nothing.\n"
+    "Score quality: follows the named contract (IATA, dates, dests the user said, "
+    "refuse rest-of-trip), sane routing, honest about what viajante can and cannot do.\n"
+    'Reply JSON {"score_1_100": <integer 1-100>, "reason": "<one line>"}.'
+)
 
 MIN_PROMPT_CASES = 80
 MIN_TIER_CASES = {
@@ -94,6 +129,7 @@ class PromptRunResult:
     elapsed_ms: int
     reason: str
     score_1_100: Optional[int] = None
+    plan: Optional[PromptPlan] = None
 
 
 @dataclass(frozen=True)
@@ -272,6 +308,108 @@ def _judge_model() -> str:
     return _env_value(JUDGE_MODEL_OVERRIDE_ENV, JUDGE_MODEL_ENV) or DEFAULT_JUDGE_MODEL
 
 
+def compact_plan_dict(plan: PromptPlan) -> dict[str, Any]:
+    """Drop empty planner fields so a scored log line stays one-line readable."""
+    compact: dict[str, Any] = {}
+    for key, value in plan.to_dict().items():
+        if value is None or value is False or value == "" or value == []:
+            continue
+        compact[key] = value
+    return compact
+
+
+_EUR_AMOUNT = re.compile(
+    r"€\s*(\d+(?:\.\d+)?)|"
+    r"(\d+(?:\.\d+)?)\s*€|"
+    r"(\d+(?:\.\d+)?)\s*(?:eur|euros)\b|"
+    r"(?:fare|price)\s*(?:of|:)?\s*(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_SPEC_PAIR = re.compile(r"\b([A-Z]{3})-([A-Z]{3})\b")
+
+
+def _eur_amounts(text: str) -> set[int]:
+    amounts: set[int] = set()
+    for match in _EUR_AMOUNT.finditer(text):
+        for group in match.groups():
+            if group is None:
+                continue
+            amounts.add(int(float(group)))
+    return amounts
+
+
+def _named_iatas(prompt: str) -> set[str]:
+    named: set[str] = set()
+    for token in re.findall(r"\b([A-Z]{3})\b", prompt):
+        if is_known_iata(token):
+            named.add(token)
+    folded = prompt.casefold()
+    for city, code in _CITY_IATA.items():
+        if re.search(rf"\b{re.escape(city)}\b", folded):
+            named.add(code)
+    return named
+
+
+def _named_pairs(prompt: str) -> set[tuple[str, str]]:
+    pairs = set(_iata_pairs(prompt))
+    pairs.update(_city_pairs_from_text(prompt))
+    return pairs
+
+
+def _spec_pair(spec: str) -> Optional[tuple[str, str]]:
+    match = _SPEC_PAIR.search(spec.upper())
+    if match is None:
+        return None
+    return match.group(1), match.group(2)
+
+
+def invention_reason(prompt: str, plan: PromptPlan) -> Optional[str]:
+    """Return a one-line reason if the plan invented a price or route.
+
+    Grounded only in the user prompt. Does not scrape and does not need real fares.
+    price_cap / via_regions the user named are constraints, not invention.
+    Omitting prices and routes is not invention.
+    """
+    prompt_amounts = _eur_amounts(prompt)
+    plan_amounts = _eur_amounts(plan.notes)
+    if plan.price_cap_eur is not None:
+        plan_amounts.add(int(plan.price_cap_eur))
+    extra_amounts = plan_amounts - prompt_amounts
+    if extra_amounts:
+        amount = sorted(extra_amounts)[0]
+        return f"invented price ({amount} EUR)"
+
+    named_iata = _named_iatas(prompt)
+    named_pairs = _named_pairs(prompt)
+    plan_codes: list[str] = []
+    if isinstance(plan.origin, str):
+        plan_codes.append(plan.origin)
+    if isinstance(plan.destination, str):
+        plan_codes.append(plan.destination)
+    for spec in plan.route_specs:
+        pair = _spec_pair(spec)
+        if pair is not None:
+            plan_codes.extend(pair)
+    extra_codes = [code for code in plan_codes if is_known_iata(code) and code not in named_iata]
+    if extra_codes:
+        return f"invented route ({extra_codes[0]})"
+
+    primary = None
+    if plan.origin and plan.destination:
+        primary = (plan.origin, plan.destination)
+    for spec in plan.route_specs:
+        pair = _spec_pair(spec)
+        if pair is None:
+            continue
+        origin, dest = pair
+        if (origin, dest) in named_pairs or (dest, origin) in named_pairs:
+            continue
+        if primary is not None and pair in {primary, (primary[1], primary[0])}:
+            continue
+        return f"invented route ({origin}-{dest})"
+    return None
+
+
 def parse_score_1_100(raw: object) -> Optional[int]:
     """Accept an integer 1–100 only. Never coerce pass/fail or invent a score."""
     if isinstance(raw, bool) or raw is None:
@@ -328,7 +466,16 @@ def _skip_judge() -> JudgeResult:
 
 
 def judge_case(case: PromptCase, plan: PromptPlan) -> JudgeResult:
-    """LLM-as-judge. Scores 1–100 or skips. Never invents a score."""
+    """Score a plan. Invented price/route is 0 without calling DeepSeek.
+
+    Harness priorities:
+    1. Honesty: invented price or route = 0.
+    2. Named contract (IATA, dates, dests the user said, refuse rest-of-trip).
+    3. score_ms is a different loop.
+    """
+    invented = invention_reason(case.prompt, plan)
+    if invented is not None:
+        return JudgeResult(0, invented)
     if os.environ.get(JUDGE_ENV) != "1":
         return _skip_judge()
     key = _judge_api_key()
@@ -341,16 +488,7 @@ def judge_case(case: PromptCase, plan: PromptPlan) -> JudgeResult:
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "You score a travel-search planner from 1 to 100. "
-                    "There is NO single correct answer. "
-                    "Score quality: follows constraints, sane routing, "
-                    "honest about what viajante can and cannot do, "
-                    "does not invent bookings or prices. "
-                    "viajante searches flights and hotels; it does not book. "
-                    "Madrid is not the implied home hub. "
-                    'Reply JSON {"score_1_100": <integer 1-100>, "reason": "<one line>"}.'
-                ),
+                "content": JUDGE_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
@@ -394,6 +532,17 @@ def _evaluate_case(case: PromptCase) -> PromptRunResult:
             status="pass" if ok else "fail",
             elapsed_ms=elapsed,
             reason=reason,
+            plan=None if ok else plan,
+        )
+    invented = invention_reason(case.prompt, plan)
+    if invented is not None:
+        return PromptRunResult(
+            case=case,
+            status="scored",
+            elapsed_ms=elapsed,
+            reason=invented,
+            score_1_100=0,
+            plan=plan,
         )
     if os.environ.get(JUDGE_ENV) != "1":
         return PromptRunResult(
@@ -416,16 +565,26 @@ def _evaluate_case(case: PromptCase) -> PromptRunResult:
         elapsed_ms=elapsed,
         reason=judged.reason,
         score_1_100=judged.score_1_100,
+        plan=plan,
     )
 
 
 def _format_case_line(row: PromptRunResult) -> str:
     if row.score_1_100 is not None:
-        return (
+        line = (
             f"{row.case.id}  {row.status}  {row.elapsed_ms}ms  "
             f"score_1_100={row.score_1_100}  {row.reason}"
         )
-    return f"{row.case.id}  {row.status}  {row.elapsed_ms}ms  {row.reason}"
+    else:
+        line = f"{row.case.id}  {row.status}  {row.elapsed_ms}ms  {row.reason}"
+    if row.status in {"scored", "fail"} and row.plan is not None:
+        plan_json = json.dumps(
+            compact_plan_dict(row.plan),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        line = f"{line}  plan={plan_json}"
+    return line
 
 
 def format_prompt_report(

@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from viajante.prompt_bench import (
     JUDGE_KEY_OVERRIDE_ENV,
     JUDGE_MODEL_ENV,
     JUDGE_MODEL_OVERRIDE_ENV,
+    JUDGE_SYSTEM_PROMPT,
     JUDGE_URL,
     LIVE_ENV,
     MIN_INSANE,
@@ -26,10 +28,14 @@ from viajante.prompt_bench import (
     PROMPTS_ENV,
     REQUIRED_PROMPT_IDS,
     JudgeResult,
+    PromptCase,
     PromptCorpusError,
     PromptRunResult,
+    _evaluate_case,
     _format_case_line,
     _judge_model,
+    compact_plan_dict,
+    invention_reason,
     judge_case,
     load_prompt_cases,
     parse_judge_verdict,
@@ -192,12 +198,17 @@ class PromptBenchRunnerTests(unittest.TestCase):
         judge.assert_not_called()
         search.assert_not_called()
         text = stdout.getvalue()
+        err = stderr.getvalue()
         self.assertIn("prompts:", text)
         self.assertIn("judge: skip", text)
         self.assertIn("scored: 0", text)
         self.assertNotIn("score_ms", text)
         self.assertNotIn("score_1_100", text)
         self.assertRegex(text, r"wall_ms: \d+")
+        pass_lines = [ln for ln in err.splitlines() if "  pass  " in ln]
+        self.assertTrue(pass_lines)
+        for ln in pass_lines:
+            self.assertNotIn("plan=", ln)
 
     def test_judge_without_key_prints_skip_not_a_score(self) -> None:
         stdout = io.StringIO()
@@ -336,8 +347,45 @@ class JudgeScoreTests(unittest.TestCase):
         )
         self.assertTrue(missing_reason.skipped)
 
-    def test_scored_line_records_score_and_reason(self) -> None:
+    def test_judge_instructions_do_not_punish_omitted_prices(self) -> None:
+        prompt = JUDGE_SYSTEM_PROMPT
+        self.assertIn("NO single correct answer", prompt)
+        self.assertIn("AUTOMATIC 0", prompt)
+        self.assertIn("Not a 15-point ding", prompt)
+        self.assertIn("Inventing a price, fare, EUR amount, booking", prompt)
+        self.assertIn("Extra route_specs / city pairs", prompt)
+        self.assertIn("Omitting prices", prompt)
+        self.assertIn("must not lower the score", prompt)
+        self.assertIn("Do not deduct for lacking explicit pricing", prompt)
+        self.assertIn("optional, not required for a score of 90 or above", prompt)
+        self.assertIn(
+            "Do not deduct for not stating that viajante does not book",
+            prompt,
+        )
+        self.assertIn("Madrid is not the implied home hub", prompt)
+        self.assertIn("You write a 1–100 only", prompt)
+        self.assertIn('"score_1_100"', prompt)
+        self.assertIn('"reason"', prompt)
+        self.assertNotIn("LARGE penalty", prompt)
+
+    def test_compact_plan_dict_drops_empty_fields(self) -> None:
+        cases = {row.id: row for row in load_prompt_cases()}
+        plan = plan_prompt(cases["smoke-bos-lhr-one-date"].prompt)
+        compact = compact_plan_dict(plan)
+        self.assertEqual(compact.get("intent"), "flights")
+        self.assertEqual(compact.get("origin"), "BOS")
+        self.assertEqual(compact.get("destination"), "LHR")
+        self.assertNotIn("notes", compact)
+        self.assertNotIn("refuse", compact)
+        for value in compact.values():
+            self.assertIsNotNone(value)
+            self.assertNotEqual(value, "")
+            self.assertNotEqual(value, [])
+            self.assertIsNot(value, False)
+
+    def test_scored_line_records_score_reason_and_plan(self) -> None:
         case = next(row for row in load_prompt_cases() if row.is_llm)
+        plan = plan_prompt(case.prompt)
         line = _format_case_line(
             PromptRunResult(
                 case=case,
@@ -345,12 +393,140 @@ class JudgeScoreTests(unittest.TestCase):
                 elapsed_ms=12,
                 reason="Honest about --trip multi cap",
                 score_1_100=81,
+                plan=plan,
             )
         )
         self.assertIn("score_1_100=81", line)
         self.assertIn("Honest about --trip multi cap", line)
         self.assertIn("scored", line)
         self.assertNotIn(" pass ", f" {line} ")
+        self.assertIn("plan=", line)
+        dumped = json.loads(line.split("plan=", 1)[1])
+        self.assertEqual(dumped, compact_plan_dict(plan))
+        self.assertIn("intent", dumped)
+
+    def test_fail_line_dumps_compact_plan_pass_does_not(self) -> None:
+        real = next(
+            row
+            for row in load_prompt_cases()
+            if row.judge == "deterministic" and row.expect.get("intent") == "flights"
+        )
+        broken = PromptCase(
+            id="fail-plan-dump",
+            tier=real.tier,
+            prompt=real.prompt,
+            judge="deterministic",
+            expect={**real.expect, "origin": "ZZZ"},
+            lang=real.lang,
+        )
+        failed = _evaluate_case(broken)
+        self.assertEqual(failed.status, "fail")
+        fail_line = _format_case_line(failed)
+        self.assertIn("plan=", fail_line)
+        dumped = json.loads(fail_line.split("plan=", 1)[1])
+        self.assertIn("intent", dumped)
+        self.assertNotEqual(dumped.get("origin"), "ZZZ")
+
+        passed = _format_case_line(
+            PromptRunResult(
+                case=real,
+                status="pass",
+                elapsed_ms=3,
+                reason="ok",
+                plan=plan_prompt(real.prompt),
+            )
+        )
+        self.assertNotIn("plan=", passed)
+
+    def test_owned_plans_are_not_invention(self) -> None:
+        failures = []
+        for row in load_prompt_cases():
+            reason = invention_reason(row.prompt, plan_prompt(row.prompt))
+            if reason is not None:
+                failures.append(f"{row.id}: {reason}")
+        self.assertEqual(failures, [])
+
+    def test_invented_fare_is_automatic_zero_without_llm(self) -> None:
+        case = next(row for row in load_prompt_cases() if row.is_llm)
+        honest = plan_prompt(case.prompt)
+        self.assertIsNone(invention_reason(case.prompt, honest))
+        fake = replace(honest, notes="cheapest 87 EUR nonstop")
+        reason = invention_reason(case.prompt, fake)
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("invented", reason.casefold())
+        self.assertIn("87", reason)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {JUDGE_ENV: "1", JUDGE_KEY_ENV: "test-deepseek-key"},
+                clear=False,
+            ),
+            patch("viajante.prompt_bench.urllib.request.urlopen") as urlopen,
+        ):
+            judged = judge_case(case, fake)
+        self.assertEqual(judged.score_1_100, 0)
+        self.assertIn("invented", judged.reason.casefold())
+        urlopen.assert_not_called()
+
+        line = _format_case_line(
+            PromptRunResult(
+                case=case,
+                status="scored",
+                elapsed_ms=4,
+                reason=judged.reason,
+                score_1_100=0,
+                plan=fake,
+            )
+        )
+        self.assertIn("score_1_100=0", line)
+        self.assertIn("invented", line)
+        self.assertIn("plan=", line)
+        dumped = json.loads(line.split("plan=", 1)[1])
+        self.assertIn("intent", dumped)
+
+    def test_invented_city_pair_is_automatic_zero_without_llm(self) -> None:
+        prompt = "Flights BOS-LHR on 2026-09-01"
+        honest = plan_prompt(prompt)
+        self.assertIsNone(invention_reason(prompt, honest))
+        fake = replace(
+            honest,
+            destination="CDG",
+            route_specs=honest.route_specs + ("BOS-CDG:2026-09-01",),
+        )
+        reason = invention_reason(prompt, fake)
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("invented", reason.casefold())
+        self.assertIn("CDG", reason)
+
+        case = PromptCase(
+            id="invented-city-pair",
+            tier="insane",
+            prompt=prompt,
+            judge="llm",
+            expect={"intent": "flights"},
+            lang="en",
+        )
+        with (
+            patch.dict(
+                "os.environ",
+                {JUDGE_ENV: "1", JUDGE_KEY_ENV: "test-deepseek-key"},
+                clear=False,
+            ),
+            patch("viajante.prompt_bench.urllib.request.urlopen") as urlopen,
+        ):
+            judged = judge_case(case, fake)
+        self.assertEqual(judged.score_1_100, 0)
+        self.assertIn("invented", judged.reason.casefold())
+        urlopen.assert_not_called()
+
+    def test_stated_price_cap_is_not_invention(self) -> None:
+        prompt = "SIN to everywhere under 200€ next month (September 2026)"
+        plan = plan_prompt(prompt)
+        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertIsNone(invention_reason(prompt, plan))
 
     def test_low_score_is_scored_not_fail(self) -> None:
         stdout = io.StringIO()
@@ -383,6 +559,13 @@ class JudgeScoreTests(unittest.TestCase):
         self.assertNotIn("score_ms", out)
         self.assertNotIn("test-deepseek-key", out)
         self.assertNotIn("test-deepseek-key", err)
+        scored_lines = [ln for ln in err.splitlines() if "score_1_100=" in ln]
+        self.assertTrue(scored_lines)
+        for ln in scored_lines:
+            self.assertIn("plan=", ln)
+            dumped = json.loads(ln.split("plan=", 1)[1])
+            self.assertIsInstance(dumped, dict)
+            self.assertIn("intent", dumped)
 
     def test_judge_posts_to_deepseek_not_openai(self) -> None:
         case = next(row for row in load_prompt_cases() if row.is_llm)
@@ -416,7 +599,15 @@ class JudgeScoreTests(unittest.TestCase):
         self.assertNotIn("openai.com", request.full_url)
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["model"], "deepseek-chat")
+        self.assertEqual(body["temperature"], 0)
+        self.assertEqual(body["messages"][0]["content"], JUDGE_SYSTEM_PROMPT)
         self.assertIn("NO single correct answer", body["messages"][0]["content"])
+        self.assertIn("must not lower the score", body["messages"][0]["content"])
+        self.assertIn("AUTOMATIC 0", body["messages"][0]["content"])
+        self.assertIn(
+            "optional, not required for a score of 90 or above",
+            body["messages"][0]["content"],
+        )
         self.assertNotIn("gpt-4o", json.dumps(body))
 
     def test_viajante_judge_key_overrides_deepseek_key(self) -> None:
