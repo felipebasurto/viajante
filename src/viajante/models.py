@@ -441,12 +441,16 @@ class SearchReport:
         }
 
 
+DateTripKind = Literal["one-way", "rt"]
+
+
 @dataclass(frozen=True)
 class DatePriceRow:
     departure_date: date
     price_eur: Optional[float] = None
     airline: Optional[str] = None
     stops_count: Optional[int] = None
+    return_date: Optional[date] = None
     status: Literal["ok", "empty", "error"] = "ok"
     error: Optional[SearchError] = None
 
@@ -458,6 +462,8 @@ class DatePriceRow:
             "stops_count": self.stops_count,
             "status": self.status,
         }
+        if self.return_date is not None:
+            payload["return_date"] = self.return_date.isoformat()
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         return payload
@@ -473,6 +479,8 @@ class DateCalendarReport:
     days: Tuple[DatePriceRow, ...]
     locale: str = "en"
     currency: str = "EUR"
+    trip: DateTripKind = "one-way"
+    nights: Optional[int] = None
     fetch_backend: Optional[str] = "calendar"
     fetch_ms: Optional[int] = None
     schema_version: int = field(init=False, default=1)
@@ -486,7 +494,7 @@ class DateCalendarReport:
             )
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "currency": self.currency,
@@ -495,10 +503,14 @@ class DateCalendarReport:
             "destination": self.destination,
             "from": self.start_date.isoformat(),
             "to": self.end_date.isoformat(),
+            "trip": self.trip,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
             "days": [row.to_dict() for row in self.days],
         }
+        if self.nights is not None:
+            payload["nights"] = self.nights
+        return payload
 
 
 @dataclass(frozen=True)

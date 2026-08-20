@@ -16,6 +16,7 @@ from viajante.bench import run_bench
 from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
     parse_route_pair,
+    resolve_date_trip,
     search_dates,
     validate_date_window,
     write_dates_report_atomic,
@@ -82,6 +83,7 @@ DATES_EXAMPLES = """\
 Examples:
   viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --fetch sweep
+  viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
 """
 
 EXPLORE_EXAMPLES = """\
@@ -638,9 +640,13 @@ def _run_hotels(args: argparse.Namespace) -> int:
 
 
 def _print_dates_report(report: DateCalendarReport) -> None:
+    stay = ""
+    if report.trip == "rt" and report.nights is not None:
+        night_word = "night" if report.nights == 1 else "nights"
+        stay = f"  (rt, {report.nights} {night_word})"
     print(
         f"\n=== {report.origin} -> {report.destination}  "
-        f"{report.start_date.isoformat()} .. {report.end_date.isoformat()} ==="
+        f"{report.start_date.isoformat()} .. {report.end_date.isoformat()}{stay} ==="
     )
     any_price = False
     for row in report.days:
@@ -712,6 +718,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         if args.adults < 1:
             raise ValueError("--adults must be at least 1")
         validate_date_window(start, end)
+        trip, nights = resolve_date_trip(args.trip, args.nights)
         FlightQuery(origin, destination, start, max_stops=args.max_stops, adults=args.adults)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -725,6 +732,8 @@ def _run_dates(args: argparse.Namespace) -> int:
         adults=args.adults,
         cabin=args.cabin,
         max_stops=args.max_stops,
+        trip=trip,
+        nights=nights,
         progress=lambda line: print(line, file=sys.stderr),
     )
     _print_dates_report(report)
@@ -1035,11 +1044,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Last departure date (YYYY-MM-DD); window cap is {MAX_DATE_WINDOW_DAYS} days",
     )
     dates.add_argument(
+        "--trip",
+        default="one-way",
+        type=normalize_trip_kind,
+        metavar="{one-way,rt}",
+        help=(
+            "Trip kind (default one-way). rt/round-trip is one packaged stay per "
+            "departure day and needs --nights. --nights without --trip is rt. "
+            "multi is not supported."
+        ),
+    )
+    dates.add_argument(
+        "--nights",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Stay length in nights for a round-trip calendar. Implies --trip rt.",
+    )
+    dates.add_argument(
         "--max-stops",
         type=int,
         default=1,
-        choices=[0, 1],
-        help="Maximum stops (default 1)",
+        choices=[0, 1, 2],
+        help="Maximum stops (default 1). 2 means two-or-fewer.",
     )
     dates.add_argument(
         "--adults",

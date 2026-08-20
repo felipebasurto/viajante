@@ -67,6 +67,7 @@ A `booking_token` prints a Google Flights itinerary URL. No passenger fields, no
 
 ```bash
 uv run viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
+uv run viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
 ```
 
 ```text
@@ -76,7 +77,7 @@ uv run viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
   2026-10-03      541 €
 ```
 
-One row per day, cheapest quote (EUR). The window is at most 31 days. This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). `--fetch detail` is accepted and ignored.
+One row per departure day, cheapest quote (EUR). The window is at most 31 days. Default is one-way. `--nights 5` (or `--trip rt --nights 5`) prices a packaged stay of that length for each outbound day. A missed day is empty, never a guessed fare. This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). `--fetch detail` is accepted and ignored.
 
 ## Explore
 
@@ -240,7 +241,8 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `dates` flag | Default | Behavior |
 |---|---|---|
 | `--from` / `--to` | required | Inclusive departure window. Cap is 31 days. |
-| `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Same meaning as `flights`. `dates` still caps stops at 1. |
+| `--trip` / `--nights` | `one-way` / unset | One-way cheapest-per-day. `--nights N` (or `--trip rt --nights N`) is one packaged stay per departure day. `multi` is not supported. |
+| `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Same meaning as `flights` (`0`, `1`, or `2` stops). |
 | `--fetch` | `sweep` | Date-grid RPC. On a compact miss, each day is priced with shopping sweep. `detail` is ignored. |
 | `--save FILE` | off | Write the calendar JSON atomically. |
 
@@ -320,7 +322,7 @@ for result in report.queries:
             print(offer.total_price_eur, offer.title)
 ```
 
-`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates`, `search_explore`, and `lookup_airports` match the `dates`, `explore`, and `airports` commands.
+`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
 
 ## Limits
 

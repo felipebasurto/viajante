@@ -12,7 +12,6 @@ from urllib.parse import quote, urlencode
 from viajante.models import (
     FETCH_LANGUAGE,
     FlightCabin,
-    FlightQuery,
     MultiCity,
     RawJourneyLeg,
     RawLayover,
@@ -88,6 +87,7 @@ class RawFlightCard:
 class CompactCalendarDay:
     departure_date: date
     price_eur: Optional[float]
+    return_date: Optional[date] = None
 
 
 @dataclass(frozen=True)
@@ -250,16 +250,16 @@ def build_shopping_request(
 
 
 def build_calendar_inner(
-    query: FlightQuery,
+    trip: Trip,
     start: date,
     end: date,
 ) -> list[Any]:
-    constraints = build_search_constraints(query)
+    constraints = build_search_constraints(trip)
     return [None, constraints, [start.isoformat(), end.isoformat()]]
 
 
 def build_calendar_request(
-    query: FlightQuery,
+    trip: Trip,
     start: date,
     end: date,
     *,
@@ -267,7 +267,7 @@ def build_calendar_request(
     currency: str = "EUR",
 ) -> tuple[str, str]:
     url = f"{CALENDAR_GRID_URL}?{urlencode(_rpc_params(html_lang, currency))}"
-    return url, _rpc_body(build_calendar_inner(query, start, end))
+    return url, _rpc_body(build_calendar_inner(trip, start, end))
 
 
 def build_explore_inner(
@@ -871,6 +871,12 @@ def _calendar_row(item: object) -> Optional[CompactCalendarDay]:
         day = date.fromisoformat(item[0])
     except ValueError:
         return None
+    returning: Optional[date] = None
+    if len(item) > 1 and isinstance(item[1], str):
+        try:
+            returning = date.fromisoformat(item[1])
+        except ValueError:
+            returning = None
     price: Optional[float] = None
     if len(item) > 2 and isinstance(item[2], list) and item[2]:
         block = item[2][0]
@@ -878,7 +884,7 @@ def _calendar_row(item: object) -> Optional[CompactCalendarDay]:
             amount = block[1]
             if isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount > 0:
                 price = float(amount)
-    return CompactCalendarDay(departure_date=day, price_eur=price)
+    return CompactCalendarDay(departure_date=day, price_eur=price, return_date=returning)
 
 
 def _explore_place(item: object) -> Optional[CompactExplorePlace]:

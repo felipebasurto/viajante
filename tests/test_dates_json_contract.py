@@ -15,11 +15,14 @@ REPORT_KEYS = {
     "destination",
     "from",
     "to",
+    "trip",
     "fetch_backend",
     "fetch_ms",
     "days",
 }
+RT_REPORT_KEYS = REPORT_KEYS | {"nights"}
 DAY_KEYS = {"date", "price_eur", "airline", "stops_count", "status"}
+DAY_RETURN_KEYS = DAY_KEYS | {"return_date"}
 DAY_ERROR_KEYS = DAY_KEYS | {"error"}
 ERROR_KEYS = {"code", "message"}
 DATE_FETCH_BACKENDS = {"calendar", "sweep"}
@@ -77,6 +80,8 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["destination"], "BCN")
         self.assertEqual(self.data["from"], "2026-09-01")
         self.assertEqual(self.data["to"], "2026-09-02")
+        self.assertEqual(self.data["trip"], "one-way")
+        self.assertNotIn("nights", self.data)
         self.assertEqual(self.data["fetch_backend"], "calendar")
         self.assertEqual(self.data["fetch_ms"], 1200)
 
@@ -106,6 +111,37 @@ class DatesJsonContractTests(unittest.TestCase):
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
         json.loads(json.dumps(self.data, ensure_ascii=False))
+
+    def test_round_trip_report_adds_nights_and_return_dates(self) -> None:
+        report = DateCalendarReport(
+            searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
+            origin="BOS",
+            destination="LHR",
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 11, 2),
+            trip="rt",
+            nights=5,
+            days=(
+                DatePriceRow(
+                    departure_date=date(2026, 11, 1),
+                    return_date=date(2026, 11, 6),
+                    price_eur=410.0,
+                ),
+                DatePriceRow(
+                    departure_date=date(2026, 11, 2),
+                    return_date=date(2026, 11, 7),
+                    status="empty",
+                ),
+            ),
+        )
+        data = report.to_dict()
+        self.assertEqual(set(data), RT_REPORT_KEYS)
+        self.assertEqual(data["trip"], "rt")
+        self.assertEqual(data["nights"], 5)
+        self.assertEqual(set(data["days"][0]), DAY_RETURN_KEYS)
+        self.assertEqual(data["days"][0]["return_date"], "2026-11-06")
+        self.assertEqual(data["days"][1]["status"], "empty")
+        self.assertIsNone(data["days"][1]["price_eur"])
 
 
 if __name__ == "__main__":

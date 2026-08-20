@@ -81,6 +81,8 @@ def build_server():
         max_stops: int = 1,
         adults: int = 1,
         cabin: str = "economy",
+        trip: str = "one-way",
+        nights: int | None = None,
     ) -> dict:
         return dict(
             search_dates_tool(
@@ -90,6 +92,8 @@ def build_server():
                 max_stops=max_stops,
                 adults=adults,
                 cabin=cabin,  # type: ignore[arg-type]
+                trip=trip,
+                nights=nights,
             )
         )
 

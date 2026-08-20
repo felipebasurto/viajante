@@ -277,7 +277,7 @@ _IATA_PAIR = re.compile(r"(?<![A-Za-z0-9])([A-Z]{3})-([A-Z]{3})(?![A-Za-z0-9])")
 _ISO_DATE = re.compile(r"(?<![0-9])(20\d{2}-\d{2}-\d{2})(?![0-9])")
 _FLAG = re.compile(
     r"--(trip|max-stops|adults|cabin|rooms|max-layover|min-layover|max-duration|"
-    r"from|days|fetch|sort|depart-window)\s+(\S+)",
+    r"from|days|nights|fetch|sort|depart-window)\s+(\S+)",
     re.IGNORECASE,
 )
 _SPANISH_DATE = re.compile(
@@ -369,7 +369,8 @@ _EXPLORE_WORDS = re.compile(
 _DATES_CALENDAR = re.compile(
     r"\b(calendario|calendar|date grid|cheapest friday|"
     r"más barato por día|mas barato por dia|qué día es más barato|"
-    r"que dia es mas barato|cheapest day|price calendar)\b"
+    r"que dia es mas barato|cheapest days?|cheapest dates|"
+    r"price calendar)\b"
 )
 _HOTEL_WORDS = re.compile(r"(?<![a-z0-9_])(hotels?|hoteles|alojamiento)(?![a-z0-9_])")
 _FLIGHT_WORDS = re.compile(
@@ -401,6 +402,7 @@ _ROOMS_ES_SINGULAR = re.compile(r"(\d+|una|un|one)\s+habitaci[oó]n")
 _ROOMS_EN = re.compile(r"(\d+)\s+rooms?")
 _DAYS_ES = re.compile(r"(\d+)\s*d[ií]as")
 _DAYS_EN = re.compile(r"(\d+)\s+days")
+_NIGHTS = re.compile(r"(\d+)\s*(?:nights?|noches?)")
 _NO_ASIA = re.compile(r"\b(no asia|not asia)\b")
 _REQUIRE_CLOCK = re.compile(r"mostrar hora|clock not null|hora, no null|arrival(?:s)? must show")
 _NIGHT_WORD = re.compile(r"\b(noche|night|nocturn)")
@@ -1319,6 +1321,13 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         rooms = _int_after((_ROOMS_ES_PLURAL, _ROOMS_ES_SINGULAR, _ROOMS_EN), folded)
 
     days = None
+    nights_stay: Optional[int] = None
+    if "nights" in flags:
+        nights_stay = int(flags["nights"])
+    else:
+        nights_match = _NIGHTS.search(folded)
+        if nights_match:
+            nights_stay = int(nights_match.group(1))
     if "days" in flags:
         days = int(flags["days"])
     else:
@@ -1327,6 +1336,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             days_match = _DAYS_EN.search(folded)
         if days_match:
             days = int(days_match.group(1))
+        elif nights_stay is not None:
+            days = nights_stay
 
     cabin = _cabin(folded, flags)
     date_strategy = _date_strategy(folded)
@@ -1670,17 +1681,22 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         )
 
     if intent == "dates":
+        date_trip = (
+            "rt" if nights_stay is not None else (trip if trip in {"one-way", "rt"} else "one-way")
+        )
         return PromptPlan(
             intent="dates",
             origin=origin,
             destination=destination,
             date_from=date_from or departure,
             date_to=date_to or returning,
+            trip=date_trip,
             weekday=weekday,
             adults=adults,
             cabin=cabin,
             max_stops=max_stops,
-            route_specs=route_specs,
+            days=nights_stay if nights_stay is not None else days,
+            route_specs=(),
         )
 
     if intent == "refuse":

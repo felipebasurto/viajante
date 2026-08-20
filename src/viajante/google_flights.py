@@ -29,7 +29,7 @@ from viajante.google_flights_rpc import (
     parse_explore_body,
     parse_shopping_body,
 )
-from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, FlightQuery, Trip
+from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, Trip
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
@@ -538,13 +538,13 @@ class GoogleFlightsHttpSource:
 
     def fetch_calendar(
         self,
-        query: FlightQuery,
+        trip: Trip,
         start: date,
         end: date,
     ) -> tuple[CompactCalendarDay, ...]:
         client = self._ensure_client()
         url, body = build_calendar_request(
-            query,
+            trip,
             start,
             end,
             html_lang=self._html_lang,
@@ -628,7 +628,7 @@ class GoogleFlightsSource:
 
     def fetch_calendar(
         self,
-        query: FlightQuery,
+        trip: Trip,
         start: date,
         end: date,
     ) -> tuple[CompactCalendarDay, ...]:
@@ -637,7 +637,7 @@ class GoogleFlightsSource:
                 html_lang=self._config.html_lang,
                 currency=self._config.currency,
             )
-        return self._http.fetch_calendar(query, start, end)
+        return self._http.fetch_calendar(trip, start, end)
 
     def reset(self) -> None:
         self._session.reset()

@@ -8,7 +8,7 @@ from datetime import date
 from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports
-from viajante.dates import parse_route_pair, search_dates, validate_date_window
+from viajante.dates import parse_route_pair, resolve_date_trip, search_dates, validate_date_window
 from viajante.explore import DEFAULT_EXPLORE_TOP, search_explore, validate_explore_window
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
@@ -116,12 +116,15 @@ def search_dates_tool(
     max_stops: int = 1,
     adults: int = 1,
     cabin: FlightCabin = "economy",
+    trip: str = "one-way",
+    nights: Optional[int] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
     end_date = date.fromisoformat(end)
     validate_date_window(start_date, end_date)
     _reject_past((start_date,))
+    kind, stay = resolve_date_trip(trip, nights)
     report = _with_search_lock(
         lambda: search_dates(
             origin,
@@ -131,6 +134,8 @@ def search_dates_tool(
             max_stops=max_stops,
             adults=adults,
             cabin=cabin,
+            trip=kind,
+            nights=stay,
         )
     )
     return dict(report.to_dict())

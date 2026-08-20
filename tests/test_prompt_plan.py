@@ -116,6 +116,20 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertEqual(plan.destination, "LHR")
         self.assertEqual(plan.date_from, date(2026, 9, 1))
         self.assertEqual(plan.date_to, date(2026, 9, 14))
+        self.assertEqual(plan.route_specs, ())
+
+    def test_cheapest_dates_with_nights_is_one_calendar_not_daily_flights(self) -> None:
+        plan = plan_prompt("cheapest dates BOS-LHR in November 2026, 5 nights")
+        self.assertEqual(plan.intent, "dates")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.date_from, date(2026, 11, 1))
+        self.assertEqual(plan.date_to, date(2026, 11, 30))
+        self.assertEqual(plan.days, 5)
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.locale, "en")
+        self.assertEqual(plan.route_specs, ())
+        self.assertNotEqual(len(plan.route_specs), 30)
 
     def test_hotels_tokyo_nights(self) -> None:
         plan = plan_prompt("Hotel in Tokyo from 2026-12-04 to 2026-12-07")

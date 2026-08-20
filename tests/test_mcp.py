@@ -119,7 +119,25 @@ class McpHandlerTests(unittest.TestCase):
             payload = search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT)
         kwargs = search.call_args.kwargs
         self.assertNotIn("fetch", kwargs)
+        self.assertEqual(kwargs["trip"], "one-way")
+        self.assertIsNone(kwargs["nights"])
         self.assertEqual(payload["schema_version"], 1)
+
+    def test_search_dates_accepts_nights_as_round_trip(self) -> None:
+        fake = _report(days=[], trip="rt", nights=5)
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            payload = search_dates_tool("BOS-LHR", FUTURE, FUTURE_OUT, nights=5)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["trip"], "rt")
+        self.assertEqual(kwargs["nights"], 5)
+        self.assertEqual(payload["trip"], "rt")
+        self.assertEqual(payload["nights"], 5)
+
+    def test_search_dates_round_trip_without_nights_fails_before_search(self) -> None:
+        with patch("viajante.mcp_handlers.search_dates") as search:
+            with self.assertRaises(ValueError):
+                search_dates_tool("BOS-LHR", FUTURE, FUTURE_OUT, trip="rt")
+        search.assert_not_called()
 
     def test_past_date_window_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_dates") as search:
