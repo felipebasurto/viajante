@@ -453,6 +453,7 @@ class FlightOffer:
     layover_hours: Optional[float] = None
     flight_numbers: Optional[Tuple[str, ...]] = None
     booking_token: Optional[str] = None
+    google_flights_url: Optional[str] = None
     legs: Tuple[RawJourneyLeg, ...] = ()
     typical_eur: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
@@ -523,6 +524,8 @@ class FlightOffer:
             "needs_bag_verify": self.needs_bag_verify,
             "legs": [leg.to_dict() for leg in self.legs],
         }
+        if self.google_flights_url:
+            payload["google_flights_url"] = self.google_flights_url
         if self.checked_bags is not None:
             payload["checked_bags"] = self.checked_bags
         if self.carry_on is not None:
@@ -557,6 +560,7 @@ class QuerySuccess:
     raw_count: int
     eligible_count: int
     offers: Tuple[FlightOffer, ...]
+    google_flights_url: Optional[str] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -566,9 +570,12 @@ class QuerySuccess:
             raise ValueError("eligible_count must be >= number of offers")
 
     def to_dict(self) -> Mapping[str, object]:
+        query = dict(self.query.to_dict())
+        if self.google_flights_url:
+            query["google_flights_url"] = self.google_flights_url
         return {
             "status": self.status,
-            "query": self.query.to_dict(),
+            "query": query,
             "raw_count": self.raw_count,
             "eligible_count": self.eligible_count,
             "offers": [offer.to_dict() for offer in self.offers],
@@ -579,12 +586,16 @@ class QuerySuccess:
 class QueryFailure:
     query: Trip
     error: SearchError
+    google_flights_url: Optional[str] = None
     status: Literal["error"] = field(init=False, default="error")
 
     def to_dict(self) -> Mapping[str, object]:
+        query = dict(self.query.to_dict())
+        if self.google_flights_url:
+            query["google_flights_url"] = self.google_flights_url
         return {
             "status": self.status,
-            "query": self.query.to_dict(),
+            "query": query,
             "error": self.error.to_dict(),
         }
 

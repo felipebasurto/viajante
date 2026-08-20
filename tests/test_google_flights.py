@@ -23,6 +23,7 @@ from viajante.google_flights import (
     build_search_params,
     build_search_url,
     extract_main_html,
+    google_flights_url,
     looks_blocked,
     parse_flight_cards,
     parse_http_flight_cards,
@@ -177,6 +178,55 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertEqual(parsed["booking_token"], ["tok"])
         with self.assertRaises(ValueError):
             build_itinerary_url("   ")
+
+    def test_google_flights_url_uses_search_url_without_a_token(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0)
+        url = google_flights_url(query)
+        self.assertEqual(url, GOLDEN_URL_DIRECT)
+        self.assertEqual(google_flights_url(query, booking_token="   "), GOLDEN_URL_DIRECT)
+
+    def test_google_flights_url_prefers_owned_booking_token(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0)
+        url = google_flights_url(query, booking_token="tok")
+        parsed = parse_qs(urlparse(url).query)
+        self.assertEqual(parsed["booking_token"], ["tok"])
+        self.assertNotIn("tfs", parsed)
+
+    def test_google_flights_url_encodes_multi_city_from_owned_tfs(self) -> None:
+        trip = MultiCity(
+            (
+                FlightLeg("MAD", "BCN", date(2026, 9, 1)),
+                FlightLeg("BCN", "FCO", date(2026, 9, 3)),
+            )
+        )
+        url = google_flights_url(trip)
+        self.assertEqual(url, build_search_url(trip))
+        parsed = parse_qs(urlparse(url).query)
+        self.assertEqual(parsed["tfs"], [encode_tfs(trip)])
+        self.assertEqual(parsed["hl"], ["en"])
+        token_url = google_flights_url(trip, booking_token="tok")
+        self.assertIn("booking_token=tok", token_url)
+        self.assertNotIn("tfs=", token_url)
+
+    def test_google_flights_url_keeps_occupancy_and_currency(self) -> None:
+        solo = google_flights_url(FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0))
+        family = google_flights_url(
+            FlightQuery(
+                "MAD",
+                "BCN",
+                date(2026, 12, 4),
+                max_stops=0,
+                adults=2,
+                children=1,
+            ),
+            currency="USD",
+            country="US",
+        )
+        parsed = parse_qs(urlparse(family).query)
+        self.assertEqual(parsed["hl"], ["en"])
+        self.assertEqual(parsed["curr"], ["USD"])
+        self.assertEqual(parsed["gl"], ["US"])
+        self.assertNotEqual(parsed["tfs"], parse_qs(urlparse(solo).query)["tfs"])
 
     def test_business_cabin_query_matches_the_golden_tfs(self) -> None:
         params = build_search_params(

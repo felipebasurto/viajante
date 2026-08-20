@@ -61,7 +61,7 @@ Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026
 
 `--fetch sweep` is one Chrome TLS session and viajante's shopping RPC. No Chromium. `--fetch detail` is the Playwright scrape. `--fetch auto` uses sweep for 3 or more queries and detail for 1 or 2. Empty or blocked sweep falls back to detail once for those legs.
 
-A `booking_token` prints a Google Flights itinerary URL. No passenger fields, no booking POST. Nothing is written to disk unless you pass `--save`.
+A successful offer includes a Google Flights URL built from the owned route, dates, trip kind, cabin, occupancy, and currency. When a `booking_token` is present in the compact shopping body, the offer URL is the deeper itinerary link. The query carries the search URL. Multi-city uses the owned tfs encoder (#51); the field is omitted only when that encode cannot run and there is no token. No passenger fields, no booking POST. Nothing is written to disk unless you pass `--save`.
 
 ## Dates
 
@@ -191,7 +191,8 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
         "departure_date": "2026-09-15",
         "max_stops": 1,
         "adults": 1,
-        "cabin": "economy"
+        "cabin": "economy",
+        "google_flights_url": "https://www.google.com/travel/flights?tfs=...&hl=en&tfu=EgQIABABIgA&curr=EUR"
       },
       "raw_count": 24,
       "eligible_count": 1,
@@ -214,6 +215,7 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
           "layover_hours": null,
           "flight_numbers": ["N0301"],
           "booking_token": "tok",
+          "google_flights_url": "https://www.google.com/travel/flights?hl=en&curr=EUR&booking_token=tok",
           "baggage_buffer_eur": 70,
           "needs_bag_verify": true,
           "legs": [
@@ -233,7 +235,7 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
 }
 ```
 
-A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. `cheapest_date` / `cheapest_eur` appear only when that median exists and the cheapest owned day is in the grid; they are omitted, not invented, when the grid missed. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
+A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. `cheapest_date` / `cheapest_eur` appear only when that median exists and the cheapest owned day is in the grid; they are omitted, not invented, when the grid missed. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `google_flights_url` is on the query and each offer when viajante can build it from owned route/date/cabin/occupancy/currency bytes, or from an owned `booking_token`. Multi-city uses the owned tfs encoder; the field is omitted only when that encode cannot run and there is no token. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
 
 ## CLI reference
 

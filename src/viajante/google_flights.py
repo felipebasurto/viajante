@@ -166,6 +166,28 @@ def build_itinerary_url(
     return f"{SEARCH_URL}?" + urlencode(params)
 
 
+def google_flights_url(
+    trip: Trip,
+    *,
+    html_lang: str = SCRAPE_LANGUAGE,
+    currency: str = SCRAPE_CURRENCY,
+    country: Optional[str] = None,
+    booking_token: Optional[str] = None,
+) -> Optional[str]:
+    """Owned Google Flights link for a trip, or a deeper itinerary when token is owned.
+
+    If the trip cannot be turned into a search URL and there is no booking
+    token, the field is omitted. No invented tfs or token.
+    """
+    token = (booking_token or "").strip()
+    if token:
+        return build_itinerary_url(token, html_lang=html_lang, currency=currency, country=country)
+    try:
+        return build_search_url(trip, html_lang=html_lang, currency=currency, country=country)
+    except ValueError:
+        return None
+
+
 def _text_or_none(node) -> Optional[str]:
     if node is None:
         return None

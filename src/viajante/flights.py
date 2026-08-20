@@ -19,6 +19,7 @@ from viajante.google_flights import (
     GoogleFlightsSource,
     NoFlightsFound,
     RawFlightCard,
+    google_flights_url,
 )
 from viajante.models import (
     DateCalendarSummary,
@@ -896,6 +897,34 @@ def _calendar_summary_from_source(
     return summary
 
 
+def _stamp_google_flights_urls(
+    result: QueryResult,
+    *,
+    html_lang: str,
+    currency: str,
+    country: Optional[str],
+) -> QueryResult:
+    query_url = google_flights_url(
+        result.query, html_lang=html_lang, currency=currency, country=country
+    )
+    if isinstance(result, QuerySuccess):
+        offers = tuple(
+            replace(
+                offer,
+                google_flights_url=google_flights_url(
+                    result.query,
+                    html_lang=html_lang,
+                    currency=currency,
+                    country=country,
+                    booking_token=offer.booking_token,
+                ),
+            )
+            for offer in result.offers
+        )
+        return replace(result, offers=offers, google_flights_url=query_url)
+    return replace(result, google_flights_url=query_url)
+
+
 def _stamp_typical(
     trip: Trip,
     offers: Tuple[FlightOffer, ...],
@@ -1020,7 +1049,12 @@ def _run_search(
                 ),
             )
             report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
-        return outcome
+        return _stamp_google_flights_urls(
+            outcome,
+            html_lang=getattr(source.config, "html_lang", "en"),
+            currency=currency,
+            country=getattr(source.config, "country", None),
+        )
 
     fetch_batch = getattr(source, "fetch_many_with_calendar", None)
     if (
@@ -1045,14 +1079,28 @@ def _run_search(
                     typical_cache[_typical_cache_key(trip)] = _summary_from_calendar_days(
                         days, start, end
                     )
-                    results.append(_success_from_cards(trip, cards_or_exc))
+                    results.append(
+                        _stamp_google_flights_urls(
+                            _success_from_cards(trip, cards_or_exc),
+                            html_lang=getattr(source.config, "html_lang", "en"),
+                            currency=currency,
+                            country=getattr(source.config, "country", None),
+                        )
+                    )
                     continue
                 failure = classify_failure(cards_or_exc)
                 if failure.code in NON_RETRIABLE_CODES:
                     _maybe_reset(failure)
                     outcome = QueryFailure(query=trip, error=failure)
                     report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
-                    results.append(outcome)
+                    results.append(
+                        _stamp_google_flights_urls(
+                            outcome,
+                            html_lang=getattr(source.config, "html_lang", "en"),
+                            currency=currency,
+                            country=getattr(source.config, "country", None),
+                        )
+                    )
                     continue
                 results.append(_search_one(trip, start_attempt=1))
             return SearchReport(

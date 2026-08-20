@@ -4,9 +4,12 @@ import json
 import unittest
 from datetime import date, datetime, timezone
 
+from viajante.google_flights import google_flights_url
 from viajante.models import (
+    FlightLeg,
     FlightOffer,
     FlightQuery,
+    MultiCity,
     QueryFailure,
     QuerySuccess,
     RawJourneyLeg,
@@ -64,6 +67,7 @@ FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
 
 def _report() -> SearchReport:
     query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+    url = google_flights_url(query, currency="EUR")
     offer = FlightOffer(
         airline="Vueling",
         departure="07:15",
@@ -78,19 +82,27 @@ def _report() -> SearchReport:
         layover_hours=None,
         baggage_buffer_eur=70,
         needs_bag_verify=True,
+        google_flights_url=url,
     )
     return SearchReport(
         searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
         fetch_backend="sweep",
         fetch_ms=2410,
         queries=(
-            QuerySuccess(query=query, raw_count=24, eligible_count=1, offers=(offer,)),
+            QuerySuccess(
+                query=query,
+                raw_count=24,
+                eligible_count=1,
+                offers=(offer,),
+                google_flights_url=url,
+            ),
             QueryFailure(
                 query=query,
                 error=SearchError(
                     code=SearchErrorCode.NO_RESULTS,
                     message="Google Flights returned no flights for this route and date.",
                 ),
+                google_flights_url=url,
             ),
         ),
     )
@@ -109,8 +121,18 @@ class JsonContractTests(unittest.TestCase):
         success, failure = self.data["queries"]
         self.assertEqual(set(success), SUCCESS_KEYS)
         self.assertEqual(set(failure), FAILURE_KEYS)
-        self.assertEqual(set(success["query"]), QUERY_KEYS)
-        self.assertEqual(set(success["offers"][0]), OFFER_KEYS)
+        self.assertEqual(set(success["query"]), QUERY_KEYS | {"google_flights_url"})
+        self.assertEqual(set(success["offers"][0]), OFFER_KEYS | {"google_flights_url"})
+        self.assertTrue(
+            str(success["query"]["google_flights_url"]).startswith(
+                "https://www.google.com/travel/flights?"
+            )
+        )
+        self.assertEqual(
+            success["query"]["google_flights_url"],
+            success["offers"][0]["google_flights_url"],
+        )
+        self.assertEqual(set(failure["query"]), QUERY_KEYS | {"google_flights_url"})
         self.assertEqual(set(failure["error"]), ERROR_KEYS)
 
     def test_declared_constants_are_stable(self) -> None:
@@ -327,6 +349,71 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(len(data["offers"][0]["legs"]), 2)
         self.assertEqual(data["offers"][0]["legs"][1]["departure"], "14:00")
         self.assertEqual(data["offers"][0]["legs"][1]["arrival"], "16:20")
+
+    def test_google_flights_url_is_an_extra_key_on_query_and_offer(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1))
+        url = google_flights_url(query, currency="EUR")
+        offer = FlightOffer(
+            airline="Vueling",
+            departure="07:15",
+            arrival="08:40",
+            price="€39",
+            price_eur=39.0,
+            duration="1 hr 25 min",
+            duration_hours=1.42,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+            booking_token="tok",
+            google_flights_url=google_flights_url(query, currency="EUR", booking_token="tok"),
+        )
+        data = QuerySuccess(
+            query=query,
+            raw_count=1,
+            eligible_count=1,
+            offers=(offer,),
+            google_flights_url=url,
+        ).to_dict()
+        self.assertEqual(data["query"]["google_flights_url"], url)
+        self.assertIn("booking_token=tok", data["offers"][0]["google_flights_url"])
+        self.assertNotEqual(
+            data["query"]["google_flights_url"], data["offers"][0]["google_flights_url"]
+        )
+
+    def test_multi_city_carries_an_owned_google_flights_search_url(self) -> None:
+        trip = MultiCity(
+            (
+                FlightLeg("MAD", "BCN", date(2026, 9, 1)),
+                FlightLeg("BCN", "FCO", date(2026, 9, 3)),
+            )
+        )
+        url = google_flights_url(trip)
+        self.assertIsNotNone(url)
+        self.assertIn("tfs=", url or "")
+        offer = FlightOffer(
+            airline="Iberia",
+            departure="07:00",
+            arrival="08:20",
+            price="€90",
+            price_eur=90.0,
+            duration="1 hr 20 min",
+            duration_hours=1.33,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+            google_flights_url=url,
+        )
+        data = QuerySuccess(
+            query=trip,
+            raw_count=1,
+            eligible_count=1,
+            offers=(offer,),
+            google_flights_url=url,
+        ).to_dict()
+        self.assertEqual(data["query"]["google_flights_url"], url)
+        self.assertEqual(data["offers"][0]["google_flights_url"], url)
 
 
 if __name__ == "__main__":

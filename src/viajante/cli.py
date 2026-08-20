@@ -47,7 +47,7 @@ from viajante.flights import (
     search_flights,
     write_report_atomic,
 )
-from viajante.google_flights import build_itinerary_url
+from viajante.google_flights import google_flights_url
 from viajante.hotels import search_hotels, write_hotel_report_atomic
 from viajante.models import (
     AppliedHotelFilters,
@@ -390,14 +390,44 @@ def _print_offer_legs(offer: FlightOffer) -> None:
         )
 
 
+def _google_flights_url_for(
+    query,
+    *,
+    currency: str,
+    country: Optional[str] = None,
+    booking_token: Optional[str] = None,
+    stored: Optional[str] = None,
+) -> Optional[str]:
+    if stored:
+        return stored
+    return google_flights_url(
+        query, currency=currency, country=country, booking_token=booking_token
+    )
+
+
+def _print_google_flights_url(url: Optional[str], *, indent: str = "    ") -> None:
+    if url:
+        print(f"{indent}{url}")
+
+
 def _print_report(report, *, sort: FlightSort = "ranked") -> None:
     any_success = False
+    country = getattr(report, "country", None)
+    currency = report.currency
     for result in report.queries:
         print(_query_header(result.query))
+        query_url = _google_flights_url_for(
+            result.query,
+            currency=currency,
+            country=country,
+            stored=getattr(result, "google_flights_url", None),
+        )
         if isinstance(result, QuerySuccess):
             any_success = True
             if not result.offers:
                 print("  (no eligible offers)")
+                _print_google_flights_url(query_url, indent="  ")
+            print_per_offer = any(offer.booking_token for offer in result.offers)
             for offer in result.offers:
                 times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
                 print(
@@ -408,8 +438,18 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                     f"{_format_airline(offer.airline)}"
                 )
                 _print_offer_legs(offer)
-                if offer.booking_token:
-                    print(f"    {build_itinerary_url(offer.booking_token)}")
+                if print_per_offer:
+                    _print_google_flights_url(
+                        _google_flights_url_for(
+                            result.query,
+                            currency=currency,
+                            country=country,
+                            booking_token=offer.booking_token,
+                            stored=offer.google_flights_url,
+                        )
+                    )
+            if result.offers and not print_per_offer:
+                _print_google_flights_url(query_url, indent="  ")
             print(
                 f"  Raw: {result.raw_count}; "
                 f"eligible: {result.eligible_count}; "
@@ -417,6 +457,7 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
             )
         elif isinstance(result, QueryFailure):
             print(f"  ERROR: {result.error.message}")
+            _print_google_flights_url(query_url, indent="  ")
     _print_best_pairs(report, sort)
     if any_success:
         print("\nVerify checked baggage on Google Flights before booking.")

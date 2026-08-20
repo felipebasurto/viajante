@@ -28,6 +28,7 @@ from viajante.google_flights import (
     GoogleFlightsRejected,
     NoFlightsFound,
     RawFlightCard,
+    google_flights_url,
 )
 from viajante.models import (
     FlightOffer,
@@ -63,6 +64,7 @@ def card(
     flight_numbers: tuple[str, ...] | None = None,
     checked_bags: int | None = None,
     carry_on: int | None = None,
+    booking_token: str | None = None,
 ) -> RawFlightCard:
     return RawFlightCard(
         airline=airline,
@@ -77,6 +79,7 @@ def card(
         flight_numbers=flight_numbers,
         checked_bags=checked_bags,
         carry_on=carry_on,
+        booking_token=booking_token,
     )
 
 
@@ -667,6 +670,24 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(query.to_dict()["return_date"], "2026-10-12")
         assert isinstance(report.queries[0], QuerySuccess)
         self.assertEqual(report.queries[0].offers[0].price_eur, 120.0)
+
+    def test_search_stamps_google_flights_urls(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        source = FakeSource(
+            {("MAD", "BCN", "2026-09-01", 1): (card(airline="Iberia", booking_token="tok"),)}
+        )
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights((query,), top=1, fetch="sweep")
+        result = report.queries[0]
+        assert isinstance(result, QuerySuccess)
+        expected_query = google_flights_url(query, currency="EUR")
+        expected_offer = google_flights_url(query, currency="EUR", booking_token="tok")
+        self.assertEqual(result.google_flights_url, expected_query)
+        self.assertEqual(result.offers[0].google_flights_url, expected_offer)
+        self.assertIn("booking_token=tok", result.offers[0].google_flights_url or "")
+        payload = report.to_dict()
+        self.assertEqual(payload["queries"][0]["query"]["google_flights_url"], expected_query)
+        self.assertEqual(payload["queries"][0]["offers"][0]["google_flights_url"], expected_offer)
 
     def test_search_closes_source(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
