@@ -11,6 +11,8 @@ from viajante.airports import is_known_iata
 
 FlightCabin = Literal["economy", "premium-economy", "business", "first"]
 _CABINS: tuple[FlightCabin, ...] = ("economy", "premium-economy", "business", "first")
+VsTypical = Literal["below", "near", "above"]
+_VS_TYPICAL: tuple[VsTypical, ...] = ("below", "near", "above")
 
 
 def _normalize_iata(code: str, *, role: str) -> str:
@@ -242,6 +244,8 @@ class FlightOffer:
     flight_numbers: Optional[Tuple[str, ...]] = None
     booking_token: Optional[str] = None
     legs: Tuple[RawJourneyLeg, ...] = ()
+    typical_eur: Optional[float] = None
+    vs_typical: Optional[VsTypical] = None
 
     def __post_init__(self) -> None:
         if self.price_eur <= 0:
@@ -250,6 +254,12 @@ class FlightOffer:
             raise ValueError("baggage_buffer_eur must not be negative")
         if self.baggage_buffer_eur > 0 and not self.needs_bag_verify:
             raise ValueError("a baggage buffer only applies to a carrier flagged for verification")
+        if (self.typical_eur is None) != (self.vs_typical is None):
+            raise ValueError("typical_eur and vs_typical must both be set or both omitted")
+        if self.typical_eur is not None and self.typical_eur <= 0:
+            raise ValueError("typical_eur must be positive")
+        if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
+            raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
         if not self.legs:
             layovers: Tuple[RawLayover, ...] = ()
             if self.layover_city is not None or self.layover_hours is not None:
@@ -277,6 +287,8 @@ class FlightOffer:
             "arrival": lead.arrival,
             "price": self.price,
             "price_eur": self.price_eur,
+            "typical_eur": self.typical_eur,
+            "vs_typical": self.vs_typical,
             "duration": self.duration,
             "duration_hours": self.duration_hours,
             "stops": self.stops,

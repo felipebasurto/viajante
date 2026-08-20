@@ -535,6 +535,7 @@ class GoogleFlightsSource:
             currency=SCRAPE_CURRENCY,
         )
         self._session = session or ChromiumSession(state_dir, self._config)
+        self._http: Optional[GoogleFlightsHttpSource] = None
 
     @property
     def config(self) -> BrowserSessionConfig:
@@ -551,11 +552,27 @@ class GoogleFlightsSource:
             )
         )
 
+    def fetch_calendar(
+        self,
+        query: FlightQuery,
+        start: date,
+        end: date,
+    ) -> tuple[CompactCalendarDay, ...]:
+        if self._http is None:
+            self._http = GoogleFlightsHttpSource(
+                html_lang=self._config.html_lang,
+                currency=self._config.currency,
+            )
+        return self._http.fetch_calendar(query, start, end)
+
     def reset(self) -> None:
         self._session.reset()
 
     def close(self) -> None:
         self._session.close()
+        if self._http is not None:
+            self._http.close()
+            self._http = None
 
     def _fetch_html(self, url: str) -> str:
         page = self._session.new_page()

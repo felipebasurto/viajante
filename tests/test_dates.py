@@ -23,6 +23,7 @@ from viajante.google_flights_rpc import (
     parse_calendar_body,
 )
 from viajante.models import FlightQuery, SearchErrorCode
+from viajante.typical import typical_eur_from_daily_prices
 
 
 def _calendar_body(rows: list[list[object]]) -> str:
@@ -95,6 +96,10 @@ class CalendarParseTests(unittest.TestCase):
         self.assertEqual(days[0].price_eur, 81.0)
         self.assertEqual(days[2].price_eur, 67.0)
         self.assertIsNone(days[3].price_eur)
+        self.assertEqual(
+            typical_eur_from_daily_prices([row.price_eur for row in days]),
+            81.0,
+        )
 
     def test_unreadable_calendar_is_a_miss(self) -> None:
         with self.assertRaises(CompactParseMiss):

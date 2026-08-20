@@ -43,6 +43,8 @@ OFFER_KEYS = {
     "arrival",
     "price",
     "price_eur",
+    "typical_eur",
+    "vs_typical",
     "duration",
     "duration_hours",
     "stops",
@@ -127,6 +129,32 @@ class JsonContractTests(unittest.TestCase):
         self.assertIsNotNone(offer["stops"])
         self.assertEqual(len(offer["legs"]), 1)
         self.assertEqual(offer["legs"][0]["departure"], offer["departure"])
+
+    def test_missing_typical_baseline_is_null_not_invented(self) -> None:
+        offer = self.data["queries"][0]["offers"][0]
+        self.assertIsNone(offer["typical_eur"])
+        self.assertIsNone(offer["vs_typical"])
+
+    def test_owned_typical_serialises_with_a_coarse_label(self) -> None:
+        offer = FlightOffer(
+            airline="Norse Atlantic",
+            departure="21:15",
+            arrival="09:40",
+            price="€289",
+            price_eur=289.0,
+            duration="7 hr 25 min",
+            duration_hours=7.42,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=70,
+            needs_bag_verify=True,
+            typical_eur=340.0,
+            vs_typical="below",
+        )
+        data = offer.to_dict()
+        self.assertEqual(data["typical_eur"], 340.0)
+        self.assertEqual(data["vs_typical"], "below")
+        self.assertEqual(set(data), OFFER_KEYS)
 
     def test_two_stop_offer_hides_string_layover_city(self) -> None:
         offer = FlightOffer(

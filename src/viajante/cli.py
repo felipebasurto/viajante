@@ -216,6 +216,12 @@ def _format_ranking_columns(offer: FlightOffer) -> str:
     return f"{fare}{extra}"
 
 
+def _format_typical(offer: FlightOffer) -> str:
+    if offer.typical_eur is None or offer.vs_typical is None:
+        return ""
+    return f"  {offer.vs_typical} typical {offer.typical_eur:.0f} €"
+
+
 def _parse_iso_date(value: str, label: str) -> date:
     try:
         return date.fromisoformat(value)
@@ -326,7 +332,8 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
             for offer in result.offers:
                 times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
                 print(
-                    f"  {_format_ranking_columns(offer)}  {offer.duration or '?':<12} "
+                    f"  {_format_ranking_columns(offer)}{_format_typical(offer)}  "
+                    f"{offer.duration or '?':<12} "
                     f"{_format_stops_with_layover(offer):<16} {times:<18} "
                     f"{_format_airline(offer.airline)}"
                 )

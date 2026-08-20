@@ -126,6 +126,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 - Ranking adds 70 EUR to known low-cost fares by default. Default `--sort ranked` orders by that total; `--sort fare` orders by cabin fare. Report the ranked total when a buffer was added. Use `--baggage-buffer 0` for hand luggage only.
 - The low-cost list is partial. Never tell the user an airline includes a bag because it is absent from the list.
 - Remind the user to verify checked baggage on Google Flights before booking.
+- When an offer has `typical_eur` / `vs_typical`, that number is the median of owned cheapest-per-day calendar prices for the same origin-destination. If those fields are null, omit the comparison. Do not invent a market average.
 
 ### Hotels
 

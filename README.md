@@ -46,12 +46,14 @@ uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
 
 ```text
 === JFK -> LHR  2026-09-15 (max 1 stop(s)) ===
-      412 €  7 hr 10 min  direct  19:30 -> 07:40     British Airways
-      289 €      359 € ranked  7 hr 25 min  direct  21:15 -> 09:40     Norse Atlantic
-      355 €  11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
+      412 €  above typical 340 €  7 hr 10 min  direct  19:30 -> 07:40     British Airways
+      289 €      359 € ranked  below typical 340 €  7 hr 25 min  direct  21:15 -> 09:40     Norse Atlantic
+      355 €  near typical 340 €  11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
 ```
 
 One adult, one-way, economy. Up to eight offers, ordered by ranked total. That is fare plus a 70 EUR buffer on known low-cost carriers, and connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. Norse is 289 € on fare. The buffer puts it behind British Airways at 359 € ranked. `--sort fare` or `--baggage-buffer 0` turns the buffer off. `--sort duration` orders by elapsed time.
+
+`typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). `vs_typical` is `below`, `near` (±10%), or `above`. Both are `null` when the compact calendar misses, has fewer than three priced days, or the query is a packaged round-trip / multi-city. Never a guessed market average.
 
 Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026-09-15,2026-09-16`.
 
@@ -180,6 +182,8 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
           "arrival": "09:40",
           "price": "€289",
           "price_eur": 289.0,
+          "typical_eur": 340.0,
+          "vs_typical": "below",
           "duration": "7 hr 25 min",
           "duration_hours": 7.42,
           "stops": "Nonstop",
@@ -207,7 +211,7 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
 }
 ```
 
-A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
+A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
 
 ## CLI reference
 

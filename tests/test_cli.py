@@ -32,6 +32,7 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    VsTypical,
 )
 
 FUTURE_DATE = date.today() + timedelta(days=30)
@@ -57,6 +58,8 @@ def _offer(
     layover_city: Optional[str] = None,
     layover_hours: Optional[float] = None,
     booking_token: Optional[str] = None,
+    typical_eur: Optional[float] = None,
+    vs_typical: Optional[VsTypical] = None,
 ) -> FlightOffer:
     return FlightOffer(
         airline=airline,
@@ -73,6 +76,8 @@ def _offer(
         baggage_buffer_eur=baggage_buffer_eur,
         needs_bag_verify=needs_bag_verify,
         booking_token=booking_token,
+        typical_eur=typical_eur,
+        vs_typical=vs_typical,
     )
 
 
@@ -252,7 +257,13 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("[baggage?]", output)
         self.assertNotIn("ranked", output)
 
-    def test_baggage_reminder_after_successful_flight_results(self) -> None:
+    def test_typical_label_prints_only_when_owned(self) -> None:
+        with_typical = _rendered(
+            _report(_offer(price_eur=289.0, typical_eur=340.0, vs_typical="below"))
+        )
+        self.assertIn("below typical 340 €", with_typical)
+        silent = _rendered(_report(_offer(price_eur=289.0)))
+        self.assertNotIn("typical", silent)
         output = _rendered(_report(_offer()))
         self.assertIn("Verify checked baggage on Google Flights before booking.", output)
 

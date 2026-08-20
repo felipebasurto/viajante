@@ -52,6 +52,7 @@ from viajante.parsers import (
     parse_stops_count,
 )
 from viajante.storage import default_state_dir, write_json_atomic
+from viajante.typical import TYPICAL_WINDOW_DAYS, typical_eur_from_daily_prices, with_typical
 
 DEFAULT_BAGGAGE_BUFFER_EUR = 70
 DEFAULT_TOP = 8
@@ -630,6 +631,54 @@ def _rank_offers(
     return tuple(deduped)
 
 
+def _typical_window(start: date) -> tuple[date, date]:
+    end = date.fromordinal(start.toordinal() + TYPICAL_WINDOW_DAYS - 1)
+    return start, end
+
+
+def _typical_cache_key(query: FlightQuery) -> tuple[str, str, date, int, int, str]:
+    start, _end = _typical_window(query.departure_date)
+    return (query.origin, query.destination, start, query.max_stops, query.adults, query.cabin)
+
+
+def _typical_eur_from_source(
+    source: _FlightSource,
+    query: FlightQuery,
+    cache: dict[tuple[str, str, date, int, int, str], Optional[float]],
+) -> Optional[float]:
+    fetch_calendar = getattr(source, "fetch_calendar", None)
+    if not callable(fetch_calendar):
+        return None
+    key = _typical_cache_key(query)
+    if key in cache:
+        return cache[key]
+    start, end = _typical_window(query.departure_date)
+    try:
+        days = fetch_calendar(query, start, end)
+    except Exception:
+        cache[key] = None
+        return None
+    typical = typical_eur_from_daily_prices(
+        [row.price_eur for row in days] if days is not None else ()
+    )
+    cache[key] = typical
+    return typical
+
+
+def _stamp_typical(
+    trip: Trip,
+    offers: Tuple[FlightOffer, ...],
+    source: _FlightSource,
+    cache: dict[tuple[str, str, date, int, int, str], Optional[float]],
+) -> Tuple[FlightOffer, ...]:
+    if not offers or not isinstance(trip, FlightQuery):
+        return offers
+    typical = _typical_eur_from_source(source, trip, cache)
+    if typical is None:
+        return offers
+    return tuple(with_typical(offer, typical) for offer in offers)
+
+
 def _run_search(
     trips: Sequence[Trip],
     *,
@@ -655,6 +704,7 @@ def _run_search(
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
     results: list[QueryResult] = []
+    typical_cache: dict[tuple[str, str, date, int, int, str], Optional[float]] = {}
     for index, trip in enumerate(trips):
         report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
         outcome: Optional[QueryResult] = None
@@ -680,11 +730,12 @@ def _run_search(
                     )
                     is not None
                 ]
+                ranked = _rank_offers(eligible, top=top, sort=sort)
                 outcome = QuerySuccess(
                     query=trip,
                     raw_count=len(cards),
                     eligible_count=len(eligible),
-                    offers=_rank_offers(eligible, top=top, sort=sort),
+                    offers=_stamp_typical(trip, ranked, source, typical_cache),
                 )
                 break
             except Exception as exc:
