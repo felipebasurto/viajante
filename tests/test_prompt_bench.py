@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from viajante.prompt_bench import (
     JUDGE_SYSTEM_PROMPT,
     JUDGE_URL,
     LIVE_ENV,
+    MAX_SWEEP_PROMPTS,
     MIN_INSANE,
     MIN_PROMPT_CASES,
     MIN_TIER_CASES,
@@ -29,6 +31,7 @@ from viajante.prompt_bench import (
     PROMPTS_ENV,
     REQUIRED_PROMPT_IDS,
     REQUIRED_SAVAGE_LANGS,
+    SWEEP_ENV,
     VALID_SAVAGE_LANGS,
     JudgeResult,
     PromptCase,
@@ -37,6 +40,7 @@ from viajante.prompt_bench import (
     _evaluate_case,
     _format_case_line,
     _judge_model,
+    _sweep_search_flights,
     compact_plan_dict,
     format_prompt_report,
     invention_reason,
@@ -45,8 +49,10 @@ from viajante.prompt_bench import (
     load_prompt_cases,
     parse_judge_verdict,
     parse_score_1_100,
+    percentile_ms,
     rt_split_reason,
     run_prompt_bench,
+    sweep_routes_for_plan,
     validate_prompt_corpus,
 )
 from viajante.prompt_plan import plan_prompt
@@ -259,8 +265,12 @@ class PromptBenchRunnerTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
-            patch.dict("os.environ", {JUDGE_ENV: "", LIVE_ENV: "", PROMPTS_ENV: ""}),
+            patch.dict(
+                "os.environ",
+                {JUDGE_ENV: "", LIVE_ENV: "", PROMPTS_ENV: "", SWEEP_ENV: ""},
+            ),
             patch("viajante.prompt_bench.judge_case") as judge,
+            patch("viajante.prompt_bench._sweep_search_flights") as sweep,
             patch("viajante.flights.search_flights") as search,
             redirect_stdout(stdout),
             redirect_stderr(stderr),
@@ -268,6 +278,7 @@ class PromptBenchRunnerTests(unittest.TestCase):
             code = run_prompt_bench()
         self.assertEqual(code, 0)
         judge.assert_not_called()
+        sweep.assert_not_called()
         search.assert_not_called()
         text = stdout.getvalue()
         err = stderr.getvalue()
@@ -278,10 +289,18 @@ class PromptBenchRunnerTests(unittest.TestCase):
         self.assertNotIn("score_ms", text)
         self.assertNotIn("score_1_100", text)
         self.assertRegex(text, r"wall_ms: \d+")
+        self.assertRegex(text, r"plan_p50_ms: \d+")
+        self.assertRegex(text, r"plan_p90_ms: \d+")
+        self.assertRegex(text, r"plan_max_ms: \d+")
+        self.assertIn("sweep_ms:", text)
+        self.assertNotRegex(text, r"sweep_ms:\s*\d")
+        self.assertNotRegex(text, r"sweep_p50_ms:\s*\d")
         pass_lines = [ln for ln in err.splitlines() if "  pass  " in ln]
         self.assertTrue(pass_lines)
         for ln in pass_lines:
             self.assertNotIn("plan=", ln)
+            self.assertRegex(ln, r"plan_ms=\d+")
+            self.assertNotIn("sweep_ms=", ln)
         self.assertNotIn("holdout-", err)
 
     def test_judge_without_key_prints_skip_not_a_score(self) -> None:
@@ -362,6 +381,8 @@ class PromptBenchRunnerTests(unittest.TestCase):
         help_text = buffer.getvalue()
         self.assertIn("--prompts", help_text)
         self.assertIn("--holdout", help_text)
+        self.assertIn("--timeit-sweep", help_text)
+        self.assertIn("VIAJANTE_BENCH_SWEEP", help_text)
         self.assertIn("DEEPSEEK_API_KEY", help_text)
         self.assertNotIn("--skip", help_text)
         self.assertNotIn("--top", help_text)
@@ -371,6 +392,22 @@ class PromptBenchRunnerTests(unittest.TestCase):
             code = main(["bench", "--prompts", "--holdout"])
         self.assertEqual(code, 0)
         runner.assert_called_once_with(holdout=True)
+
+    def test_cli_timeit_sweep_wires_to_runner(self) -> None:
+        with patch("viajante.cli.run_prompt_bench", return_value=0) as runner:
+            code = main(["bench", "--prompts", "--timeit-sweep"])
+        self.assertEqual(code, 0)
+        runner.assert_called_once_with(timeit_sweep=True)
+
+    def test_cli_timeit_sweep_implies_prompts(self) -> None:
+        with (
+            patch("viajante.cli.run_prompt_bench", return_value=0) as runner,
+            patch("viajante.cli.run_bench") as speed,
+        ):
+            code = main(["bench", "--timeit-sweep"])
+        self.assertEqual(code, 0)
+        runner.assert_called_once_with(timeit_sweep=True)
+        speed.assert_not_called()
 
 
 class JudgeScoreTests(unittest.TestCase):
@@ -855,11 +892,20 @@ class JudgeScoreTests(unittest.TestCase):
             )
         self.assertIn("judge: ran", text)
         self.assertIn("judge_mean: 85.5", text)
+        self.assertIn("plan_p50_ms: 1", text)
+        self.assertIn("plan_p90_ms: 1", text)
+        self.assertIn("plan_max_ms: 1", text)
+        self.assertIn("sweep_ms:", text)
+        self.assertNotRegex(text, r"sweep_ms:\s*\d")
         self.assertNotIn("score_ms", text)
 
         skipped = format_prompt_report(cases=[case], results=[], wall_ms=10)
         self.assertIn("judge: skip", skipped)
         self.assertNotRegex(skipped, r"judge_mean:\s*\d")
+        self.assertIn("plan_p50_ms:", skipped)
+        self.assertNotRegex(skipped, r"plan_p50_ms:\s*\d")
+        self.assertIn("sweep_ms:", skipped)
+        self.assertNotRegex(skipped, r"sweep_ms:\s*\d")
 
         with patch.dict(
             "os.environ",
@@ -1019,8 +1065,12 @@ class HoldoutCorpusTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
-            patch.dict("os.environ", {JUDGE_ENV: "", LIVE_ENV: "", PROMPTS_ENV: ""}),
+            patch.dict(
+                "os.environ",
+                {JUDGE_ENV: "", LIVE_ENV: "", PROMPTS_ENV: "", SWEEP_ENV: ""},
+            ),
             patch("viajante.prompt_bench.judge_case") as judge,
+            patch("viajante.prompt_bench._sweep_search_flights") as sweep,
             patch("viajante.flights.search_flights") as search,
             redirect_stdout(stdout),
             redirect_stderr(stderr),
@@ -1028,6 +1078,7 @@ class HoldoutCorpusTests(unittest.TestCase):
             code = run_prompt_bench(holdout=True)
         self.assertEqual(code, 0)
         judge.assert_not_called()
+        sweep.assert_not_called()
         search.assert_not_called()
         out = stdout.getvalue()
         err = stderr.getvalue()
@@ -1047,6 +1098,124 @@ class HoldoutCorpusTests(unittest.TestCase):
             with self.assertRaises(PromptCorpusError) as ctx:
                 validate_prompt_corpus(checkout)
             self.assertIn("holdout", str(ctx.exception).casefold())
+
+
+class PromptTimingTests(unittest.TestCase):
+    def test_percentile_ms_does_not_invent_empty(self) -> None:
+        self.assertIsNone(percentile_ms([], 50))
+        self.assertIsNone(percentile_ms([], 90))
+        self.assertEqual(percentile_ms([7], 50), 7)
+        self.assertEqual(percentile_ms([7], 90), 7)
+        self.assertEqual(percentile_ms([7], 100), 7)
+        self.assertEqual(percentile_ms([1, 2, 3, 4, 5], 50), 3)
+        self.assertEqual(percentile_ms([1, 2, 3, 4, 5], 90), 5)
+        self.assertEqual(percentile_ms([1, 2, 3, 4, 5], 0), 1)
+
+    def test_fake_clock_prints_plan_ms(self) -> None:
+        case = next(row for row in load_prompt_cases() if row.id == "smoke-bos-lhr-one-date")
+        with patch("viajante.prompt_bench._clock", side_effect=[10.0, 10.007]):
+            row = _evaluate_case(case)
+        self.assertEqual(row.elapsed_ms, 7)
+        self.assertIsNone(row.sweep_ms)
+        line = _format_case_line(row)
+        self.assertIn("plan_ms=7", line)
+        self.assertNotIn("sweep_ms=", line)
+
+    def test_sweep_routes_need_a_real_iata_pair_and_date(self) -> None:
+        flights = plan_prompt("Flights BOS-LHR on 2026-09-01")
+        self.assertEqual(sweep_routes_for_plan(flights), ("BOS-LHR:2026-09-01",))
+        refuse = plan_prompt("Flights XXX-LHR on 2026-09-01")
+        self.assertIsNone(sweep_routes_for_plan(refuse))
+        airports = plan_prompt("IATA code for Tokyo")
+        self.assertIsNone(sweep_routes_for_plan(airports))
+        past = replace(flights, departure_date=date.today() - timedelta(days=1), route_specs=())
+        self.assertIsNone(sweep_routes_for_plan(past))
+        world = replace(flights, around_the_world=True)
+        self.assertIsNone(sweep_routes_for_plan(world))
+
+    def test_sweep_hook_forces_http_sweep_not_detail(self) -> None:
+        with patch("viajante.prompt_bench.search_flights_tool") as tool:
+            tool.return_value = {"queries": []}
+            _sweep_search_flights(
+                ("BOS-LHR:2026-09-01",),
+                trip="one-way",
+                max_stops=1,
+                adults=1,
+                cabin="economy",
+            )
+        tool.assert_called_once()
+        kwargs = tool.call_args.kwargs
+        self.assertEqual(kwargs["fetch"], "sweep")
+        self.assertNotEqual(kwargs["fetch"], "detail")
+        self.assertNotEqual(kwargs["fetch"], "auto")
+
+    def test_sweep_on_caps_and_prints_summary_not_keep(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        calls: list[object] = []
+
+        def fake_sweep(routes: object, **kwargs: object) -> dict[str, object]:
+            calls.append(routes)
+            return {"queries": []}
+
+        with (
+            patch.dict(
+                "os.environ",
+                {JUDGE_ENV: "", LIVE_ENV: "", PROMPTS_ENV: "", SWEEP_ENV: "1"},
+            ),
+            patch("viajante.prompt_bench._sweep_search_flights", side_effect=fake_sweep),
+            patch("viajante.flights.search_flights") as search,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = run_prompt_bench()
+        self.assertEqual(code, 0)
+        search.assert_not_called()
+        self.assertEqual(len(calls), MAX_SWEEP_PROMPTS)
+        self.assertEqual(calls[0], ("BOS-LHR:2026-09-01",))
+        out = stdout.getvalue()
+        err = stderr.getvalue()
+        self.assertIn("judge_mean:", out)
+        self.assertNotRegex(out, r"judge_mean:\s*\d")
+        self.assertNotIn("score_ms", out)
+        self.assertIn("sweep_n: 8", out)
+        self.assertRegex(out, r"sweep_p50_ms: \d+")
+        self.assertRegex(out, r"sweep_p90_ms: \d+")
+        self.assertRegex(out, r"sweep_max_ms: \d+")
+        self.assertNotIn("sweep_ms:", out)
+        self.assertNotRegex(out, r"sweep_ms:\s*\d")
+        sweep_lines = [ln for ln in err.splitlines() if "sweep_ms=" in ln]
+        self.assertEqual(len(sweep_lines), MAX_SWEEP_PROMPTS)
+        self.assertIn("not judge_mean or score_ms", err)
+
+    def test_format_prompt_report_sweep_requested_without_samples_stays_blank(self) -> None:
+        case = PromptCase(
+            id="no-sweep-sample",
+            tier="smoke",
+            prompt="Flights BOS-LHR on 2026-09-01",
+            judge="deterministic",
+            expect={"intent": "flights"},
+            lang="en",
+        )
+        results = [
+            PromptRunResult(
+                case=case,
+                status="pass",
+                elapsed_ms=4,
+                reason="ok",
+            )
+        ]
+        text = format_prompt_report(
+            cases=[case],
+            results=results,
+            wall_ms=10,
+            sweep_requested=True,
+        )
+        self.assertIn("plan_p50_ms: 4", text)
+        self.assertIn("sweep_ms:", text)
+        self.assertNotRegex(text, r"sweep_ms:\s*\d")
+        self.assertNotIn("sweep_p50_ms", text)
+        self.assertNotIn("score_ms", text)
 
 
 if __name__ == "__main__":

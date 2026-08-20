@@ -9,6 +9,16 @@ score_ms. The API key lives outside the repo (DEEPSEEK_API_KEY, or
 VIAJANTE_JUDGE_KEY as override). Unset key → judge: skip; never invent a
 score.
 
+Each weekday row also prints `plan_ms` (wall ms of `plan_prompt` plus the
+cheap owned parse that row already does). Summary prints `plan_p50_ms` /
+`plan_p90_ms` / `plan_max_ms`. That is not `score_ms` and not `judge_mean`.
+
+Optional live find-flights timer: VIAJANTE_BENCH_SWEEP=1 (or `--timeit-sweep`).
+Off by default. Caps at the first MAX_SWEEP_PROMPTS planned IATA+date flight
+queries and uses the MCP `search_flights` HTTP sweep path (fetch=sweep, no
+Playwright). Live Google is never the keep/revert number. Sweep off →
+`sweep_ms:` blank, like `judge_mean:` when the judge skipped.
+
 Harness priorities:
 1. Honesty: invented price or route = 0 (deterministic; no DeepSeek, no live search).
 2. Named contract (IATA, dates, dests the user said, refuse rest-of-trip,
@@ -25,11 +35,13 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from viajante.airports import is_known_iata
 from viajante.bench import LIVE_ENV, repo_root
+from viajante.mcp_handlers import search_flights_tool
 from viajante.prompt_plan import (
     PromptPlan,
     _city_pairs_from_text,
@@ -43,6 +55,8 @@ from viajante.prompt_plan import (
 PROMPTS_ENV = "VIAJANTE_BENCH_PROMPTS"
 HOLDOUT_NAME = "holdout.jsonl"
 HOLDOUT_TIER = "holdout"
+SWEEP_ENV = "VIAJANTE_BENCH_SWEEP"
+MAX_SWEEP_PROMPTS = 8
 JUDGE_ENV = "VIAJANTE_BENCH_JUDGE"
 JUDGE_KEY_ENV = "DEEPSEEK_API_KEY"
 JUDGE_KEY_OVERRIDE_ENV = "VIAJANTE_JUDGE_KEY"
@@ -170,6 +184,7 @@ class PromptRunResult:
     reason: str
     score_1_100: Optional[int] = None
     plan: Optional[PromptPlan] = None
+    sweep_ms: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -367,8 +382,101 @@ def validate_prompt_corpus(root: Optional[Path] = None) -> list[PromptCase]:
     return cases
 
 
+def _clock() -> float:
+    return time.perf_counter()
+
+
 def _ms_since(started: float) -> int:
-    return max(0, int(round((time.perf_counter() - started) * 1000)))
+    return max(0, int(round((_clock() - started) * 1000)))
+
+
+def percentile_ms(values: Sequence[int], p: float) -> Optional[int]:
+    """Nearest-rank percentile. None when there are no samples (never invent)."""
+    if not values:
+        return None
+    if p < 0 or p > 100:
+        raise ValueError("percentile must be in 0..100")
+    ordered = sorted(int(item) for item in values)
+    index = int(round((p / 100.0) * (len(ordered) - 1)))
+    return ordered[index]
+
+
+def _fmt_optional_ms(key: str, value: Optional[int]) -> str:
+    if value is None:
+        return f"{key}:"
+    return f"{key}: {value}"
+
+
+def sweep_routes_for_plan(plan: PromptPlan) -> Optional[tuple[str, ...]]:
+    """Owned route specs for a live sweep, or None when the plan is not a pair+date."""
+    if plan.intent != "flights":
+        return None
+    if plan.refuse:
+        return None
+    if plan.around_the_world or plan.trip == "multi":
+        return None
+    if not plan.origin or not plan.destination or plan.departure_date is None:
+        return None
+    if not is_known_iata(plan.origin) or not is_known_iata(plan.destination):
+        return None
+    if plan.departure_date < date.today():
+        return None
+    if plan.route_specs:
+        if len(plan.route_specs) > 2:
+            return None
+        return plan.route_specs
+    if plan.trip == "rt" and plan.return_date is not None:
+        out = plan.departure_date.isoformat()
+        back = plan.return_date.isoformat()
+        return (f"{plan.origin}-{plan.destination}:{out}:{back}",)
+    return (f"{plan.origin}-{plan.destination}:{plan.departure_date.isoformat()}",)
+
+
+def _sweep_search_flights(
+    routes: Sequence[str],
+    *,
+    trip: str,
+    max_stops: int,
+    adults: int,
+    cabin: str,
+) -> Mapping[str, object]:
+    """MCP search_flights path with HTTP sweep. Patch this hook in tests."""
+    return search_flights_tool(
+        routes,
+        trip=trip,
+        max_stops=max_stops,
+        adults=adults,
+        cabin=cabin,  # type: ignore[arg-type]
+        fetch="sweep",
+    )
+
+
+def _maybe_time_sweep(plan: PromptPlan, sweep_left: Optional[list[int]]) -> Optional[int]:
+    if sweep_left is None or sweep_left[0] <= 0:
+        return None
+    routes = sweep_routes_for_plan(plan)
+    if routes is None:
+        return None
+    trip = plan.trip if plan.trip in {"one-way", "rt"} else "one-way"
+    max_stops = plan.max_stops if plan.max_stops in {0, 1, 2} else 1
+    adults = plan.adults if isinstance(plan.adults, int) and plan.adults >= 1 else 1
+    if plan.cabin in {"economy", "premium-economy", "business", "first"}:
+        cabin = plan.cabin
+    else:
+        cabin = "economy"
+    started = _clock()
+    try:
+        _sweep_search_flights(
+            routes,
+            trip=trip,
+            max_stops=max_stops,
+            adults=adults,
+            cabin=cabin,
+        )
+    except Exception:
+        pass
+    sweep_left[0] -= 1
+    return _ms_since(started)
 
 
 @dataclass(frozen=True)
@@ -673,72 +781,85 @@ def judge_case(case: PromptCase, plan: PromptPlan) -> JudgeResult:
     return parse_judge_verdict(payload)
 
 
-def _evaluate_case(case: PromptCase) -> PromptRunResult:
-    started = time.perf_counter()
+def _evaluate_case(
+    case: PromptCase,
+    *,
+    sweep_left: Optional[list[int]] = None,
+) -> PromptRunResult:
+    started = _clock()
     plan = plan_prompt(case.prompt)
-    elapsed = _ms_since(started)
     if case.judge == "deterministic":
         ok, reason = plan.matches(case.expect)
+        plan_ms = _ms_since(started)
+        sweep_ms = _maybe_time_sweep(plan, sweep_left)
         return PromptRunResult(
             case=case,
             status="pass" if ok else "fail",
-            elapsed_ms=elapsed,
+            elapsed_ms=plan_ms,
             reason=reason,
             plan=None if ok else plan,
+            sweep_ms=sweep_ms,
         )
     invented = invention_reason(case.prompt, plan)
+    split = None if invented is not None else rt_split_reason(case.prompt, plan)
+    plan_ms = _ms_since(started)
+    sweep_ms = _maybe_time_sweep(plan, sweep_left)
     if invented is not None:
         return PromptRunResult(
             case=case,
             status="scored",
-            elapsed_ms=elapsed,
+            elapsed_ms=plan_ms,
             reason=invented,
             score_1_100=0,
             plan=plan,
+            sweep_ms=sweep_ms,
         )
-    split = rt_split_reason(case.prompt, plan)
     if split is not None:
         return PromptRunResult(
             case=case,
             status="scored",
-            elapsed_ms=elapsed,
+            elapsed_ms=plan_ms,
             reason=split,
             score_1_100=0,
             plan=plan,
+            sweep_ms=sweep_ms,
         )
     if os.environ.get(JUDGE_ENV) != "1":
         return PromptRunResult(
             case=case,
             status="skip",
-            elapsed_ms=elapsed,
+            elapsed_ms=plan_ms,
             reason="judge: skip",
+            sweep_ms=sweep_ms,
         )
     judged = judge_case(case, plan)
     if judged.skipped:
         return PromptRunResult(
             case=case,
             status="skip",
-            elapsed_ms=elapsed,
+            elapsed_ms=plan_ms,
             reason=judged.reason,
+            sweep_ms=sweep_ms,
         )
     return PromptRunResult(
         case=case,
         status="scored",
-        elapsed_ms=elapsed,
+        elapsed_ms=plan_ms,
         reason=judged.reason,
         score_1_100=judged.score_1_100,
         plan=plan,
+        sweep_ms=sweep_ms,
     )
 
 
 def _format_case_line(row: PromptRunResult) -> str:
+    parts = [row.case.id, row.status, f"plan_ms={row.elapsed_ms}"]
+    if row.sweep_ms is not None:
+        parts.append(f"sweep_ms={row.sweep_ms}")
     if row.score_1_100 is not None:
-        line = (
-            f"{row.case.id}  {row.status}  {row.elapsed_ms}ms  "
-            f"score_1_100={row.score_1_100}  {row.reason}"
-        )
-    else:
-        line = f"{row.case.id}  {row.status}  {row.elapsed_ms}ms  {row.reason}"
+        parts.append(f"score_1_100={row.score_1_100}")
+    parts.append(row.reason)
+    line = "  ".join(parts)
     if row.status in {"scored", "fail"} and row.plan is not None:
         plan_json = json.dumps(
             compact_plan_dict(row.plan),
@@ -754,9 +875,12 @@ def format_prompt_report(
     cases: Sequence[PromptCase],
     results: Sequence[PromptRunResult],
     wall_ms: int,
+    sweep_requested: bool = False,
 ) -> str:
     counts = {"pass": 0, "fail": 0, "skip": 0, "scored": 0}
     scores: list[int] = []
+    plan_times = [row.elapsed_ms for row in results]
+    sweep_times = [row.sweep_ms for row in results if row.sweep_ms is not None]
     for row in results:
         counts[row.status] = counts.get(row.status, 0) + 1
         if row.status == "scored" and row.case.judge == "llm" and row.score_1_100 is not None:
@@ -775,13 +899,35 @@ def format_prompt_report(
         lines.append(f"judge_mean: {sum(scores) / len(scores):.1f}")
     else:
         lines.append("judge_mean:")
+    lines.append(_fmt_optional_ms("plan_p50_ms", percentile_ms(plan_times, 50)))
+    lines.append(_fmt_optional_ms("plan_p90_ms", percentile_ms(plan_times, 90)))
+    lines.append(_fmt_optional_ms("plan_max_ms", max(plan_times) if plan_times else None))
+    if sweep_requested and sweep_times:
+        lines.append(f"sweep_n: {len(sweep_times)}")
+        lines.append(_fmt_optional_ms("sweep_p50_ms", percentile_ms(sweep_times, 50)))
+        lines.append(_fmt_optional_ms("sweep_p90_ms", percentile_ms(sweep_times, 90)))
+        lines.append(_fmt_optional_ms("sweep_max_ms", max(sweep_times)))
+    else:
+        lines.append("sweep_ms:")
     return "\n".join(lines) + "\n"
 
 
-def run_prompt_bench(*, root: Optional[Path] = None, holdout: bool = False) -> int:
+def run_prompt_bench(
+    *,
+    root: Optional[Path] = None,
+    holdout: bool = False,
+    timeit_sweep: bool = False,
+) -> int:
     if os.environ.get(LIVE_ENV) == "1":
         print(
             "note: prompt battery does not scrape; VIAJANTE_BENCH_LIVE is ignored",
+            file=sys.stderr,
+        )
+    sweep_requested = timeit_sweep or os.environ.get(SWEEP_ENV) == "1"
+    if sweep_requested:
+        print(
+            f"note: prompt sweep timer on (HTTP fetch=sweep, cap {MAX_SWEEP_PROMPTS}); "
+            "not judge_mean or score_ms",
             file=sys.stderr,
         )
     try:
@@ -791,14 +937,23 @@ def run_prompt_bench(*, root: Optional[Path] = None, holdout: bool = False) -> i
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    started = time.perf_counter()
+    started = _clock()
     results: list[PromptRunResult] = []
+    sweep_left = [MAX_SWEEP_PROMPTS] if sweep_requested else None
     for case in cases:
-        row = _evaluate_case(case)
+        row = _evaluate_case(case, sweep_left=sweep_left)
         results.append(row)
         print(_format_case_line(row), file=sys.stderr)
     wall_ms = _ms_since(started)
-    print(format_prompt_report(cases=cases, results=results, wall_ms=wall_ms), end="")
+    print(
+        format_prompt_report(
+            cases=cases,
+            results=results,
+            wall_ms=wall_ms,
+            sweep_requested=sweep_requested,
+        ),
+        end="",
+    )
     if any(row.status == "fail" for row in results):
         return 1
     return 0

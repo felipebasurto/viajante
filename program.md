@@ -154,6 +154,12 @@ answer: record `score_1_100` plus a one-line reason, not pass/fail as
 the only output. When the judge ran and `scores[]` is non-empty, stdout
 prints `judge_mean:` to one decimal. Unset key prints `judge: skip` and
 `judge_mean:` blank; do not invent a score or a mean.
+Each row also prints `plan_ms` (planner wall ms). Summary prints
+`plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. Optional live find-flights
+timer: `VIAJANTE_BENCH_SWEEP=1` or `--timeit-sweep` (cap 8 HTTP sweeps,
+MCP `search_flights` fetch=sweep). Off by default; skipped print is
+`sweep_ms:` blank. `plan_ms` and live `sweep_ms` are **not** keep and are
+never folded into `judge_mean` or `score_ms`.
 Judge wall time and live scrapes are never `score_ms`.
 Empty or dropped prompt files fail the prompts run. Holdout is **not**
 in that weekday battery. Do not add `holdout.jsonl` to `manifest.json`.
@@ -181,8 +187,8 @@ Existing smoke→insane rows are frozen except to fix a real planner bug
 
 Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
 coverage, drop a fixture from `manifest.json`, add empty fixtures, lower
-`--top` or the baggage buffer, or stub parsers. Do not count `sweep_ms`,
-live Google, replay p50, 2×MAD, or LLM-judge latency as the keep.
+`--top` or the baggage buffer, or stub parsers. Do not count `sweep_ms`, prompt `plan_ms`, live Google, replay p50, 2×MAD,
+or LLM-judge latency as the keep.
 Do not edit `src/viajante/bench.py`, `src/viajante/prompt_bench.py`,
 `tests/bench/`, or `tests/prompts/`.
 

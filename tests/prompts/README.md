@@ -44,8 +44,20 @@ Never put a key in source or a PR. A local `.env` is gitignored.
 
 If both `DEEPSEEK_API_KEY` and `VIAJANTE_JUDGE_KEY` are unset, those
 cases print `judge: skip`. Do not invent a score. Judge latency is never
-`score_ms`. Live Google is still `VIAJANTE_BENCH_LIVE=1` on the speed
-bench only; this battery does not scrape.
+`score_ms`. Each weekday row prints `plan_ms`; the summary prints
+`plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. That is not the keep
+metric. Optional live find-flights timer (off by default):
+
+```bash
+VIAJANTE_BENCH_SWEEP=1 uv run viajante bench --prompts
+# same: uv run viajante bench --prompts --timeit-sweep
+```
+
+Caps at 8 planned IATA+date flight queries and uses the MCP
+`search_flights` HTTP sweep path (`fetch=sweep`, no Playwright). If sweep
+is off, stdout prints `sweep_ms:` blank. Live Google is never
+`judge_mean` or `score_ms`. Live Google on the speed bench is still
+`VIAJANTE_BENCH_LIVE=1` only; that extra is also not the score.
 
 ## Files
 

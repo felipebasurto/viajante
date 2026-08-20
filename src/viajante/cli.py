@@ -99,6 +99,7 @@ Examples:
   viajante bench
   viajante bench --prompts
   viajante bench --prompts --holdout
+  viajante bench --prompts --timeit-sweep
 """
 
 HOTELS_EXAMPLES = """\
@@ -1136,6 +1137,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "Not part of the weekday 90. Operator overfitting check."
         ),
     )
+    bench.add_argument(
+        "--timeit-sweep",
+        action="store_true",
+        help=(
+            "With --prompts, time HTTP sweep (fetch=sweep) for up to 8 planned "
+            "IATA+date flight queries. Same as VIAJANTE_BENCH_SWEEP=1. Off by "
+            "default. Never judge_mean or score_ms. No Playwright."
+        ),
+    )
     return parser
 
 
@@ -1165,10 +1175,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.cmd == "airports":
         return _run_airports(args)
     if args.cmd == "bench":
+        sweep_kw = {"timeit_sweep": True} if args.timeit_sweep else {}
         if args.holdout:
-            return run_prompt_bench(holdout=True)
-        if args.prompts or os.environ.get(PROMPTS_ENV) == "1":
-            return run_prompt_bench()
+            return run_prompt_bench(holdout=True, **sweep_kw)
+        if args.prompts or os.environ.get(PROMPTS_ENV) == "1" or args.timeit_sweep:
+            return run_prompt_bench(**sweep_kw)
         return run_bench()
 
     parser.print_help()
