@@ -387,7 +387,10 @@ _LISTED_DESTS = re.compile(
 _FIXED_DATES_FIRST = re.compile(r"fixed(?: natural)? dates first")
 _PLUS_MINUS_1 = re.compile(r"(?:±|\+/-)\s*1")
 _MAX_2_STOPS = re.compile(r"max(?:imum)?\s+2\s+stops|m[aá]ximo 2 escalas|max 2 stops")
-_MAX_1_STOP = re.compile(r"max(?:imum)?\s+1\s+stop|m[aá]ximo 1 escala|at most (?:one|1) stop")
+_MAX_1_STOP = re.compile(
+    r"max(?:imum)?\s+1\s+stop|m[aá]ximo 1 escala|at most (?:one|1) stop|"
+    r"მაქსიმუმ\s+1\s+გადაჯდომა"
+)
 _SIN_ESCALAS_MAS = re.compile(r"sin escalas de m[aá]s")
 _ESCALAS_SANAS = re.compile(r"escalas sanas")
 _NONSTOP = re.compile(r"\b(nonstop|directos?|sin escalas)\b")
@@ -399,7 +402,6 @@ _ROOMS_EN = re.compile(r"(\d+)\s+rooms?")
 _DAYS_ES = re.compile(r"(\d+)\s*d[ií]as")
 _DAYS_EN = re.compile(r"(\d+)\s+days")
 _NO_ASIA = re.compile(r"\b(no asia|not asia)\b")
-_IST_WORD = re.compile(r"\bist\b")
 _REQUIRE_CLOCK = re.compile(r"mostrar hora|clock not null|hora, no null|arrival(?:s)? must show")
 _NIGHT_WORD = re.compile(r"\b(noche|night|nocturn)")
 _MAX_LAYOVER_H = re.compile(r"(?:como mucho|at most|max(?:imum)?|≤|<=)\s*(\d+(?:\.\d+)?)\s*h")
@@ -473,9 +475,27 @@ _BACK_DAY_BEFORE = re.compile(
     re.IGNORECASE,
 )
 _MIN_LAYOVER_H = re.compile(
-    r"(?:at least|min(?:imum)?|no less than|≥|>=)\s*(\d+(?:\.\d+)?)\s*h",
+    r"(?:at least|min(?:imum)?|no less than|≥|>=|მინიმუმ)\s*(\d+(?:\.\d+)?)\s*"
+    r"(?:h\b|hours?\b|horas\b|საათ)",
     re.IGNORECASE,
 )
+_VIA_AIRPORT_IATA = re.compile(
+    r"\b(?:via|through|connecting?\s+(?:in|via|at)|"
+    r"transfer(?:ring)?\s+(?:in|at)|stop(?:over|ping)?\s+(?:in|at))\s+"
+    r"([A-Z]{3})\b",
+    re.IGNORECASE,
+)
+_KA_VIA_IATA = re.compile(r"გადავჯდ[^\s,]*\s+([A-Z]{3})")
+_REQUIRE_OVERNIGHT_IATA = re.compile(
+    r"\b(?:must|need(?:s)? to|required to)\s+overnight\s+(?:in|at)\s+([A-Z]{3})\b",
+    re.IGNORECASE,
+)
+_NO_OVERNIGHT_IATA = re.compile(
+    r"\b(?:never|no|not|don'?t|nunca)\s+overnight\s+(?:in|at|en)\s+([A-Z]{3})\b",
+    re.IGNORECASE,
+)
+_KA_NO_OVERNIGHT_IATA = re.compile(r"([A-Z]{3})-ში\s+ღამის\s+გათევა\s+არასდროს")
+_KA_MAX_STOPS = re.compile(r"მაქსიმუმ\s+([012])\s+გადაჯდომა")
 _NO_PLUS_LAYOVER = re.compile(r"no\s+(\d+(?:\.\d+)?)\s*h\+", re.IGNORECASE)
 _NO_TRAINS = re.compile(
     r"\b(?:no trains?|not trains?|don'?t (?:take )?(?:the )?trains?)\b",
@@ -532,6 +552,7 @@ class PromptPlan:
     exclude_airports: Tuple[str, ...] = ()
     via_regions: Tuple[str, ...] = ()
     no_overnight: Tuple[str, ...] = ()
+    require_overnight: Tuple[str, ...] = ()
     refuse: Tuple[str, ...] = ()
     hotels: bool = False
     baggage: Optional[str] = None
@@ -581,6 +602,7 @@ class PromptPlan:
             "exclude_airports": list(self.exclude_airports),
             "via_regions": list(self.via_regions),
             "no_overnight": list(self.no_overnight),
+            "require_overnight": list(self.require_overnight),
             "refuse": list(self.refuse),
             "hotels": self.hotels,
             "baggage": self.baggage,
@@ -600,6 +622,7 @@ class PromptPlan:
             "exclude_regions",
             "exclude_airports",
             "no_overnight",
+            "require_overnight",
             "prefer_airports",
         }
         exact_list_keys = {"via_regions", "route_specs", "destinations"}
@@ -909,6 +932,9 @@ def _max_stops(folded: str, flags: Mapping[str, str]) -> Optional[int]:
             return value
     if _MAX_2_STOPS.search(folded):
         return 2
+    ka_stops = _KA_MAX_STOPS.search(folded)
+    if ka_stops:
+        return int(ka_stops.group(1))
     if _MAX_1_STOP.search(folded):
         return 1
     if _SIN_ESCALAS_MAS.search(folded) or _ESCALAS_SANAS.search(folded):
@@ -1092,6 +1118,43 @@ def _use_airports(raw: str) -> list[str]:
     return found
 
 
+def _iata_group_hits(pattern: re.Pattern[str], raw: str) -> list[str]:
+    found: list[str] = []
+    for match in pattern.finditer(raw):
+        code = match.group(1).upper()
+        if is_known_iata(code) and code not in found:
+            found.append(code)
+    return found
+
+
+def _extend_unique(dst: list[str], src: Sequence[str]) -> None:
+    for code in src:
+        if code not in dst:
+            dst.append(code)
+
+
+def _via_airports(raw: str) -> list[str]:
+    found: list[str] = []
+    _extend_unique(found, _iata_group_hits(_VIA_AIRPORT_IATA, raw))
+    _extend_unique(found, _iata_group_hits(_KA_VIA_IATA, raw))
+    return found
+
+
+def _require_overnight_airports(raw: str) -> list[str]:
+    return _iata_group_hits(_REQUIRE_OVERNIGHT_IATA, raw)
+
+
+def _no_overnight_codes(raw: str, folded: str) -> list[str]:
+    found: list[str] = []
+    _extend_unique(found, _iata_group_hits(_NO_OVERNIGHT_IATA, raw))
+    _extend_unique(found, _iata_group_hits(_KA_NO_OVERNIGHT_IATA, raw))
+    if found:
+        return found
+    if "no overnight" in folded or "not overnight" in folded or "never overnight" in folded:
+        return ["any"]
+    return []
+
+
 def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     raw = " ".join(text.split())
     folded = _fold(raw)
@@ -1107,19 +1170,18 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     via_regions = _via_regions(folded)
     exclude_regions: list[str] = []
     exclude_airports: list[str] = []
-    no_overnight: list[str] = []
+    require_overnight = _require_overnight_airports(raw)
+    via_airports = _via_airports(raw)
+    no_overnight = _no_overnight_codes(raw, folded)
 
     if _NO_ASIA.search(folded) or "tercermundista" in folded:
         exclude_regions.append("asia")
-    if _IST_WORD.search(folded) and (
-        "overnight" in folded or "noche" in folded or "never" in folded or "nunca" in folded
-    ):
-        exclude_airports.append("IST")
-        no_overnight.append("IST")
-    elif "no overnight" in folded or "not overnight" in folded or "never overnight" in folded:
-        no_overnight.append("any")
     for code in _excluded_airports(raw):
         if code not in exclude_airports:
+            exclude_airports.append(code)
+    keep_connect = set(require_overnight) | set(via_airports)
+    for code in no_overnight:
+        if code != "any" and code not in keep_connect and code not in exclude_airports:
             exclude_airports.append(code)
 
     around = "around the world" in folded or "vuelta al mundo" in folded
@@ -1160,7 +1222,12 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         min_layover = float(flags["min-layover"])
     else:
         min_hit = _MIN_LAYOVER_H.search(folded)
-        if min_hit and ("layover" in folded or "connection" in folded or "escala" in folded):
+        if min_hit and (
+            "layover" in folded
+            or "connection" in folded
+            or "escala" in folded
+            or "გადაჯდომა" in folded
+        ):
             min_layover = float(min_hit.group(1))
     max_duration: Optional[float] = None
     if "max-duration" in flags:
@@ -1256,6 +1323,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         if pairs and origin and destination:
             pairs = [(origin, destination)]
 
+    via_airports = [code for code in via_airports if code not in {origin, destination}]
+
     destinations = _listed_destinations(raw, origin)
 
     trip = _trip_kind(folded, flags, len(pairs), date_count=len(dates))
@@ -1318,6 +1387,14 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             "Keep every dated open-jaw city pair on --trip multi; "
             "do not collapse them into one origin-destination."
         )
+    elif set(require_overnight) & set(no_overnight) or (
+        require_overnight and "any" in no_overnight
+    ):
+        codes = [
+            code for code in require_overnight if code in no_overnight or "any" in no_overnight
+        ]
+        joined = "/".join(codes) if codes else "the named airport"
+        notes = f"Unsatisfiable layover: overnight {joined} is both required and forbidden."
 
     departure = dates[0] if dates else None
     returning = dates[1] if len(dates) >= 2 else None
@@ -1352,7 +1429,13 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     prefer_airports: Tuple[str, ...] = tuple(
         dict.fromkeys(
             code
-            for code in (origin, destination, *use_airports)
+            for code in (
+                origin,
+                destination,
+                *use_airports,
+                *via_airports,
+                *require_overnight,
+            )
             if code and code in named_airports and code not in exclude_airports
         )
     )
@@ -1559,6 +1642,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         exclude_airports=tuple(exclude_airports),
         via_regions=via_regions,
         no_overnight=tuple(no_overnight),
+        require_overnight=tuple(require_overnight),
         refuse=all_refuse,
         hotels=plan_hotels,
         baggage=baggage,

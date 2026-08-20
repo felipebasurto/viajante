@@ -420,6 +420,63 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(plan.locale, "en")
         self.assertNotIn("€", plan.notes)
 
+    def test_overnight_ist_required_and_forbidden_keeps_both(self) -> None:
+        plan = plan_prompt(
+            "BKK-LHR on 2026-11-10, must overnight in IST, never overnight in IST, "
+            "max 1 stop, 1 checked bag. Quote the fare in EUR."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "BKK")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.baggage, "checked_1")
+        self.assertIn("IST", plan.require_overnight)
+        self.assertIn("IST", plan.no_overnight)
+        self.assertIn("IST", plan.prefer_airports)
+        self.assertNotIn("IST", plan.exclude_airports)
+        folded_notes = plan.notes.casefold()
+        self.assertIn("required", folded_notes)
+        self.assertIn("forbidden", folded_notes)
+        self.assertNotIn("€", plan.notes)
+
+    def test_never_overnight_ist_without_via_still_excludes(self) -> None:
+        plan = plan_prompt("DEL-LHR on 2026-11-03, never overnight in IST")
+        self.assertIn("IST", plan.exclude_airports)
+        self.assertIn("IST", plan.no_overnight)
+        self.assertNotIn("IST", plan.prefer_airports)
+        self.assertEqual(plan.require_overnight, ())
+
+    def test_via_ist_and_no_overnight_keeps_prefer(self) -> None:
+        plan = plan_prompt(
+            "TBS-SIN on 2026-11-03 via IST, at least 12h connection, "
+            "never overnight in IST, max 1 stop."
+        )
+        self.assertEqual(plan.origin, "TBS")
+        self.assertEqual(plan.destination, "SIN")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.min_layover, 12.0)
+        self.assertIn("IST", plan.prefer_airports)
+        self.assertIn("IST", plan.no_overnight)
+        self.assertNotIn("IST", plan.exclude_airports)
+
+    def test_georgian_via_ist_long_connect_keeps_no_overnight(self) -> None:
+        plan = plan_prompt(
+            "მინდა გავფრინდე თბილისიდან სინგაპურში TBS-SIN 2026-11-03, "
+            "აუცილებლად გადავჯდე IST-ში, მინიმუმ 12 საათიანი გადაჯდომა, "
+            "მაგრამ IST-ში ღამის გათევა არასდროს. მაქსიმუმ 1 გადაჯდომა. "
+            "ტარიფი არ გამოიგონო."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "TBS")
+        self.assertEqual(plan.destination, "SIN")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.min_layover, 12.0)
+        self.assertIn("IST", plan.prefer_airports)
+        self.assertIn("IST", plan.no_overnight)
+        self.assertNotIn("IST", plan.exclude_airports)
+        self.assertEqual(plan.locale, "en")
+        self.assertNotIn("€", plan.notes)
+
 
 class PromptPlanMatchTests(unittest.TestCase):
     def test_plan_to_dict_is_json_friendly(self) -> None:
