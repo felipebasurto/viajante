@@ -57,6 +57,52 @@ GOLDEN_URL_DIRECT = (
 )
 
 
+def _uvarint(buf: bytes, index: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    while True:
+        byte = buf[index]
+        index += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, index
+        shift += 7
+
+
+def _proto_fields(buf: bytes) -> list[tuple[int, object]]:
+    index = 0
+    fields: list[tuple[int, object]] = []
+    while index < len(buf):
+        key, index = _uvarint(buf, index)
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            value, index = _uvarint(buf, index)
+            fields.append((field, value))
+        elif wire == 2:
+            length, index = _uvarint(buf, index)
+            fields.append((field, buf[index : index + length]))
+            index += length
+        else:
+            raise AssertionError(f"unexpected tfs wire {wire}")
+    return fields
+
+
+def _tfs_leg(payload: object) -> tuple[str, str, str]:
+    assert isinstance(payload, bytes)
+    inner = dict(_proto_fields(payload))
+    origin_msg = inner[13]
+    destination_msg = inner[14]
+    day = inner[2]
+    assert isinstance(origin_msg, bytes)
+    assert isinstance(destination_msg, bytes)
+    assert isinstance(day, bytes)
+    origin = dict(_proto_fields(origin_msg))[2]
+    destination = dict(_proto_fields(destination_msg))[2]
+    assert isinstance(origin, bytes)
+    assert isinstance(destination, bytes)
+    return origin.decode("ascii"), destination.decode("ascii"), day.decode("ascii")
+
+
 def build_card(
     *,
     airline: str = "Iberia",
@@ -178,15 +224,61 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertEqual(encode_tfs(trip), GOLDEN_TFS_ROUND_TRIP)
         self.assertEqual(build_search_params(trip)["tfs"], GOLDEN_TFS_ROUND_TRIP)
 
-    def test_multi_city_tfs_is_gated(self) -> None:
+    def test_multi_city_tfs_repeats_legs_and_sets_trip_kind(self) -> None:
         trip = MultiCity(
             (
                 FlightLeg("MAD", "BCN", date(2026, 9, 1)),
                 FlightLeg("BCN", "FCO", date(2026, 9, 3)),
             )
         )
-        with self.assertRaises(ValueError):
-            encode_tfs(trip)
+        encoded = encode_tfs(trip)
+        fields = _proto_fields(base64.b64decode(encoded))
+        flights = [payload for field, payload in fields if field == 3]
+        self.assertEqual(len(flights), 2)
+        self.assertEqual(_tfs_leg(flights[0]), ("MAD", "BCN", "2026-09-01"))
+        self.assertEqual(_tfs_leg(flights[1]), ("BCN", "FCO", "2026-09-03"))
+        self.assertEqual([value for field, value in fields if field == 19], [3])
+        self.assertEqual(
+            encoded,
+            _encode_legs(trip.legs, adults=1, cabin="economy", trip_kind=3),
+        )
+
+    def test_open_jaw_yvr_lhr_lgw_encodes_tfs_and_shopping(self) -> None:
+        trip = MultiCity(
+            (
+                FlightLeg("YVR", "LHR", date(2026, 10, 9)),
+                FlightLeg("LGW", "YVR", date(2026, 10, 13)),
+            )
+        )
+        encoded = encode_tfs(trip)
+        fields = _proto_fields(base64.b64decode(encoded))
+        flights = [payload for field, payload in fields if field == 3]
+        self.assertEqual(
+            [_tfs_leg(payload) for payload in flights],
+            [("YVR", "LHR", "2026-10-09"), ("LGW", "YVR", "2026-10-13")],
+        )
+        self.assertEqual([value for field, value in fields if field == 19], [3])
+        params = build_search_params(trip)
+        self.assertEqual(params["tfs"], encoded)
+        self.assertEqual(params["hl"], "en")
+        parsed = parse_qs(urlparse(build_search_url(trip)).query)
+        self.assertEqual(parsed["tfs"], [encoded])
+        self.assertEqual(parsed["hl"], ["en"])
+
+        inner = build_shopping_inner(trip)
+        self.assertEqual(inner[1][2], 3)
+        outbound, inbound = inner[1][13]
+        self.assertEqual(outbound[0], [[["YVR", 0]]])
+        self.assertEqual(outbound[1], [[["LHR", 0]]])
+        self.assertEqual(outbound[6], "2026-10-09")
+        self.assertEqual(inbound[0], [[["LGW", 0]]])
+        self.assertEqual(inbound[1], [[["YVR", 0]]])
+        self.assertEqual(inbound[6], "2026-10-13")
+        self.assertEqual(outbound[14], 3)
+        self.assertEqual(inbound[14], 3)
+        url, body = build_shopping_request(trip)
+        self.assertEqual(parse_qs(urlparse(url).query)["hl"], ["en"])
+        self.assertTrue(body.startswith("f.req="))
 
     def test_html_lang_and_currency_args_reach_url_params(self) -> None:
         params = build_search_params(

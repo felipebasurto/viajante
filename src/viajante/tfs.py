@@ -30,6 +30,7 @@ _SEAT: Mapping[FlightCabin, int] = {
 }
 _TRIP_ONE_WAY = 2
 _TRIP_ROUND_TRIP = 1
+_TRIP_MULTI_CITY = 3
 _PASSENGER_ADULT = 1
 _PASSENGER_CHILD = 2
 _PASSENGER_INFANT_IN_SEAT = 3
@@ -37,9 +38,7 @@ _PASSENGER_INFANT_ON_LAP = 4
 
 
 def encode_tfs(trip: Trip) -> str:
-    """Encode a Google Flights `tfs` query parameter."""
-    if isinstance(trip, MultiCity):
-        raise ValueError("multi-city tfs is gated on a captured Google search URL")
+    """Encode a Google Flights `tfs` query parameter from owned trip fields."""
     return _encode_legs(
         trip.legs,
         adults=trip.adults,
@@ -54,9 +53,11 @@ def encode_tfs(trip: Trip) -> str:
 def _tfs_trip_kind(trip: Trip) -> int:
     if isinstance(trip, RoundTrip):
         return _TRIP_ROUND_TRIP
+    if isinstance(trip, MultiCity):
+        return _TRIP_MULTI_CITY
     if isinstance(trip, FlightQuery):
         return _TRIP_ONE_WAY
-    raise ValueError("multi-city tfs is gated on a captured Google search URL")
+    raise ValueError(f"cannot encode tfs for {type(trip).__name__}")
 
 
 def _varint(n: int) -> bytes:
