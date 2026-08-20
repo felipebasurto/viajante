@@ -560,6 +560,34 @@ def parse_score_1_100(raw: object) -> Optional[int]:
     return None
 
 
+def _judge_verdict_from_text(text: str) -> Optional[JudgeResult]:
+    """Recover score_1_100 + reason from model text. None if nothing parses.
+
+    DeepSeek often wraps the JSON object (markdown fence, leading prose, extra
+    keys, trailing chatter). Extra keys are ignored. Garbage is not scored.
+    """
+    decoder = json.JSONDecoder()
+    idx = 0
+    while idx < len(text):
+        start = text.find("{", idx)
+        if start < 0:
+            return None
+        try:
+            obj, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            idx = start + 1
+            continue
+        idx = max(end, start + 1)
+        if not isinstance(obj, dict):
+            continue
+        score = parse_score_1_100(obj.get("score_1_100"))
+        reason = str(obj.get("reason") or "").strip()
+        if score is None or not reason:
+            continue
+        return JudgeResult(score, reason.splitlines()[0][:200])
+    return None
+
+
 def parse_judge_verdict(payload: object) -> JudgeResult:
     """Parse a DeepSeek chat payload into score_1_100 + one-line reason."""
     skip = JudgeResult(None, "judge: skip (malformed verdict)")
@@ -571,27 +599,8 @@ def parse_judge_verdict(payload: object) -> JudgeResult:
         return skip
     if not isinstance(content, str) or not content.strip():
         return skip
-    text = content.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    try:
-        verdict = json.loads(text)
-    except json.JSONDecodeError:
-        return skip
-    if not isinstance(verdict, dict):
-        return skip
-    score = parse_score_1_100(verdict.get("score_1_100"))
-    if score is None:
-        return skip
-    reason = str(verdict.get("reason") or "").strip()
-    if not reason:
-        return skip
-    return JudgeResult(score, reason.splitlines()[0][:200])
+    recovered = _judge_verdict_from_text(content)
+    return recovered if recovered is not None else skip
 
 
 def _skip_judge() -> JudgeResult:

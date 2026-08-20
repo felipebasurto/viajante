@@ -429,6 +429,63 @@ class JudgeScoreTests(unittest.TestCase):
         )
         self.assertTrue(missing_reason.skipped)
 
+    def test_verdict_recovers_fence_prose_and_extra_keys(self) -> None:
+        def payload(content: str) -> dict[str, object]:
+            return {"choices": [{"message": {"content": content}}]}
+
+        fenced = parse_judge_verdict(
+            payload(
+                '```json\n{"score_1_100": 88, "reason": "Hotel stay matches the named dates."}\n```'
+            )
+        )
+        self.assertEqual(fenced.score_1_100, 88)
+        self.assertEqual(fenced.reason, "Hotel stay matches the named dates.")
+        self.assertFalse(fenced.skipped)
+
+        prose = parse_judge_verdict(
+            payload(
+                "Verdict for this Yoruba hotel plan:\n"
+                '{"score_1_100": 90, "reason": "Hotel search matches Johannesburg dates."}\n'
+                "Hope this helps."
+            )
+        )
+        self.assertEqual(prose.score_1_100, 90)
+        self.assertEqual(prose.reason, "Hotel search matches Johannesburg dates.")
+        self.assertFalse(prose.skipped)
+
+        extra = parse_judge_verdict(
+            payload(
+                json.dumps(
+                    {
+                        "score_1_100": 91,
+                        "reason": "Stay nights match the inbound clock.",
+                        "notes": "yo",
+                        "language": "Yoruba",
+                    }
+                )
+            )
+        )
+        self.assertEqual(extra.score_1_100, 91)
+        self.assertEqual(extra.reason, "Stay nights match the inbound clock.")
+        self.assertFalse(extra.skipped)
+
+    def test_verdict_garbage_still_skips_without_inventing(self) -> None:
+        def payload(content: str) -> dict[str, object]:
+            return {"choices": [{"message": {"content": content}}]}
+
+        for content in (
+            "This hotel plan looks like a 95 to me.",
+            "{not json",
+            json.dumps({"pass": True, "reason": "ok"}),
+            json.dumps({"score_1_100": 90}),
+            json.dumps({"score_1_100": "ninety", "reason": "ok"}),
+            "",
+        ):
+            skipped = parse_judge_verdict(payload(content))
+            self.assertTrue(skipped.skipped, content)
+            self.assertIsNone(skipped.score_1_100, content)
+            self.assertEqual(skipped.reason, "judge: skip (malformed verdict)", content)
+
     def test_judge_instructions_do_not_punish_omitted_prices(self) -> None:
         prompt = JUDGE_SYSTEM_PROMPT
         self.assertIn("NO single correct answer", prompt)
