@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import marshal
 from dataclasses import dataclass
 from importlib.resources import files
 from typing import Mapping, Optional, Tuple
@@ -108,6 +109,19 @@ _BY_CITY: Optional[dict[str, tuple[Airport, ...]]] = None
 
 
 def _load_iata_airports() -> dict[str, Airport]:
+    """Load published IATA rows. Prefer the checked-in marshal blob over CSV."""
+    cached = files("viajante").joinpath("iata_rows.marshal")
+    try:
+        payload = marshal.loads(cached.read_bytes())
+        return {
+            code: Airport(iata=code, name=name or code, city=city, country=country)
+            for code, name, city, country in payload
+        }
+    except (FileNotFoundError, OSError, ValueError, TypeError, EOFError):
+        return _load_iata_airports_from_csv()
+
+
+def _load_iata_airports_from_csv() -> dict[str, Airport]:
     """Read only the fields we publish. Skip DictReader and numeric columns."""
     source = files("airportsdata").joinpath("airports.csv")
     by_code: dict[str, Airport] = {}

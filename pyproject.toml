@@ -33,7 +33,7 @@ viajante-mcp = "viajante.mcp_server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-viajante = ["py.typed"]
+viajante = ["py.typed", "iata_rows.marshal"]
 
 [tool.ruff]
 line-length = 100
