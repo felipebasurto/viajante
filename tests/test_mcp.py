@@ -80,12 +80,24 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(type(search.call_args.args[0][0]).__name__, "RoundTrip")
         self.assertEqual(kwargs["airlines"], ("IB", "I2"))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
-        self.assertEqual(kwargs["depart_window"], (7, 12))
+        self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(kwargs["max_duration_hours"], 8)
         self.assertEqual(kwargs["min_layover_hours"], 1)
         self.assertEqual(kwargs["max_layover_hours"], 6)
         self.assertEqual(kwargs["buffer_eur"], 0)
         self.assertEqual(kwargs["sort"], "duration")
+
+    def test_search_flights_accepts_clock_window_and_price_sort(self) -> None:
+        fake = _report(queries=[], currency="EUR")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool(
+                [f"MAD-BCN:{FUTURE}"],
+                depart_window="06:00-20:00",
+                sort="price",
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
+        self.assertEqual(kwargs["sort"], "price")
 
     def test_search_flights_accepts_bags_and_carry_on(self) -> None:
         fake = _report(queries=[], currency="EUR")

@@ -58,6 +58,15 @@ DEFAULT_BAGGAGE_BUFFER_EUR = 70
 DEFAULT_TOP = 8
 
 UNKNOWN_DURATION_SORTS_LAST = float("inf")
+FLIGHT_SORTS: tuple[str, ...] = (
+    "ranked",
+    "fare",
+    "price",
+    "duration",
+    "departure",
+    "arrival",
+)
+_MINUTES_IN_DAY = 24 * 60
 
 LOW_COST_NAMES = [
     "AirAsia",
@@ -85,7 +94,11 @@ LOW_COST_NAMES = [
 NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
 REJECTED_MESSAGE = "Google Flights rejected this route or date (unknown airport or invalid query)."
 
-FlightSort = Literal["ranked", "fare", "duration"]
+FlightSort = Literal["ranked", "fare", "price", "duration", "departure", "arrival"]
+_CLOCK_TOKEN = re.compile(
+    r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$",
+    re.IGNORECASE,
+)
 FetchMode = Literal["auto", "sweep", "detail"]
 TripKind = Literal["one-way", "rt", "multi"]
 FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | MultiCity
@@ -451,19 +464,61 @@ def parse_airline_codes(text: Optional[str]) -> Optional[Tuple[str, ...]]:
     return codes
 
 
+def _clock_token_minutes(text: str) -> Optional[int]:
+    match = _CLOCK_TOKEN.fullmatch(text.strip())
+    if match is None:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    ampm = (match.group(3) or "").casefold()
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour * 60 + minute
+
+
+def _looks_like_clock_token(text: str) -> bool:
+    stripped = text.strip()
+    return ":" in stripped or bool(re.search(r"(?i)[ap]m$", stripped))
+
+
 def parse_depart_window(text: Optional[str]) -> Optional[Tuple[int, int]]:
+    """Parse a local departure window as inclusive minutes from midnight.
+
+    Hour form `6-20` keeps the whole start and end hours (06:00–20:59).
+    Clock form `06:00-20:00` is exact on both ends.
+    """
     if text is None:
         return None
+    raw = text.strip()
+    if not raw:
+        raise ValueError("depart window must look like 6-20 or 06:00-20:00")
     try:
-        start_text, end_text = text.split("-", 1)
-        start, end = int(start_text), int(end_text)
+        start_text, end_text = raw.split("-", 1)
     except ValueError as exc:
-        raise ValueError("depart window must look like 6-20") from exc
-    if not (0 <= start <= 23 and 0 <= end <= 23):
+        raise ValueError("depart window must look like 6-20 or 06:00-20:00") from exc
+    start_text = start_text.strip()
+    end_text = end_text.strip()
+    if _looks_like_clock_token(start_text) or _looks_like_clock_token(end_text):
+        start = _clock_token_minutes(start_text)
+        end = _clock_token_minutes(end_text)
+        if start is None or end is None:
+            raise ValueError("depart window must look like 6-20 or 06:00-20:00")
+        if start > end:
+            raise ValueError("depart window start must be at or before the end")
+        return start, end
+    try:
+        start_hour, end_hour = int(start_text), int(end_text)
+    except ValueError as exc:
+        raise ValueError("depart window must look like 6-20 or 06:00-20:00") from exc
+    if not (0 <= start_hour <= 23 and 0 <= end_hour <= 23):
         raise ValueError("depart window hours must be between 0 and 23")
-    if start > end:
+    if start_hour > end_hour:
         raise ValueError("depart window start must be at or before the end hour")
-    return start, end
+    return start_hour * 60, end_hour * 60 + 59
 
 
 def _airline_filter_hit(raw: RawFlightCard, token: str) -> bool:
@@ -490,24 +545,28 @@ def _passes_airline_filters(
     return True
 
 
-def _departure_hour(text: Optional[str]) -> Optional[int]:
+def _clock_minutes(text: Optional[str]) -> Optional[int]:
     clock = normalize_clock(text)
     if not clock:
         return None
     try:
-        return int(clock.split(":", 1)[0])
+        hour_text, minute_text = clock.split(":", 1)
+        minutes = int(hour_text) * 60 + int(minute_text)
     except ValueError:
         return None
+    if not (0 <= minutes < _MINUTES_IN_DAY):
+        return None
+    return minutes
 
 
 def _passes_depart_window(raw: RawFlightCard, window: Optional[Tuple[int, int]]) -> bool:
     if window is None:
         return True
-    hour = _departure_hour(raw.departure)
-    if hour is None:
+    minutes = _clock_minutes(raw.departure)
+    if minutes is None:
         return False
     start, end = window
-    return start <= hour <= end
+    return start <= minutes <= end
 
 
 def baggage_buffer_eur(
@@ -683,7 +742,15 @@ def _rank_offers(
             duration = UNKNOWN_DURATION_SORTS_LAST
         if sort == "duration":
             return (duration, offer.price_eur)
-        primary = offer.price_eur if sort == "fare" else _effective_cost(offer)
+        if sort == "departure":
+            minutes = _clock_minutes(offer.departure)
+            primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
+            return (primary, offer.price_eur)
+        if sort == "arrival":
+            minutes = _clock_minutes(offer.arrival)
+            primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
+            return (primary, offer.price_eur)
+        primary = offer.price_eur if sort in ("fare", "price") else _effective_cost(offer)
         return (primary, duration)
 
     rows = sorted(rows, key=sort_key)
@@ -936,8 +1003,10 @@ def search_flights(
         and min_layover_hours > max_layover_hours
     ):
         raise ValueError("min layover must be at or below max layover")
-    if sort not in ("ranked", "fare", "duration"):
-        raise ValueError("sort must be 'ranked', 'fare', or 'duration'")
+    if sort not in FLIGHT_SORTS:
+        raise ValueError(
+            "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
+        )
     if fetch not in ("auto", "sweep", "detail"):
         raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
     trips = tuple(queries)

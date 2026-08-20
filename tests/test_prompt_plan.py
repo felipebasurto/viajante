@@ -366,6 +366,32 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(plan.depart_after, "18:00")
         self.assertEqual(plan.weekday, "friday")
 
+    def test_depart_window_and_sort_by_duration(self) -> None:
+        plan = plan_prompt(
+            "JFK-LHR on 2026-09-15, leave between 06:00 and 20:00, sort by duration, max 1 stop."
+        )
+        self.assertEqual(plan.depart_window, "06:00-20:00")
+        self.assertEqual(plan.sort, "duration")
+        self.assertIsNone(plan.depart_after)
+        ampm = plan_prompt("JFK-LHR on 2026-09-15, leave between 6am and 8pm, sort by duration.")
+        self.assertEqual(ampm.depart_window, "06:00-20:00")
+
+    def test_depart_window_dash_and_sort_by_price(self) -> None:
+        plan = plan_prompt("SIN-NRT on 2026-10-09, leave 07:30-18:00, sort by price.")
+        self.assertEqual(plan.depart_window, "07:30-18:00")
+        self.assertEqual(plan.sort, "price")
+
+    def test_sort_by_departure_and_arrival(self) -> None:
+        depart = plan_prompt("GRU-EZE on 2026-11-03, order by departure.")
+        arrive = plan_prompt("GRU-EZE on 2026-11-03, sort by arrival.")
+        self.assertEqual(depart.sort, "departure")
+        self.assertEqual(arrive.sort, "arrival")
+
+    def test_depart_window_and_sort_flags(self) -> None:
+        plan = plan_prompt("MAD-BCN on 2026-09-01 --depart-window 6-20 --sort arrival")
+        self.assertEqual(plan.depart_window, "6-20")
+        self.assertEqual(plan.sort, "arrival")
+
     def test_prefer_airports_lhr_not_lgw(self) -> None:
         plan = plan_prompt("GRU-LHR on 2026-09-08, use LHR not LGW, max 1 stop.")
         self.assertEqual(plan.destination, "LHR")

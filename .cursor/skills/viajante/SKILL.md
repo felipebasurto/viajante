@@ -20,7 +20,7 @@ After `uv sync` and `uv run playwright install chromium`, the entry point is ava
 ## Commands
 
 ```bash
-uv run viajante flights ORIGIN-DEST:YYYY-MM-DD[,YYYY-MM-DD...] [--trip {one-way,rt,multi}] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--bags N] [--carry-on] [--top N] [--baggage-buffer EUR] [--sort {ranked,fare,duration}] [--airlines CODES] [--exclude-airlines CODES] [--depart-window START-END] [--fetch {auto,sweep,detail}] [--max-layover HOURS] [--min-layover HOURS] [--max-duration HOURS] [--save FILE]
+uv run viajante flights ORIGIN-DEST:YYYY-MM-DD[,YYYY-MM-DD...] [--trip {one-way,rt,multi}] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--bags N] [--carry-on] [--top N] [--baggage-buffer EUR] [--sort {ranked,fare,price,duration,departure,arrival}] [--airlines CODES] [--exclude-airlines CODES] [--depart-window START-END] [--fetch {auto,sweep,detail}] [--max-layover HOURS] [--min-layover HOURS] [--max-duration HOURS] [--save FILE]
 uv run viajante dates ORIGIN-DEST --from YYYY-MM-DD --to YYYY-MM-DD [--max-stops {0,1}] [--adults N] [--cabin CABIN] [--fetch {auto,sweep,detail}] [--save FILE]
 uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [--top N] [--adults N] [--cabin CABIN] [--max-stops {0,1}] [--save FILE]
 uv run viajante airports QUERY
@@ -124,7 +124,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 ### Flights
 
 - Keep the scrape locale on English (`hl=en` / `lang=en`, `locale=en-US`) for stable rendered evidence and the JSON `locale: "en"` contract. Planner prompts may be any language; fetch queries stay English.
-- Ranking adds 70 EUR to known low-cost fares by default when bag counts are still unknown. `--bags N` / `--carry-on` put those counts on the shopping request so prices come back for that selection. Default is unset. If a compact card includes checked/carry counts, they are parsed; missing bag data stays omitted. Default `--sort ranked` orders by that total; `--sort fare` orders by cabin fare. Report the ranked total when a buffer was added. Use `--baggage-buffer 0` for hand luggage only.
+- Ranking adds 70 EUR to known low-cost fares by default when bag counts are still unknown. `--bags N` / `--carry-on` put those counts on the shopping request so prices come back for that selection. Default is unset. If a compact card includes checked/carry counts, they are parsed; missing bag data stays omitted. Default `--sort ranked` orders by that total; `--sort fare` / `--sort price` order by cabin fare; `--sort duration` by elapsed time; `--sort departure` / `--sort arrival` by local clocks. `--depart-window 06:00-20:00` (or hours `6-20`) drops departures outside that inclusive window. Report the ranked total when a buffer was added. Use `--baggage-buffer 0` for hand luggage only.
 - The low-cost list is partial. Never tell the user an airline includes a bag because it is absent from the list.
 - Remind the user to verify checked baggage on Google Flights before booking.
 - When an offer has `typical_eur` / `vs_typical`, that number is the median of owned cheapest-per-day calendar prices for the same origin-destination. If those fields are null, omit the comparison. Do not invent a market average.

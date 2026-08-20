@@ -29,7 +29,9 @@ from viajante.explore import (
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
+    FLIGHT_SORTS,
     FlightSort,
+    _clock_minutes,
     normalize_trip_kind,
     parse_airline_codes,
     parse_depart_window,
@@ -70,6 +72,7 @@ Examples:
   viajante flights LAX-NRT:2026-10-12 --fetch sweep --max-layover 8
   viajante flights JFK-LHR:2026-09-15 --fetch detail
   viajante flights JFK-LHR:2026-09-15 --exclude-airlines F9,NK --depart-window 7-12 --fetch sweep
+  viajante flights JFK-LHR:2026-09-15 --depart-window 06:00-20:00 --sort duration
   viajante flights JFK-LHR:2026-09-15 --airlines BA,AA --sort duration
   viajante flights JFK-LHR:2026-09-15 --bags 1 --carry-on --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --max-duration 16 --min-layover 1 --max-layover 8
@@ -209,10 +212,16 @@ def _ranked_total(offer: FlightOffer) -> float:
 
 
 def _sort_value(offer: FlightOffer, sort: FlightSort) -> float:
-    if sort == "fare":
+    if sort in ("fare", "price"):
         return offer.price_eur
     if sort == "duration":
         return offer.duration_hours if offer.duration_hours is not None else float("inf")
+    if sort == "departure":
+        minutes = _clock_minutes(offer.departure)
+        return float(minutes) if minutes is not None else float("inf")
+    if sort == "arrival":
+        minutes = _clock_minutes(offer.arrival)
+        return float(minutes) if minutes is not None else float("inf")
     return _ranked_total(offer)
 
 
@@ -298,9 +307,14 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
             continue
         out_offer = min(outbound.offers, key=lambda offer: _sort_value(offer, sort))
         back_offer = min(inbound.offers, key=lambda offer: _sort_value(offer, sort))
-        out_value = _sort_value(out_offer, sort)
-        back_value = _sort_value(back_offer, sort)
-        unit = "ranked" if sort == "ranked" else "fare"
+        if sort == "ranked":
+            out_value = _ranked_total(out_offer)
+            back_value = _ranked_total(back_offer)
+            unit = "ranked"
+        else:
+            out_value = out_offer.price_eur
+            back_value = back_offer.price_eur
+            unit = "fare"
         print(
             f"\nBest pair ({unit}): "
             f"{outbound.query.origin}->{outbound.query.destination} {out_value:.0f} € {unit} + "
@@ -865,8 +879,11 @@ def _build_parser() -> argparse.ArgumentParser:
     flights.add_argument(
         "--sort",
         default="ranked",
-        choices=["ranked", "fare", "duration"],
-        help="Order and select --top by ranked total (default), fare, or duration",
+        choices=list(FLIGHT_SORTS),
+        help=(
+            "Order and select --top by ranked total (default), fare/price, duration, "
+            "departure, or arrival"
+        ),
     )
     flights.add_argument(
         "--airlines",
@@ -886,7 +903,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="depart_window",
         metavar="START-END",
-        help="Keep departures whose local hour is in START-END inclusive (e.g. 6-20)",
+        help="Keep local departures in START-END inclusive (hours 6-20 or clocks 06:00-20:00)",
     )
     flights.add_argument(
         "--fetch",

@@ -51,7 +51,7 @@ uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
       355 €  near typical 340 €  11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
 ```
 
-One adult, one-way, economy. Up to eight offers, ordered by ranked total. That is fare plus a 70 EUR buffer on known low-cost carriers, and connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. Norse is 289 € on fare. The buffer puts it behind British Airways at 359 € ranked. `--sort fare` or `--baggage-buffer 0` turns the buffer off. `--sort duration` orders by elapsed time. `--bags N` and `--carry-on` put those counts on the shopping request so returned prices are for that bag selection. Default is unset (same prices as before). If a compact card includes checked/carry counts, they are parsed onto the offer; missing bag data stays omitted. Offers whose parsed counts contradict the request are dropped. The 70 EUR buffer is a guess used only when bag counts are still unknown.
+One adult, one-way, economy. Up to eight offers, ordered by ranked total. That is fare plus a 70 EUR buffer on known low-cost carriers, and connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. Norse is 289 € on fare. The buffer puts it behind British Airways at 359 € ranked. `--sort fare` or `--sort price` or `--baggage-buffer 0` turns the buffer off. `--sort duration` orders by elapsed time. `--sort departure` / `--sort arrival` order by local clocks. `--bags N` and `--carry-on` put those counts on the shopping request so returned prices are for that bag selection. Default is unset (same prices as before). If a compact card includes checked/carry counts, they are parsed onto the offer; missing bag data stays omitted. Offers whose parsed counts contradict the request are dropped. The 70 EUR buffer is a guess used only when bag counts are still unknown.
 
 `typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). `vs_typical` is `below`, `near` (±10%), or `above`. Both are `null` when the compact calendar misses, has fewer than three priced days, or the query is a packaged round-trip / multi-city. Never a guessed market average.
 
@@ -227,10 +227,10 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--carry-on` | unset | Ask the shopping request for one carry-on. Omit to leave the slot empty. |
 | `--top` | `8` | Offers kept per query after ranking and deduplication. |
 | `--baggage-buffer` | `70` | EUR added to low-cost fares when ranking. `0` ranks on fare alone. |
-| `--sort` | `ranked` | `ranked` uses fare+buffer for `--top` and hides very slow connections. `fare` uses cabin fare. `duration` uses elapsed time. |
+| `--sort` | `ranked` | `ranked` uses fare+buffer for `--top` and hides very slow connections. `fare` / `price` use cabin fare. `duration` uses elapsed time. `departure` / `arrival` use local clocks. |
 | `--airlines` | off | Keep only these airline IATA codes (`BA,AA` or `JL,NH`). After parse, before `--top`. |
 | `--exclude-airlines` | off | Drop these airline IATA codes (`F9,NK`). |
-| `--depart-window` | off | Keep local departure hours in `START-END` inclusive (`6-20`). |
+| `--depart-window` | off | Keep local departures in `START-END` inclusive. Hours (`6-20`) keep the whole end hour. Clocks (`06:00-20:00`) are exact. |
 | `--fetch` | `auto` | `sweep` is HTTP. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
 | `--max-layover` | off | Drop connecting offers whose layover exceeds this many hours. Nonstops stay. |
 | `--min-layover` | off | Drop connecting offers whose layover is shorter than this many hours. Nonstops stay. |

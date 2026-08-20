@@ -14,6 +14,7 @@ from viajante.flights import (
     classify_failure,
     is_low_cost,
     normalize_trip_kind,
+    parse_depart_window,
     parse_flight_plan,
     parse_route_specs,
     plan_unit_count,
@@ -762,9 +763,37 @@ class OfferFilterTests(unittest.TestCase):
         early = card(departure="06:45", price="80 €")
         mid = card(departure="09:10", price="90 €")
         late = card(departure="13:00", price="70 €")
-        self.assertIsNone(_normalize_offer(early, 1, depart_window=(7, 12)))
-        self.assertIsNotNone(_normalize_offer(mid, 1, depart_window=(7, 12)))
-        self.assertIsNone(_normalize_offer(late, 1, depart_window=(7, 12)))
+        window = parse_depart_window("7-12")
+        self.assertEqual(window, (7 * 60, 12 * 60 + 59))
+        self.assertIsNone(_normalize_offer(early, 1, depart_window=window))
+        self.assertIsNotNone(_normalize_offer(mid, 1, depart_window=window))
+        self.assertIsNone(_normalize_offer(late, 1, depart_window=window))
+
+    def test_depart_window_clocks_are_inclusive_minutes(self) -> None:
+        window = parse_depart_window("06:00-20:00")
+        self.assertEqual(window, (6 * 60, 20 * 60))
+        self.assertIsNone(
+            _normalize_offer(card(departure="05:59", price="80 €"), 1, depart_window=window)
+        )
+        self.assertIsNotNone(
+            _normalize_offer(card(departure="06:00", price="80 €"), 1, depart_window=window)
+        )
+        self.assertIsNotNone(
+            _normalize_offer(card(departure="20:00", price="80 €"), 1, depart_window=window)
+        )
+        self.assertIsNone(
+            _normalize_offer(card(departure="20:01", price="80 €"), 1, depart_window=window)
+        )
+        hour_window = parse_depart_window("6-20")
+        self.assertIsNotNone(
+            _normalize_offer(card(departure="20:45", price="80 €"), 1, depart_window=hour_window)
+        )
+
+    def test_parse_depart_window_rejects_backwards_range(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_depart_window("20:00-06:00")
+        with self.assertRaises(ValueError):
+            parse_depart_window("20-6")
 
     def test_max_duration_drops_long_elapsed_time(self) -> None:
         short = card(duration="1 h 20 min", price="90 €")
@@ -820,6 +849,72 @@ class OfferFilterTests(unittest.TestCase):
         ranked = _rank_offers((slow, fast), top=5, sort="duration")
         self.assertEqual(ranked[0].airline, "Fast")
         self.assertEqual(ranked[1].airline, "Slow")
+
+    def test_price_sort_orders_by_cabin_fare(self) -> None:
+        cheap = FlightOffer(
+            airline="Cheap",
+            departure="21:00",
+            arrival="22:20",
+            price="40 €",
+            price_eur=40.0,
+            duration="1 h 20 min",
+            duration_hours=1 + 20 / 60,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=70,
+            needs_bag_verify=True,
+        )
+        dear = FlightOffer(
+            airline="Dear",
+            departure="09:00",
+            arrival="10:20",
+            price="90 €",
+            price_eur=90.0,
+            duration="1 h 20 min",
+            duration_hours=1 + 20 / 60,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+        )
+        by_price = _rank_offers((dear, cheap), top=5, sort="price")
+        by_fare = _rank_offers((dear, cheap), top=5, sort="fare")
+        ranked = _rank_offers((dear, cheap), top=5, sort="ranked")
+        self.assertEqual([offer.airline for offer in by_price], ["Cheap", "Dear"])
+        self.assertEqual([offer.airline for offer in by_fare], ["Cheap", "Dear"])
+        self.assertEqual([offer.airline for offer in ranked], ["Dear", "Cheap"])
+
+    def test_departure_and_arrival_sort_use_clocks(self) -> None:
+        late = FlightOffer(
+            airline="Late",
+            departure="19:40",
+            arrival="21:00",
+            price="80 €",
+            price_eur=80.0,
+            duration="1 h 20 min",
+            duration_hours=1 + 20 / 60,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+        )
+        early = FlightOffer(
+            airline="Early",
+            departure="06:15",
+            arrival="22:10",
+            price="120 €",
+            price_eur=120.0,
+            duration="15 h 55 min",
+            duration_hours=15 + 55 / 60,
+            stops="1 stop",
+            stops_count=1,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+        )
+        by_depart = _rank_offers((late, early), top=5, sort="departure")
+        by_arrive = _rank_offers((late, early), top=5, sort="arrival")
+        self.assertEqual([offer.airline for offer in by_depart], ["Early", "Late"])
+        self.assertEqual([offer.airline for offer in by_arrive], ["Late", "Early"])
 
     def test_ranked_sort_hides_overnight_hops_on_short_haul(self) -> None:
         nonstop = FlightOffer(

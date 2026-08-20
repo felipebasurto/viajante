@@ -277,7 +277,7 @@ _IATA_PAIR = re.compile(r"(?<![A-Za-z0-9])([A-Z]{3})-([A-Z]{3})(?![A-Za-z0-9])")
 _ISO_DATE = re.compile(r"(?<![0-9])(20\d{2}-\d{2}-\d{2})(?![0-9])")
 _FLAG = re.compile(
     r"--(trip|max-stops|adults|cabin|rooms|max-layover|min-layover|max-duration|"
-    r"from|days|fetch)\s+(\S+)",
+    r"from|days|fetch|sort|depart-window)\s+(\S+)",
     re.IGNORECASE,
 )
 _SPANISH_DATE = re.compile(
@@ -462,6 +462,19 @@ _DEPART_AFTER = re.compile(
     r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
     re.IGNORECASE,
 )
+_CLOCK_TOKEN = r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)"
+_DEPART_WINDOW_BETWEEN = re.compile(
+    r"\b(?:leave|depart(?:ure)?s?)\s+between\s+" + _CLOCK_TOKEN + r"\s+and\s+" + _CLOCK_TOKEN,
+    re.IGNORECASE,
+)
+_DEPART_WINDOW_DASH = re.compile(
+    r"\b(?:leave|depart(?:ure)?s?)\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})",
+    re.IGNORECASE,
+)
+_SORT_BY = re.compile(
+    r"\b(?:sort(?:ed)?|order)\s+by\s+(price|fare|duration|departure|arrival|ranked)\b",
+    re.IGNORECASE,
+)
 _WORK_BACK_BY = re.compile(
     r"\b(?:must work|work|back(?:\s+in)?|in the office)\s+"
     r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
@@ -558,6 +571,8 @@ class PromptPlan:
     baggage: Optional[str] = None
     arrive_before: Optional[str] = None
     depart_after: Optional[str] = None
+    depart_window: Optional[str] = None
+    sort: Optional[str] = None
     prefer_airports: Tuple[str, ...] = ()
     work_back_by: Optional[str] = None
     route_specs: Tuple[str, ...] = ()
@@ -608,6 +623,8 @@ class PromptPlan:
             "baggage": self.baggage,
             "arrive_before": self.arrive_before,
             "depart_after": self.depart_after,
+            "depart_window": self.depart_window,
+            "sort": self.sort,
             "prefer_airports": list(self.prefer_airports),
             "work_back_by": self.work_back_by,
             "route_specs": list(self.route_specs),
@@ -1074,6 +1091,40 @@ def _hhmm(raw: str) -> Optional[str]:
     return f"{hour:02d}:{minute:02d}"
 
 
+_SORT_ALIASES = {
+    "price": "price",
+    "fare": "fare",
+    "duration": "duration",
+    "departure": "departure",
+    "arrival": "arrival",
+    "ranked": "ranked",
+}
+
+
+def _depart_window(folded: str, flags: Mapping[str, str]) -> Optional[str]:
+    flagged = flags.get("depart-window")
+    if flagged:
+        return flagged
+    hit = _DEPART_WINDOW_BETWEEN.search(folded) or _DEPART_WINDOW_DASH.search(folded)
+    if hit is None:
+        return None
+    start = _hhmm(hit.group(1))
+    end = _hhmm(hit.group(2))
+    if start is None or end is None or start > end:
+        return None
+    return f"{start}-{end}"
+
+
+def _sort_key(folded: str, flags: Mapping[str, str]) -> Optional[str]:
+    flagged = flags.get("sort")
+    if flagged:
+        return _SORT_ALIASES.get(flagged.strip().casefold())
+    hit = _SORT_BY.search(folded)
+    if hit is None:
+        return None
+    return _SORT_ALIASES.get(hit.group(1).casefold())
+
+
 def _match_is_negated(text: str, start: int) -> bool:
     prefix = text[max(0, start - 24) : start].casefold()
     return bool(_NEGATION_BEFORE.search(prefix))
@@ -1456,6 +1507,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     depart_hit = _DEPART_AFTER.search(folded)
     if depart_hit:
         depart_after = _hhmm(depart_hit.group(1))
+    depart_window = _depart_window(folded, flags)
+    sort = _sort_key(folded, flags)
     work_back_by = _work_back_by(folded)
     if around:
         prefer_seed = (*use_airports, *via_airports, *require_overnight)
@@ -1683,6 +1736,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         baggage=baggage,
         arrive_before=arrive_before,
         depart_after=depart_after,
+        depart_window=depart_window,
+        sort=sort,
         prefer_airports=prefer_airports,
         work_back_by=work_back_by,
         route_specs=route_specs,

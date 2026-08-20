@@ -358,6 +358,28 @@ class ReportRenderingTests(unittest.TestCase):
                 main(["flights", ROUTE, "--sort", "fare"])
         self.assertEqual(search.call_args.kwargs["sort"], "fare")
 
+    def test_clock_depart_window_and_departure_sort_reach_the_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(
+                    [
+                        "flights",
+                        ROUTE,
+                        "--depart-window",
+                        "06:00-20:00",
+                        "--sort",
+                        "departure",
+                    ]
+                )
+        self.assertEqual(search.call_args.kwargs["depart_window"], (6 * 60, 20 * 60))
+        self.assertEqual(search.call_args.kwargs["sort"], "departure")
+
+    def test_sort_price_reaches_the_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(["flights", ROUTE, "--sort", "price"])
+        self.assertEqual(search.call_args.kwargs["sort"], "price")
+
     def test_max_layover_flag_reaches_the_search(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
@@ -442,7 +464,7 @@ class ReportRenderingTests(unittest.TestCase):
                 )
         self.assertEqual(search.call_args.kwargs["airlines"], ("IB", "I2"))
         self.assertEqual(search.call_args.kwargs["exclude_airlines"], ("FR", "RK"))
-        self.assertEqual(search.call_args.kwargs["depart_window"], (7, 12))
+        self.assertEqual(search.call_args.kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
     def test_fetch_flag_reaches_the_search(self) -> None:
@@ -579,6 +601,8 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--bags", help_text)
         self.assertIn("--carry-on", help_text)
         self.assertIn("duration", help_text)
+        self.assertIn("departure", help_text)
+        self.assertIn("06:00-20:00", help_text)
 
     def test_root_help_preserves_flight_examples_and_lists_subcommands(self) -> None:
         buffer = io.StringIO()
