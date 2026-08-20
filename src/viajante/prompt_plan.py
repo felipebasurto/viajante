@@ -202,9 +202,15 @@ _CAR_PRIMARY = re.compile(
     r"alquiler de coche|rental car|hire a car|coche de alquiler|rent[- ]a[- ]car",
     re.IGNORECASE,
 )
-_CITY_IATA_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
-    (re.compile(rf"\b{re.escape(name)}\b"), iata)
-    for name, iata in sorted(_CITY_IATA.items(), key=lambda item: len(item[0]), reverse=True)
+# Longest aliases first so "new york" wins over a shorter overlapping token.
+_CITY_NAMES_LONGEST_FIRST: tuple[str, ...] = tuple(
+    name for name, _iata in sorted(_CITY_IATA.items(), key=lambda item: len(item[0]), reverse=True)
+)
+_CITY_NAME_RANK: Mapping[str, int] = {
+    name: index for index, name in enumerate(_CITY_NAMES_LONGEST_FIRST)
+}
+_CITY_IATA_COMBINED = re.compile(
+    r"\b(?:" + "|".join(re.escape(name) for name in _CITY_NAMES_LONGEST_FIRST) + r")\b"
 )
 _FROM_TO_PAIR = re.compile(
     r"\b(?:de|desde|from)\s+([a-záéíóúüñ ]+?)\s+(?:a|to|hacia)\s+([a-záéíóúüñ ]+?)"
@@ -476,11 +482,25 @@ def _iata_pairs(text: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def _iter_city_iata(folded: str) -> list[tuple[str, str]]:
+    """Each city-alias hit in text order as (alias, IATA)."""
+    hits: list[tuple[str, str]] = []
+    for match in _CITY_IATA_COMBINED.finditer(folded):
+        name = match.group(0)
+        hits.append((name, _CITY_IATA[name]))
+    return hits
+
+
 def _first_city_iata(folded: str) -> Optional[str]:
-    for pattern, iata in _CITY_IATA_PATTERNS:
-        if pattern.search(folded):
-            return iata
-    return None
+    # Same rule as the old per-alias loop: longest matching name, not leftmost.
+    best: Optional[str] = None
+    best_rank: Optional[int] = None
+    for name, iata in _iter_city_iata(folded):
+        rank = _CITY_NAME_RANK[name]
+        if best_rank is None or rank < best_rank:
+            best = iata
+            best_rank = rank
+    return best
 
 
 def _resolve_city_iata(name: str) -> Optional[str]:

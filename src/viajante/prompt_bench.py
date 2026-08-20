@@ -31,10 +31,10 @@ from typing import Any, Optional, Sequence
 from viajante.airports import is_known_iata
 from viajante.bench import LIVE_ENV, repo_root
 from viajante.prompt_plan import (
-    _CITY_IATA_PATTERNS,
     PromptPlan,
     _city_pairs_from_text,
     _iata_pairs,
+    _iter_city_iata,
     plan_prompt,
 )
 
@@ -347,9 +347,7 @@ def _named_iatas(prompt: str) -> set[str]:
         if is_known_iata(token):
             named.add(token)
     folded = prompt.casefold()
-    for pattern, code in _CITY_IATA_PATTERNS:
-        if pattern.search(folded):
-            named.add(code)
+    named.update(code for _alias, code in _iter_city_iata(folded))
     return named
 
 
