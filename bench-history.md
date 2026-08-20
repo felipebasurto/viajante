@@ -23,6 +23,7 @@ Checked-in `bench-baseline.json` is still **1603**. Do not rewrite it.
 | **25** | **loss** | **557** | **580** | **+23** | lazy selectolax / Lexbor off `google_flights` import |
 | **26** | **loss** | **589** | **570** | −19 | IATA marshal rows as tuples; `Airport` only on lookup hits |
 | **27** | **keep** | **850** | **752** | **−98** | `is_known_iata` via `_BY_CODE`; city scan only on `lookup_airports` |
+| **28** | **keep** | **688** | **660** | **−28** | one combined LCC airline regex; `_bag_evidence` calls `is_low_cost` once |
 
 #17 is the large one: unittest was importing the MCP SDK.
 Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
@@ -31,6 +32,7 @@ Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
 #25: score_ms 557→580/584 (not strictly below warm). `parse_ms` 2→20 (parent bench process paid Lexbor at corpus parse; unittest subprocess still paid it). Cold `--help` 277→260 (did not veto). Reverted.
 #26: score_ms 589→581/570 (both below warm). Cold `--help` 290→394 (veto). Reverted.
 #27: score_ms 850→787/752 (both below warm). Cold `--help` 318→304 (did not veto). Kept. Baseline left at 1603.
+#28: score_ms 688→665/660 (both below warm). Cold `--help` 292→289 (did not veto). Kept. Baseline left at 1603.
 
 ## Quality already landed (do not redo)
 

@@ -405,18 +405,20 @@ def _parse_multi_city_plan(
     return MultiCity(tuple(legs), adults=adults, cabin=cabin, bags=bags, carry_on=carry_on)
 
 
+_AIRLINE_STRIP = re.compile(r"[^a-z0-9 ]+")
+
+
 def _normalize_airline(airline_text: Optional[str]) -> str:
-    return re.sub(r"[^a-z0-9 ]+", "", (airline_text or "").casefold())
+    return _AIRLINE_STRIP.sub("", (airline_text or "").casefold())
 
 
-_LOW_COST_PATTERNS = tuple(
-    re.compile(r"\b" + re.escape(_normalize_airline(name)) + r"\b") for name in LOW_COST_NAMES
+_LOW_COST_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(_normalize_airline(name)) for name in LOW_COST_NAMES) + r")\b"
 )
 
 
 def is_low_cost(airline_text: str) -> bool:
-    text = _normalize_airline(airline_text)
-    return any(pattern.search(text) for pattern in _LOW_COST_PATTERNS)
+    return _LOW_COST_PATTERN.search(_normalize_airline(airline_text)) is not None
 
 
 AIRLINE_CODE_ALIASES = {
@@ -549,7 +551,7 @@ def _bag_evidence(
     needs_verify = is_low_cost(airline_text)
     if requested:
         return 0, needs_verify
-    return baggage_buffer_eur(airline_text, buffer_eur=buffer_eur), needs_verify
+    return (buffer_eur if needs_verify else 0), needs_verify
 
 
 def _normalize_offer(
