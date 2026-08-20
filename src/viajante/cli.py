@@ -751,7 +751,10 @@ def _run_airports(args: argparse.Namespace) -> int:
     return _print_airports(args.query)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+_PARSER: Optional[argparse.ArgumentParser] = None
+
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Local Google Flights and hotel search. Any IATA pair; quotes in EUR. "
@@ -1086,7 +1089,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "scores 1-100, and is never the score_ms. Unset key prints judge: skip."
         ),
     )
+    return parser
 
+
+def _cli_parser() -> argparse.ArgumentParser:
+    global _PARSER
+    if _PARSER is None:
+        _PARSER = _build_parser()
+    return _PARSER
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = _cli_parser()
     try:
         args = parser.parse_args(list(argv) if argv is not None else None)
     except SystemExit as exc:
