@@ -87,6 +87,14 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["buffer_eur"], 0)
         self.assertEqual(kwargs["sort"], "duration")
 
+    def test_search_flights_accepts_bags_and_carry_on(self) -> None:
+        fake = _report(queries=[], currency="EUR")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool([f"MAD-BCN:{FUTURE}"], bags=1, carry_on=1)
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.bags, 1)
+        self.assertEqual(trip.carry_on, 1)
+
     def test_past_flight_date_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_flights") as search:
             with self.assertRaises(ValueError):

@@ -71,6 +71,7 @@ Examples:
   viajante flights JFK-LHR:2026-09-15 --fetch detail
   viajante flights JFK-LHR:2026-09-15 --exclude-airlines F9,NK --depart-window 7-12 --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --airlines BA,AA --sort duration
+  viajante flights JFK-LHR:2026-09-15 --bags 1 --carry-on --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --max-duration 16 --min-layover 1 --max-layover 8
 """
 
@@ -118,6 +119,9 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         raise ValueError("--baggage-buffer must not be negative")
     if args.adults < 1:
         raise ValueError("--adults must be at least 1")
+    if args.bags is not None and args.bags < 0:
+        raise ValueError("--bags must not be negative")
+    carry_on = 1 if args.carry_on else None
     if args.max_layover is not None and args.max_layover < 0:
         raise ValueError("--max-layover must not be negative")
     if args.min_layover is not None and args.min_layover < 0:
@@ -139,6 +143,8 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         max_stops=args.max_stops,
         adults=args.adults,
         cabin=args.cabin,
+        bags=args.bags,
+        carry_on=carry_on,
     )
     today = date.today()
     for departure in _plan_departure_dates(plan):
@@ -221,6 +227,17 @@ def _format_typical(offer: FlightOffer) -> str:
     if offer.typical_eur is None or offer.vs_typical is None:
         return ""
     return f"  {offer.vs_typical} typical {offer.typical_eur:.0f} €"
+
+
+def _format_parsed_bags(offer: FlightOffer) -> str:
+    parts: list[str] = []
+    if offer.checked_bags is not None:
+        parts.append(f"{offer.checked_bags} checked")
+    if offer.carry_on is not None:
+        parts.append(f"{offer.carry_on} carry-on")
+    if not parts:
+        return ""
+    return f"  {', '.join(parts)}"
 
 
 def _parse_iso_date(value: str, label: str) -> date:
@@ -333,7 +350,8 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
             for offer in result.offers:
                 times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
                 print(
-                    f"  {_format_ranking_columns(offer)}{_format_typical(offer)}  "
+                    f"  {_format_ranking_columns(offer)}{_format_typical(offer)}"
+                    f"{_format_parsed_bags(offer)}  "
                     f"{offer.duration or '?':<12} "
                     f"{_format_stops_with_layover(offer):<16} {times:<18} "
                     f"{_format_airline(offer.airline)}"
@@ -813,6 +831,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default="economy",
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
+    )
+    flights.add_argument(
+        "--bags",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Checked bags on the shopping request (omit to leave unset)",
+    )
+    flights.add_argument(
+        "--carry-on",
+        action="store_true",
+        dest="carry_on",
+        help="Ask the shopping request for one carry-on (omit to leave unset)",
     )
     flights.add_argument(
         "--top",

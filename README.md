@@ -51,7 +51,7 @@ uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
       355 €  near typical 340 €  11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
 ```
 
-One adult, one-way, economy. Up to eight offers, ordered by ranked total. That is fare plus a 70 EUR buffer on known low-cost carriers, and connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. Norse is 289 € on fare. The buffer puts it behind British Airways at 359 € ranked. `--sort fare` or `--baggage-buffer 0` turns the buffer off. `--sort duration` orders by elapsed time.
+One adult, one-way, economy. Up to eight offers, ordered by ranked total. That is fare plus a 70 EUR buffer on known low-cost carriers, and connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. Norse is 289 € on fare. The buffer puts it behind British Airways at 359 € ranked. `--sort fare` or `--baggage-buffer 0` turns the buffer off. `--sort duration` orders by elapsed time. `--bags N` and `--carry-on` put those counts on the shopping request so returned prices are for that bag selection. Default is unset (same prices as before). If a compact card includes checked/carry counts, they are parsed onto the offer; missing bag data stays omitted. Offers whose parsed counts contradict the request are dropped. The 70 EUR buffer is a guess used only when bag counts are still unknown.
 
 `typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). `vs_typical` is `below`, `near` (±10%), or `above`. Both are `null` when the compact calendar misses, has fewer than three priced days, or the query is a packaged round-trip / multi-city. Never a guessed market average.
 
@@ -211,7 +211,7 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
 }
 ```
 
-A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
+A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
 
 ## CLI reference
 
@@ -223,6 +223,8 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--max-stops` | `1` | `0` direct only, `1` one stop, `2` two or fewer. |
 | `--adults` | `1` | Adults on the search. |
 | `--cabin` | `economy` | `economy`, `premium-economy`, `business`, or `first`. |
+| `--bags` | unset | Checked bags on the shopping request. Omit to leave the slot empty. |
+| `--carry-on` | unset | Ask the shopping request for one carry-on. Omit to leave the slot empty. |
 | `--top` | `8` | Offers kept per query after ranking and deduplication. |
 | `--baggage-buffer` | `70` | EUR added to low-cost fares when ranking. `0` ranks on fare alone. |
 | `--sort` | `ranked` | `ranked` uses fare+buffer for `--top` and hides very slow connections. `fare` uses cabin fare. `duration` uses elapsed time. |

@@ -48,6 +48,8 @@ def build_server():
         max_layover: float | None = None,
         baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
         sort: str = "ranked",
+        bags: int | None = None,
+        carry_on: int | None = None,
     ) -> dict:
         return dict(
             search_flights_tool(
@@ -66,6 +68,8 @@ def build_server():
                 max_layover=max_layover,
                 baggage_buffer=baggage_buffer,
                 sort=sort,  # type: ignore[arg-type]
+                bags=bags,
+                carry_on=carry_on,
             )
         )
 

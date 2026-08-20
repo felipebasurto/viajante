@@ -68,6 +68,15 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["trip"], "one-way")
         self.assertNotIn("return_date", data)
         self.assertNotIn("legs", data)
+        self.assertNotIn("bags", data)
+        self.assertNotIn("carry_on", data)
+
+    def test_flight_query_bags_are_omitted_until_requested(self) -> None:
+        data = FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=1, carry_on=0).to_dict()
+        self.assertEqual(data["bags"], 1)
+        self.assertEqual(data["carry_on"], 0)
+        with self.assertRaises(ValueError):
+            FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=-1)
 
     def test_flight_leg_accepts_two_stops(self) -> None:
         leg = FlightLeg("MAD", "NRT", date(2026, 10, 1), max_stops=2)
@@ -212,6 +221,29 @@ class BaggageInvariantTests(unittest.TestCase):
 
     def test_a_flagged_carrier_may_carry_no_buffer(self) -> None:
         self.assertEqual(self._offer(buffer_eur=0, needs_verify=True).baggage_buffer_eur, 0)
+
+    def test_parsed_bag_counts_serialise_only_when_present(self) -> None:
+        known = FlightOffer(
+            airline="Ryanair",
+            departure="08:00",
+            arrival="09:00",
+            price="€50",
+            price_eur=50.0,
+            duration="1 hr",
+            duration_hours=1.0,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+            checked_bags=1,
+            carry_on=1,
+        )
+        data = known.to_dict()
+        self.assertEqual(data["checked_bags"], 1)
+        self.assertEqual(data["carry_on"], 1)
+        omitted = self._offer(buffer_eur=0, needs_verify=True).to_dict()
+        self.assertNotIn("checked_bags", omitted)
+        self.assertNotIn("carry_on", omitted)
 
     def test_negative_buffers_are_rejected(self) -> None:
         with self.assertRaises(ValueError):

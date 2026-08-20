@@ -52,6 +52,7 @@ REQUIRED_FIXTURE_NAMES = frozenset(
         "shopping-longhaul-group.wrb",
         "shopping-empty.wrb",
         "shopping-rejected.wrb",
+        "shopping-bags.wrb",
         "cards-best.html",
         "cards-http.html",
         "cards-empty.html",
@@ -59,9 +60,9 @@ REQUIRED_FIXTURE_NAMES = frozenset(
 )
 
 # Floors so emptying or shrinking the corpus cannot "win".
-MIN_FIXTURE_FILES = 15
+MIN_FIXTURE_FILES = 16
 MIN_CORPUS_BYTES = 8_000
-MIN_PARSED_CARDS = 14
+MIN_PARSED_CARDS = 15
 MIN_FILE_BYTES: Mapping[str, int] = {
     "shopping-one-stop.wrb": 150,
     "shopping-round-trip.wrb": 200,
@@ -75,6 +76,7 @@ MIN_FILE_BYTES: Mapping[str, int] = {
     "shopping-longhaul-group.wrb": 1_600,
     "shopping-empty.wrb": 60,
     "shopping-rejected.wrb": 150,
+    "shopping-bags.wrb": 150,
     "cards-best.html": 800,
     "cards-http.html": 350,
     "cards-empty.html": 60,

@@ -48,6 +48,9 @@ _SEGMENT_RETURN = 1
 _ANTI_XSSI = ")]}'"
 # viajante max_stops -> shopping segment[3]. TFS field 5 stays the viajante integer.
 _SHOPPING_STOPS: Mapping[int, int] = {0: 1, 1: 2, 2: 3}
+# Compact fare blocks put a [checked, carry_on] pair after the booking token.
+# Counts above this are not bag counts (prices, durations).
+_MAX_BAG_COUNT = 9
 
 
 class CompactParseMiss(ValueError):
@@ -76,6 +79,8 @@ class RawFlightCard:
     airline_codes: Optional[tuple[str, ...]] = None
     booking_token: Optional[str] = None
     legs: tuple[RawJourneyLeg, ...] = ()
+    checked_bags: Optional[int] = None
+    carry_on: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -141,12 +146,20 @@ def _shopping_segment(
     ]
 
 
+def _bags_constraint(*, bags: Optional[int], carry_on: Optional[int]) -> Any:
+    if bags is None and carry_on is None:
+        return None
+    return [0 if bags is None else bags, 0 if carry_on is None else carry_on]
+
+
 def _constraints_from_segments(
     segments: list[list[Any]],
     *,
     adults: int,
     cabin: FlightCabin,
     trip_kind: int = _TRIP_ONE_WAY,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> list[Any]:
     return [
         None,
@@ -159,7 +172,7 @@ def _constraints_from_segments(
         None,
         None,
         None,
-        None,
+        _bags_constraint(bags=bags, carry_on=carry_on),  # [checked, carry_on]; 7 is price-cap
         None,
         None,
         segments,
@@ -190,6 +203,8 @@ def build_search_constraints(
         adults=trip.adults,
         cabin=trip.cabin,
         trip_kind=_shopping_trip_kind(trip),
+        bags=trip.bags,
+        carry_on=trip.carry_on,
     )
 
 
@@ -468,6 +483,7 @@ def _itinerary_to_card(item: list[Any]) -> Optional[RawFlightCard]:
         return None
     layover_city, layover_hours = _layover_from_flight(flight)
     journey_legs = tuple(_flight_to_journey_leg(row) for row in journeys)
+    checked_bags, carry_on = _bags_from_fare(item[1] if len(item) > 1 else None)
     return RawFlightCard(
         airline=", ".join(airlines) or None,
         departure=_flight_departure(flight),
@@ -481,6 +497,8 @@ def _itinerary_to_card(item: list[Any]) -> Optional[RawFlightCard]:
         airline_codes=_airline_codes(flight),
         booking_token=_booking_token(item[1] if len(item) > 1 else None),
         legs=journey_legs,
+        checked_bags=checked_bags,
+        carry_on=carry_on,
     )
 
 
@@ -528,6 +546,47 @@ def _booking_token(block: object) -> Optional[str]:
     if isinstance(token, str) and token.strip():
         return token
     return None
+
+
+def _bag_count(value: object) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 0 or value > _MAX_BAG_COUNT:
+        return None
+    return value
+
+
+def _bag_pair(value: object) -> Optional[tuple[Optional[int], Optional[int]]]:
+    if not isinstance(value, list) or not value:
+        return None
+    if len(value) == 1 and isinstance(value[0], list):
+        return _bag_pair(value[0])
+    checked = _bag_count(value[0])
+    if len(value) == 1:
+        if checked is None:
+            return None
+        return checked, None
+    carry = _bag_count(value[1])
+    if checked is None and carry is None:
+        return None
+    return checked, carry
+
+
+def _bags_from_fare(block: object) -> tuple[Optional[int], Optional[int]]:
+    if not isinstance(block, list):
+        return None, None
+    # Fare is [[null, price], booking_token, [checked, carry_on], ...].
+    # The pair is omitted when the compact body has no bag counts.
+    for index in (2, 1):
+        if index >= len(block):
+            continue
+        slot = block[index]
+        if index == 1 and isinstance(slot, str):
+            continue
+        parsed = _bag_pair(slot)
+        if parsed is not None:
+            return parsed
+    return None, None
 
 
 def _price_text(block: object) -> Optional[str]:

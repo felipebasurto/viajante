@@ -60,6 +60,8 @@ def _offer(
     booking_token: Optional[str] = None,
     typical_eur: Optional[float] = None,
     vs_typical: Optional[VsTypical] = None,
+    checked_bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> FlightOffer:
     return FlightOffer(
         airline=airline,
@@ -78,6 +80,8 @@ def _offer(
         booking_token=booking_token,
         typical_eur=typical_eur,
         vs_typical=vs_typical,
+        checked_bags=checked_bags,
+        carry_on=carry_on,
     )
 
 
@@ -197,6 +201,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(queries[0].adults, 2)
         self.assertEqual(queries[0].cabin, "business")
 
+    def test_bags_flags_reach_parsed_queries(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                code = main(["flights", ROUTE, "--bags", "1", "--carry-on"])
+        self.assertEqual(code, 0)
+        queries = search.call_args.args[0]
+        self.assertEqual(queries[0].bags, 1)
+        self.assertEqual(queries[0].carry_on, 1)
+
+    def test_bags_default_stays_unset(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(["flights", ROUTE])
+        queries = search.call_args.args[0]
+        self.assertIsNone(queries[0].bags)
+        self.assertIsNone(queries[0].carry_on)
+
+    def test_negative_bags_is_rejected_before_searching(self) -> None:
+        with patch("viajante.cli.search_flights") as search:
+            self.assertEqual(main(["flights", ROUTE, "--bags", "-1"]), 1)
+            search.assert_not_called()
+
     def test_zero_adults_is_rejected_before_searching(self) -> None:
         with patch("viajante.cli.search_flights") as search:
             self.assertEqual(main(["flights", ROUTE, "--adults", "0"]), 1)
@@ -262,6 +288,12 @@ class ReportRenderingTests(unittest.TestCase):
             _report(_offer(price_eur=289.0, typical_eur=340.0, vs_typical="below"))
         )
         self.assertIn("below typical 340 €", with_typical)
+
+    def test_parsed_bag_counts_print_when_present(self) -> None:
+        output = _rendered(_report(_offer(checked_bags=1, carry_on=1)))
+        self.assertIn("1 checked", output)
+        self.assertIn("1 carry-on", output)
+        self.assertNotIn("None", output)
         silent = _rendered(_report(_offer(price_eur=289.0)))
         self.assertNotIn("typical", silent)
         output = _rendered(_report(_offer()))
@@ -544,6 +576,8 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--exclude-airlines", help_text)
         self.assertIn("--depart-window", help_text)
+        self.assertIn("--bags", help_text)
+        self.assertIn("--carry-on", help_text)
         self.assertIn("duration", help_text)
 
     def test_root_help_preserves_flight_examples_and_lists_subcommands(self) -> None:

@@ -60,6 +60,8 @@ def card(
     layover_hours: float | None = None,
     airline_codes: tuple[str, ...] | None = None,
     flight_numbers: tuple[str, ...] | None = None,
+    checked_bags: int | None = None,
+    carry_on: int | None = None,
 ) -> RawFlightCard:
     return RawFlightCard(
         airline=airline,
@@ -72,6 +74,8 @@ def card(
         layover_hours=layover_hours,
         airline_codes=airline_codes,
         flight_numbers=flight_numbers,
+        checked_bags=checked_bags,
+        carry_on=carry_on,
     )
 
 
@@ -288,6 +292,40 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(nonstop, max_stops=0))
         self.assertIsNone(_normalize_offer(one_stop, max_stops=0))
         self.assertIsNotNone(_normalize_offer(one_stop, max_stops=1))
+
+    def test_bag_request_drops_only_offers_that_contradict_parsed_counts(self) -> None:
+        missing = card(price="80 €")
+        too_few = card(price="70 €", checked_bags=0, carry_on=1)
+        enough = card(price="90 €", checked_bags=1, carry_on=1)
+        self.assertIsNotNone(_normalize_offer(missing, max_stops=1, bags=1, carry_on=1))
+        self.assertIsNone(_normalize_offer(too_few, max_stops=1, bags=1, carry_on=1))
+        kept = _normalize_offer(enough, max_stops=1, bags=1, carry_on=1)
+        assert kept is not None
+        self.assertEqual(kept.checked_bags, 1)
+        self.assertEqual(kept.carry_on, 1)
+
+    def test_parsed_bag_counts_clear_the_lcc_guess(self) -> None:
+        raw = card(airline="Ryanair", price="50 €", checked_bags=1, carry_on=0)
+        offer = _normalize_offer(raw, max_stops=1)
+        assert offer is not None
+        self.assertEqual(offer.baggage_buffer_eur, 0)
+        self.assertFalse(offer.needs_bag_verify)
+
+    def test_requested_bags_without_parsed_counts_do_not_invent_a_fee(self) -> None:
+        raw = card(airline="Ryanair", price="50 €")
+        offer = _normalize_offer(raw, max_stops=1, bags=1)
+        assert offer is not None
+        self.assertEqual(offer.baggage_buffer_eur, 0)
+        self.assertTrue(offer.needs_bag_verify)
+        self.assertNotIn("checked_bags", offer.to_dict())
+
+    def test_parse_flight_plan_keeps_bags_unset_by_default(self) -> None:
+        plan = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1, bags=1, carry_on=1)
+        self.assertEqual(plan[0].bags, 1)
+        self.assertEqual(plan[0].carry_on, 1)
+        default = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1)
+        self.assertIsNone(default[0].bags)
+        self.assertIsNone(default[0].carry_on)
 
     def test_unlabelled_stops_are_rejected_when_only_direct_flights_are_wanted(self) -> None:
         unknown = card(stops="Unknown", price="90 €", departure="14:00", arrival="15:00")

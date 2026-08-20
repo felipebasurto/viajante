@@ -135,6 +135,35 @@ class JsonContractTests(unittest.TestCase):
         self.assertIsNone(offer["typical_eur"])
         self.assertIsNone(offer["vs_typical"])
 
+    def test_missing_bag_counts_are_omitted_not_invented(self) -> None:
+        offer = self.data["queries"][0]["offers"][0]
+        self.assertNotIn("checked_bags", offer)
+        self.assertNotIn("carry_on", offer)
+        query = self.data["queries"][0]["query"]
+        self.assertNotIn("bags", query)
+        self.assertNotIn("carry_on", query)
+
+    def test_parsed_bag_counts_are_extra_offer_keys(self) -> None:
+        offer = FlightOffer(
+            airline="Ryanair",
+            departure="07:15",
+            arrival="08:40",
+            price="€64",
+            price_eur=64.0,
+            duration="1 hr 25 min",
+            duration_hours=1.42,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+            checked_bags=1,
+            carry_on=1,
+        )
+        data = offer.to_dict()
+        self.assertEqual(data["checked_bags"], 1)
+        self.assertEqual(data["carry_on"], 1)
+        self.assertEqual(set(data), OFFER_KEYS | {"checked_bags", "carry_on"})
+
     def test_owned_typical_serialises_with_a_coarse_label(self) -> None:
         offer = FlightOffer(
             airline="Norse Atlantic",

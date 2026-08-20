@@ -1,9 +1,9 @@
 {
   "version": 1,
   "source": "Owned builders in tests/test_google_flights.py. Do not add empty files.",
-  "min_files": 15,
+  "min_files": 16,
   "min_total_bytes": 8000,
-  "min_cards": 14,
+  "min_cards": 15,
   "fixtures": [
     {
       "name": "shopping-one-stop.wrb",
@@ -52,6 +52,10 @@
     {
       "name": "shopping-rejected.wrb",
       "kind": "shopping_rejected"
+    },
+    {
+      "name": "shopping-bags.wrb",
+      "kind": "shopping"
     },
     {
       "name": "cards-best.html",

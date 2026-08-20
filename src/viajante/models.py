@@ -34,6 +34,22 @@ def _require_cabin(cabin: FlightCabin) -> None:
         raise ValueError(f"invalid cabin: {cabin!r}")
 
 
+def _require_bag_count(value: Optional[int], *, role: str) -> None:
+    if value is None:
+        return
+    if value < 0:
+        raise ValueError(f"{role} must not be negative")
+
+
+def _optional_bag_fields(bags: Optional[int], carry_on: Optional[int]) -> dict[str, int]:
+    payload: dict[str, int] = {}
+    if bags is not None:
+        payload["bags"] = bags
+    if carry_on is not None:
+        payload["carry_on"] = carry_on
+    return payload
+
+
 @dataclass(frozen=True)
 class FlightLeg:
     origin: str
@@ -60,6 +76,8 @@ class FlightQuery:
     max_stops: int = 1
     adults: int = 1
     cabin: FlightCabin = "economy"
+    bags: Optional[int] = None
+    carry_on: Optional[int] = None
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -68,6 +86,8 @@ class FlightQuery:
             raise ValueError("max_stops must be 0, 1, or 2")
         _require_adults(self.adults)
         _require_cabin(self.cabin)
+        _require_bag_count(self.bags, role="bags")
+        _require_bag_count(self.carry_on, role="carry_on")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
 
@@ -83,7 +103,7 @@ class FlightQuery:
         )
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "trip": "one-way",
             "origin": self.origin,
             "destination": self.destination,
@@ -92,6 +112,8 @@ class FlightQuery:
             "adults": self.adults,
             "cabin": self.cabin,
         }
+        payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        return payload
 
 
 @dataclass(frozen=True)
@@ -103,6 +125,8 @@ class RoundTrip:
     max_stops: int = 1
     adults: int = 1
     cabin: FlightCabin = "economy"
+    bags: Optional[int] = None
+    carry_on: Optional[int] = None
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -115,11 +139,13 @@ class RoundTrip:
             raise ValueError("max_stops must be 0, 1, or 2")
         _require_adults(self.adults)
         _require_cabin(self.cabin)
+        _require_bag_count(self.bags, role="bags")
+        _require_bag_count(self.carry_on, role="carry_on")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "trip": "rt",
             "origin": self.origin,
             "destination": self.destination,
@@ -129,6 +155,8 @@ class RoundTrip:
             "adults": self.adults,
             "cabin": self.cabin,
         }
+        payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        return payload
 
     @property
     def legs(self) -> Tuple[FlightLeg, FlightLeg]:
@@ -143,6 +171,8 @@ class MultiCity:
     legs: Tuple[FlightLeg, ...]
     adults: int = 1
     cabin: FlightCabin = "economy"
+    bags: Optional[int] = None
+    carry_on: Optional[int] = None
 
     def __post_init__(self) -> None:
         if len(self.legs) < 2:
@@ -152,9 +182,11 @@ class MultiCity:
             raise ValueError("multi-city dates must be non-decreasing")
         _require_adults(self.adults)
         _require_cabin(self.cabin)
+        _require_bag_count(self.bags, role="bags")
+        _require_bag_count(self.carry_on, role="carry_on")
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "trip": "multi",
             "origin": self.legs[0].origin,
             "destination": self.legs[-1].destination,
@@ -172,6 +204,8 @@ class MultiCity:
                 for leg in self.legs
             ],
         }
+        payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        return payload
 
 
 Trip = Union[FlightQuery, RoundTrip, MultiCity]
@@ -246,6 +280,8 @@ class FlightOffer:
     legs: Tuple[RawJourneyLeg, ...] = ()
     typical_eur: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
+    checked_bags: Optional[int] = None
+    carry_on: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.price_eur <= 0:
@@ -260,6 +296,8 @@ class FlightOffer:
             raise ValueError("typical_eur must be positive")
         if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
             raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
+        _require_bag_count(self.checked_bags, role="checked_bags")
+        _require_bag_count(self.carry_on, role="carry_on")
         if not self.legs:
             layovers: Tuple[RawLayover, ...] = ()
             if self.layover_city is not None or self.layover_hours is not None:
@@ -281,7 +319,7 @@ class FlightOffer:
     def to_dict(self) -> Mapping[str, object]:
         lead = self.legs[0]
         two_stop = self.stops_count is not None and self.stops_count >= 2
-        return {
+        payload: dict[str, object] = {
             "airline": self.airline,
             "departure": lead.departure,
             "arrival": lead.arrival,
@@ -301,6 +339,11 @@ class FlightOffer:
             "needs_bag_verify": self.needs_bag_verify,
             "legs": [leg.to_dict() for leg in self.legs],
         }
+        if self.checked_bags is not None:
+            payload["checked_bags"] = self.checked_bags
+        if self.carry_on is not None:
+            payload["carry_on"] = self.carry_on
+        return payload
 
 
 class SearchErrorCode(str, Enum):

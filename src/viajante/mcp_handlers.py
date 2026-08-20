@@ -76,6 +76,8 @@ def search_flights_tool(
     max_layover: Optional[float] = None,
     baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     sort: FlightSort = "ranked",
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         routes,
@@ -83,6 +85,8 @@ def search_flights_tool(
         max_stops=max_stops,
         adults=adults,
         cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
     )
     trips = _as_trips(plan)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])

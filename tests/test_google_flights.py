@@ -358,6 +358,7 @@ def _itinerary(
     minutes: int = 170,
     price: int = 129,
     legs: int = 1,
+    bags: tuple[int, int] | None = None,
 ) -> list[object]:
     flight = [
         code,
@@ -371,7 +372,10 @@ def _itinerary(
         list(arr),
         minutes,
     ]
-    return [flight, [[None, price], "tok"]]
+    fare: list[object] = [[None, price], "tok"]
+    if bags is not None:
+        fare.append(list(bags))
+    return [flight, fare]
 
 
 def _compact_body(*itineraries: list[object], other: tuple[list[object], ...] = ()) -> str:
@@ -437,6 +441,24 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(flight[6], "2026-09-01")
         self.assertEqual(inner[1][5], 3)
         self.assertEqual(inner[1][6], [2, 0, 0, 0])
+        self.assertIsNone(inner[1][7])
+
+    def test_bags_pair_fills_constraints_index_10(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=1, carry_on=1)
+        inner = build_shopping_inner(query)
+        self.assertEqual(inner[1][6], [1, 0, 0, 0])
+        self.assertIsNone(inner[1][7])
+        self.assertIsNone(inner[1][8])
+        self.assertIsNone(inner[1][9])
+        self.assertEqual(inner[1][10], [1, 1])
+        checked_only = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=2))
+        self.assertEqual(checked_only[1][10], [2, 0])
+        self.assertIsNone(checked_only[1][7])
+        carry_only = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1), carry_on=1))
+        self.assertEqual(carry_only[1][10], [0, 1])
+        default = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1)))
+        self.assertIsNone(default[1][7])
+        self.assertIsNone(default[1][10])
 
     def test_shopping_stop_table_is_not_the_tfs_integer(self) -> None:
         self.assertEqual(shopping_stop_code(0), 1)
@@ -643,6 +665,35 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(offer.price_eur, 83.0)
         self.assertEqual(offer.stops_count, 1)
         self.assertEqual(offer.duration_hours, 4 + 5 / 60)
+        self.assertIsNone(cards[0].checked_bags)
+        self.assertIsNone(cards[0].carry_on)
+        self.assertNotIn("checked_bags", offer.to_dict())
+        self.assertNotIn("carry_on", offer.to_dict())
+
+    def test_fare_bags_pair_is_parsed_and_otherwise_omitted(self) -> None:
+        with_bags = parse_shopping_body(_compact_body(_itinerary(price=91, bags=(1, 1))))[0]
+        self.assertEqual(with_bags.checked_bags, 1)
+        self.assertEqual(with_bags.carry_on, 1)
+        offer = _normalize_offer(with_bags, max_stops=1)
+        assert offer is not None
+        self.assertEqual(offer.checked_bags, 1)
+        self.assertEqual(offer.carry_on, 1)
+        self.assertEqual(offer.to_dict()["checked_bags"], 1)
+        self.assertFalse(offer.needs_bag_verify)
+        self.assertEqual(offer.baggage_buffer_eur, 0)
+        missing = parse_shopping_body(_compact_body(_itinerary(price=91)))[0]
+        self.assertIsNone(missing.checked_bags)
+        self.assertIsNone(missing.carry_on)
+
+    def test_owned_bags_fixture_parses_the_fare_pair(self) -> None:
+        body = (Path(__file__).resolve().parent / "bench" / "shopping-bags.wrb").read_text(
+            encoding="utf-8"
+        )
+        card = parse_shopping_body(body)[0]
+        self.assertEqual(card.airline, "Ryanair")
+        self.assertEqual(card.checked_bags, 1)
+        self.assertEqual(card.carry_on, 1)
+        self.assertEqual(card.price, "€64")
 
     def test_missing_itinerary_arrival_uses_last_leg(self) -> None:
         item = _itinerary(dep=(13, 40), arr=(16, 20), minutes=160, price=74, legs=2)
@@ -798,8 +849,11 @@ def _live_flight(
     return flight
 
 
-def _priced(flight: list[object], price: int) -> list[object]:
-    return [flight, [[None, price], "tok"]]
+def _priced(flight: list[object], price: int, bags: tuple[int, int] | None = None) -> list[object]:
+    fare: list[object] = [[None, price], "tok"]
+    if bags is not None:
+        fare.append(list(bags))
+    return [flight, fare]
 
 
 def _tap_long_layover() -> list[object]:

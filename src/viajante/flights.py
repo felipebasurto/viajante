@@ -206,6 +206,8 @@ def parse_route_specs(
     max_stops: int,
     adults: int = 1,
     cabin: FlightCabin = "economy",
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> Tuple[FlightQuery, ...]:
     if max_stops not in (0, 1, 2):
         raise ValueError("max_stops must be 0, 1, or 2")
@@ -239,6 +241,8 @@ def parse_route_specs(
                     max_stops=max_stops,
                     adults=adults,
                     cabin=cabin,
+                    bags=bags,
+                    carry_on=carry_on,
                 )
             )
             queries.append(
@@ -249,6 +253,8 @@ def parse_route_specs(
                     max_stops=max_stops,
                     adults=adults,
                     cabin=cabin,
+                    bags=bags,
+                    carry_on=carry_on,
                 )
             )
             continue
@@ -268,6 +274,8 @@ def parse_route_specs(
                     max_stops=max_stops,
                     adults=adults,
                     cabin=cabin,
+                    bags=bags,
+                    carry_on=carry_on,
                 )
             )
         if not any(part.strip() for part in stripped.split(",")):
@@ -290,13 +298,36 @@ def parse_flight_plan(
     max_stops: int,
     adults: int = 1,
     cabin: FlightCabin = "economy",
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> FlightPlan:
     kind = normalize_trip_kind(trip)
     if kind == "one-way":
-        return parse_route_specs(specs, max_stops=max_stops, adults=adults, cabin=cabin)
+        return parse_route_specs(
+            specs,
+            max_stops=max_stops,
+            adults=adults,
+            cabin=cabin,
+            bags=bags,
+            carry_on=carry_on,
+        )
     if kind == "rt":
-        return _parse_round_trip_plan(specs, max_stops=max_stops, adults=adults, cabin=cabin)
-    return _parse_multi_city_plan(specs, max_stops=max_stops, adults=adults, cabin=cabin)
+        return _parse_round_trip_plan(
+            specs,
+            max_stops=max_stops,
+            adults=adults,
+            cabin=cabin,
+            bags=bags,
+            carry_on=carry_on,
+        )
+    return _parse_multi_city_plan(
+        specs,
+        max_stops=max_stops,
+        adults=adults,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+    )
 
 
 def _split_route(spec: str, *, grammar: str) -> tuple[str, str, str]:
@@ -316,6 +347,8 @@ def _parse_round_trip_plan(
     max_stops: int,
     adults: int,
     cabin: FlightCabin,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> RoundTrip:
     if len(specs) != 1:
         raise ValueError(f"--trip rt expects exactly one {RT_GRAMMAR}")
@@ -336,6 +369,8 @@ def _parse_round_trip_plan(
         max_stops=max_stops,
         adults=adults,
         cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
     )
 
 
@@ -345,6 +380,8 @@ def _parse_multi_city_plan(
     max_stops: int,
     adults: int,
     cabin: FlightCabin,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> MultiCity:
     if not 2 <= len(specs) <= 6:
         raise ValueError(f"--trip multi expects 2 to 6 {MULTI_GRAMMAR} routes")
@@ -365,7 +402,7 @@ def _parse_multi_city_plan(
                 max_stops=max_stops,
             )
         )
-    return MultiCity(tuple(legs), adults=adults, cabin=cabin)
+    return MultiCity(tuple(legs), adults=adults, cabin=cabin, bags=bags, carry_on=carry_on)
 
 
 def _normalize_airline(airline_text: Optional[str]) -> str:
@@ -486,6 +523,35 @@ def _eligible_stops(stops: Optional[str], max_stops: int) -> bool:
     return max_stops >= 1
 
 
+def _passes_bag_request(
+    raw: RawFlightCard,
+    *,
+    bags: Optional[int],
+    carry_on: Optional[int],
+) -> bool:
+    if bags is not None and raw.checked_bags is not None and raw.checked_bags < bags:
+        return False
+    if carry_on is not None and raw.carry_on is not None and raw.carry_on < carry_on:
+        return False
+    return True
+
+
+def _bag_evidence(
+    raw: RawFlightCard,
+    airline_text: str,
+    *,
+    buffer_eur: int,
+    requested: bool,
+) -> tuple[int, bool]:
+    knows = raw.checked_bags is not None or raw.carry_on is not None
+    if knows:
+        return 0, False
+    needs_verify = is_low_cost(airline_text)
+    if requested:
+        return 0, needs_verify
+    return baggage_buffer_eur(airline_text, buffer_eur=buffer_eur), needs_verify
+
+
 def _normalize_offer(
     raw: RawFlightCard,
     max_stops: int,
@@ -497,6 +563,8 @@ def _normalize_offer(
     depart_window: Optional[Tuple[int, int]] = None,
     max_duration_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
 ) -> Optional[FlightOffer]:
     price_text = raw.price or ""
     price_eur = parse_price_eur(price_text)
@@ -507,6 +575,8 @@ def _normalize_offer(
     if not _passes_airline_filters(raw, airlines=airlines, exclude_airlines=exclude_airlines):
         return None
     if not _passes_depart_window(raw, depart_window):
+        return None
+    if not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
         return None
     stops_count = parse_stops_count(raw.stops)
     layover_hours = raw.layover_hours
@@ -534,6 +604,8 @@ def _normalize_offer(
     ):
         return None
     airline = raw.airline or ""
+    requested = bags is not None or carry_on is not None
+    buffer, needs_verify = _bag_evidence(raw, airline, buffer_eur=buffer_eur, requested=requested)
     legs = tuple(
         RawJourneyLeg(
             departure=normalize_clock(leg.departure) or leg.departure,
@@ -559,9 +631,11 @@ def _normalize_offer(
         layover_hours=layover_hours,
         flight_numbers=raw.flight_numbers,
         booking_token=raw.booking_token,
-        baggage_buffer_eur=baggage_buffer_eur(airline, buffer_eur=buffer_eur),
-        needs_bag_verify=is_low_cost(airline),
+        baggage_buffer_eur=buffer,
+        needs_bag_verify=needs_verify,
         legs=legs,
+        checked_bags=raw.checked_bags,
+        carry_on=raw.carry_on,
     )
 
 
@@ -726,6 +800,8 @@ def _run_search(
                             airlines=airlines,
                             exclude_airlines=exclude_airlines,
                             depart_window=depart_window,
+                            bags=trip.bags,
+                            carry_on=trip.carry_on,
                         )
                     )
                     is not None
