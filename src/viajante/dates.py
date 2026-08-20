@@ -7,7 +7,15 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence
 
-from viajante.flights import _normalize_offer, classify_failure, normalize_trip_kind
+from viajante.flights import (
+    DEFAULT_BAGGAGE_BUFFER_EUR,
+    DEFAULT_TOP,
+    FlightSort,
+    _normalize_offer,
+    _rank_offers,
+    classify_failure,
+    normalize_trip_kind,
+)
 from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
 from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
 from viajante.models import (
@@ -15,7 +23,10 @@ from viajante.models import (
     DateCalendarSummary,
     DatePriceRow,
     DateTripKind,
+    FlexFetchBackend,
+    FlexSearchReport,
     FlightCabin,
+    FlightOffer,
     FlightQuery,
     RoundTrip,
     SearchError,
@@ -23,8 +34,10 @@ from viajante.models import (
     Trip,
 )
 from viajante.storage import write_json_atomic
+from viajante.typical import typical_eur_from_daily_prices, vs_typical, with_typical
 
 MAX_DATE_WINDOW_DAYS = 31
+MAX_FLEX_DAYS = 15
 
 EMPTY_DAY_MARK = "·"
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -280,6 +293,192 @@ def search_dates(
 
 
 def write_dates_report_atomic(report: DateCalendarReport, destination: Path) -> None:
+    write_json_atomic(report.to_dict(), destination)
+
+
+def flex_window(
+    around: date,
+    flex_days: int,
+    *,
+    today: Optional[date] = None,
+) -> tuple[date, date]:
+    """Inclusive [around-flex, around+flex], clamped to today. Cap is 31 days."""
+    if flex_days < 1:
+        raise ValueError("flex must be at least 1 day")
+    if flex_days > MAX_FLEX_DAYS:
+        raise ValueError(
+            f"flex is at most {MAX_FLEX_DAYS} days (window cap {MAX_DATE_WINDOW_DAYS})"
+        )
+    check = today or date.today()
+    if around < check:
+        raise ValueError(f"around date is in the past: {around.isoformat()}")
+    start = date.fromordinal(around.toordinal() - flex_days)
+    end = date.fromordinal(around.toordinal() + flex_days)
+    if start < check:
+        start = check
+    validate_date_window(start, end, today=check)
+    return start, end
+
+
+def cheapest_priced_day(
+    rows: Sequence[DatePriceRow],
+    around: date,
+) -> Optional[DatePriceRow]:
+    """Cheapest owned calendar day. Ties: closer to around, then earlier date."""
+    priced = [
+        row
+        for row in rows
+        if row.status == "ok" and row.price_eur is not None and row.price_eur > 0
+    ]
+    if not priced:
+        return None
+
+    def sort_key(row: DatePriceRow) -> tuple[float, int, date]:
+        price = row.price_eur if row.price_eur is not None else 0.0
+        delta = abs((row.departure_date - around).days)
+        return (price, delta, row.departure_date)
+
+    return min(priced, key=sort_key)
+
+
+def search_flex(
+    origin: str,
+    destination: str,
+    around: date,
+    flex_days: int,
+    *,
+    adults: int = 1,
+    cabin: FlightCabin = "economy",
+    max_stops: int = 1,
+    trip: str = "one-way",
+    nights: Optional[int] = None,
+    top: int = DEFAULT_TOP,
+    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    sort: FlightSort = "ranked",
+    progress: Optional[Callable[[str], None]] = None,
+    source: Optional[CalendarSource] = None,
+) -> FlexSearchReport:
+    """Calendar window, then at most one shopping POST on the cheapest legal day.
+
+    A compact calendar miss or a window with no priced day is empty: no
+    per-day shopping sweep, no invented fare.
+    """
+    if top <= 0:
+        raise ValueError("top must be a positive integer")
+    if buffer_eur < 0:
+        raise ValueError("baggage buffer must not be negative")
+    if sort not in ("ranked", "fare", "price", "duration", "departure", "arrival"):
+        raise ValueError(
+            "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
+        )
+    start, end = flex_window(around, flex_days)
+    kind, stay = resolve_date_trip(trip, nights)
+    seed = calendar_trip(
+        origin,
+        destination,
+        start,
+        max_stops=max_stops,
+        adults=adults,
+        cabin=cabin,
+        nights=stay,
+    )
+    report_progress = progress or (lambda _: None)
+    stay_label = ""
+    if kind == "rt" and stay is not None:
+        night_word = "night" if stay == 1 else "nights"
+        stay_label = f", rt {stay} {night_word}"
+    report_progress(
+        f"flex: {seed.origin} -> {seed.destination} around {around.isoformat()} "
+        f"±{flex_days} {start.isoformat()} .. {end.isoformat()}{stay_label}"
+    )
+    started = time.perf_counter()
+    client = source or GoogleFlightsHttpSource()
+    backend: FlexFetchBackend = "calendar"
+    days: tuple[DatePriceRow, ...] = ()
+    offers: tuple[FlightOffer, ...] = ()
+    chosen: Optional[date] = None
+    returning: Optional[date] = None
+    error: Optional[SearchError] = None
+    typical: Optional[float] = None
+    try:
+        try:
+            compact = client.fetch_calendar(seed, start, end)
+            days = _rows_from_calendar(start, end, compact, nights=stay)
+        except CompactParseMiss:
+            report_progress("calendar miss; no fare")
+            days = ()
+        except Exception as exc:
+            error = classify_failure(exc)
+            days = _error_rows(start, end, error, nights=stay)
+        else:
+            typical = typical_eur_from_daily_prices([row.price_eur for row in days])
+            winner = cheapest_priced_day(days, around)
+            if winner is None:
+                report_progress("no priced day in flex window; no fare")
+            else:
+                chosen = winner.departure_date
+                returning = winner.return_date
+                shop = calendar_trip(
+                    seed.origin,
+                    seed.destination,
+                    chosen,
+                    max_stops=max_stops,
+                    adults=adults,
+                    cabin=cabin,
+                    nights=stay,
+                )
+                report_progress(f"chosen {chosen.isoformat()}; pricing that day")
+                backend = "calendar_then_sweep"
+                try:
+                    cards = client.fetch(shop)
+                except Exception as exc:
+                    error = classify_failure(exc)
+                    cards = ()
+                eligible = [
+                    offer
+                    for raw in cards
+                    if (
+                        offer := _normalize_offer(
+                            raw,
+                            shop.legs[0].max_stops,
+                            buffer_eur=buffer_eur,
+                        )
+                    )
+                    is not None
+                ]
+                ranked = _rank_offers(eligible, top=top, sort=sort)
+                if typical is not None:
+                    offers = tuple(with_typical(offer, typical) for offer in ranked)
+                else:
+                    offers = ranked
+    finally:
+        client.close()
+    fare = min((offer.price_eur for offer in offers), default=None)
+    label = vs_typical(fare, typical) if fare is not None else None
+    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
+    return FlexSearchReport(
+        searched_at=datetime.now(timezone.utc),
+        origin=seed.origin,
+        destination=seed.destination,
+        around=around,
+        flex_days=flex_days,
+        start_date=start,
+        end_date=end,
+        days=days,
+        chosen_date=chosen,
+        return_date=returning,
+        offers=offers,
+        typical_eur=typical,
+        vs_typical=label,
+        trip=kind,
+        nights=stay,
+        fetch_backend=backend,
+        fetch_ms=fetch_ms,
+        error=error,
+    )
+
+
+def write_flex_report_atomic(report: FlexSearchReport, destination: Path) -> None:
     write_json_atomic(report.to_dict(), destination)
 
 

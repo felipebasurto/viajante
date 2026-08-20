@@ -22,6 +22,7 @@ After `uv sync` and `uv run playwright install chromium`, the entry point is ava
 ```bash
 uv run viajante flights ORIGIN-DEST:YYYY-MM-DD[,YYYY-MM-DD...] [--trip {one-way,rt,multi}] [--max-stops {0,1,2}] [--adults N] [--children N] [--infants-in-seat N] [--infants-on-lap N] [--cabin CABIN] [--currency CODE] [--country CC] [--bags N] [--carry-on] [--top N] [--baggage-buffer EUR] [--sort {ranked,fare,price,duration,departure,arrival}] [--airlines CODES] [--exclude-airlines CODES] [--alliance NAMES] [--exclude-alliance NAMES] [--depart-window START-END] [--fetch {auto,sweep,detail}] [--max-layover HOURS] [--min-layover HOURS] [--max-duration HOURS] [--save FILE]
 uv run viajante dates ORIGIN-DEST --from YYYY-MM-DD --to YYYY-MM-DD [--trip {one-way,rt}] [--nights N] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--fetch {auto,sweep,detail}] [--save FILE]
+uv run viajante flex ORIGIN-DEST --around YYYY-MM-DD --flex N [--nights N] [--trip {one-way,rt}] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--top N] [--save FILE]
 uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [--top N] [--adults N] [--cabin CABIN] [--max-stops {0,1}] [--save FILE]
 uv run viajante airports QUERY
 uv run viajante hotels LOCATION CHECK_IN CHECK_OUT [--source {booking,google}] [--adults N] [--rooms N] [--top N] [--min-rating SCORE] [--entire-home] [--allow-non-refundable] [--compare-cancellation] [--save FILE]
@@ -32,7 +33,7 @@ uv run viajante bench --prompts --timeit-sweep
 
 Route grammar: `MAD-BCN:2026-09-01`, or several dates comma-separated on one route. `MAD-OPO:2026-10-09:2026-10-12` without `--trip` is sugar for outbound + return as two one-way queries. `--trip rt` POSTs one package. You can still pass a return leg as a second route.
 
-MCP (stdio, no auth): `uv sync --extra mcp` then `viajante-mcp`. Tools match the CLI an agent needs: flight filters, dates `nights`/`trip`/`max_stops`, explore `month`/`adults`/`cabin`/`max_stops`, hotels `source=google` by default. Keep the one-search process lock.
+MCP (stdio, no auth): `uv sync --extra mcp` then `viajante-mcp`. Tools match the CLI an agent needs: flight filters, dates `nights`/`trip`/`max_stops`, flex `around`/`flex`/`nights`, explore `month`/`adults`/`cabin`/`max_stops`, hotels `source=google` by default. Keep the one-search process lock.
 
 ## Smoke
 
@@ -43,6 +44,7 @@ uv run python -m unittest discover -s tests -v
 # Fast HTTP shortlist (no Chromium)
 uv run viajante flights MAD-BCN:2026-09-01 --fetch sweep --top 3
 uv run viajante dates MAD-BCN --from 2026-09-01 --to 2026-09-14 --fetch sweep
+uv run viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7 --fetch sweep
 uv run viajante explore MAD --from 2026-09-01 --days 7
 uv run viajante airports MAD
 
@@ -81,7 +83,7 @@ Each route and each comma-separated date is a separate sequential query. `--max-
 
 Use sweep to shortlist a 10–20 route batch. Use `--bags N` / `--carry-on` on sweep when the user asked for bags. Use `--fetch detail` (or a second invocation) when they want times or the full card set. Do not mix backends across legs of one report unless that fallback fired.
 
-For “when is this route cheap?” use `viajante dates ORIGIN-DEST --from --to` (31-day cap, one cheapest-EUR row per departure day, English week calendar plus min/median/max from priced days only). For a stay, add `--nights N` so it is one packaged calendar, not a month of one-day searches. For “where is cheap from this airport?” use `viajante explore ORIGIN --from --days`. Do not brute-force comma date lists or every airport when these commands exist. `viajante airports london` resolves IATA codes offline.
+For “when is this route cheap?” use `viajante dates ORIGIN-DEST --from --to` (31-day cap, one cheapest-EUR row per departure day, English week calendar plus min/median/max from priced days only). For a stay, add `--nights N` so it is one packaged calendar, not a month of one-day searches. For “around this date, ±N days, then price the winner” use `viajante flex ORIGIN-DEST --around DATE --flex N` (calendar grid, then one shopping search on the cheapest legal day). For “where is cheap from this airport?” use `viajante explore ORIGIN --from --days`. Do not brute-force comma date lists or every airport when these commands exist. `viajante airports london` resolves IATA codes offline.
 
 ## Timing
 
@@ -116,7 +118,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 
 ## Agent rules
 
-- Use the CLI or the installed `search_flights` / `search_dates` / `search_hotels` APIs. Do not write a one-off scraper.
+- Use the CLI or the installed `search_flights` / `search_dates` / `search_flex` / `search_hotels` APIs. Do not write a one-off scraper.
 - Run provider queries sequentially.
 - Do not add flags or code that shorten detail or hotel delays or backoff. Sweep already uses a zero inter-query delay; do not parallelize.
 - After rate-limit failures, stop for 30-60 minutes before another search.

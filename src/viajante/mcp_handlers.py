@@ -9,10 +9,18 @@ from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports
 from viajante.carriers import parse_airline_codes, parse_alliances
-from viajante.dates import parse_route_pair, resolve_date_trip, search_dates, validate_date_window
+from viajante.dates import (
+    flex_window,
+    parse_route_pair,
+    resolve_date_trip,
+    search_dates,
+    search_flex,
+    validate_date_window,
+)
 from viajante.explore import DEFAULT_EXPLORE_TOP, search_explore, validate_explore_window
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
+    DEFAULT_TOP,
     FlightSort,
     parse_depart_window,
     parse_flight_plan,
@@ -150,6 +158,44 @@ def search_dates_tool(
             cabin=cabin,
             trip=kind,
             nights=stay,
+        )
+    )
+    return dict(report.to_dict())
+
+
+def search_flex_tool(
+    route: str,
+    around: str,
+    flex: int,
+    *,
+    max_stops: int = 1,
+    adults: int = 1,
+    cabin: FlightCabin = "economy",
+    trip: str = "one-way",
+    nights: Optional[int] = None,
+    top: int = DEFAULT_TOP,
+    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    sort: FlightSort = "ranked",
+) -> Mapping[str, object]:
+    origin, destination = parse_route_pair(route)
+    around_date = date.fromisoformat(around)
+    start, _end = flex_window(around_date, flex)
+    _reject_past((around_date, start), label="around")
+    kind, stay = resolve_date_trip(trip, nights)
+    report = _with_search_lock(
+        lambda: search_flex(
+            origin,
+            destination,
+            around_date,
+            flex,
+            max_stops=max_stops,
+            adults=adults,
+            cabin=cabin,
+            trip=kind,
+            nights=stay,
+            top=top,
+            buffer_eur=baggage_buffer,
+            sort=sort,
         )
     )
     return dict(report.to_dict())

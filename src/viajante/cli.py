@@ -16,14 +16,18 @@ from viajante.bench import run_bench
 from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
+    MAX_FLEX_DAYS,
+    flex_window,
     format_sparkline,
     format_summary_line,
     format_week_calendar,
     parse_route_pair,
     resolve_date_trip,
     search_dates,
+    search_flex,
     validate_date_window,
     write_dates_report_atomic,
+    write_flex_report_atomic,
 )
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
@@ -50,6 +54,7 @@ from viajante.models import (
     CancellationEvidence,
     DateCalendarReport,
     ExploreReport,
+    FlexSearchReport,
     FlightOffer,
     FlightQuery,
     HotelOffer,
@@ -89,6 +94,12 @@ Examples:
   viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --fetch sweep
   viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
+"""
+
+FLEX_EXAMPLES = """\
+Examples:
+  viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
+  viajante flex JFK-LHR --around 2026-09-15 --flex 3
 """
 
 EXPLORE_EXAMPLES = """\
@@ -779,6 +790,94 @@ def _run_dates(args: argparse.Namespace) -> int:
     return _dates_exit_code(report)
 
 
+def _flex_exit_code(report: FlexSearchReport) -> int:
+    if report.error is not None:
+        if report.chosen_date is None:
+            return 2
+        return 3
+    return 0
+
+
+def _print_flex_report(report: FlexSearchReport) -> None:
+    stay = ""
+    if report.trip == "rt" and report.nights is not None:
+        night_word = "night" if report.nights == 1 else "nights"
+        stay = f"  (rt, {report.nights} {night_word})"
+    print(
+        f"\n=== {report.origin} -> {report.destination}  around {report.around.isoformat()} "
+        f"±{report.flex_days}  {report.start_date.isoformat()} .. {report.end_date.isoformat()}"
+        f"{stay} ==="
+    )
+    if report.error is not None and report.chosen_date is None:
+        print(f"  ERROR: {report.error.message}")
+        return
+    if report.chosen_date is None:
+        print("  (no priced day in window)")
+        return
+    returning = (
+        f"  return {report.return_date.isoformat()}" if report.return_date is not None else ""
+    )
+    print(f"  chosen {report.chosen_date.isoformat()}{returning}")
+    if not report.offers:
+        if report.error is not None:
+            print(f"  ERROR: {report.error.message}")
+        else:
+            print("  (no eligible offers)")
+        return
+    for offer in report.offers:
+        times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
+        print(
+            f"  {_format_ranking_columns(offer)}{_format_typical(offer)}"
+            f"{_format_parsed_bags(offer)}  "
+            f"{offer.duration or '?':<12} "
+            f"{_format_stops_with_layover(offer):<16} {times:<18} "
+            f"{_format_airline(offer.airline)}"
+        )
+    print("\nVerify checked baggage on Google Flights before booking.")
+
+
+def _run_flex(args: argparse.Namespace) -> int:
+    try:
+        origin, destination = parse_route_pair(args.route)
+        around = _parse_iso_date(args.around, "--around")
+        if args.flex_days < 1:
+            raise ValueError("--flex must be at least 1")
+        if args.adults < 1:
+            raise ValueError("--adults must be at least 1")
+        if args.top <= 0:
+            raise ValueError("--top must be a positive integer")
+        if args.baggage_buffer < 0:
+            raise ValueError("--baggage-buffer must not be negative")
+        start, _end = flex_window(around, args.flex_days)
+        trip, nights = resolve_date_trip(args.trip, args.nights)
+        FlightQuery(origin, destination, start, max_stops=args.max_stops, adults=args.adults)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    report = search_flex(
+        origin,
+        destination,
+        around,
+        args.flex_days,
+        adults=args.adults,
+        cabin=args.cabin,
+        max_stops=args.max_stops,
+        trip=trip,
+        nights=nights,
+        top=args.top,
+        buffer_eur=args.baggage_buffer,
+        sort=args.sort,
+        progress=lambda line: print(line, file=sys.stderr),
+    )
+    _print_flex_report(report)
+    if args.save:
+        destination_path = Path(args.save)
+        write_flex_report_atomic(report, destination_path)
+        print(f"\nSaved {destination_path}")
+    return _flex_exit_code(report)
+
+
 def _month_start(value: str) -> date:
     try:
         year_text, month_text = value.split("-", 1)
@@ -1174,6 +1273,94 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write JSON report atomically to FILE",
     )
 
+    flex = sub.add_parser(
+        "flex",
+        help="Cheapest day in a ±N window, then one shopping search (quoted in EUR)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=FLEX_EXAMPLES,
+    )
+    flex.add_argument("route", help="ORIGIN-DESTINATION (IATA codes)")
+    flex.add_argument(
+        "--around",
+        required=True,
+        help="Anchor departure date (YYYY-MM-DD)",
+    )
+    flex.add_argument(
+        "--flex",
+        dest="flex_days",
+        type=int,
+        required=True,
+        metavar="N",
+        help=f"Days either side of --around (1–{MAX_FLEX_DAYS}; window cap {MAX_DATE_WINDOW_DAYS})",
+    )
+    flex.add_argument(
+        "--trip",
+        default="one-way",
+        type=normalize_trip_kind,
+        metavar="{one-way,rt}",
+        help=(
+            "Trip kind (default one-way). rt/round-trip needs --nights. "
+            "--nights without --trip is rt. multi is not supported."
+        ),
+    )
+    flex.add_argument(
+        "--nights",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Stay length in nights for a packaged round-trip. Implies --trip rt.",
+    )
+    flex.add_argument(
+        "--max-stops",
+        type=int,
+        default=1,
+        choices=[0, 1, 2],
+        help="Maximum stops (default 1). 2 means two-or-fewer.",
+    )
+    flex.add_argument(
+        "--adults",
+        type=int,
+        default=1,
+        help="Number of adults (default 1)",
+    )
+    flex.add_argument(
+        "--cabin",
+        default="economy",
+        choices=["economy", "premium-economy", "business", "first"],
+        help="Cabin class (default economy)",
+    )
+    flex.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP,
+        help=f"Offers to show from the chosen day (default {DEFAULT_TOP})",
+    )
+    flex.add_argument(
+        "--baggage-buffer",
+        type=int,
+        default=DEFAULT_BAGGAGE_BUFFER_EUR,
+        metavar="EUR",
+        help=(f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR})"),
+    )
+    flex.add_argument(
+        "--sort",
+        default="ranked",
+        choices=FLIGHT_SORTS,
+        help="Offer order for the chosen day (default ranked)",
+    )
+    flex.add_argument(
+        "--fetch",
+        default="sweep",
+        choices=["auto", "sweep", "detail"],
+        help="Uses the date-grid RPC plus one HTTP shopping POST. detail is accepted and ignored.",
+    )
+    flex.add_argument(
+        "--save",
+        default=None,
+        metavar="FILE",
+        help="Write JSON report atomically to FILE",
+    )
+
     explore = sub.add_parser(
         "explore",
         help="Cheap destinations from one origin (quoted in EUR)",
@@ -1295,6 +1482,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_hotels(args)
     if args.cmd == "dates":
         return _run_dates(args)
+    if args.cmd == "flex":
+        return _run_flex(args)
     if args.cmd == "explore":
         return _run_explore(args)
     if args.cmd == "airports":

@@ -77,7 +77,7 @@ Non-English prompts must plan English fetch `locale` / city strings.
   airports lookup, cheapest Friday, invalid IATA, missing date.
 - **medium**: packaged RT vs two one-ways, open jaw, max-stops, cabin,
   adults, explore, dates calendar, hotel nights / rooms.
-- **hard**: flexible dates, layover caps, night-arrival clocks, packaged
+- **hard**: flexible dates, flex around-date window, layover caps, night-arrival clocks, packaged
   RT return legs, rooms occupancy, refuse booking/trains/cars, destinations
   and prices only.
 - **insane**: multi-hop fantasy that still has a contract, including

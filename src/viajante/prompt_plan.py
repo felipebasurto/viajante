@@ -280,18 +280,46 @@ _MONTHS = {
     "december": 12,
     "diciembre": 12,
 }
+_MONTH_NUM = {
+    **_MONTHS,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "sept": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
 
 _IATA_PAIR = re.compile(r"(?<![A-Za-z0-9])([A-Z]{3})-([A-Z]{3})(?![A-Za-z0-9])")
 _ISO_DATE = re.compile(r"(?<![0-9])(20\d{2}-\d{2}-\d{2})(?![0-9])")
 _FLAG = re.compile(
     r"--(trip|max-stops|adults|children|infants-in-seat|infants-on-lap|cabin|rooms|"
-    r"max-layover|min-layover|max-duration|from|days|nights|fetch|sort|"
+    r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|currency|country|airlines|exclude-airlines|alliance|"
     r"exclude-alliance)\s+(\S+)",
     re.IGNORECASE,
 )
 _SPANISH_DATE = re.compile(
     r"\b(\d{1,2})\s+de\s+([a-záéíóú]+)\s+(?:de\s+)?(20\d{2})\b",
+    re.IGNORECASE,
+)
+_EN_MONTH = (
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?"
+)
+_EN_DMY = re.compile(
+    rf"\b(\d{{1,2}})\s+({_EN_MONTH})\.?\s+(20\d{{2}})\b",
+    re.IGNORECASE,
+)
+_EN_MDY = re.compile(
+    rf"\b({_EN_MONTH})\.?\s+(\d{{1,2}}),?\s+(20\d{{2}})\b",
     re.IGNORECASE,
 )
 _MONTH_YEAR = re.compile(
@@ -417,6 +445,7 @@ _ROOMS_EN = re.compile(r"(\d+)\s+rooms?")
 _DAYS_ES = re.compile(r"(\d+)\s*d[ií]as")
 _DAYS_EN = re.compile(r"(\d+)\s+days")
 _NIGHTS = re.compile(r"(\d+)\s*(?:nights?|noches?)")
+_FLEX_DAYS = re.compile(r"\bflex\s+(\d+)(?:\s+days?)?\b")
 _NO_ASIA = re.compile(r"\b(no asia|not asia)\b")
 _REQUIRE_CLOCK = re.compile(r"mostrar hora|clock not null|hora, no null|arrival(?:s)? must show")
 _NIGHT_WORD = re.compile(r"\b(noche|night|nocturn)")
@@ -601,6 +630,7 @@ class PromptPlan:
     route_specs: Tuple[str, ...] = ()
     notes: str = ""
     locale: str = FETCH_LANGUAGE
+    flex_days: Optional[int] = None
 
     def to_dict(self) -> dict[str, Any]:
         def iso(value: Optional[date]) -> Optional[str]:
@@ -660,6 +690,7 @@ class PromptPlan:
             "route_specs": list(self.route_specs),
             "notes": self.notes,
             "locale": self.locale,
+            "flex_days": self.flex_days,
         }
 
     def matches(self, expect: Mapping[str, Any]) -> tuple[bool, str]:
@@ -727,6 +758,16 @@ def _iso_dates(text: str) -> list[date]:
         if month is None:
             continue
         dates.append(date(int(match.group(3)), month, int(match.group(1))))
+    for match in _EN_DMY.finditer(text):
+        month = _MONTH_NUM.get(match.group(2).casefold())
+        if month is None:
+            continue
+        dates.append(date(int(match.group(3)), month, int(match.group(1))))
+    for match in _EN_MDY.finditer(text):
+        month = _MONTH_NUM.get(match.group(1).casefold())
+        if month is None:
+            continue
+        dates.append(date(int(match.group(3)), month, int(match.group(2))))
     # de-dupe, preserve order
     seen: set[date] = set()
     unique: list[date] = []
@@ -927,6 +968,28 @@ def _is_explore(folded: str) -> bool:
 
 def _is_dates_calendar(folded: str) -> bool:
     return bool(_DATES_CALENDAR.search(folded))
+
+
+def _flex_days_value(folded: str, flags: Mapping[str, str]) -> Optional[int]:
+    if "flex" in flags:
+        try:
+            value = int(flags["flex"])
+        except ValueError:
+            return None
+        return value if value >= 1 else None
+    match = _FLEX_DAYS.search(folded)
+    if match is None:
+        return None
+    value = int(match.group(1))
+    return value if value >= 1 else None
+
+
+def _is_flex_window(folded: str, flags: Mapping[str, str], dates: Sequence[date]) -> bool:
+    if not dates:
+        return False
+    if "around the world" in folded or "vuelta al mundo" in folded:
+        return False
+    return _flex_days_value(folded, flags) is not None
 
 
 def _is_hotels(folded: str) -> bool:
@@ -1778,6 +1841,13 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             days = 7
         if origin is None:
             origin = _first_city_iata(folded)
+    elif _is_flex_window(folded, flags, dates):
+        intent = "flex"
+        span = _flex_days_value(folded, flags)
+        anchor = dates[0]
+        if span is not None:
+            date_from = date.fromordinal(anchor.toordinal() - span)
+            date_to = date.fromordinal(anchor.toordinal() + span)
     elif _is_dates_calendar(folded):
         intent = "dates"
         if date_from is None and departure is not None:
@@ -1882,6 +1952,30 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_airports=tuple(exclude_airports),
             no_overnight=tuple(no_overnight),
             refuse=all_refuse,
+        )
+
+    if intent == "flex":
+        date_trip = (
+            "rt" if nights_stay is not None else (trip if trip in {"one-way", "rt"} else "one-way")
+        )
+        return PromptPlan(
+            intent="flex",
+            origin=origin,
+            destination=destination,
+            departure_date=dates[0] if dates else departure,
+            date_from=date_from,
+            date_to=date_to,
+            trip=date_trip,
+            adults=adults,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
+            cabin=cabin,
+            max_stops=max_stops,
+            days=nights_stay,
+            flex_days=_flex_days_value(folded, flags),
+            route_specs=(),
+            locale=FETCH_LANGUAGE,
         )
 
     if intent == "dates":

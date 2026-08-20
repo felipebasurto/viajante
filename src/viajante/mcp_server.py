@@ -6,11 +6,12 @@ import sys
 from typing import Optional, Sequence
 
 from viajante.explore import DEFAULT_EXPLORE_TOP
-from viajante.flights import DEFAULT_BAGGAGE_BUFFER_EUR
+from viajante.flights import DEFAULT_BAGGAGE_BUFFER_EUR, DEFAULT_TOP
 from viajante.mcp_handlers import (
     lookup_airports_tool,
     search_dates_tool,
     search_explore_tool,
+    search_flex_tool,
     search_flights_tool,
     search_hotels_tool,
 )
@@ -21,7 +22,7 @@ viajante-mcp — stdio MCP server for local flight and hotel search.
 Install:  uv sync --extra mcp
 Run:      viajante-mcp
 
-Tools: search_flights, search_dates, search_explore, search_hotels, lookup_airports.
+Tools: search_flights, search_dates, search_flex, search_explore, search_hotels, lookup_airports.
 No auth. One search at a time in this process.
 """
 
@@ -108,6 +109,36 @@ def build_server():
                 cabin=cabin,  # type: ignore[arg-type]
                 trip=trip,
                 nights=nights,
+            )
+        )
+
+    @server.tool()
+    def search_flex(
+        route: str,
+        around: str,
+        flex: int,
+        max_stops: int = 1,
+        adults: int = 1,
+        cabin: str = "economy",
+        trip: str = "one-way",
+        nights: int | None = None,
+        top: int = DEFAULT_TOP,
+        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        sort: str = "ranked",
+    ) -> dict:
+        return dict(
+            search_flex_tool(
+                route,
+                around,
+                flex,
+                max_stops=max_stops,
+                adults=adults,
+                cabin=cabin,  # type: ignore[arg-type]
+                trip=trip,
+                nights=nights,
+                top=top,
+                baggage_buffer=baggage_buffer,
+                sort=sort,  # type: ignore[arg-type]
             )
         )
 

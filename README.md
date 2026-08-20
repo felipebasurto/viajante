@@ -36,7 +36,7 @@ uv sync --extra mcp
 uv run viajante-mcp
 ```
 
-Five tools. Stdio, no auth. One process lock, so two searches cannot overlap. `lookup_airports` stays unlocked. Hotel search defaults to Google on MCP; Booking stays opt-in. `viajante-mcp --help` prints the tool list.
+Six tools. Stdio, no auth. One process lock, so two searches cannot overlap. `lookup_airports` stays unlocked. Hotel search defaults to Google on MCP; Booking stays opt-in. `viajante-mcp --help` prints the tool list.
 
 ## Flights
 
@@ -83,6 +83,20 @@ uv run viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
 ```
 
 English week lines plus a sparkline of owned daily prices. Empty days are `·` in the grid (and `—` in the row list), never a guessed fare. `min` / `median` / `max` / cheapest date are computed only from priced days and omitted when fewer than three days have a price. The window is at most 31 days. Default is one-way. `--nights 5` (or `--trip rt --nights 5`) prices a packaged stay of that length for each outbound day. This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). `--fetch detail` is accepted and ignored. The `--save` JSON `summary` block is the same numbers.
+
+## Flex
+
+```bash
+uv run viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
+```
+
+```text
+=== BOS -> LHR  around 2026-09-12 ±3  2026-09-09 .. 2026-09-15  (rt, 7 nights) ===
+  chosen 2026-09-10  return 2026-09-17
+      350 €  below typical 440 €  7 hr         direct           18:00 -> 06:00     British Airways
+```
+
+`--around` plus `--flex N` is the inclusive window (at most 31 days). The owned date-grid RPC finds the cheapest legal departure in that window, then one shopping POST prices that day. `--nights N` (or `--trip rt --nights N`) packages the stay. A calendar miss or a window with no priced day is empty: no per-day shopping sweep, no invented fare. `typical_eur` is the median of priced days in that same grid when there are at least three; `vs_typical` compares the shopping fare to that median. Fetch locale stays English.
 
 ## Explore
 
@@ -144,7 +158,7 @@ The CLI validates the route before anything starts. HTTP paths reuse one keep-al
 
 ## Save JSON
 
-For a cheapest-per-day grid, prefer `viajante dates`. A comma list still dumps full offer blocks when you need the cards:
+For a cheapest-per-day grid, prefer `viajante dates`. For around a date ±N, prefer `viajante flex` (calendar, then one shopping search). A comma list still dumps full offer blocks when you need the cards:
 
 ```bash
 uv run viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --save results/dates.viajante.json
@@ -336,7 +350,7 @@ for result in report.queries:
             print(offer.total_price_eur, offer.title)
 ```
 
-`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
+`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_flex(..., around=..., flex=3)` is that grid plus one shopping search on the cheapest legal day. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
 
 ## Limits
 
@@ -381,7 +395,7 @@ The graded prompt battery is a separate quality contract, not `score_ms`:
 uv run viajante bench --prompts
 ```
 
-178 prompts, smoke → savage (includes `i18n.jsonl` on brutal). Smoke→insane stay English; savage and i18n add multilingual hardness while the plan still emits English IATA and English flight fetch locale. International origins. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy). Each row prints `plan_ms`; the summary prints `plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. That is not `score_ms` and not `judge_mean`. `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1–100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Optional live find-flights timer: `VIAJANTE_BENCH_SWEEP=1` or `viajante bench --prompts --timeit-sweep` (first 8 planned IATA+date flights, HTTP sweep, no Playwright). Off by default; skipped print is `sweep_ms:` blank. Live Google is never the keep metric. Do not delete `tests/prompts/` to “win” the speed loop. Holdout (`viajante bench --prompts --holdout`) is not in that weekday battery.
+180 prompts, smoke → savage (includes `i18n.jsonl` on brutal). Smoke→insane stay English; savage and i18n add multilingual hardness while the plan still emits English IATA and English flight fetch locale. International origins. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy). Each row prints `plan_ms`; the summary prints `plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. That is not `score_ms` and not `judge_mean`. `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1–100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Optional live find-flights timer: `VIAJANTE_BENCH_SWEEP=1` or `viajante bench --prompts --timeit-sweep` (first 8 planned IATA+date flights, HTTP sweep, no Playwright). Off by default; skipped print is `sweep_ms:` blank. Live Google is never the keep metric. Do not delete `tests/prompts/` to “win” the speed loop. Holdout (`viajante bench --prompts --holdout`) is not in that weekday battery.
 
 ## Privacy
 

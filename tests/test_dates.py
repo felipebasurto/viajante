@@ -12,13 +12,17 @@ from viajante.cli import main
 from viajante.dates import (
     EMPTY_DAY_MARK,
     MAX_DATE_WINDOW_DAYS,
+    MAX_FLEX_DAYS,
     calendar_trip,
+    cheapest_priced_day,
+    flex_window,
     format_sparkline,
     format_summary_line,
     format_week_calendar,
     parse_route_pair,
     resolve_date_trip,
     search_dates,
+    search_flex,
     validate_date_window,
 )
 from viajante.google_flights import GoogleFlightsRejected, RawFlightCard
@@ -597,6 +601,220 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("BOS -> LHR", output)
         self.assertIn("rt, 5 nights", output)
         self.assertIn("410 €", output)
+
+
+class FlexWindowTests(unittest.TestCase):
+    def test_around_plus_minus_three(self) -> None:
+        start, end = flex_window(date(2026, 9, 12), 3, today=date(2026, 8, 20))
+        self.assertEqual(start, date(2026, 9, 9))
+        self.assertEqual(end, date(2026, 9, 15))
+        self.assertEqual((end - start).days + 1, 7)
+        self.assertLessEqual((end - start).days + 1, MAX_DATE_WINDOW_DAYS)
+
+    def test_past_around_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            flex_window(date(2026, 8, 1), 3, today=date(2026, 8, 20))
+
+    def test_flex_zero_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            flex_window(date(2026, 9, 12), 0, today=date(2026, 8, 20))
+
+    def test_flex_over_cap_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            flex_window(date(2026, 9, 12), MAX_FLEX_DAYS + 1, today=date(2026, 8, 20))
+
+    def test_start_clamps_to_today(self) -> None:
+        start, end = flex_window(date(2026, 8, 21), 3, today=date(2026, 8, 20))
+        self.assertEqual(start, date(2026, 8, 20))
+        self.assertEqual(end, date(2026, 8, 24))
+
+    def test_cheapest_day_breaks_ties_toward_the_anchor(self) -> None:
+        rows = (
+            DatePriceRow(departure_date=date(2026, 9, 9), price_eur=100.0, status="ok"),
+            DatePriceRow(departure_date=date(2026, 9, 13), price_eur=100.0, status="ok"),
+            DatePriceRow(departure_date=date(2026, 9, 11), price_eur=120.0, status="ok"),
+        )
+        winner = cheapest_priced_day(rows, date(2026, 9, 12))
+        assert winner is not None
+        self.assertEqual(winner.departure_date, date(2026, 9, 13))
+
+
+class FlexSearchTests(unittest.TestCase):
+    def test_calendar_picks_cheapest_and_shops_once(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 9), 520.0, date(2026, 9, 16)),
+                CompactCalendarDay(date(2026, 9, 10), 388.0, date(2026, 9, 17)),
+                CompactCalendarDay(date(2026, 9, 11), 410.0, date(2026, 9, 18)),
+                CompactCalendarDay(date(2026, 9, 12), 450.0, date(2026, 9, 19)),
+                CompactCalendarDay(date(2026, 9, 13), 430.0, date(2026, 9, 20)),
+                CompactCalendarDay(date(2026, 9, 14), None, date(2026, 9, 21)),
+                CompactCalendarDay(date(2026, 9, 15), 500.0, date(2026, 9, 22)),
+            ),
+            cards={
+                date(2026, 9, 10): (
+                    RawFlightCard(
+                        airline="British Airways",
+                        departure="18:00",
+                        arrival="06:00",
+                        duration="7 hr",
+                        stops="Nonstop",
+                        price="€350",
+                    ),
+                ),
+            },
+        )
+        report = search_flex(
+            "BOS",
+            "LHR",
+            date(2026, 9, 12),
+            3,
+            nights=7,
+            source=source,
+            buffer_eur=0,
+        )
+        self.assertEqual(report.chosen_date, date(2026, 9, 10))
+        self.assertEqual(report.return_date, date(2026, 9, 17))
+        self.assertEqual(report.trip, "rt")
+        self.assertEqual(report.nights, 7)
+        self.assertEqual(report.locale, "en")
+        self.assertEqual(source.calls, 1)
+        self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(report.fetch_backend, "calendar_then_sweep")
+        self.assertEqual(report.offers[0].price_eur, 350.0)
+        self.assertEqual(report.typical_eur, 440.0)
+        self.assertEqual(report.vs_typical, "below")
+        self.assertEqual(report.offers[0].typical_eur, 440.0)
+        self.assertEqual(report.offers[0].vs_typical, "below")
+        self.assertTrue(source.closed)
+
+    def test_calendar_miss_does_not_shop_or_invent(self) -> None:
+        source = FakeCalendarSource(CompactParseMiss("no wrb.fr calendar payload"))
+        report = search_flex("BOS", "LHR", date(2026, 9, 12), 3, nights=7, source=source)
+        self.assertIsNone(report.chosen_date)
+        self.assertEqual(report.offers, ())
+        self.assertIsNone(report.typical_eur)
+        self.assertIsNone(report.vs_typical)
+        self.assertEqual(source.fetch_calls, 0)
+        self.assertEqual(report.fetch_backend, "calendar")
+        self.assertEqual(report.days, ())
+        self.assertTrue(source.closed)
+
+    def test_empty_window_does_not_invent(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 9), None),
+                CompactCalendarDay(date(2026, 9, 12), None),
+                CompactCalendarDay(date(2026, 9, 15), None),
+            )
+        )
+        report = search_flex("JFK", "LHR", date(2026, 9, 12), 3, source=source)
+        self.assertIsNone(report.chosen_date)
+        self.assertEqual(report.offers, ())
+        self.assertIsNone(report.typical_eur)
+        self.assertEqual(source.fetch_calls, 0)
+        self.assertEqual(len(report.days), 7)
+        self.assertTrue(all(row.status == "empty" for row in report.days))
+
+    def test_thin_grid_omits_typical(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 12), 410.0),
+                CompactCalendarDay(date(2026, 9, 13), 388.0),
+            ),
+            cards={
+                date(2026, 9, 13): (
+                    RawFlightCard(
+                        airline="Norse Atlantic",
+                        departure="21:00",
+                        arrival="08:00",
+                        duration="7 hr",
+                        stops="Nonstop",
+                        price="€388",
+                    ),
+                ),
+            },
+        )
+        report = search_flex("JFK", "LHR", date(2026, 9, 12), 3, source=source, buffer_eur=0)
+        self.assertEqual(report.chosen_date, date(2026, 9, 13))
+        self.assertEqual(report.offers[0].price_eur, 388.0)
+        self.assertIsNone(report.typical_eur)
+        self.assertIsNone(report.vs_typical)
+        self.assertIsNone(report.offers[0].typical_eur)
+
+
+class FlexCliTests(unittest.TestCase):
+    def test_flex_help_mentions_the_window(self) -> None:
+        buffer = io.StringIO()
+        with patch("sys.stdout", buffer):
+            code = main(["flex", "--help"])
+        self.assertEqual(code, 0)
+        help_text = buffer.getvalue()
+        self.assertIn("--around", help_text)
+        self.assertIn("--flex", help_text)
+        self.assertIn("--nights", help_text)
+        self.assertIn("viajante flex BOS-LHR", help_text)
+        self.assertIn(str(MAX_FLEX_DAYS), help_text)
+
+    def test_past_around_is_rejected_before_search(self) -> None:
+        with patch("viajante.cli.search_flex") as search:
+            code = main(
+                [
+                    "flex",
+                    "BOS-LHR",
+                    "--around",
+                    "2020-01-01",
+                    "--flex",
+                    "3",
+                ]
+            )
+        self.assertEqual(code, 1)
+        search.assert_not_called()
+
+    def test_prints_chosen_day_and_fare(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 9), 520.0, date(2026, 9, 16)),
+                CompactCalendarDay(date(2026, 9, 10), 388.0, date(2026, 9, 17)),
+                CompactCalendarDay(date(2026, 9, 11), 410.0, date(2026, 9, 18)),
+            ),
+            cards={
+                date(2026, 9, 10): (
+                    RawFlightCard(
+                        airline="British Airways",
+                        departure="18:00",
+                        arrival="06:00",
+                        duration="7 hr",
+                        stops="Nonstop",
+                        price="€350",
+                    ),
+                ),
+            },
+        )
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(
+                    [
+                        "flex",
+                        "BOS-LHR",
+                        "--around",
+                        "2026-09-12",
+                        "--flex",
+                        "3",
+                        "--nights",
+                        "7",
+                        "--baggage-buffer",
+                        "0",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("BOS -> LHR", output)
+        self.assertIn("around 2026-09-12", output)
+        self.assertIn("chosen 2026-09-10", output)
+        self.assertIn("350 €", output)
+        self.assertIn("rt, 7 nights", output)
 
 
 if __name__ == "__main__":

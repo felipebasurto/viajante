@@ -131,6 +131,20 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertEqual(plan.route_specs, ())
         self.assertNotEqual(len(plan.route_specs), 30)
 
+    def test_flex_around_window_then_one_packaged_search(self) -> None:
+        plan = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights")
+        self.assertEqual(plan.intent, "flex")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.departure_date, date(2026, 9, 12))
+        self.assertEqual(plan.date_from, date(2026, 9, 9))
+        self.assertEqual(plan.date_to, date(2026, 9, 15))
+        self.assertEqual(plan.flex_days, 3)
+        self.assertEqual(plan.days, 7)
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.locale, "en")
+        self.assertEqual(plan.route_specs, ())
+
     def test_hotels_tokyo_nights(self) -> None:
         plan = plan_prompt("Hotel in Tokyo from 2026-12-04 to 2026-12-07")
         self.assertEqual(plan.intent, "hotels")

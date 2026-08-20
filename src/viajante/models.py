@@ -745,6 +745,81 @@ class DateCalendarReport:
         return payload
 
 
+FlexFetchBackend = Literal["calendar", "calendar_then_sweep"]
+
+
+@dataclass(frozen=True)
+class FlexSearchReport:
+    """Calendar window pick plus at most one shopping search. Never invents a fare."""
+
+    searched_at: datetime
+    origin: str
+    destination: str
+    around: date
+    flex_days: int
+    start_date: date
+    end_date: date
+    days: Tuple[DatePriceRow, ...]
+    chosen_date: Optional[date] = None
+    return_date: Optional[date] = None
+    offers: Tuple[FlightOffer, ...] = ()
+    typical_eur: Optional[float] = None
+    vs_typical: Optional[VsTypical] = None
+    locale: str = "en"
+    currency: str = "EUR"
+    trip: DateTripKind = "one-way"
+    nights: Optional[int] = None
+    fetch_backend: Optional[FlexFetchBackend] = "calendar"
+    fetch_ms: Optional[int] = None
+    error: Optional[SearchError] = None
+    schema_version: int = field(init=False, default=1)
+
+    def __post_init__(self) -> None:
+        if self.flex_days < 1:
+            raise ValueError("flex_days must be at least 1")
+        if self.typical_eur is not None and self.typical_eur <= 0:
+            raise ValueError("typical_eur must be positive")
+        if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
+            raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
+        if self.vs_typical is not None and self.typical_eur is None:
+            raise ValueError("vs_typical requires typical_eur")
+        if self.searched_at.tzinfo is not None:
+            object.__setattr__(
+                self,
+                "searched_at",
+                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
+            )
+
+    def to_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "currency": self.currency,
+            "locale": self.locale,
+            "origin": self.origin,
+            "destination": self.destination,
+            "around": self.around.isoformat(),
+            "flex_days": self.flex_days,
+            "from": self.start_date.isoformat(),
+            "to": self.end_date.isoformat(),
+            "trip": self.trip,
+            "chosen_date": self.chosen_date.isoformat() if self.chosen_date else None,
+            "typical_eur": self.typical_eur,
+            "vs_typical": self.vs_typical,
+            "fetch_backend": self.fetch_backend,
+            "fetch_ms": self.fetch_ms,
+            "days": [row.to_dict() for row in self.days],
+            "offers": [offer.to_dict() for offer in self.offers],
+        }
+        if self.nights is not None:
+            payload["nights"] = self.nights
+        if self.return_date is not None:
+            payload["return_date"] = self.return_date.isoformat()
+        if self.error is not None:
+            payload["error"] = self.error.to_dict()
+        return payload
+
+
 @dataclass(frozen=True)
 class ExploreDestination:
     iata: str

@@ -15,6 +15,7 @@ from viajante.mcp_handlers import (
     lookup_airports_tool,
     search_dates_tool,
     search_explore_tool,
+    search_flex_tool,
     search_flights_tool,
     search_hotels_tool,
 )
@@ -177,6 +178,30 @@ class McpHandlerTests(unittest.TestCase):
                 search_dates_tool("MAD-BCN", PAST, FUTURE)
         search.assert_not_called()
 
+    def test_search_flex_calendar_then_one_shop(self) -> None:
+        fake = _report(
+            chosen_date=FUTURE,
+            offers=[],
+            typical_eur=None,
+            vs_typical=None,
+            trip="rt",
+            nights=7,
+        )
+        with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
+            payload = search_flex_tool("BOS-LHR", FUTURE, 3, nights=7)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["trip"], "rt")
+        self.assertEqual(kwargs["nights"], 7)
+        self.assertEqual(search.call_args.args[3], 3)
+        self.assertEqual(payload["nights"], 7)
+        self.assertNotIn("fetch", kwargs)
+
+    def test_search_flex_past_around_fails_before_search(self) -> None:
+        with patch("viajante.mcp_handlers.search_flex") as search:
+            with self.assertRaises(ValueError):
+                search_flex_tool("BOS-LHR", PAST, 3)
+        search.assert_not_called()
+
     def test_search_explore_defaults_match_cli_and_accepts_filters(self) -> None:
         fake = _report(destinations=[])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
@@ -300,6 +325,7 @@ class McpServerImportTests(unittest.TestCase):
             [
                 "search_flights",
                 "search_dates",
+                "search_flex",
                 "search_explore",
                 "search_hotels",
                 "lookup_airports",

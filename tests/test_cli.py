@@ -698,6 +698,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("flights", help_text)
         self.assertIn("hotels", help_text)
         self.assertIn("dates", help_text)
+        self.assertIn("flex", help_text)
         self.assertIn("explore", help_text)
         self.assertIn("airports", help_text)
         self.assertIn("bench", help_text)
@@ -758,6 +759,7 @@ class PublicApiTests(unittest.TestCase):
             "PropertyTypeEvidence",
             "search_hotels",
             "search_dates",
+            "search_flex",
             "search_explore",
             "lookup_airports",
         ):
@@ -768,6 +770,7 @@ class PublicApiTests(unittest.TestCase):
                 "CancellationEvidence",
                 "DateCalendarReport",
                 "ExploreReport",
+                "FlexSearchReport",
                 "FlightLeg",
                 "FlightQuery",
                 "HotelQuery",
@@ -780,6 +783,7 @@ class PublicApiTests(unittest.TestCase):
                 "lookup_airports",
                 "search_dates",
                 "search_explore",
+                "search_flex",
                 "search_flights",
                 "search_hotels",
             },
