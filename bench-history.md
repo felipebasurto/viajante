@@ -21,12 +21,14 @@ Checked-in `bench-baseline.json` is still **1603**. Do not rewrite it.
 | 21 | **loss** | 561 | 571 | +10 | Path IATA marshal; `importlib.resources` off unittest |
 | 23 | **loss** | 549 | 572 | +23 | known-IATA frozenset; `plan_prompt` pair scan once |
 | **25** | **loss** | **557** | **580** | **+23** | lazy selectolax / Lexbor off `google_flights` import |
+| **26** | **loss** | **589** | **570** | −19 | IATA marshal rows as tuples; `Airport` only on lookup hits |
 
 #17 is the large one: unittest was importing the MCP SDK.
 Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
 #21 re-run after #20: score_ms 561→578/571 (not strictly below warm). Cold `--help` 278→267 (did not veto). Reverted.
 #23: score_ms 549→572/578 (not strictly below warm). Cold `--help` 285→280 (did not veto). Reverted.
 #25: score_ms 557→580/584 (not strictly below warm). `parse_ms` 2→20 (parent bench process paid Lexbor at corpus parse; unittest subprocess still paid it). Cold `--help` 277→260 (did not veto). Reverted.
+#26: score_ms 589→581/570 (both below warm). Cold `--help` 290→394 (veto). Reverted.
 
 ## Quality already landed (do not redo)
 
