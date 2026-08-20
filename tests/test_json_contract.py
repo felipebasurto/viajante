@@ -18,6 +18,8 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    StopsCompare,
+    StopsCompareSide,
 )
 
 REPORT_KEYS = {
@@ -63,6 +65,19 @@ OFFER_KEYS = {
     "legs",
 }
 ERROR_KEYS = {"code", "message"}
+STOPS_COMPARE_SIDE_KEYS = {
+    "airline",
+    "departure",
+    "arrival",
+    "price",
+    "price_eur",
+    "duration",
+    "duration_hours",
+    "stops",
+    "stops_count",
+    "layover_city",
+    "layover_hours",
+}
 FLIGHT_FETCH_BACKENDS = {"sweep", "detail", "sweep_then_detail"}
 FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
 
@@ -357,6 +372,79 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(len(data["offers"][0]["legs"]), 2)
         self.assertEqual(data["offers"][0]["legs"][1]["departure"], "14:00")
         self.assertEqual(data["offers"][0]["legs"][1]["arrival"], "16:20")
+        self.assertNotIn("stops_compare", data)
+
+    def test_stops_compare_is_an_extra_success_key(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        nonstop = StopsCompareSide.from_offer(
+            FlightOffer(
+                airline="Vueling",
+                departure="07:15",
+                arrival="08:40",
+                price="€39",
+                price_eur=39.0,
+                duration="1 hr 25 min",
+                duration_hours=1.42,
+                stops="Nonstop",
+                stops_count=0,
+                baggage_buffer_eur=70,
+                needs_bag_verify=True,
+            )
+        )
+        one_stop = StopsCompareSide.from_offer(
+            FlightOffer(
+                airline="Ryanair",
+                departure="06:00",
+                arrival="10:00",
+                price="€29",
+                price_eur=29.0,
+                duration="4 hr",
+                duration_hours=4.0,
+                stops="1 stop",
+                stops_count=1,
+                layover_city="OPO",
+                layover_hours=1.5,
+                baggage_buffer_eur=70,
+                needs_bag_verify=True,
+            )
+        )
+        data = QuerySuccess(
+            query=query,
+            raw_count=2,
+            eligible_count=2,
+            offers=(),
+            stops_compare=StopsCompare(nonstop=nonstop, one_stop=one_stop),
+        ).to_dict()
+        self.assertEqual(set(data), SUCCESS_KEYS | {"stops_compare"})
+        self.assertEqual(set(data["stops_compare"]), {"nonstop", "one_stop"})
+        self.assertEqual(set(data["stops_compare"]["nonstop"]), STOPS_COMPARE_SIDE_KEYS)
+        self.assertEqual(set(data["stops_compare"]["one_stop"]), STOPS_COMPARE_SIDE_KEYS)
+        self.assertEqual(data["stops_compare"]["nonstop"]["price_eur"], 39.0)
+        self.assertEqual(data["stops_compare"]["one_stop"]["price_eur"], 29.0)
+        self.assertEqual(data["stops_compare"]["one_stop"]["layover_city"], "OPO")
+
+    def test_stops_compare_omits_an_empty_side(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        one_stop = StopsCompareSide(
+            airline="Ryanair",
+            price="€29",
+            price_eur=29.0,
+            duration="4 hr",
+            duration_hours=4.0,
+            stops="1 stop",
+            stops_count=1,
+            departure="06:00",
+            arrival="10:00",
+        )
+        data = QuerySuccess(
+            query=query,
+            raw_count=1,
+            eligible_count=1,
+            offers=(),
+            stops_compare=StopsCompare(one_stop=one_stop),
+        ).to_dict()
+        self.assertEqual(set(data["stops_compare"]), {"one_stop"})
+        self.assertNotIn("nonstop", data["stops_compare"])
 
     def test_google_flights_url_is_an_extra_key_on_query_and_offer(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1))

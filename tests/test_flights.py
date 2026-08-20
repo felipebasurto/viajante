@@ -12,6 +12,7 @@ from viajante.flights import (
     _rank_offers,
     _run_search,
     classify_failure,
+    compare_nonstop_vs_one_stop,
     is_low_cost,
     normalize_trip_kind,
     parse_depart_window,
@@ -431,6 +432,8 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(outcome.raw_count, 2)
         self.assertEqual(outcome.eligible_count, 0)
         self.assertEqual(outcome.offers, ())
+        self.assertIsNone(outcome.stops_compare)
+        self.assertNotIn("stops_compare", outcome.to_dict())
 
     def test_rank_dedupe_and_baggage(self) -> None:
         offers = (
@@ -1146,6 +1149,219 @@ class OfferFilterTests(unittest.TestCase):
         ranked = _rank_offers((one_stop, two_stop), top=5, sort="ranked")
         self.assertEqual(len(ranked), 2)
         self.assertEqual(ranked[0].airline, "China Southern")
+
+
+def _fare_offer(
+    *,
+    airline: str,
+    price_eur: float,
+    stops_count: int,
+    duration_hours: float = 2.0,
+    duration: str = "2 h",
+    layover_city: str | None = None,
+    layover_hours: float | None = None,
+    baggage_buffer_eur: int = 0,
+    needs_bag_verify: bool = False,
+    stops: str | None = None,
+) -> FlightOffer:
+    if stops is None:
+        if stops_count == 0:
+            stops = "Nonstop"
+        elif stops_count == 1:
+            stops = "1 stop"
+        else:
+            stops = f"{stops_count} stops"
+    return FlightOffer(
+        airline=airline,
+        departure="08:00",
+        arrival="10:00",
+        price=f"{price_eur:.0f} €",
+        price_eur=price_eur,
+        duration=duration,
+        duration_hours=duration_hours,
+        stops=stops,
+        stops_count=stops_count,
+        layover_city=layover_city,
+        layover_hours=layover_hours,
+        baggage_buffer_eur=baggage_buffer_eur,
+        needs_bag_verify=needs_bag_verify,
+    )
+
+
+class StopsCompareTests(unittest.TestCase):
+    def test_picks_cheapest_cabin_fare_in_each_bucket(self) -> None:
+        compare = compare_nonstop_vs_one_stop(
+            (
+                _fare_offer(airline="Iberia", price_eur=120.0, stops_count=0),
+                _fare_offer(airline="Vueling", price_eur=90.0, stops_count=0),
+                _fare_offer(airline="Ryanair", price_eur=55.0, stops_count=1),
+                _fare_offer(airline="Air Europa", price_eur=80.0, stops_count=1),
+            )
+        )
+        assert compare is not None
+        assert compare.nonstop is not None
+        assert compare.one_stop is not None
+        self.assertEqual(compare.nonstop.airline, "Vueling")
+        self.assertEqual(compare.nonstop.price_eur, 90.0)
+        self.assertEqual(compare.one_stop.airline, "Ryanair")
+        self.assertEqual(compare.one_stop.price_eur, 55.0)
+
+    def test_uses_fare_not_ranked_buffer(self) -> None:
+        compare = compare_nonstop_vs_one_stop(
+            (
+                _fare_offer(
+                    airline="Ryanair",
+                    price_eur=40.0,
+                    stops_count=0,
+                    baggage_buffer_eur=70,
+                    needs_bag_verify=True,
+                ),
+                _fare_offer(airline="Iberia", price_eur=100.0, stops_count=0),
+            )
+        )
+        assert compare is not None
+        assert compare.nonstop is not None
+        self.assertEqual(compare.nonstop.airline, "Ryanair")
+        self.assertEqual(compare.nonstop.price_eur, 40.0)
+        self.assertIsNone(compare.one_stop)
+
+    def test_omits_empty_one_stop_side(self) -> None:
+        compare = compare_nonstop_vs_one_stop(
+            (_fare_offer(airline="Iberia", price_eur=88.0, stops_count=0),)
+        )
+        assert compare is not None
+        assert compare.nonstop is not None
+        self.assertEqual(compare.nonstop.airline, "Iberia")
+        self.assertIsNone(compare.one_stop)
+        self.assertEqual(set(compare.to_dict()), {"nonstop"})
+
+    def test_omits_empty_nonstop_side(self) -> None:
+        compare = compare_nonstop_vs_one_stop(
+            (_fare_offer(airline="Ryanair", price_eur=49.0, stops_count=1),)
+        )
+        assert compare is not None
+        assert compare.one_stop is not None
+        self.assertIsNone(compare.nonstop)
+        self.assertEqual(compare.one_stop.airline, "Ryanair")
+        self.assertEqual(set(compare.to_dict()), {"one_stop"})
+
+    def test_omits_block_when_no_zero_or_one_stop(self) -> None:
+        two_stop = _fare_offer(airline="China Southern", price_eur=314.0, stops_count=2)
+        unknown = FlightOffer(
+            airline="Mystery",
+            departure="08:00",
+            arrival="10:00",
+            price="40 €",
+            price_eur=40.0,
+            duration="2 h",
+            duration_hours=2.0,
+            stops="Unknown",
+            stops_count=None,
+            baggage_buffer_eur=0,
+            needs_bag_verify=False,
+        )
+        self.assertIsNone(compare_nonstop_vs_one_stop((two_stop, unknown)))
+
+    def test_tie_breaks_on_shorter_duration(self) -> None:
+        compare = compare_nonstop_vs_one_stop(
+            (
+                _fare_offer(
+                    airline="Slow",
+                    price_eur=100.0,
+                    stops_count=0,
+                    duration_hours=3.0,
+                    duration="3 h",
+                ),
+                _fare_offer(
+                    airline="Fast",
+                    price_eur=100.0,
+                    stops_count=0,
+                    duration_hours=1.5,
+                    duration="1 h 30 min",
+                ),
+            )
+        )
+        assert compare is not None
+        assert compare.nonstop is not None
+        self.assertEqual(compare.nonstop.airline, "Fast")
+
+    def test_search_keeps_hidden_ranked_one_stop_in_compare(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        source = FakeSource(
+            {
+                ("MAD", "BCN", "2026-09-01", 1): (
+                    card(
+                        airline="Iberia",
+                        price="88 €",
+                        duration="1 hr 20 min",
+                        stops="Nonstop",
+                        departure="09:30",
+                        arrival="10:50",
+                    ),
+                    card(
+                        airline="Air Europa",
+                        price="69 €",
+                        duration="21 hr",
+                        stops="1 stop",
+                        layover_city="Palma",
+                        layover_hours=18.0,
+                        departure="21:00",
+                        arrival="18:00",
+                    ),
+                ),
+            }
+        )
+        report = _run_search(
+            (query,),
+            top=8,
+            source=source,
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            buffer_eur=0,
+        )
+        outcome = report.queries[0]
+        self.assertIsInstance(outcome, QuerySuccess)
+        self.assertEqual([offer.airline for offer in outcome.offers], ["Iberia"])
+        compare = outcome.stops_compare
+        assert compare is not None
+        assert compare.nonstop is not None
+        assert compare.one_stop is not None
+        self.assertEqual(compare.nonstop.airline, "Iberia")
+        self.assertEqual(compare.nonstop.price_eur, 88.0)
+        self.assertEqual(compare.one_stop.airline, "Air Europa")
+        self.assertEqual(compare.one_stop.price_eur, 69.0)
+        payload = outcome.to_dict()["stops_compare"]
+        self.assertEqual(payload["nonstop"]["price_eur"], 88.0)
+        self.assertEqual(payload["one_stop"]["price_eur"], 69.0)
+        self.assertEqual(payload["one_stop"]["layover_city"], "Palma")
+
+    def test_search_with_max_stops_zero_omits_one_stop_side(self) -> None:
+        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=0)
+        source = FakeSource(
+            {
+                ("MAD", "BCN", "2026-09-01", 0): (
+                    card(airline="Iberia", price="88 €", stops="Nonstop"),
+                    card(airline="Ryanair", price="49 €", stops="1 stop"),
+                ),
+            }
+        )
+        report = _run_search(
+            (query,),
+            top=8,
+            source=source,
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            buffer_eur=0,
+        )
+        outcome = report.queries[0]
+        self.assertIsInstance(outcome, QuerySuccess)
+        assert outcome.stops_compare is not None
+        assert outcome.stops_compare.nonstop is not None
+        self.assertEqual(outcome.stops_compare.nonstop.price_eur, 88.0)
+        self.assertIsNone(outcome.stops_compare.one_stop)
+        self.assertNotIn("one_stop", outcome.to_dict()["stops_compare"])
 
 
 if __name__ == "__main__":

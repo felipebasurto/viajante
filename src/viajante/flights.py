@@ -37,6 +37,8 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    StopsCompare,
+    StopsCompareSide,
     Trip,
     normalize_country,
     normalize_currency,
@@ -796,6 +798,31 @@ def _hide_slow_connections(
     return tuple(kept) if kept else tuple(offers)
 
 
+def _cheapest_by_fare(offers: Sequence[FlightOffer]) -> Optional[FlightOffer]:
+    if not offers:
+        return None
+
+    def sort_key(offer: FlightOffer) -> tuple[float, float]:
+        duration = offer.duration_hours
+        if duration is None:
+            duration = UNKNOWN_DURATION_SORTS_LAST
+        return (offer.price_eur, duration)
+
+    return min(offers, key=sort_key)
+
+
+def compare_nonstop_vs_one_stop(offers: Sequence[FlightOffer]) -> Optional[StopsCompare]:
+    """Cheapest cabin fare per stop bucket from one parsed set. No extra fetch."""
+    nonstop = _cheapest_by_fare([offer for offer in offers if offer.stops_count == 0])
+    one_stop = _cheapest_by_fare([offer for offer in offers if offer.stops_count == 1])
+    if nonstop is None and one_stop is None:
+        return None
+    return StopsCompare(
+        nonstop=StopsCompareSide.from_offer(nonstop) if nonstop is not None else None,
+        one_stop=StopsCompareSide.from_offer(one_stop) if one_stop is not None else None,
+    )
+
+
 def _rank_offers(
     offers: Sequence[FlightOffer],
     *,
@@ -1018,6 +1045,7 @@ def _run_search(
             raw_count=len(cards),
             eligible_count=len(eligible),
             offers=_stamp_typical(trip, ranked, source, typical_cache),
+            stops_compare=compare_nonstop_vs_one_stop(eligible),
         )
 
     def _maybe_reset(failure: SearchError) -> None:

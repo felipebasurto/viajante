@@ -566,6 +566,86 @@ class FlightOffer:
         return payload
 
 
+@dataclass(frozen=True)
+class StopsCompareSide:
+    """Cheapest parsed offer in one stop bucket. Cabin fare only; never invented."""
+
+    price: str
+    price_eur: float
+    duration: Optional[str]
+    duration_hours: Optional[float]
+    airline: Optional[str]
+    stops: Optional[str]
+    stops_count: int
+    departure: Optional[str] = None
+    arrival: Optional[str] = None
+    layover_city: Optional[str] = None
+    layover_hours: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.price_eur <= 0:
+            raise ValueError("price_eur must be positive")
+        if self.stops_count not in (0, 1):
+            raise ValueError("stops_count must be 0 or 1")
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "airline": self.airline,
+            "departure": self.departure,
+            "arrival": self.arrival,
+            "price": self.price,
+            "price_eur": self.price_eur,
+            "duration": self.duration,
+            "duration_hours": self.duration_hours,
+            "stops": self.stops,
+            "stops_count": self.stops_count,
+            "layover_city": self.layover_city,
+            "layover_hours": self.layover_hours,
+        }
+
+    @classmethod
+    def from_offer(cls, offer: FlightOffer) -> "StopsCompareSide":
+        if offer.stops_count not in (0, 1):
+            raise ValueError("stops compare side is only nonstop or 1-stop")
+        return cls(
+            price=offer.price,
+            price_eur=offer.price_eur,
+            duration=offer.duration,
+            duration_hours=offer.duration_hours,
+            airline=offer.airline,
+            stops=offer.stops,
+            stops_count=offer.stops_count,
+            departure=offer.departure,
+            arrival=offer.arrival,
+            layover_city=offer.layover_city,
+            layover_hours=offer.layover_hours,
+        )
+
+
+@dataclass(frozen=True)
+class StopsCompare:
+    """Cheapest nonstop vs cheapest 1-stop from one parsed offer set."""
+
+    nonstop: Optional[StopsCompareSide] = None
+    one_stop: Optional[StopsCompareSide] = None
+
+    def __post_init__(self) -> None:
+        if self.nonstop is None and self.one_stop is None:
+            raise ValueError("stops_compare needs a nonstop or 1-stop side")
+        if self.nonstop is not None and self.nonstop.stops_count != 0:
+            raise ValueError("nonstop side must have stops_count 0")
+        if self.one_stop is not None and self.one_stop.stops_count != 1:
+            raise ValueError("one_stop side must have stops_count 1")
+
+    def to_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {}
+        if self.nonstop is not None:
+            payload["nonstop"] = self.nonstop.to_dict()
+        if self.one_stop is not None:
+            payload["one_stop"] = self.one_stop.to_dict()
+        return payload
+
+
 class SearchErrorCode(str, Enum):
     NO_RESULTS = "no_results"
     REJECTED = "rejected"
@@ -591,6 +671,7 @@ class QuerySuccess:
     eligible_count: int
     offers: Tuple[FlightOffer, ...]
     google_flights_url: Optional[str] = None
+    stops_compare: Optional[StopsCompare] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -603,13 +684,16 @@ class QuerySuccess:
         query = dict(self.query.to_dict())
         if self.google_flights_url:
             query["google_flights_url"] = self.google_flights_url
-        return {
+        payload: dict[str, object] = {
             "status": self.status,
             "query": query,
             "raw_count": self.raw_count,
             "eligible_count": self.eligible_count,
             "offers": [offer.to_dict() for offer in self.offers],
         }
+        if self.stops_compare is not None:
+            payload["stops_compare"] = self.stops_compare.to_dict()
+        return payload
 
 
 @dataclass(frozen=True)

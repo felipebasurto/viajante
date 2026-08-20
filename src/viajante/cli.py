@@ -66,6 +66,8 @@ from viajante.models import (
     QueryFailure,
     QuerySuccess,
     RoundTrip,
+    StopsCompare,
+    StopsCompareSide,
     Trip,
     normalize_country,
     normalize_currency,
@@ -266,6 +268,27 @@ def _format_ranking_columns(offer: FlightOffer) -> str:
     return f"{fare}{extra}"
 
 
+def _format_compare_side(side: StopsCompareSide) -> str:
+    label = _format_stops(side.stops_count)
+    if side.layover_city:
+        label = f"{label} {side.layover_city}"
+    if side.layover_hours is not None:
+        label = f"{label} {_format_layover_hours(side.layover_hours)}"
+    duration = side.duration or "?"
+    return f"{side.price_eur:.0f} €  {duration}  {label}  {_format_airline(side.airline)}"
+
+
+def format_stops_compare(compare: StopsCompare) -> str:
+    lines: list[str] = []
+    if compare.nonstop is not None:
+        lines.append(f"  Cheapest nonstop:  {_format_compare_side(compare.nonstop)}")
+    else:
+        lines.append("  Cheapest nonstop:  no nonstop")
+    if compare.one_stop is not None:
+        lines.append(f"  Cheapest 1-stop:   {_format_compare_side(compare.one_stop)}")
+    return "\n".join(lines)
+
+
 def _format_typical(offer: FlightOffer) -> str:
     line = offer.typical_deal()
     if not line:
@@ -451,6 +474,8 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                     )
             if result.offers and not print_per_offer:
                 _print_google_flights_url(query_url, indent="  ")
+            if result.stops_compare is not None:
+                print(format_stops_compare(result.stops_compare))
             print(
                 f"  Raw: {result.raw_count}; "
                 f"eligible: {result.eligible_count}; "

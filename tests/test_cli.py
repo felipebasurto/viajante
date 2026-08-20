@@ -32,6 +32,8 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    StopsCompare,
+    StopsCompareSide,
     VsTypical,
 )
 
@@ -91,7 +93,7 @@ def _offer(
     )
 
 
-def _report(*offers: FlightOffer) -> SearchReport:
+def _report(*offers: FlightOffer, stops_compare: Optional[StopsCompare] = None) -> SearchReport:
     shown = offers or (_offer(),)
     return SearchReport(
         searched_at=SEARCHED_AT,
@@ -101,6 +103,7 @@ def _report(*offers: FlightOffer) -> SearchReport:
                 raw_count=3,
                 eligible_count=len(shown),
                 offers=shown,
+                stops_compare=stops_compare,
             ),
         ),
     )
@@ -433,6 +436,73 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("Verify checked baggage", output)
         self.assertIn("https://www.google.com/travel/flights", output)
         self.assertIn("tfs=", output)
+        self.assertNotIn("Cheapest nonstop:", output)
+        self.assertNotIn("Cheapest 1-stop:", output)
+
+    def test_stops_compare_prints_both_english_sides(self) -> None:
+        compare = StopsCompare(
+            nonstop=StopsCompareSide.from_offer(_offer(airline="Iberia", price_eur=88.0)),
+            one_stop=StopsCompareSide.from_offer(
+                _offer(
+                    airline="Ryanair",
+                    price_eur=49.0,
+                    duration="5 h",
+                    stops="1 stop",
+                    stops_count=1,
+                    layover_city="OPO",
+                    layover_hours=2.0,
+                )
+            ),
+        )
+        output = _rendered(_report(_offer(airline="Iberia", price_eur=88.0), stops_compare=compare))
+        self.assertIn("Cheapest nonstop:", output)
+        self.assertIn("88 €", output)
+        self.assertIn("Iberia", output)
+        self.assertIn("Cheapest 1-stop:", output)
+        self.assertIn("49 €", output)
+        self.assertIn("Ryanair", output)
+        self.assertIn("OPO", output)
+        self.assertNotIn("no nonstop", output)
+
+    def test_stops_compare_prints_no_nonstop_when_only_connections(self) -> None:
+        compare = StopsCompare(
+            one_stop=StopsCompareSide.from_offer(
+                _offer(
+                    airline="Ryanair",
+                    price_eur=49.0,
+                    duration="5 h",
+                    stops="1 stop",
+                    stops_count=1,
+                )
+            )
+        )
+        output = _rendered(
+            _report(
+                _offer(
+                    airline="Ryanair",
+                    price_eur=49.0,
+                    duration="5 h",
+                    stops="1 stop",
+                    stops_count=1,
+                ),
+                stops_compare=compare,
+            )
+        )
+        self.assertIn("Cheapest nonstop:  no nonstop", output)
+        self.assertIn("Cheapest 1-stop:", output)
+        self.assertIn("49 €", output)
+
+    def test_stops_compare_omits_one_stop_line_when_only_nonstop(self) -> None:
+        compare = StopsCompare(nonstop=StopsCompareSide.from_offer(_offer()))
+        output = _rendered(_report(stops_compare=compare))
+        self.assertIn("Cheapest nonstop:", output)
+        self.assertNotIn("Cheapest 1-stop:", output)
+        self.assertNotIn("no nonstop", output)
+
+    def test_stops_compare_omitted_from_print_when_absent(self) -> None:
+        output = _rendered(_report(_offer()))
+        self.assertNotIn("Cheapest nonstop:", output)
+        self.assertNotIn("Cheapest 1-stop:", output)
 
     def test_clock_strips_weekday_tail(self) -> None:
         self.assertEqual(_format_clock("10:35 AM on Fri, Oct 9"), "10:35 AM")

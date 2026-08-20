@@ -24,6 +24,8 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    StopsCompare,
+    StopsCompareSide,
     normalize_country,
     normalize_currency,
 )
@@ -196,6 +198,40 @@ class ModelTests(unittest.TestCase):
             QuerySuccess(query=query, raw_count=0, eligible_count=1, offers=(offer,))
         with self.assertRaises(ValueError):
             QuerySuccess(query=query, raw_count=1, eligible_count=0, offers=(offer,))
+
+    def test_stops_compare_rejects_empty_and_wrong_buckets(self) -> None:
+        nonstop = StopsCompareSide.from_offer(
+            FlightOffer(
+                airline="Iberia",
+                departure="08:00",
+                arrival="09:00",
+                price="100 €",
+                price_eur=100.0,
+                duration="1 h",
+                duration_hours=1.0,
+                stops="Nonstop",
+                stops_count=0,
+                baggage_buffer_eur=0,
+                needs_bag_verify=False,
+            )
+        )
+        with self.assertRaises(ValueError):
+            StopsCompare()
+        with self.assertRaises(ValueError):
+            StopsCompare(
+                nonstop=StopsCompareSide(
+                    airline="Air",
+                    price="80 €",
+                    price_eur=80.0,
+                    duration="3 h",
+                    duration_hours=3.0,
+                    stops="1 stop",
+                    stops_count=1,
+                )
+            )
+        compare = StopsCompare(nonstop=nonstop)
+        self.assertEqual(compare.to_dict()["nonstop"]["price_eur"], 100.0)
+        self.assertNotIn("one_stop", compare.to_dict())
 
     def test_search_report_json(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=0)

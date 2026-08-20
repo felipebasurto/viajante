@@ -131,6 +131,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 - Remind the user to verify checked baggage on Google Flights before booking.
 - Successful flight JSON includes `google_flights_url` on the query and each offer when viajante can build it from owned route/date/cabin/occupancy/currency (or an owned `booking_token`). Multi-city uses the owned tfs encoder. Omit the field only when that encode cannot run and there is no token. Do not invent a token or a fare.
 - When an offer has `typical_eur` / `vs_typical` / `vs_typical_pct`, print the English `typical_deal` line (e.g. `below typical 340 € (−15%)`). Packaged round-trip uses the same-stay calendar median (same origin/destination and nights). `cheapest_date` / `cheapest_eur` (when present) are the cheapest owned day in that same window. If those fields are null or omitted, skip the comparison. Do not invent a market average.
+- Successful searches also print cheapest nonstop vs cheapest 1-stop from that same parsed set (cabin fare). `--save` / MCP `stops_compare` is the same pair. A missing bucket is omitted (`no nonstop` on the CLI when only connections remain). This is not a second Google request.
 
 ### Hotels
 
