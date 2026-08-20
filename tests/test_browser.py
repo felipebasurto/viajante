@@ -154,8 +154,8 @@ class ChromiumSessionTests(unittest.TestCase):
                 Path(tmp),
                 BrowserSessionConfig(
                     state_filename="pw_state_booking.json",
-                    locale="es-ES",
-                    html_lang="es",
+                    locale="de-DE",
+                    html_lang="de",
                     viewport={"width": 1280, "height": 900},
                     user_agent="TestAgent/1.0",
                 ),
@@ -167,7 +167,7 @@ class ChromiumSessionTests(unittest.TestCase):
             browser.context_options,
             [
                 {
-                    "locale": "es-ES",
+                    "locale": "de-DE",
                     "storage_state": None,
                     "viewport": {"width": 1280, "height": 900},
                     "user_agent": "TestAgent/1.0",
@@ -199,8 +199,8 @@ class ChromiumSessionTests(unittest.TestCase):
                 Path(tmp),
                 BrowserSessionConfig(
                     state_filename="pw_state_booking.json",
-                    locale="es-ES",
-                    html_lang="es",
+                    locale="de-DE",
+                    html_lang="de",
                     blocked_resource_types=frozenset({"image", "media"}),
                 ),
             )

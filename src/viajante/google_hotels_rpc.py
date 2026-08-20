@@ -6,7 +6,7 @@ import json
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
-from viajante.models import HotelQuery, RawHotelCard
+from viajante.models import FETCH_LANGUAGE, HotelQuery, RawHotelCard
 
 HOTELS_RPC_URL = "https://www.google.com/_/TravelFrontendUi/data/batchexecute"
 HOTELS_RPC_ID = "AtySUc"
@@ -105,7 +105,7 @@ def _rpc_params(html_lang: str, currency: str) -> dict[str, str]:
 def build_hotels_request(
     query: HotelQuery,
     *,
-    html_lang: str = "en",
+    html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
 ) -> tuple[str, str]:
     inner = json.dumps(build_hotels_inner(query, currency=currency), separators=(",", ":"))

@@ -29,6 +29,7 @@ from viajante.google_hotels_rpc import (
     HotelsRejected,
 )
 from viajante.models import (
+    FETCH_LANGUAGE,
     AppliedHotelFilters,
     CancellationEvidence,
     HotelOffer,
@@ -191,7 +192,7 @@ def _run_search(
     sleep: Callable[[float], None],
     random_gen: random.Random,
     now: Callable[[], datetime],
-    html_lang: str = "es",
+    html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
     progress: Optional[Callable[[str], None]] = None,
     provider: HotelProvider = "booking.com",

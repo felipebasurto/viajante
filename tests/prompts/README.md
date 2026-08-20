@@ -3,7 +3,8 @@
 Graded prompts for viajante, ordered smoke → easy → medium → hard → insane → brutal.
 This is the **quality** contract. It is not `score_ms`.
 
-All prompts are **English**. Origins and destinations are international
+All prompts may be **any language**. Planned fetch queries and locale are
+**English**. Origins and destinations are international
 (North America, LatAm, Europe, Africa, Middle East, South Asia, East Asia,
 SE Asia, Oceania). No city is the implied home hub.
 
@@ -47,9 +48,11 @@ Listed in `manifest.json`. Empty or dropped files fail the prompts run,
 same spirit as the parse corpus floors. `holdout.jsonl` is **not** listed;
 see `holdout.md`. Looping speed agents must not open it to pick work.
 
-Each JSONL row: `id`, `tier`, `lang` (`en`), `prompt`, `expect`, `judge`
+Each JSONL row: `id`, `tier`, `lang` (ISO 639-1; `en` or another language),
+`prompt`, `expect`, `judge`
 (`deterministic` or `llm`). `expect` is the checkable contract (origin IATA,
-dest, dates, trip kind, max stops, adults, cabin, refuse reasons).
+dest, dates, trip kind, max stops, adults, cabin, refuse reasons). Non-English
+prompts must plan English fetch `locale` / city strings.
 
 ## Tiers
 
@@ -74,6 +77,9 @@ dest, dates, trip kind, max stops, adults, cabin, refuse reasons).
   book-and-don't-book, secret dests with invented fares) so the planner
   and judge can miss. No invented fares or hotel prices in `expect`.
   Smoke→insane stay intact.
+- **i18n** (`i18n.jsonl`, brutal tier): non-English prompts (French, German,
+  Japanese) whose planned fetch query and `locale` are English. Not a
+  rewrite of frozen smoke→insane rows.
 
 Humans may later gate easy-tier failures. Do not silently gate insane/llm
 or brutal/llm cases.

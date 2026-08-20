@@ -392,6 +392,34 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIn("cars", plan.refuse)
         self.assertIn("booking", plan.refuse)
 
+    def test_french_hotel_prompt_emits_english_query(self) -> None:
+        plan = plan_prompt("Hôtel à Paris du 2026-12-04 au 2026-12-07. Ne pas inventer de tarif.")
+        self.assertEqual(plan.intent, "hotels")
+        self.assertEqual(plan.location, "Paris")
+        self.assertEqual(plan.locale, "en")
+        self.assertEqual(plan.check_in, date(2026, 12, 4))
+        self.assertEqual(plan.check_out, date(2026, 12, 7))
+
+    def test_german_hotel_tokio_emits_tokyo(self) -> None:
+        plan = plan_prompt("Hotel in Tokio vom 2026-12-04 bis 2026-12-07. Keinen Preis erfinden.")
+        self.assertEqual(plan.intent, "hotels")
+        self.assertEqual(plan.location, "Tokyo")
+        self.assertEqual(plan.locale, "en")
+
+    def test_japanese_hotel_emits_english_tokyo(self) -> None:
+        plan = plan_prompt("2026-12-04から2026-12-07まで東京のhotel。料金を作らないで。")
+        self.assertEqual(plan.intent, "hotels")
+        self.assertEqual(plan.location, "Tokyo")
+        self.assertEqual(plan.locale, "en")
+
+    def test_french_flights_emit_english_locale(self) -> None:
+        plan = plan_prompt("Vols de Paris à Tokyo le 2026-11-03. Pas de tarif inventé.")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "CDG")
+        self.assertEqual(plan.destination, "NRT")
+        self.assertEqual(plan.locale, "en")
+        self.assertNotIn("€", plan.notes)
+
 
 class PromptPlanMatchTests(unittest.TestCase):
     def test_plan_to_dict_is_json_friendly(self) -> None:
@@ -399,6 +427,7 @@ class PromptPlanMatchTests(unittest.TestCase):
         data = plan.to_dict()
         self.assertEqual(data["origin"], "BOS")
         self.assertEqual(data["departure_date"], "2026-09-01")
+        self.assertEqual(data["locale"], "en")
         self.assertIsInstance(data["refuse"], list)
 
 

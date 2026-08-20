@@ -23,6 +23,10 @@
     {
       "name": "brutal.jsonl",
       "tier": "brutal"
+    },
+    {
+      "name": "i18n.jsonl",
+      "tier": "brutal"
     }
   ]
 }

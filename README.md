@@ -325,7 +325,7 @@ for result in report.queries:
 ## Limits
 
 - Flights default to one-way. `--trip rt` / `round-trip` and `--trip multi` POST one package. `--max-stops` is `0`, `1`, or `2`. `--trip multi` cannot use `--fetch detail` yet. There is no flag to shorten Chromium delays or to parallelize requests.
-- Quotes are requested in EUR so fares from different regions compare. That is a quote currency, not an audience. Flight cards render in English (`hl=en`). Booking cards use a fixed Spanish locale against the owned parser. Google Hotels uses English.
+- Quotes are requested in EUR so fares from different regions compare. That is a quote currency, not an audience. Flight and hotel cards render in English (`hl=en` / `lang=en`, `locale=en-US`).
 - Flight ranking adds a flat estimate for known low-cost carriers, not a fare quote. The low-cost list is partial. An airline missing from it is not evidence of a bag-inclusive fare. Confirm the checked bag on Google Flights before booking.
 - Hotel cancellation, lodging kind, and bed counts are observed evidence. `unknown` means the card did not say. `--entire-home` therefore cannot remove every non-home. Confirm the final total and the cancellation terms on the site you book.
 - Finding nothing eligible still exits `0` and prints `(no eligible offers)` or `(no eligible stays)`. Widen the filters or check the route.

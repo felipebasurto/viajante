@@ -28,13 +28,13 @@ from viajante.google_flights_rpc import (
     parse_explore_body,
     parse_shopping_body,
 )
-from viajante.models import FlightCabin, FlightQuery, Trip
+from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, FlightQuery, Trip
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
 STATE_FILENAME = "pw_state_google.json"
 
-SCRAPE_LANGUAGE = "en"
+SCRAPE_LANGUAGE = FETCH_LANGUAGE
 SCRAPE_CURRENCY = "EUR"
 # Owned `tfu` blob that selects result tabs; not produced by encode_tfs.
 RESULT_TABS = "EgQIABABIgA"
@@ -559,7 +559,7 @@ class GoogleFlightsSource:
     ) -> None:
         self._config = config or BrowserSessionConfig(
             state_filename=STATE_FILENAME,
-            locale="en-US",
+            locale=FETCH_LOCALE,
             html_lang=SCRAPE_LANGUAGE,
             currency=SCRAPE_CURRENCY,
         )

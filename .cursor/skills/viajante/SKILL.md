@@ -122,7 +122,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 
 ### Flights
 
-- Keep the flight scrape locale on English (`hl=en`, `locale=en-US`) for stable rendered evidence and the JSON `locale: "en"` contract. Hotels stay on Spanish.
+- Keep the scrape locale on English (`hl=en` / `lang=en`, `locale=en-US`) for stable rendered evidence and the JSON `locale: "en"` contract. Planner prompts may be any language; fetch queries stay English.
 - Ranking adds 70 EUR to known low-cost fares by default when bag counts are still unknown. `--bags N` / `--carry-on` put those counts on the shopping request so prices come back for that selection. Default is unset. If a compact card includes checked/carry counts, they are parsed; missing bag data stays omitted. Default `--sort ranked` orders by that total; `--sort fare` orders by cabin fare. Report the ranked total when a buffer was added. Use `--baggage-buffer 0` for hand luggage only.
 - The low-cost list is partial. Never tell the user an airline includes a bag because it is absent from the list.
 - Remind the user to verify checked baggage on Google Flights before booking.

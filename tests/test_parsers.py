@@ -40,7 +40,6 @@ DURATION_CASES = [
     ("2 h", 2.0),
     ("2 hr 50 min", 2 + 50 / 60),
     ("1 day 3 hr", 27.0),
-    ("1 día 3 h", 27.0),
     ("2 days", 48.0),
     ("1 day 2 hr 30 min", 26.5),
     ("", None),
@@ -49,13 +48,12 @@ DURATION_CASES = [
 ]
 
 STOPS_CASES = [
-    ("Directo", 0),
     ("Nonstop", 0),
     ("Non-stop", 0),
     ("Direct", 0),
-    ("Sin escalas", 0),
-    ("Sin paradas", 0),
-    ("1 escala", 1),
+    ("Directo", None),
+    ("Sin escalas", None),
+    ("Sin paradas", None),
     ("1 stop", 1),
     ("Unknown", None),
     (None, None),
@@ -113,21 +111,22 @@ class ParserTests(unittest.TestCase):
 
     def test_parse_rating(self) -> None:
         cases = [
-            ("Puntuación: 8,4", 8.4),
+            ("Rating: 8.4", 8.4),
             ("Scored 8.5", 8.5),
             ("9", 9.0),
-            ("Valoración 7,2", 7.2),
+            ("Rating: 7.2", 7.2),
             ("Rating: 10.0", 10.0),
-            ("8,7 Fabuloso", 8.7),
-            ("Fabuloso 8,7", 8.7),
-            ("1.234 comentarios", None),
-            ("Fabuloso 1.234 comentarios", None),
-            ("1.234 comentarios · 8,7", 8.7),
+            ("8,7 Fabulous", 8.7),
+            ("Fabulous 8,7", 8.7),
+            ("1.234 reviews", None),
+            ("Fabulous 1.234 reviews", None),
+            ("1.234 reviews · 8,7", 8.7),
             ("", None),
             (None, None),
-            ("2 dormitorios 3 camas", None),
-            ("Puntuación: 11,0", None),
+            ("2 bedrooms 3 beds", None),
+            ("Rating: 11.0", None),
             ("Scored -1", None),
+            ("Puntuación: 8,4", 8.4),
         ]
         for text, want in cases:
             with self.subTest(text=text):
@@ -135,44 +134,35 @@ class ParserTests(unittest.TestCase):
 
     def test_parse_cancellation_evidence(self) -> None:
         cases = [
-            ("Cancelación gratuita", CancellationEvidence.FREE),
             ("Free cancellation", CancellationEvidence.FREE),
-            ("No reembolsable", CancellationEvidence.NON_REFUNDABLE),
             ("Non-refundable", CancellationEvidence.NON_REFUNDABLE),
-            (
-                "Cancelación gratuita. No reembolsable",
-                CancellationEvidence.NON_REFUNDABLE,
-            ),
             (
                 "Free cancellation. No cancellation fees.",
                 CancellationEvidence.FREE,
             ),
             ("No free cancellation", CancellationEvidence.UNKNOWN),
-            ("Sin cancelación gratuita", CancellationEvidence.UNKNOWN),
-            (
-                "Sin cancelación gratuita. No reembolsable",
-                CancellationEvidence.NON_REFUNDABLE,
-            ),
             (
                 "No free cancellation. Non-refundable",
                 CancellationEvidence.NON_REFUNDABLE,
             ),
             (
-                "Desayuno\nCancelación gratuita",
+                "Breakfast\nFree cancellation",
                 CancellationEvidence.FREE,
             ),
             (
-                "Hotel Bruno\nCancelación gratuita",
+                "Hotel Bruno\nFree cancellation",
                 CancellationEvidence.FREE,
             ),
             (
-                "Apartamento moderno\nCancelación gratuita",
+                "Modern apartment\nFree cancellation",
                 CancellationEvidence.FREE,
             ),
             ("Casino free cancellation", CancellationEvidence.FREE),
+            ("Cancelación gratuita", CancellationEvidence.UNKNOWN),
+            ("No reembolsable", CancellationEvidence.UNKNOWN),
             ("", CancellationEvidence.UNKNOWN),
             (None, CancellationEvidence.UNKNOWN),
-            ("Precio por noche", CancellationEvidence.UNKNOWN),
+            ("Price per night", CancellationEvidence.UNKNOWN),
         ]
         for text, want in cases:
             with self.subTest(text=text):
@@ -180,14 +170,14 @@ class ParserTests(unittest.TestCase):
 
     def test_parse_property_type_evidence(self) -> None:
         cases = [
-            ("Apartamento entero", PropertyTypeEvidence.ENTIRE_HOME),
             ("Entire home", PropertyTypeEvidence.ENTIRE_HOME),
             ("Whole place", PropertyTypeEvidence.ENTIRE_HOME),
-            ("Habitación privada", PropertyTypeEvidence.NOT_ENTIRE_HOME),
+            ("Apartamento entero", PropertyTypeEvidence.UNKNOWN),
             ("Private room", PropertyTypeEvidence.NOT_ENTIRE_HOME),
             ("Shared room", PropertyTypeEvidence.NOT_ENTIRE_HOME),
             ("Hotel room", PropertyTypeEvidence.NOT_ENTIRE_HOME),
-            ("2 dormitorios", PropertyTypeEvidence.UNKNOWN),
+            ("Habitación privada", PropertyTypeEvidence.UNKNOWN),
+            ("2 bedrooms", PropertyTypeEvidence.UNKNOWN),
             ("", PropertyTypeEvidence.UNKNOWN),
             (None, PropertyTypeEvidence.UNKNOWN),
         ]
@@ -197,15 +187,14 @@ class ParserTests(unittest.TestCase):
 
     def test_parse_lodging_kind(self) -> None:
         cases = [
-            ("Apartamento entero", LodgingKind.ENTIRE_HOME),
             ("Entire home", LodgingKind.ENTIRE_HOME),
-            ("Habitación privada", LodgingKind.PRIVATE_ROOM),
+            ("Apartamento entero", LodgingKind.UNKNOWN),
             ("Private room", LodgingKind.PRIVATE_ROOM),
             ("Shared room", LodgingKind.PRIVATE_ROOM),
             ("Hotel room", LodgingKind.HOTEL),
-            ("Habitación de hotel", LodgingKind.HOTEL),
-            ("Hotel Bruno\nCancelación gratuita", LodgingKind.UNKNOWN),
-            ("2 dormitorios", LodgingKind.UNKNOWN),
+            ("Habitación de hotel", LodgingKind.UNKNOWN),
+            ("Hotel Bruno\nFree cancellation", LodgingKind.UNKNOWN),
+            ("2 bedrooms", LodgingKind.UNKNOWN),
             ("", LodgingKind.UNKNOWN),
             (None, LodgingKind.UNKNOWN),
         ]
@@ -213,34 +202,34 @@ class ParserTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(parse_lodging_kind(text), want)
         self.assertEqual(
-            parse_lodging_kind("Wifi included", title="Apartamento Vinohrady"),
+            parse_lodging_kind("Wifi included", title="Vinohrady Apartment"),
             LodgingKind.ENTIRE_HOME,
         )
         self.assertEqual(
             parse_lodging_kind("Wifi included", title="Casa Azul"),
-            LodgingKind.ENTIRE_HOME,
+            LodgingKind.UNKNOWN,
         )
         self.assertEqual(
             parse_lodging_kind("Wifi included", title="Hotel Bruno"),
             LodgingKind.UNKNOWN,
         )
         self.assertEqual(
-            parse_lodging_kind("Private room", title="Apartamento Vinohrady"),
+            parse_lodging_kind("Private room", title="Vinohrady Apartment"),
             LodgingKind.PRIVATE_ROOM,
         )
 
     def test_parse_unit_hints(self) -> None:
         cases = [
             (
-                "2 dormitorios · 1 baño · 3 camas",
-                {"bedrooms": 2, "bathrooms": 1, "beds": 3},
-            ),
-            (
                 "2 bedrooms · 1 bathroom · 3 beds",
                 {"bedrooms": 2, "bathrooms": 1, "beds": 3},
             ),
             (
-                "1 habitación · 1 baño",
+                "2 dormitorios · 1 baño · 3 camas",
+                {"bedrooms": None, "bathrooms": None, "beds": None},
+            ),
+            (
+                "1 bedroom · 1 bathroom",
                 {"bedrooms": 1, "bathrooms": 1, "beds": None},
             ),
             ("", {"bedrooms": None, "bathrooms": None, "beds": None}),

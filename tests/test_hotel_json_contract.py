@@ -71,7 +71,7 @@ def _offer() -> HotelOffer:
         total_price_eur=246.0,
         rating="8,9",
         rating_score=8.9,
-        details="Cancelación gratis. Apartamento entero.",
+        details="Free cancellation. Entire home.",
         cancellation_evidence=CancellationEvidence.FREE,
         property_type_evidence=PropertyTypeEvidence.ENTIRE_HOME,
         lodging_kind=LodgingKind.ENTIRE_HOME,
@@ -132,7 +132,7 @@ class HotelJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["schema_version"], 1)
         self.assertEqual(self.data["provider"], "booking.com")
         self.assertEqual(self.data["currency"], "EUR")
-        self.assertEqual(self.data["locale"], "es")
+        self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["price_basis"], "total_stay")
 
     def test_timestamp_is_utc_iso_with_a_trailing_z(self) -> None:

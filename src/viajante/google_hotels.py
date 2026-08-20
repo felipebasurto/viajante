@@ -15,7 +15,12 @@ from viajante.google_hotels_rpc import (
     build_hotels_request,
     parse_hotels_body,
 )
-from viajante.models import AppliedHotelFilters, HotelPage, HotelQuery
+from viajante.models import (
+    FETCH_LANGUAGE,
+    AppliedHotelFilters,
+    HotelPage,
+    HotelQuery,
+)
 
 HTTP_TIMEOUT_SECONDS = 30
 
@@ -23,7 +28,7 @@ HTTP_TIMEOUT_SECONDS = 30
 def build_applied_filters(
     query: HotelQuery,
     *,
-    html_lang: str = "en",
+    html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
 ) -> AppliedHotelFilters:
     chips: list[str] = []
@@ -45,7 +50,7 @@ class GoogleHotelsSource:
     def __init__(
         self,
         *,
-        html_lang: str = "en",
+        html_lang: str = FETCH_LANGUAGE,
         currency: str = "EUR",
         client: Optional[SweepHttpClient] = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,

@@ -8,7 +8,14 @@ from typing import Optional, Tuple
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
-from viajante.models import AppliedHotelFilters, HotelPage, HotelQuery, RawHotelCard
+from viajante.models import (
+    FETCH_LANGUAGE,
+    FETCH_LOCALE,
+    AppliedHotelFilters,
+    HotelPage,
+    HotelQuery,
+    RawHotelCard,
+)
 from viajante.storage import write_text_atomic
 
 BOOKING_SEARCH_URL = "https://www.booking.com/searchresults.html"
@@ -49,7 +56,7 @@ class BookingResultsTimeout(TimeoutError):
 def build_applied_filters(
     query: HotelQuery,
     *,
-    html_lang: str = "es",
+    html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
 ) -> AppliedHotelFilters:
     chips: list[str] = []
@@ -87,8 +94,8 @@ class BookingHotelsSource:
         self._state_dir = state_dir
         self._config = config or BrowserSessionConfig(
             state_filename=BOOKING_STATE_FILENAME,
-            locale="es-ES",
-            html_lang="es",
+            locale=FETCH_LOCALE,
+            html_lang=FETCH_LANGUAGE,
             currency="EUR",
             viewport={"width": 1280, "height": 900},
             blocked_resource_types=BOOKING_BLOCKED_RESOURCE_TYPES,

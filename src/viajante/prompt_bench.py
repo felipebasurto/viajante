@@ -102,6 +102,7 @@ REQUIRED_PROMPT_FILES = (
     "hard.jsonl",
     "insane.jsonl",
     "brutal.jsonl",
+    "i18n.jsonl",
 )
 REQUIRED_PROMPT_IDS = frozenset(
     {
@@ -288,8 +289,10 @@ def validate_prompt_corpus(root: Optional[Path] = None) -> list[PromptCase]:
     origins: list[str] = []
     for row in cases:
         by_tier[row.tier] += 1
-        if row.lang != "en":
-            raise PromptCorpusError(f"{row.id} must be English (lang=en)")
+        if not row.lang:
+            raise PromptCorpusError(f"{row.id} missing lang")
+        if row.lang != "en" and row.expect.get("locale") != "en":
+            raise PromptCorpusError(f"{row.id} non-English prompt must plan English fetch locale")
         origin = row.expect.get("origin")
         if isinstance(origin, str) and len(origin) == 3:
             origins.append(origin)

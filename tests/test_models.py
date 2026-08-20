@@ -355,9 +355,9 @@ class HotelModelTests(unittest.TestCase):
             address="Praga 1",
             total_price="200 €",
             total_price_eur=200.0,
-            rating="Puntuación: 8,4",
+            rating="Rating: 8.4",
             rating_score=8.4,
-            details="2 dormitorios",
+            details="2 bedrooms",
             cancellation_evidence=CancellationEvidence.FREE,
             property_type_evidence=PropertyTypeEvidence.ENTIRE_HOME,
             lodging_kind=LodgingKind.ENTIRE_HOME,
@@ -472,7 +472,7 @@ class HotelModelTests(unittest.TestCase):
         self.assertEqual(data["schema_version"], 1)
         self.assertEqual(data["provider"], "booking.com")
         self.assertEqual(data["currency"], "EUR")
-        self.assertEqual(data["locale"], "es")
+        self.assertEqual(data["locale"], "en")
         self.assertEqual(data["price_basis"], "total_stay")
         self.assertEqual(data["searched_at"], "2026-08-10T09:20:00Z")
         self.assertEqual(data["queries"][0]["status"], "error")

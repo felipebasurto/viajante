@@ -9,15 +9,31 @@ from __future__ import annotations
 
 import calendar
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from viajante.airports import is_known_iata
+from viajante.models import FETCH_LANGUAGE
 
 Intent = str
 
-_CITY_IATA = {
+
+def _fold(text: str) -> str:
+    """Casefold and strip Latin combining marks (Hôtel/à → hotel/a). CJK stays."""
+    pieces: list[str] = []
+    for char in text.replace("\u2014", "-").replace("\u2013", "-"):
+        name = unicodedata.name(char, "")
+        if name.startswith("LATIN"):
+            decomposed = unicodedata.normalize("NFKD", char)
+            pieces.append("".join(part for part in decomposed if not unicodedata.combining(part)))
+        else:
+            pieces.append(char)
+    return " ".join("".join(pieces).split()).casefold()
+
+
+_CITY_IATA_RAW = {
     "madrid": "MAD",
     "barcelona": "BCN",
     "oporto": "OPO",
@@ -124,6 +140,89 @@ _CITY_IATA = {
     "heathrow": "LHR",
     "gatwick": "LGW",
     "newark": "EWR",
+    "東京": "NRT",
+    "パリ": "CDG",
+    "ロンドン": "LHR",
+}
+
+_CITY_IATA: dict[str, str] = {}
+for _alias, _iata in _CITY_IATA_RAW.items():
+    _CITY_IATA[_fold(_alias)] = _iata
+
+_IATA_TO_ENGLISH = {
+    "MAD": "Madrid",
+    "BCN": "Barcelona",
+    "OPO": "Porto",
+    "LIS": "Lisbon",
+    "CDG": "Paris",
+    "FCO": "Rome",
+    "LHR": "London",
+    "JFK": "New York",
+    "NRT": "Tokyo",
+    "YHZ": "Halifax",
+    "NAN": "Fiji",
+    "PRG": "Prague",
+    "IST": "Istanbul",
+    "AKL": "Auckland",
+    "SYD": "Sydney",
+    "PEK": "Beijing",
+    "PVG": "Shanghai",
+    "DEL": "Delhi",
+    "NBO": "Nairobi",
+    "LOS": "Lagos",
+    "JNB": "Johannesburg",
+    "SUV": "Suva",
+    "BOS": "Boston",
+    "ORD": "Chicago",
+    "LAX": "Los Angeles",
+    "MIA": "Miami",
+    "CUN": "Cancun",
+    "DUB": "Dublin",
+    "AMS": "Amsterdam",
+    "FRA": "Frankfurt",
+    "MUC": "Munich",
+    "ZRH": "Zurich",
+    "VIE": "Vienna",
+    "BUD": "Budapest",
+    "WAW": "Warsaw",
+    "ATH": "Athens",
+    "DXB": "Dubai",
+    "SIN": "Singapore",
+    "HKG": "Hong Kong",
+    "ICN": "Seoul",
+    "KIX": "Osaka",
+    "MEL": "Melbourne",
+    "PMI": "Palma",
+    "VLC": "Valencia",
+    "SVQ": "Seville",
+    "BIO": "Bilbao",
+    "AGP": "Malaga",
+    "MXP": "Milan",
+    "NAP": "Naples",
+    "PMO": "Palermo",
+    "RAK": "Marrakech",
+    "YVR": "Vancouver",
+    "CPT": "Cape Town",
+    "EZE": "Buenos Aires",
+    "GRU": "Sao Paulo",
+    "SCL": "Santiago",
+    "CAI": "Cairo",
+    "BOM": "Mumbai",
+    "BKK": "Bangkok",
+    "CGK": "Jakarta",
+    "MNL": "Manila",
+    "HNL": "Honolulu",
+    "PER": "Perth",
+    "CHC": "Christchurch",
+    "ADD": "Addis Ababa",
+    "CMN": "Casablanca",
+    "LIM": "Lima",
+    "BOG": "Bogota",
+    "MEX": "Mexico City",
+    "YYZ": "Toronto",
+    "DOH": "Doha",
+    "LGW": "Gatwick",
+    "EWR": "Newark",
 }
 
 _WORD_NUMBERS = {
@@ -174,8 +273,8 @@ _MONTHS = {
     "diciembre": 12,
 }
 
-_IATA_PAIR = re.compile(r"\b([A-Z]{3})-([A-Z]{3})\b")
-_ISO_DATE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+_IATA_PAIR = re.compile(r"(?<![A-Za-z0-9])([A-Z]{3})-([A-Z]{3})(?![A-Za-z0-9])")
+_ISO_DATE = re.compile(r"(?<![0-9])(20\d{2}-\d{2}-\d{2})(?![0-9])")
 _FLAG = re.compile(
     r"--(trip|max-stops|adults|cabin|rooms|max-layover|min-layover|max-duration|"
     r"from|days|fetch)\s+(\S+)",
@@ -209,22 +308,29 @@ _CAR_PRIMARY = re.compile(
 _CITY_NAMES_LONGEST_FIRST: tuple[str, ...] = tuple(
     name for name, _iata in sorted(_CITY_IATA.items(), key=lambda item: len(item[0]), reverse=True)
 )
+_ASCII_CITY_NAMES: tuple[str, ...] = tuple(
+    name for name in _CITY_NAMES_LONGEST_FIRST if name.isascii()
+)
+_CJK_CITY_NAMES: tuple[str, ...] = tuple(
+    name for name in _CITY_NAMES_LONGEST_FIRST if not name.isascii()
+)
 _CITY_NAME_RANK: Mapping[str, int] = {
     name: index for index, name in enumerate(_CITY_NAMES_LONGEST_FIRST)
 }
 _CITY_IATA_COMBINED = re.compile(
-    r"\b(?:" + "|".join(re.escape(name) for name in _CITY_NAMES_LONGEST_FIRST) + r")\b"
+    r"\b(?:" + "|".join(re.escape(name) for name in _ASCII_CITY_NAMES) + r")\b"
 )
 _FROM_TO_PAIR = re.compile(
     r"\b(?:de|desde|from)\s+([a-záéíóúüñ ]+?)\s+(?:a|to|hacia)\s+([a-záéíóúüñ ]+?)"
-    r"(?:\s+(?:el|on|del|al|passing|pasando|,)|$)"
+    r"(?:\s+(?:el|on|del|al|passing|pasando|,)|\s+\d|$)"
 )
 _TO_FROM_PAIR = re.compile(
     r"\bto\s+([a-záéíóúüñ ]+?)\s+from\s+([a-záéíóúüñ ]+?)"
-    r"(?:\s+(?:passing|pasando|on|el|,)|$)"
+    r"(?:\s+(?:passing|pasando|on|el|,)|\s+\d|$)"
 )
 _HOTEL_LOCATION = re.compile(
-    r"\b(?:hotel|hoteles|alojamiento|stay|stays)\s+(?:en|in|at)\s+([A-Za-zÁÉÍÓÚáéíóúüñ ]+)",
+    r"\b(?:hotel|hoteles|alojamiento|stay|stays)\s+(?:en|in|at|a)\s+"
+    r"([A-Za-z\u3040-\u30ff\u4e00-\u9fff ]+)",
     re.IGNORECASE,
 )
 _HOTEL_LOCATION_SPLIT = re.compile(r"\b(del|de|from|on|el|al|a|,|\d)")
@@ -250,8 +356,8 @@ _AIRPORTS_QUERY_CITIES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
         "auckland",
     )
 )
-_IATA_TOKEN = re.compile(r"\b([A-Za-z]{3})\b")
-_IATA_TOKEN_UPPER = re.compile(r"\b([A-Z]{3})\b")
+_IATA_TOKEN = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{3})(?![A-Za-z0-9])")
+_IATA_TOKEN_UPPER = re.compile(r"(?<![A-Za-z0-9])([A-Z]{3})(?![A-Za-z0-9])")
 _AIRPORTS_LOOKUP = re.compile(
     r"\b(iata code|código iata|codigo iata|qué aeropuerto|que aeropuerto)\b"
 )
@@ -265,7 +371,7 @@ _DATES_CALENDAR = re.compile(
     r"más barato por día|mas barato por dia|qué día es más barato|"
     r"que dia es mas barato|cheapest day|price calendar)\b"
 )
-_HOTEL_WORDS = re.compile(r"\b(hotels?|hoteles|alojamiento)\b")
+_HOTEL_WORDS = re.compile(r"(?<![a-z0-9_])(hotels?|hoteles|alojamiento)(?![a-z0-9_])")
 _FLIGHT_WORDS = re.compile(
     r"\b(vuelo|vuelos|volar|fly|flight|flights|one-way|ida|round-trip|open jaws?)\b"
 )
@@ -382,10 +488,6 @@ _NO_CARS = re.compile(
 _NEGATION_BEFORE = re.compile(r"(?:do not|don'?t|never|without|not)\s+$", re.IGNORECASE)
 
 
-def _fold(text: str) -> str:
-    return " ".join(text.replace("\u2014", "-").replace("\u2013", "-").split()).casefold()
-
-
 def _contains_all(got: Any, wanted: Any) -> bool:
     got_list = [str(item) for item in (got or [])]
     if isinstance(wanted, str):
@@ -439,6 +541,7 @@ class PromptPlan:
     work_back_by: Optional[str] = None
     route_specs: Tuple[str, ...] = ()
     notes: str = ""
+    locale: str = FETCH_LANGUAGE
 
     def to_dict(self) -> dict[str, Any]:
         def iso(value: Optional[date]) -> Optional[str]:
@@ -487,6 +590,7 @@ class PromptPlan:
             "work_back_by": self.work_back_by,
             "route_specs": list(self.route_specs),
             "notes": self.notes,
+            "locale": self.locale,
         }
 
     def matches(self, expect: Mapping[str, Any]) -> tuple[bool, str]:
@@ -576,11 +680,20 @@ def _iata_pairs(text: str) -> list[tuple[str, str]]:
 
 def _iter_city_iata(folded: str) -> list[tuple[str, str]]:
     """Each city-alias hit in text order as (alias, IATA)."""
-    hits: list[tuple[str, str]] = []
+    found: list[tuple[int, str, str]] = []
     for match in _CITY_IATA_COMBINED.finditer(folded):
         name = match.group(0)
-        hits.append((name, _CITY_IATA[name]))
-    return hits
+        found.append((match.start(), name, _CITY_IATA[name]))
+    for name in _CJK_CITY_NAMES:
+        start = 0
+        while True:
+            index = folded.find(name, start)
+            if index < 0:
+                break
+            found.append((index, name, _CITY_IATA[name]))
+            start = index + len(name)
+    found.sort(key=lambda item: item[0])
+    return [(name, iata) for _, name, iata in found]
 
 
 def _first_city_iata(folded: str) -> Optional[str]:
@@ -638,13 +751,37 @@ def _lookup_alias(name: str) -> Optional[str]:
     return None
 
 
+def _english_place_name(raw: str) -> Optional[str]:
+    """Map a user-language city token onto the English fetch query string."""
+    folded = _fold(raw)
+    iata = _CITY_IATA.get(folded) or _lookup_alias(folded)
+    if iata is None:
+        hits = _iter_city_iata(folded)
+        if hits:
+            iata = hits[0][1]
+    if iata is not None:
+        return _IATA_TO_ENGLISH.get(iata)
+    cleaned = folded.strip(" ,.")
+    return cleaned or None
+
+
+def _first_english_city(folded: str) -> Optional[str]:
+    hits = _iter_city_iata(folded)
+    if not hits:
+        return None
+    return _IATA_TO_ENGLISH.get(hits[0][1])
+
+
 def _hotel_location(text: str) -> Optional[str]:
-    match = _HOTEL_LOCATION.search(text)
+    folded = _fold(text)
+    match = _HOTEL_LOCATION.search(folded)
     if match is None:
         return None
-    raw = match.group(1)
-    raw = _HOTEL_LOCATION_SPLIT.split(raw, maxsplit=1)[0].strip(" ,.")
-    return raw or None
+    english = _english_place_name(match.group(1))
+    if english:
+        return english
+    raw = _HOTEL_LOCATION_SPLIT.split(match.group(1), maxsplit=1)[0].strip(" ,.")
+    return _english_place_name(raw) if raw else None
 
 
 def _int_after(patterns: Sequence[re.Pattern[str]], folded: str) -> Optional[int]:
@@ -681,13 +818,18 @@ def _via_regions(folded: str) -> Tuple[str, ...]:
 def _airports_query(text: str, folded: str) -> str:
     match = _AIRPORTS_CODE_FOR.search(text.strip())
     if match:
-        return match.group(1).strip(" ?.")
+        token = match.group(1).strip(" ?.")
+        english = _english_place_name(token)
+        return (english or token).casefold()
     for pattern, name in _AIRPORTS_QUERY_CITIES:
         if pattern.search(folded):
             return name
     iata = _IATA_TOKEN.search(text)
     if iata and is_known_iata(iata.group(1)):
         return iata.group(1).upper()
+    english = _first_english_city(folded)
+    if english:
+        return english.casefold()
     return text.strip()
 
 
@@ -1189,6 +1331,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
 
     location = _hotel_location(raw)
     plan_hotels = _is_hotels(folded) and not rest_of_trip
+    if plan_hotels and location is None:
+        location = _first_english_city(folded)
     check_in = dates[0] if plan_hotels and dates else None
     check_out = dates[1] if plan_hotels and len(dates) >= 2 else None
 
@@ -1315,7 +1459,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
 
     if intent == "airports":
         query = _airports_query(raw, folded)
-        return PromptPlan(intent="airports", airports_query=query.casefold())
+        english = _english_place_name(query)
+        return PromptPlan(
+            intent="airports",
+            airports_query=(english or query).casefold(),
+        )
 
     if intent == "hotels":
         return PromptPlan(

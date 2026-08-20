@@ -7,9 +7,9 @@ import re
 from viajante.models import CancellationEvidence, LodgingKind, PropertyTypeEvidence
 
 _PRICE_NUMBER = re.compile(r"([\d.,]+)")
-_DURATION_DAYS = re.compile(r"(\d+)\s*(?:d[ií]as?|days?|d)\b")
-_DURATION_HOURS = re.compile(r"(\d+)\s*(?:h|hr|hrs|hours?|horas?)\b")
-_DURATION_MINUTES = re.compile(r"(\d+)\s*(?:min|mins|minutes?|minutos?|m)\b")
+_DURATION_DAYS = re.compile(r"(\d+)\s*(?:days?|d)\b")
+_DURATION_HOURS = re.compile(r"(\d+)\s*(?:h|hr|hrs|hours?)\b")
+_DURATION_MINUTES = re.compile(r"(\d+)\s*(?:min|mins|minutes?|m)\b")
 _DIGITS = re.compile(r"(\d+)")
 
 
@@ -104,10 +104,7 @@ def parse_stops_count(stops: str | None) -> int | None:
     if lower in (
         "nonstop",
         "non-stop",
-        "directo",
         "direct",
-        "sin escalas",
-        "sin paradas",
     ):
         return 0
     m = _DIGITS.search(lower)
@@ -118,7 +115,7 @@ def parse_stops_count(stops: str | None) -> int | None:
 
 _RATING_PATTERNS = (
     re.compile(
-        r"(?:puntuaci[oó]n|valoraci[oó]n|rating|scored)\s*:?\s*(\d+[.,]\d+|\d+)",
+        r"(?:rating|scored)\s*:?\s*(\d+[.,]\d+|\d+)",
         re.IGNORECASE,
     ),
     re.compile(r"^(\d+[.,]\d{1,2}|\d+)$", re.IGNORECASE),
@@ -140,16 +137,10 @@ def parse_rating(rating_text: str | None) -> float | None:
     return None
 
 
-_FREE_CANCEL = re.compile(
-    r"(?<!\bno\s)(?<!\bsin\s)cancelaci[oó]n\s+gratuita|"
-    r"(?<!\bno\s)(?<!\bsin\s)cancelaci[oó]n\s+gratis|"
-    r"(?<!\bno\s)free\s+cancell?ation"
-)
+_FREE_CANCEL = re.compile(r"(?<!\bno\s)free\s+cancell?ation")
 _NON_REFUNDABLE = re.compile(
-    r"no\s+reembolsable|"
     r"non[\s-]?refundable|"
-    r"no\s+cancell?ation(?!\s+(?:fees?|charges?|costs?))|"
-    r"no\s+se\s+puede\s+cancelar"
+    r"no\s+cancell?ation(?!\s+(?:fees?|charges?|costs?))"
 )
 
 
@@ -164,14 +155,8 @@ def parse_cancellation_evidence(card_text: str | None) -> CancellationEvidence:
     return CancellationEvidence.UNKNOWN
 
 
-_ENTIRE_HOME = re.compile(
-    r"apartamento\s+entero|alojamiento\s+entero|entire\s+home|"
-    r"entire\s+apartment|whole\s+place|casa\s+entera"
-)
-_NOT_ENTIRE_HOME = re.compile(
-    r"habitaci[oó]n\s+privada|private\s+room|shared\s+room|"
-    r"habitaci[oó]n\s+compartida|hotel\s+room|habitaci[oó]n\s+de\s+hotel"
-)
+_ENTIRE_HOME = re.compile(r"entire\s+home|entire\s+apartment|whole\s+place")
+_NOT_ENTIRE_HOME = re.compile(r"private\s+room|shared\s+room|hotel\s+room")
 
 
 def parse_property_type_evidence(card_text: str | None) -> PropertyTypeEvidence:
@@ -185,11 +170,9 @@ def parse_property_type_evidence(card_text: str | None) -> PropertyTypeEvidence:
     return PropertyTypeEvidence.UNKNOWN
 
 
-_PRIVATE_ROOM = re.compile(
-    r"habitaci[oó]n\s+privada|private\s+room|shared\s+room|habitaci[oó]n\s+compartida"
-)
-_HOTEL_ROOM = re.compile(r"hotel\s+room|habitaci[oó]n\s+de\s+hotel")
-_TITLE_ENTIRE_HOME = re.compile(r"apartamentos?\b|apartments?\b|\bcasa\b")
+_PRIVATE_ROOM = re.compile(r"private\s+room|shared\s+room")
+_HOTEL_ROOM = re.compile(r"hotel\s+room")
+_TITLE_ENTIRE_HOME = re.compile(r"apartments?\b")
 
 
 def parse_lodging_kind(card_text: str | None, *, title: str | None = None) -> LodgingKind:
@@ -208,14 +191,9 @@ def parse_lodging_kind(card_text: str | None, *, title: str | None = None) -> Lo
 
 
 # Pattern order is load-bearing: first pattern that matches anywhere wins.
-_BATHROOM_PATTERNS = (re.compile(r"(\d+)\s*baños?"), re.compile(r"(\d+)\s*bathrooms?"))
-_BEDROOM_PATTERNS = (
-    re.compile(r"(\d+)\s*dormitorios?"),
-    re.compile(r"(\d+)\s*habitaci[oó]n(?:es)?"),
-    re.compile(r"(\d+)\s*bedrooms?"),
-)
+_BATHROOM_PATTERNS = (re.compile(r"(\d+)\s*bathrooms?"),)
+_BEDROOM_PATTERNS = (re.compile(r"(\d+)\s*bedrooms?"),)
 _BED_PATTERNS = (
-    re.compile(r"(\d+)\s*camas?\b"),
     re.compile(r"(\d+)\s*beds\b"),
     re.compile(r"(\d+)\s*bed\b"),
 )

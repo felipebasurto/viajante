@@ -168,7 +168,7 @@ def provider_card(
     rating: str | None = "8,7 Fabuloso\n1.234 comentarios",
     address: str | None = "Centro, Lisboa",
     link: str | None = "/hotel/pt/casa-azul.html?aid=123#reviews",
-    details: str = "Cancelación gratis · Apartamento entero",
+    details: str = "Free cancellation · Entire home",
 ) -> FakeProviderCard:
     elements = {}
     if title is not None:
@@ -200,7 +200,7 @@ class AppliedFiltersTests(unittest.TestCase):
                 "no_rooms": ["1"],
                 "group_children": ["0"],
                 "selected_currency": ["EUR"],
-                "lang": ["es"],
+                "lang": ["en"],
                 "order": ["price"],
                 "nflt": ["oos=1"],
             },
@@ -242,8 +242,8 @@ class BookingHotelsSourceTests(unittest.TestCase):
             source = BookingHotelsSource(Path(tmp))
             config = source.config
             self.assertEqual(config.state_filename, "pw_state_booking.json")
-            self.assertEqual(config.locale, "es-ES")
-            self.assertEqual(config.html_lang, "es")
+            self.assertEqual(config.locale, "en-US")
+            self.assertEqual(config.html_lang, "en")
             self.assertEqual(config.currency, "EUR")
             self.assertEqual(config.viewport, {"width": 1280, "height": 900})
             self.assertIsNone(config.user_agent)

@@ -10,6 +10,7 @@ from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
 from viajante.models import (
+    FETCH_LANGUAGE,
     FlightCabin,
     FlightQuery,
     MultiCity,
@@ -241,7 +242,7 @@ def _rpc_body(inner: list[Any]) -> str:
 def build_shopping_request(
     trip: Trip,
     *,
-    html_lang: str = "en",
+    html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
 ) -> tuple[str, str]:
     url = f"{SHOPPING_RESULTS_URL}?{urlencode(_rpc_params(html_lang, currency))}"
@@ -262,7 +263,7 @@ def build_calendar_request(
     start: date,
     end: date,
     *,
-    html_lang: str = "en",
+    html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
 ) -> tuple[str, str]:
     url = f"{CALENDAR_GRID_URL}?{urlencode(_rpc_params(html_lang, currency))}"
@@ -297,7 +298,7 @@ def build_explore_request(
     *,
     adults: int = 1,
     cabin: FlightCabin = "economy",
-    html_lang: str = "en",
+    html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
 ) -> tuple[str, str]:
     url = f"{EXPLORE_DESTINATIONS_URL}?{urlencode(_rpc_params(html_lang, currency))}"

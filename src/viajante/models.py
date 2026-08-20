@@ -9,6 +9,10 @@ from typing import Literal, Mapping, Optional, Tuple, Union
 
 from viajante.airports import is_known_iata
 
+# Fetch/browser locale is English so owned card parsers stay on English evidence.
+FETCH_LANGUAGE = "en"
+FETCH_LOCALE = "en-US"
+
 FlightCabin = Literal["economy", "premium-economy", "business", "first"]
 _CABINS: tuple[FlightCabin, ...] = ("economy", "premium-economy", "business", "first")
 VsTypical = Literal["below", "near", "above"]
@@ -743,7 +747,7 @@ HotelFetchBackend = Literal["booking", "google"]
 class HotelSearchReport:
     searched_at: datetime
     queries: Tuple[HotelQueryResult, ...]
-    locale: str = "es"
+    locale: str = FETCH_LANGUAGE
     currency: str = "EUR"
     schema_version: int = field(init=False, default=1)
     provider: HotelProvider = "booking.com"

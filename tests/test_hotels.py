@@ -49,7 +49,7 @@ class FakeSource:
         self.fetch_calls: List[Tuple[HotelQuery, AppliedHotelFilters, int]] = []
         self.reset_calls = 0
         self.closed = False
-        self.config = SimpleNamespace(html_lang="es", currency="EUR")
+        self.config = SimpleNamespace(html_lang="en", currency="EUR")
 
     def fetch(
         self,
@@ -92,8 +92,8 @@ def card(
     title: str = "Casa Azul",
     address: str | None = "Centro, Lisboa",
     total_price: str = "400 €",
-    rating: str | None = "Puntuación: 8,7",
-    details: str = "Cancelación gratis · Apartamento entero · 2 dormitorios · 1 baño · 3 camas",
+    rating: str | None = "Rating: 8.7",
+    details: str = "Free cancellation · Entire home · 2 bedrooms · 1 bathroom · 3 beds",
     link: str | None = "https://www.booking.com/hotel/pt/casa-azul.html",
 ) -> RawHotelCard:
     return RawHotelCard(
@@ -161,7 +161,7 @@ class PureHotelLogicTests(unittest.TestCase):
         assert normalized is not None
         self.assertEqual(normalized.total_price, "400 €")
         self.assertEqual(normalized.total_price_eur, 400.0)
-        self.assertEqual(normalized.rating, "Puntuación: 8,7")
+        self.assertEqual(normalized.rating, "Rating: 8.7")
         self.assertEqual(normalized.rating_score, 8.7)
         self.assertEqual(normalized.details, card().details)
         self.assertEqual(normalized.cancellation_evidence, CancellationEvidence.FREE)
@@ -176,9 +176,7 @@ class PureHotelLogicTests(unittest.TestCase):
         )
 
     def test_rating_is_never_parsed_from_card_details(self) -> None:
-        normalized = _normalize_card(
-            card(rating=None, details="Puntuación: 9,9 · Cancelación gratis")
-        )
+        normalized = _normalize_card(card(rating=None, details="Rating: 9.9 · Free cancellation"))
 
         assert normalized is not None
         self.assertIsNone(normalized.rating_score)
@@ -186,8 +184,8 @@ class PureHotelLogicTests(unittest.TestCase):
     def test_normalize_card_parses_realistic_dedicated_rating_text(self) -> None:
         normalized = _normalize_card(
             card(
-                rating="8,7 Fabuloso",
-                details="2 dormitorios · Puntuación del barrio: 4,1",
+                rating="8,7 Fabulous",
+                details="2 bedrooms · Neighborhood score: 4.1",
             )
         )
 
@@ -195,13 +193,13 @@ class PureHotelLogicTests(unittest.TestCase):
         self.assertEqual(normalized.rating_score, 8.7)
 
     def test_normalize_card_does_not_publish_review_count_as_rating(self) -> None:
-        normalized = _normalize_card(card(rating="Fabuloso 1.234 comentarios"))
+        normalized = _normalize_card(card(rating="Fabulous 1.234 reviews"))
 
         assert normalized is not None
         self.assertIsNone(normalized.rating_score)
 
     def test_apartment_title_fills_silent_lodging_kind(self) -> None:
-        normalized = _normalize_card(card(title="Apartamento do Chiado", details="Wifi · Centro"))
+        normalized = _normalize_card(card(title="Chiado Apartment", details="Wifi · Centre"))
         assert normalized is not None
         self.assertEqual(normalized.lodging_kind, LodgingKind.ENTIRE_HOME)
         hotel = _normalize_card(card(title="Hotel Bruno", details="Wifi · Centro"))

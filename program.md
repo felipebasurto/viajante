@@ -92,7 +92,10 @@ uv run viajante bench --prompts
 ```
 
 Checked-in corpus: `tests/prompts/` (JSONL + README, smoke → brutal).
-Prompts are English. Origins are international; no city is the implied
+User prompts may be any language. Planned Google Flights / Google Hotels /
+Booking queries and fetch locale stay English (`en` / `en-US`). Do not grow
+card-evidence regexes per language; English cards generalize. Origins are
+international; no city is the implied
 home hub. Named outbound+return without "two one-way" / "without --trip rt"
 / "separate tickets" is packaged `--trip rt`; two one-ways only when the
 user asked for that split. DeepSeek and the pre-judge harness zero a

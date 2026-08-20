@@ -222,16 +222,18 @@ class OwnedCardParserTests(unittest.TestCase):
         self.assertEqual(offer.price_eur, 1234.56)
         self.assertAlmostEqual(offer.duration_hours or 0, 2 + 50 / 60)
 
-    def test_spanish_labels_are_preserved_and_normalized(self) -> None:
+    def test_spanish_stop_labels_are_raw_only(self) -> None:
         card = parse_flight_cards(
             build_results_page(build_card(stops="Sin escalas", price="1.234,56 €"))
         )[0]
         self.assertEqual(card.stops, "Sin escalas")
         self.assertEqual(card.price, "1.234,56 €")
-        offer = _normalize_offer(card, max_stops=0)
+        skipped = _normalize_offer(card, max_stops=0)
+        self.assertIsNone(skipped)
+        offer = _normalize_offer(card, max_stops=1)
         assert offer is not None
         self.assertEqual(offer.stops, "Sin escalas")
-        self.assertEqual(offer.stops_count, 0)
+        self.assertIsNone(offer.stops_count)
         self.assertEqual(offer.price_eur, 1234.56)
 
     def test_cards_beat_stale_empty_state_markup(self) -> None:

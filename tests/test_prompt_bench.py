@@ -180,13 +180,20 @@ class PromptCorpusIntegrityTests(unittest.TestCase):
             r"alquiler de coche)\b"
         )
         origins: list[str] = []
+        i18n = 0
         for row in cases:
-            self.assertEqual(row.lang, "en", row.id)
-            self.assertRegex(row.prompt, r"[A-Za-z]")
-            self.assertNotRegex(row.prompt, spanish)
             origin = row.expect.get("origin")
             if isinstance(origin, str):
                 origins.append(origin)
+            if row.lang != "en":
+                i18n += 1
+                self.assertEqual(row.expect.get("locale"), "en", row.id)
+                self.assertTrue(row.prompt.strip(), row.id)
+                continue
+            self.assertEqual(row.lang, "en", row.id)
+            self.assertRegex(row.prompt, r"[A-Za-z]")
+            self.assertNotRegex(row.prompt, spanish)
+        self.assertGreaterEqual(i18n, 3)
         unique = set(origins)
         self.assertGreaterEqual(len(unique), MIN_UNIQUE_ORIGINS)
         self.assertLessEqual(origins.count("MAD"), 2)
@@ -799,6 +806,7 @@ class HoldoutCorpusTests(unittest.TestCase):
                 "hard.jsonl",
                 "insane.jsonl",
                 "brutal.jsonl",
+                "i18n.jsonl",
             ],
         )
 
