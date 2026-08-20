@@ -24,8 +24,9 @@
 - Offline IATA lookup: `src/viajante/airports.py`
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
+- Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 
-`google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source.
+`google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
 
 ## Invariants
 
@@ -56,6 +57,7 @@
 - `lodging_kind` is observed card evidence (`entire_home` / `private_room` / `hotel` / `unknown`). If the card is silent, apartment in the title may infer `entire_home`. Do not infer `hotel` from the word hotel in the title. Do not claim cancellation, lodging kind, or unit counts when unknown.
 - Callers must verify the final total and cancellation terms on Booking.com before booking.
 - Other OTAs are not scrapers in this tree. After Booking, for 1–3 finalists, the viajante skill says to use the user's browser harness (Google the property; list official site, aggregators, and other hits as options, without preferring one). Unverified second opinion. Do not invent prices from snippets or write them into `--save` JSON.
+- `viajante trip` / MCP `search_trip` run flights then hotels sequentially (one lock). When dates overlap and both sides return owned prices, print flight fare + hotel stay + sum. Hotel `price_basis` stays `total_stay`. Omit `trip_total` if either side missed, dates do not overlap, or currencies differ. Never invent a fare or a stay.
 
 ## Tests
 
@@ -76,9 +78,9 @@ uv run viajante bench
 
 `tests/test_google_flights.py` pins owned TFS encoding, the compact shopping fixture → `RawFlightCard` seam, and HTML fallback. Test the owned boundary (`RawFlightCard`, typed empty/markup/block failures), not upstream HTML rewriting. `tests/test_booking.py` is the Booking page seam (`build_applied_filters`, cards, empty vs markup). `tests/test_hotels.py` is eligibility, ranking, and the search loop.
 
-`tests/test_json_contract.py` and `tests/test_hotel_json_contract.py` pin the flight and hotel JSON shapes. A renamed or dropped key is a breaking change for anything reading `--save` output. `tests/test_dates.py`, `tests/test_flex_json_contract.py`, `tests/test_explore.py`, and `tests/test_airports.py` cover the calendar window, flex pick-then-shop, explore catalog, and offline IATA lookup. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is installed (`mcp>=1.6,<2`).
+`tests/test_json_contract.py` and `tests/test_hotel_json_contract.py` pin the flight and hotel JSON shapes. `tests/test_trip.py` / `tests/test_trip_json_contract.py` pin the owned trip total. A renamed or dropped key is a breaking change for anything reading `--save` output. `tests/test_dates.py`, `tests/test_flex_json_contract.py`, `tests/test_explore.py`, and `tests/test_airports.py` cover the calendar window, flex pick-then-shop, explore catalog, and offline IATA lookup. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is installed (`mcp>=1.6,<2`).
 
-Stdio MCP: `uv sync --extra mcp` then `viajante-mcp`. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels`, `lookup_airports`. No Streamable HTTP. Keep the one-search process lock.
+Stdio MCP: `uv sync --extra mcp` then `viajante-mcp`. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels`, `search_trip`, `lookup_airports`. No Streamable HTTP. Keep the one-search process lock.
 
 ## Trip-planning search strategy
 

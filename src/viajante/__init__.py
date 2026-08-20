@@ -19,7 +19,9 @@ from viajante.models import (
     RoundTrip,
     SearchReport,
     Trip,
+    TripSearchReport,
 )
+from viajante.trip import search_trip
 
 __all__ = [
     "CancellationEvidence",
@@ -35,10 +37,12 @@ __all__ = [
     "RoundTrip",
     "SearchReport",
     "Trip",
+    "TripSearchReport",
     "lookup_airports",
     "search_dates",
     "search_explore",
     "search_flex",
     "search_flights",
     "search_hotels",
+    "search_trip",
 ]

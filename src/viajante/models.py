@@ -1219,3 +1219,69 @@ class HotelSearchReport:
             "fetch_ms": self.fetch_ms,
             "queries": [result.to_dict() for result in self.queries],
         }
+
+
+@dataclass(frozen=True)
+class TripTotal:
+    """Owned flight fare plus owned hotel stay. Omitted unless both sides hit."""
+
+    flight_fare_eur: float
+    hotel_stay_eur: float
+    total_eur: float
+    nights: int
+    hotel_price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
+
+    def __post_init__(self) -> None:
+        if self.flight_fare_eur <= 0:
+            raise ValueError("flight_fare_eur must be a positive owned fare")
+        if self.hotel_stay_eur <= 0:
+            raise ValueError("hotel_stay_eur must be a positive owned stay total")
+        if abs(self.total_eur - (self.flight_fare_eur + self.hotel_stay_eur)) > 1e-9:
+            raise ValueError("total_eur must equal flight_fare_eur + hotel_stay_eur")
+        if self.nights < 1:
+            raise ValueError("nights must be at least 1")
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "flight_fare_eur": self.flight_fare_eur,
+            "hotel_stay_eur": self.hotel_stay_eur,
+            "total_eur": self.total_eur,
+            "hotel_price_basis": self.hotel_price_basis,
+            "nights": self.nights,
+        }
+
+
+@dataclass(frozen=True)
+class TripSearchReport:
+    """Nested owned flight and hotel reports, plus an optional trip total."""
+
+    searched_at: datetime
+    flights: SearchReport
+    hotels: HotelSearchReport
+    trip_total: Optional[TripTotal] = None
+    locale: str = FETCH_LANGUAGE
+    currency: str = "EUR"
+    fetch_ms: Optional[int] = None
+    schema_version: int = field(init=False, default=1)
+
+    def __post_init__(self) -> None:
+        if self.searched_at.tzinfo is not None:
+            object.__setattr__(
+                self,
+                "searched_at",
+                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
+            )
+
+    def to_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "currency": self.currency,
+            "locale": self.locale,
+            "fetch_ms": self.fetch_ms,
+            "flights": dict(self.flights.to_dict()),
+            "hotels": dict(self.hotels.to_dict()),
+        }
+        if self.trip_total is not None:
+            payload["trip_total"] = dict(self.trip_total.to_dict())
+        return payload

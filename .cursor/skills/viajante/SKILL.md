@@ -26,6 +26,7 @@ uv run viajante flex ORIGIN-DEST --around YYYY-MM-DD --flex N [--nights N] [--tr
 uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [--top N] [--adults N] [--cabin CABIN] [--max-stops {0,1}] [--save FILE]
 uv run viajante airports QUERY
 uv run viajante hotels LOCATION CHECK_IN CHECK_OUT [--source {booking,google}] [--adults N] [--rooms N] [--top N] [--min-rating SCORE] [--entire-home] [--allow-non-refundable] [--compare-cancellation] [--save FILE]
+uv run viajante trip ORIGIN-DEST:YYYY-MM-DD[:YYYY-MM-DD] --hotel LOCATION [--check-in DATE] [--check-out DATE] [--trip {one-way,rt,multi}] [--adults N] [--rooms N] [--fetch {auto,sweep,detail}] [--source {booking,google}] [--save FILE]
 uv run viajante bench
 uv run viajante bench --prompts
 uv run viajante bench --prompts --timeit-sweep
@@ -33,7 +34,7 @@ uv run viajante bench --prompts --timeit-sweep
 
 Route grammar: `MAD-BCN:2026-09-01`, or several dates comma-separated on one route. `MAD-OPO:2026-10-09:2026-10-12` without `--trip` is sugar for outbound + return as two one-way queries. `--trip rt` POSTs one package. You can still pass a return leg as a second route.
 
-MCP (stdio, no auth): `uv sync --extra mcp` then `viajante-mcp`. Tools match the CLI an agent needs: flight filters, dates `nights`/`trip`/`max_stops`, flex `around`/`flex`/`nights`, explore `month`/`adults`/`cabin`/`max_stops`, hotels `source=google` by default. Keep the one-search process lock.
+MCP (stdio, no auth): `uv sync --extra mcp` then `viajante-mcp`. Tools match the CLI an agent needs: flight filters, dates `nights`/`trip`/`max_stops`, flex `around`/`flex`/`nights`, explore `month`/`adults`/`cabin`/`max_stops`, hotels `source=google` by default, `search_trip` for an owned fare+stay sum. Keep the one-search process lock.
 
 ## Smoke
 
@@ -61,7 +62,7 @@ uv run viajante hotels Prague 2026-12-04 2026-12-07 --top 3
 |-------------|--------|
 | Price check for a named route/date only | Flights only. Do not ask about hotels. |
 | Trip with dates and unclear lodging | Ask once whether to search Booking.com hotels. |
-| Explicit flights and hotels | Run both. Do not ask. |
+| Explicit flights and hotels | Run `viajante trip` (or both tools). Print owned fare + stay + sum when both succeed. Do not invent a missing side. |
 | Hotels only | Hotels only. |
 | Explicit "no hotel" / "flights only" | Flights only. Do not ask. |
 
@@ -118,7 +119,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 
 ## Agent rules
 
-- Use the CLI or the installed `search_flights` / `search_dates` / `search_flex` / `search_hotels` APIs. Do not write a one-off scraper.
+- Use the CLI or the installed `search_flights` / `search_dates` / `search_flex` / `search_hotels` / `search_trip` APIs. Do not write a one-off scraper.
 - Run provider queries sequentially.
 - Do not add flags or code that shorten detail or hotel delays or backoff. Sweep already uses a zero inter-query delay; do not parallelize.
 - After rate-limit failures, stop for 30-60 minutes before another search.

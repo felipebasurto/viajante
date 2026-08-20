@@ -14,6 +14,7 @@ from viajante.mcp_handlers import (
     search_flex_tool,
     search_flights_tool,
     search_hotels_tool,
+    search_trip_tool,
 )
 
 _HELP = """\
@@ -22,7 +23,8 @@ viajante-mcp — stdio MCP server for local flight and hotel search.
 Install:  uv sync --extra mcp
 Run:      viajante-mcp
 
-Tools: search_flights, search_dates, search_flex, search_explore, search_hotels, lookup_airports.
+Tools: search_flights, search_dates, search_flex, search_explore,
+search_hotels, search_trip, lookup_airports.
 No auth. One search at a time in this process.
 """
 
@@ -187,6 +189,62 @@ def build_server():
                 adults=adults,
                 rooms=rooms,
                 top=top,
+                min_rating=min_rating,
+                entire_home=entire_home,
+                free_cancellation=free_cancellation,
+                source=source,  # type: ignore[arg-type]
+            )
+        )
+
+    @server.tool()
+    def search_trip(
+        routes: list[str],
+        location: str,
+        check_in: str | None = None,
+        check_out: str | None = None,
+        trip: str = "one-way",
+        max_stops: int = 1,
+        adults: int = 1,
+        rooms: int = 1,
+        cabin: str = "economy",
+        top: int = 8,
+        fetch: str = "auto",
+        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        sort: str = "ranked",
+        bags: int | None = None,
+        carry_on: int | None = None,
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
+        currency: str = "EUR",
+        country: str | None = None,
+        min_rating: float | None = None,
+        entire_home: bool = False,
+        free_cancellation: bool = True,
+        source: str = "google",
+    ) -> dict:
+        return dict(
+            search_trip_tool(
+                routes,
+                location,
+                check_in=check_in,
+                check_out=check_out,
+                trip=trip,
+                max_stops=max_stops,
+                adults=adults,
+                rooms=rooms,
+                cabin=cabin,  # type: ignore[arg-type]
+                top=top,
+                fetch=fetch,
+                baggage_buffer=baggage_buffer,
+                sort=sort,  # type: ignore[arg-type]
+                bags=bags,
+                carry_on=carry_on,
+                children=children,
+                infants_in_seat=infants_in_seat,
+                infants_on_lap=infants_on_lap,
+                currency=currency,
+                country=country,
                 min_rating=min_rating,
                 entire_home=entire_home,
                 free_cancellation=free_cancellation,

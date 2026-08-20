@@ -28,6 +28,7 @@ from viajante.flights import (
 )
 from viajante.hotels import HotelSourceName, search_hotels
 from viajante.models import FlightCabin, HotelQuery, MultiCity, RoundTrip, Trip
+from viajante.trip import search_trip, stay_window_from_trips
 
 _SEARCH_LOCK = threading.Lock()
 
@@ -266,4 +267,88 @@ def search_hotels_tool(
         free_cancellation=free_cancellation,
     )
     report = _with_search_lock(lambda: search_hotels((query,), top=top, source=source))
+    return dict(report.to_dict())
+
+
+def search_trip_tool(
+    routes: Sequence[str],
+    location: str,
+    *,
+    check_in: Optional[str] = None,
+    check_out: Optional[str] = None,
+    trip: str = "one-way",
+    max_stops: int = 1,
+    adults: int = 1,
+    rooms: int = 1,
+    cabin: FlightCabin = "economy",
+    top: int = 8,
+    fetch: str = "auto",
+    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    sort: FlightSort = "ranked",
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+    currency: str = "EUR",
+    country: Optional[str] = None,
+    min_rating: Optional[float] = None,
+    entire_home: bool = False,
+    free_cancellation: bool = True,
+    source: HotelSourceName = "google",
+) -> Mapping[str, object]:
+    """Flights then hotel, one lock. trip_total omitted if either side missed."""
+    if source == "google" and min_rating is not None and min_rating > 5:
+        raise ValueError("min_rating must be at most 5 with source google")
+    plan = parse_flight_plan(
+        routes,
+        trip=trip,
+        max_stops=max_stops,
+        adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+    )
+    trips = _as_trips(plan)
+    _reject_past([leg.departure_date for item in trips for leg in item.legs])
+    window = stay_window_from_trips(trips)
+    if check_in:
+        check_in_date = date.fromisoformat(check_in)
+    elif window is not None:
+        check_in_date = window[0]
+    else:
+        raise ValueError("hotel stay needs check_in (or a two-date flight route)")
+    if check_out:
+        check_out_date = date.fromisoformat(check_out)
+    elif window is not None:
+        check_out_date = window[1]
+    else:
+        raise ValueError("hotel stay needs check_out (or a two-date flight route)")
+    _reject_past((check_in_date,), label="check-in")
+    query = HotelQuery(
+        location,
+        check_in_date,
+        check_out_date,
+        adults=adults,
+        rooms=rooms,
+        min_rating=min_rating,
+        entire_home=entire_home,
+        free_cancellation=free_cancellation,
+    )
+    report = _with_search_lock(
+        lambda: search_trip(
+            trips,
+            query,
+            top=top,
+            buffer_eur=baggage_buffer,
+            sort=sort,
+            fetch=fetch,
+            currency=currency,
+            country=country,
+            hotel_source=source,
+        )
+    )
     return dict(report.to_dict())

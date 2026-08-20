@@ -36,7 +36,7 @@ uv sync --extra mcp
 uv run viajante-mcp
 ```
 
-Six tools. Stdio, no auth. One process lock, so two searches cannot overlap. `lookup_airports` stays unlocked. Hotel search defaults to Google on MCP; Booking stays opt-in. `viajante-mcp --help` prints the tool list.
+Seven tools. Stdio, no auth. One process lock, so two searches cannot overlap. `lookup_airports` stays unlocked. Hotel search defaults to Google on MCP; Booking stays opt-in. `viajante-mcp --help` prints the tool list.
 
 ## Flights
 
@@ -151,6 +151,14 @@ Prices are totals for the whole stay, not per night. Free cancellation is requir
 `--source google` is the HTTP shortlist (ratings 0–5). Stay totals include tax. `--min-rating` tops out at 5 on that source. Booking is the CLI default evidence path (ratings 0–10). MCP hotel search defaults to Google.
 
 The output separates what you asked for (`Filters`), what the site was told, and what the card showed. Those three can disagree. `--min-rating` is a local filter. Only free cancellation and `--entire-home` are pushed to the provider. Do not treat a silent cancellation card as `free`. Non-property titles such as `closed` are dropped.
+
+## Trip total
+
+```bash
+uv run viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --adults 2 --fetch sweep
+```
+
+When a search names flights and a hotel on overlapping dates, viajante prints the owned cabin fare, the owned hotel stay, and their sum. Hotel `price_basis` stays `total_stay`. If either side misses (empty offers, fetch error, dates that do not overlap), the sum is omitted — never invented. `--adults` applies to both searches. Hotel check-in/out default to the earliest and latest flight dates when the route has two dates; override with `--check-in` / `--check-out`. MCP `search_trip` is the same join (Google hotels by default). `--save` writes both nested reports plus `trip_total` only when both sides hit.
 
 ## HTTP or Chromium
 
@@ -358,7 +366,7 @@ for result in report.queries:
             print(offer.total_price_eur, offer.title)
 ```
 
-`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_flex(..., around=..., flex=3)` is that grid plus one shopping search on the cheapest legal day. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
+`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_flex(..., around=..., flex=3)` is that grid plus one shopping search on the cheapest legal day. `search_trip` joins owned flight fare and hotel stay when dates overlap. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
 
 ## Limits
 

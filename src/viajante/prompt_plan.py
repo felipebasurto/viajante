@@ -22,7 +22,7 @@ from viajante.carriers import (
     parse_alliances,
 )
 from viajante.flights import FlightPlan, parse_flight_plan
-from viajante.models import FETCH_LANGUAGE, FlightCabin
+from viajante.models import FETCH_LANGUAGE, FlightCabin, HotelQuery
 
 Intent = str
 _PLAN_CABINS = frozenset({"economy", "premium-economy", "business", "first"})
@@ -1591,6 +1591,25 @@ def plan_to_trips(plan: PromptPlan) -> FlightPlan:
         infants_in_seat=plan.infants_in_seat if plan.infants_in_seat is not None else 0,
         infants_on_lap=plan.infants_on_lap if plan.infants_on_lap is not None else 0,
         cabin=cabin,
+    )
+
+
+def plan_to_hotel_query(plan: PromptPlan) -> HotelQuery:
+    """Hotel query from a plan that already named a stay. Does not invent a total."""
+    if not plan.hotels:
+        raise ValueError("plan_to_hotel_query requires hotels=true")
+    if plan.refuse:
+        raise ValueError(
+            "plan_to_hotel_query cannot search a refused plan: " + ", ".join(plan.refuse)
+        )
+    if plan.location is None or plan.check_in is None or plan.check_out is None:
+        raise ValueError("plan_to_hotel_query needs location, check_in, and check_out")
+    return HotelQuery(
+        plan.location,
+        plan.check_in,
+        plan.check_out,
+        adults=plan.adults if plan.adults is not None else 2,
+        rooms=plan.rooms if plan.rooms is not None else 1,
     )
 
 

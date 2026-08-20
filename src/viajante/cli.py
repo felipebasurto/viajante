@@ -69,10 +69,17 @@ from viajante.models import (
     StopsCompare,
     StopsCompareSide,
     Trip,
+    TripSearchReport,
     normalize_country,
     normalize_currency,
 )
 from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
+from viajante.trip import (
+    format_trip_total,
+    search_trip,
+    stay_window_from_trips,
+    write_trip_report_atomic,
+)
 
 FLIGHTS_EXAMPLES = """\
 Examples:
@@ -133,6 +140,13 @@ Examples:
   viajante hotels Tokyo 2026-10-12 2026-10-16 --compare-cancellation
   viajante hotels Tokyo 2026-10-12 2026-10-16 --save results/hotels.json
   viajante hotels Tokyo 2026-10-12 2026-10-16 --source google --top 3
+"""
+
+TRIP_EXAMPLES = """\
+Examples:
+  viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --adults 2
+  viajante trip DUB-JFK:2026-10-09:2026-10-13 --hotel "New York" --adults 2 --fetch sweep
+  viajante trip LAX-NRT:2026-10-12:2026-10-20 --hotel Tokyo --trip rt --source google
 """
 
 
@@ -744,6 +758,116 @@ def _run_hotels(args: argparse.Namespace) -> int:
     return _exit_code(report)
 
 
+def _print_trip_total(report: TripSearchReport) -> None:
+    if report.trip_total is None:
+        return
+    print(f"\n{format_trip_total(report.trip_total)}")
+
+
+def _combined_exit_code(*reports: object) -> int:
+    codes = [_exit_code(report) for report in reports]
+    if all(code == 0 for code in codes):
+        return 0
+    if all(code == 2 for code in codes):
+        return 2
+    return 3
+
+
+def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
+    defaults = {
+        "children": 0,
+        "infants_in_seat": 0,
+        "infants_on_lap": 0,
+        "bags": None,
+        "carry_on": False,
+        "max_layover": None,
+        "min_layover": None,
+        "max_duration": None,
+        "airlines": None,
+        "exclude_airlines": None,
+        "alliance": None,
+        "exclude_alliance": None,
+        "depart_window": None,
+    }
+    for key, value in defaults.items():
+        if not hasattr(args, key):
+            setattr(args, key, value)
+
+
+def _trip_hotel_query(args: argparse.Namespace, trips: Tuple[Trip, ...]) -> HotelQuery:
+    if args.check_in and args.check_out:
+        check_in = _parse_iso_date(args.check_in, "check-in")
+        check_out = _parse_iso_date(args.check_out, "check-out")
+    else:
+        window = stay_window_from_trips(trips)
+        if window is None:
+            raise ValueError(
+                "hotel stay needs --check-in and --check-out (or a two-date flight route)"
+            )
+        check_in, check_out = window
+        if args.check_in:
+            check_in = _parse_iso_date(args.check_in, "check-in")
+        if args.check_out:
+            check_out = _parse_iso_date(args.check_out, "check-out")
+    today = date.today()
+    if check_in < today:
+        raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
+    source = getattr(args, "source", "booking")
+    if source == "google" and args.min_rating is not None and args.min_rating > 5:
+        raise ValueError("--min-rating must be at most 5 with --source google")
+    return HotelQuery(
+        args.hotel,
+        check_in,
+        check_out,
+        adults=args.adults,
+        rooms=args.rooms,
+        min_rating=args.min_rating,
+        entire_home=args.entire_home,
+        free_cancellation=not args.allow_non_refundable,
+    )
+
+
+def _run_trip(args: argparse.Namespace) -> int:
+    _ensure_flight_validate_defaults(args)
+    try:
+        trips = _parse_and_validate(args)
+        hotel_query = _trip_hotel_query(args, trips)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    report = search_trip(
+        trips,
+        hotel_query,
+        top=args.top,
+        buffer_eur=args.baggage_buffer,
+        progress=lambda line: print(line, file=sys.stderr),
+        sort=args.sort,
+        fetch=args.fetch,
+        max_layover_hours=args.max_layover,
+        min_layover_hours=args.min_layover,
+        max_duration_hours=args.max_duration,
+        airlines=parse_airline_codes(args.airlines),
+        exclude_airlines=parse_airline_codes(args.exclude_airlines),
+        alliances=parse_alliances(args.alliance),
+        exclude_alliances=parse_alliances(args.exclude_alliance),
+        depart_window=parse_depart_window(args.depart_window),
+        currency=args.currency,
+        country=args.country,
+        hotel_source=getattr(args, "source", "booking"),
+    )
+    _print_report(report.flights, sort=args.sort)
+    _print_hotel_report(report.hotels)
+    _print_trip_total(report)
+
+    if args.save:
+        destination = Path(args.save)
+        write_trip_report_atomic(report, destination)
+        print(f"\nSaved {destination}")
+
+    return _combined_exit_code(report.flights, report.hotels)
+
+
 def _print_dates_report(report: DateCalendarReport) -> None:
     stay = ""
     if report.trip == "rt" and report.nights is not None:
@@ -1271,6 +1395,166 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write JSON report atomically to FILE",
     )
 
+    trip = sub.add_parser(
+        "trip",
+        help=(
+            "Flights plus hotel: print owned fare + hotel total stay + sum "
+            "when dates overlap and both searches succeed"
+        ),
+        description=(
+            "Search flights then a hotel. Print owned fare + hotel total stay + sum "
+            "when dates overlap and both searches succeed. Omit the sum if either side missed."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=TRIP_EXAMPLES,
+    )
+    trip.add_argument(
+        "routes",
+        nargs="+",
+        help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
+    )
+    trip.add_argument(
+        "--hotel",
+        required=True,
+        help="Hotel city or area (same occupancy adults as the flights)",
+    )
+    trip.add_argument(
+        "--check-in",
+        dest="check_in",
+        default=None,
+        help="Hotel check-in (YYYY-MM-DD). Default: earliest flight date when a return exists",
+    )
+    trip.add_argument(
+        "--check-out",
+        dest="check_out",
+        default=None,
+        help="Hotel check-out (YYYY-MM-DD). Default: latest flight date when a return exists",
+    )
+    trip.add_argument(
+        "--trip",
+        default="one-way",
+        type=normalize_trip_kind,
+        metavar="{one-way,rt,multi}",
+        help=(
+            "Trip kind (default one-way). rt/round-trip POSTs one package. "
+            "Sugar without --trip stays two one-ways."
+        ),
+    )
+    trip.add_argument(
+        "--max-stops",
+        type=int,
+        default=1,
+        choices=[0, 1, 2],
+        help="Maximum stops (default 1). 2 means two-or-fewer.",
+    )
+    trip.add_argument(
+        "--adults",
+        type=int,
+        default=1,
+        help="Adults for both flights and the hotel (default 1)",
+    )
+    trip.add_argument(
+        "--rooms",
+        type=int,
+        default=1,
+        help="Hotel rooms (default 1)",
+    )
+    trip.add_argument(
+        "--cabin",
+        default="economy",
+        choices=["economy", "premium-economy", "business", "first"],
+        help="Cabin class (default economy)",
+    )
+    trip.add_argument(
+        "--currency",
+        default="EUR",
+        metavar="CODE",
+        help="ISO 4217 currency for Google params (default EUR)",
+    )
+    trip.add_argument(
+        "--country",
+        default=None,
+        metavar="CC",
+        help="ISO country for Google gl (omit to leave unset; not a home-hub default)",
+    )
+    trip.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP,
+        help=f"Offers per query (default {DEFAULT_TOP})",
+    )
+    trip.add_argument(
+        "--baggage-buffer",
+        type=int,
+        default=DEFAULT_BAGGAGE_BUFFER_EUR,
+        metavar="EUR",
+        help=(
+            f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR}). "
+            "Trip total uses the owned cabin fare, not this buffer."
+        ),
+    )
+    trip.add_argument(
+        "--sort",
+        default="ranked",
+        choices=list(FLIGHT_SORTS),
+        help="Flight offer order (default ranked). Trip total still uses owned fare.",
+    )
+    trip.add_argument(
+        "--fetch",
+        default="auto",
+        choices=["auto", "sweep", "detail"],
+        help=(
+            "sweep is a fast HTTP shortlist; detail is the Playwright scrape. "
+            "auto uses sweep for 3+ flight queries and detail for 1-2 (default auto)"
+        ),
+    )
+    trip.add_argument(
+        "--source",
+        default="booking",
+        choices=["booking", "google"],
+        help=(
+            "Hotel source. booking is the Playwright evidence path (CLI default). "
+            "google is the HTTP shortlist (MCP default)."
+        ),
+    )
+    trip.add_argument(
+        "--min-rating",
+        type=float,
+        default=None,
+        dest="min_rating",
+        metavar="SCORE",
+        help="Minimum hotel review score (Booking 0-10; Google Hotels 0-5)",
+    )
+    trip.add_argument(
+        "--entire-home",
+        action="store_true",
+        help=("Require entire homes/apartments (cards with unknown property type may remain)"),
+    )
+    trip.add_argument(
+        "--allow-non-refundable",
+        action="store_true",
+        help="Include non-refundable stays (default filters to free cancellation)",
+    )
+    trip.add_argument(
+        "--bags",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Checked bags on the shopping request (omit to leave unset)",
+    )
+    trip.add_argument(
+        "--carry-on",
+        action="store_true",
+        dest="carry_on",
+        help="Ask the shopping request for one carry-on (omit to leave unset)",
+    )
+    trip.add_argument(
+        "--save",
+        default=None,
+        metavar="FILE",
+        help="Write JSON (flights, hotels, optional trip_total) atomically to FILE",
+    )
+
     dates = sub.add_parser(
         "dates",
         help="Cheapest fare per day for one route (compact calendar, quoted in EUR)",
@@ -1547,6 +1831,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_flights(args)
     if args.cmd == "hotels":
         return _run_hotels(args)
+    if args.cmd == "trip":
+        return _run_trip(args)
     if args.cmd == "dates":
         return _run_dates(args)
     if args.cmd == "flex":

@@ -18,6 +18,7 @@ from viajante.mcp_handlers import (
     search_flex_tool,
     search_flights_tool,
     search_hotels_tool,
+    search_trip_tool,
 )
 
 FUTURE = (date.today() + timedelta(days=30)).isoformat()
@@ -227,6 +228,47 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(payload["provider"], "google-hotels")
         self.assertNotIn("success", payload)
 
+    def test_search_trip_returns_nested_reports_and_omits_invented_total(self) -> None:
+        fake = _report(
+            flights={"queries": []},
+            hotels={"price_basis": "total_stay", "queries": []},
+        )
+        with patch("viajante.mcp_handlers.search_trip", return_value=fake) as search:
+            payload = search_trip_tool(
+                [f"SIN-MEL:{FUTURE}:{FUTURE_OUT}"],
+                "Melbourne",
+                trip="rt",
+                adults=2,
+                rooms=1,
+            )
+        search.assert_called_once()
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertIn("flights", payload)
+        self.assertIn("hotels", payload)
+        self.assertEqual(payload["hotels"]["price_basis"], "total_stay")
+        self.assertNotIn("trip_total", payload)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["hotel_source"], "google")
+        self.assertEqual(kwargs["buffer_eur"], 70)
+        trip = search.call_args.args[0][0]
+        self.assertEqual(type(trip).__name__, "RoundTrip")
+        self.assertEqual(trip.adults, 2)
+        hotel = search.call_args.args[1]
+        self.assertEqual(hotel.adults, 2)
+        self.assertEqual(hotel.rooms, 1)
+        self.assertEqual(hotel.location, "Melbourne")
+
+    def test_search_trip_past_check_in_fails_before_search(self) -> None:
+        with patch("viajante.mcp_handlers.search_trip") as search:
+            with self.assertRaises(ValueError):
+                search_trip_tool(
+                    [f"SIN-MEL:{FUTURE}:{FUTURE_OUT}"],
+                    "Melbourne",
+                    check_in=PAST,
+                    check_out=FUTURE_OUT,
+                )
+        search.assert_not_called()
+
     def test_google_hotels_reject_min_rating_above_five(self) -> None:
         with patch("viajante.mcp_handlers.search_hotels") as search:
             with self.assertRaises(ValueError):
@@ -294,6 +336,8 @@ class McpServerImportTests(unittest.TestCase):
             self.assertNotIn(name, sys.modules)
         self.assertIn("viajante-mcp", help_text)
         self.assertIn("search_flights", help_text)
+        self.assertIn("search_flex", help_text)
+        self.assertIn("search_trip", help_text)
         self.assertIn("stdio", help_text)
 
     def test_build_server_registers_tools_without_sdk(self) -> None:
@@ -328,6 +372,7 @@ class McpServerImportTests(unittest.TestCase):
                 "search_flex",
                 "search_explore",
                 "search_hotels",
+                "search_trip",
                 "lookup_airports",
             ],
         )

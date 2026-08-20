@@ -34,6 +34,8 @@ from viajante.models import (
     SearchReport,
     StopsCompare,
     StopsCompareSide,
+    TripSearchReport,
+    TripTotal,
     VsTypical,
 )
 
@@ -796,6 +798,7 @@ class ReportRenderingTests(unittest.TestCase):
         help_text = buffer.getvalue()
         self.assertIn("flights", help_text)
         self.assertIn("hotels", help_text)
+        self.assertIn("trip", help_text)
         self.assertIn("dates", help_text)
         self.assertIn("flex", help_text)
         self.assertIn("explore", help_text)
@@ -857,6 +860,7 @@ class PublicApiTests(unittest.TestCase):
             "CancellationEvidence",
             "PropertyTypeEvidence",
             "search_hotels",
+            "search_trip",
             "search_dates",
             "search_flex",
             "search_explore",
@@ -879,12 +883,14 @@ class PublicApiTests(unittest.TestCase):
                 "RoundTrip",
                 "SearchReport",
                 "Trip",
+                "TripSearchReport",
                 "lookup_airports",
                 "search_dates",
                 "search_explore",
                 "search_flex",
                 "search_flights",
                 "search_hotels",
+                "search_trip",
             },
         )
 
@@ -1428,6 +1434,149 @@ class HotelCliTests(unittest.TestCase):
                     data = json.loads(out.read_text(encoding="utf-8"))
                     self.assertEqual(data["schema_version"], 1)
                     self.assertEqual(data["price_basis"], "total_stay")
+
+
+class TripCliTests(unittest.TestCase):
+    def test_trip_help_returns_zero_without_search(self) -> None:
+        with patch("viajante.cli.search_trip") as search:
+            buffer = io.StringIO()
+            with patch("sys.stdout", buffer):
+                code = main(["trip", "--help"])
+            self.assertEqual(code, 0)
+            search.assert_not_called()
+            text = buffer.getvalue()
+            self.assertIn("--hotel", text)
+            self.assertIn("total stay", text)
+
+    def test_trip_prints_owned_fare_stay_and_sum(self) -> None:
+        flights = SearchReport(
+            searched_at=SEARCHED_AT,
+            fetch_backend="sweep",
+            fetch_ms=10,
+            queries=(
+                QuerySuccess(
+                    query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10), adults=2),
+                    raw_count=1,
+                    eligible_count=1,
+                    offers=(_offer(price_eur=412, baggage_buffer_eur=0),),
+                ),
+            ),
+        )
+        stay = HotelOffer(
+            title="Southbank Stay",
+            address="Melbourne",
+            total_price="246 €",
+            total_price_eur=246.0,
+            rating="8.9",
+            rating_score=8.9,
+            details="Free cancellation",
+            cancellation_evidence=CancellationEvidence.FREE,
+            property_type_evidence=PropertyTypeEvidence.ENTIRE_HOME,
+            lodging_kind=LodgingKind.ENTIRE_HOME,
+            bedrooms=1,
+            bathrooms=1,
+            beds=1,
+            link=None,
+        )
+        hotels = HotelSearchReport(
+            searched_at=SEARCHED_AT,
+            fetch_backend="google",
+            fetch_ms=8,
+            provider="google-hotels",
+            queries=(
+                HotelQuerySuccess(
+                    query=HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10), adults=2),
+                    applied=AppliedHotelFilters(chips=(), url="https://example.test"),
+                    raw_count=1,
+                    eligible_count=1,
+                    offers=(stay,),
+                ),
+            ),
+        )
+        report = TripSearchReport(
+            searched_at=SEARCHED_AT,
+            flights=flights,
+            hotels=hotels,
+            trip_total=TripTotal(
+                flight_fare_eur=412.0,
+                hotel_stay_eur=246.0,
+                total_eur=658.0,
+                nights=4,
+            ),
+            fetch_ms=18,
+        )
+        with patch("viajante.cli.search_trip", return_value=report) as search:
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(
+                    [
+                        "trip",
+                        "SIN-MEL:2026-11-06:2026-11-10",
+                        "--hotel",
+                        "Melbourne",
+                        "--trip",
+                        "rt",
+                        "--adults",
+                        "2",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        search.assert_called_once()
+        output = buffer.getvalue()
+        self.assertIn("412 € fare", output)
+        self.assertIn("246 € stay", output)
+        self.assertIn("total stay", output)
+        self.assertIn("= 658 €", output)
+        trips = search.call_args.args[0]
+        hotel_query = search.call_args.args[1]
+        self.assertEqual(trips[0].adults, 2)
+        self.assertEqual(hotel_query.adults, 2)
+        self.assertEqual(hotel_query.location, "Melbourne")
+        self.assertEqual(hotel_query.check_in, date(2026, 11, 6))
+        self.assertEqual(hotel_query.check_out, date(2026, 11, 10))
+        self.assertEqual(search.call_args.kwargs["hotel_source"], "booking")
+
+    def test_trip_omits_sum_when_total_missing(self) -> None:
+        flights = SearchReport(
+            searched_at=SEARCHED_AT,
+            fetch_backend="sweep",
+            queries=(
+                QuerySuccess(
+                    query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10)),
+                    raw_count=1,
+                    eligible_count=1,
+                    offers=(_offer(price_eur=412),),
+                ),
+            ),
+        )
+        hotels = _sample_hotel_report()
+        report = TripSearchReport(
+            searched_at=SEARCHED_AT,
+            flights=flights,
+            hotels=hotels,
+            trip_total=None,
+        )
+        with patch("viajante.cli.search_trip", return_value=report):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(
+                    [
+                        "trip",
+                        "SIN-MEL:2026-11-06:2026-11-10",
+                        "--hotel",
+                        "Melbourne",
+                        "--trip",
+                        "rt",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assertNotIn("Trip total:", buffer.getvalue())
+
+    def test_one_way_without_checkout_fails_before_search(self) -> None:
+        with patch("viajante.cli.search_trip") as search:
+            code = main(["trip", f"SIN-MEL:{FUTURE_DATE.isoformat()}", "--hotel", "Melbourne"])
+        self.assertEqual(code, 1)
+        search.assert_not_called()
 
 
 if __name__ == "__main__":
