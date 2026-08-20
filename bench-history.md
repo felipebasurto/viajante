@@ -25,6 +25,7 @@ Checked-in `bench-baseline.json` is still **1603**. Do not rewrite it.
 | **27** | **keep** | **850** | **752** | **−98** | `is_known_iata` via `_BY_CODE`; city scan only on `lookup_airports` |
 | **28** | **keep** | **688** | **660** | **−28** | one combined LCC airline regex; `_bag_evidence` calls `is_low_cost` once |
 | **29** | **keep** | **669** | **650** | **−19** | compile hotel evidence regexes once; one combined pattern per family |
+| **30** | **loss** | **711** | **654** | −57 | one Lexbor tree for HTTP cards; no `main.html` re-parse |
 
 #17 is the large one: unittest was importing the MCP SDK.
 Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
@@ -35,6 +36,7 @@ Do not redo #18: cache `load_prompt_cases()` / prompt JSONL parse (closed loss).
 #27: score_ms 850→787/752 (both below warm). Cold `--help` 318→304 (did not veto). Kept. Baseline left at 1603.
 #28: score_ms 688→665/660 (both below warm). Cold `--help` 292→289 (did not veto). Kept. Baseline left at 1603.
 #29: score_ms 669→650/659 (both below warm). Cold `--help` 280→280 (did not veto). Kept. Baseline left at 1603.
+#30: score_ms 711→654/656 (both below warm). Cold `--help` 281→285 (veto). Reverted.
 
 ## Quality already landed (do not redo)
 
