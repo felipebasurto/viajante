@@ -37,6 +37,7 @@ from viajante.prompt_bench import (
     compact_plan_dict,
     invention_reason,
     judge_case,
+    load_holdout_cases,
     load_prompt_cases,
     parse_judge_verdict,
     parse_score_1_100,
@@ -209,6 +210,7 @@ class PromptBenchRunnerTests(unittest.TestCase):
         self.assertTrue(pass_lines)
         for ln in pass_lines:
             self.assertNotIn("plan=", ln)
+        self.assertNotIn("holdout-", err)
 
     def test_judge_without_key_prints_skip_not_a_score(self) -> None:
         stdout = io.StringIO()
@@ -286,9 +288,16 @@ class PromptBenchRunnerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         help_text = buffer.getvalue()
         self.assertIn("--prompts", help_text)
+        self.assertIn("--holdout", help_text)
         self.assertIn("DEEPSEEK_API_KEY", help_text)
         self.assertNotIn("--skip", help_text)
         self.assertNotIn("--top", help_text)
+
+    def test_cli_holdout_flag_wires_to_runner(self) -> None:
+        with patch("viajante.cli.run_prompt_bench", return_value=0) as runner:
+            code = main(["bench", "--prompts", "--holdout"])
+        self.assertEqual(code, 0)
+        runner.assert_called_once_with(holdout=True)
 
 
 class JudgeScoreTests(unittest.TestCase):
@@ -657,6 +666,77 @@ class PromptCorpusDropTests(unittest.TestCase):
                 code = run_prompt_bench(root=checkout)
             self.assertEqual(code, 1)
             self.assertNotIn("score_ms", stdout.getvalue())
+
+
+class HoldoutCorpusTests(unittest.TestCase):
+    def test_holdout_is_not_in_weekday_manifest(self) -> None:
+        data = json.loads(
+            (repo_root() / "tests" / "prompts" / "manifest.json").read_text(encoding="utf-8")
+        )
+        names = [row["name"] for row in data["files"]]
+        self.assertNotIn("holdout.jsonl", names)
+        self.assertEqual(
+            names, ["smoke.jsonl", "easy.jsonl", "medium.jsonl", "hard.jsonl", "insane.jsonl"]
+        )
+
+    def test_weekday_load_skips_holdout(self) -> None:
+        cases = load_prompt_cases()
+        self.assertFalse(any(row.id.startswith("holdout-") for row in cases))
+        self.assertFalse(any(row.tier == "holdout" for row in cases))
+
+    def test_holdout_file_schema(self) -> None:
+        cases = load_holdout_cases()
+        self.assertGreaterEqual(len(cases), 8)
+        self.assertLessEqual(len(cases), 12)
+        origins: list[str] = []
+        judges = set()
+        for row in cases:
+            self.assertTrue(row.id.startswith("holdout-"), row.id)
+            self.assertEqual(row.tier, "holdout")
+            self.assertEqual(row.lang, "en")
+            self.assertIn(row.judge, {"deterministic", "llm"})
+            self.assertTrue(row.prompt.strip())
+            self.assertTrue(row.expect)
+            judges.add(row.judge)
+            origin = row.expect.get("origin")
+            if isinstance(origin, str):
+                origins.append(origin)
+        self.assertEqual(judges, {"deterministic", "llm"})
+        self.assertGreaterEqual(len(set(origins)), 6)
+        self.assertNotIn("MAD", origins)
+
+    def test_holdout_run_stays_offline(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch.dict("os.environ", {JUDGE_ENV: "", LIVE_ENV: "", PROMPTS_ENV: ""}),
+            patch("viajante.prompt_bench.judge_case") as judge,
+            patch("viajante.flights.search_flights") as search,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = run_prompt_bench(holdout=True)
+        self.assertEqual(code, 0)
+        judge.assert_not_called()
+        search.assert_not_called()
+        out = stdout.getvalue()
+        err = stderr.getvalue()
+        self.assertIn("prompts: ", out)
+        self.assertNotIn("score_ms", out)
+        lines = err.splitlines()
+        self.assertTrue(any(ln.startswith("holdout-") for ln in lines))
+        self.assertFalse(any(ln.startswith("smoke-") for ln in lines))
+
+    def test_manifest_listing_holdout_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = _copy_prompts(Path(tmp))
+            path = checkout / "tests" / "prompts" / "manifest.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["files"].append({"name": "holdout.jsonl", "tier": "holdout"})
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaises(PromptCorpusError) as ctx:
+                validate_prompt_corpus(checkout)
+            self.assertIn("holdout", str(ctx.exception).casefold())
 
 
 if __name__ == "__main__":

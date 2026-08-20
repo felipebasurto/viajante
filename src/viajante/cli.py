@@ -97,6 +97,7 @@ BENCH_EXAMPLES = """\
 Examples:
   viajante bench
   viajante bench --prompts
+  viajante bench --prompts --holdout
 """
 
 HOTELS_EXAMPLES = """\
@@ -1096,6 +1097,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "scores 1-100, and is never the score_ms. Unset key prints judge: skip."
         ),
     )
+    bench.add_argument(
+        "--holdout",
+        action="store_true",
+        help=(
+            "With --prompts, load only tests/prompts/holdout.jsonl. "
+            "Not part of the weekday 90. Operator overfitting check."
+        ),
+    )
     return parser
 
 
@@ -1125,6 +1134,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.cmd == "airports":
         return _run_airports(args)
     if args.cmd == "bench":
+        if args.holdout:
+            return run_prompt_bench(holdout=True)
         if args.prompts or os.environ.get(PROMPTS_ENV) == "1":
             return run_prompt_bench()
         return run_bench()

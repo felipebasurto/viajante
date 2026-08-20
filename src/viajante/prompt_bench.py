@@ -1,12 +1,13 @@
 """Graded prompt battery: quality contract, not the keep-or-revert score.
 
-`viajante bench --prompts` (or VIAJANTE_BENCH_PROMPTS=1) loads the checked-in
-corpus in tests/prompts/, runs the owned prompt→query planner, and checks
-deterministic contracts offline. LLM-as-judge is opt-in via
-VIAJANTE_BENCH_JUDGE=1, scores quality 1–100 with DeepSeek (`deepseek-chat`),
-and is never folded into score_ms. The API key lives outside the repo
-(DEEPSEEK_API_KEY, or VIAJANTE_JUDGE_KEY as override). Unset key →
-judge: skip; never invent a score.
+`viajante bench --prompts` (or VIAJANTE_BENCH_PROMPTS=1) loads the weekday
+corpus via tests/prompts/manifest.json (smoke → insane). `--holdout` loads
+only holdout.jsonl, which is not in that manifest. Deterministic contracts
+are offline. LLM-as-judge is opt-in via VIAJANTE_BENCH_JUDGE=1, scores
+quality 1–100 with DeepSeek (`deepseek-chat`), and is never folded into
+score_ms. The API key lives outside the repo (DEEPSEEK_API_KEY, or
+VIAJANTE_JUDGE_KEY as override). Unset key → judge: skip; never invent a
+score.
 
 Harness priorities:
 1. Honesty: invented price or route = 0 (deterministic; no DeepSeek, no live search).
@@ -37,6 +38,8 @@ from viajante.prompt_plan import (
 )
 
 PROMPTS_ENV = "VIAJANTE_BENCH_PROMPTS"
+HOLDOUT_NAME = "holdout.jsonl"
+HOLDOUT_TIER = "holdout"
 JUDGE_ENV = "VIAJANTE_BENCH_JUDGE"
 JUDGE_KEY_ENV = "DEEPSEEK_API_KEY"
 JUDGE_KEY_OVERRIDE_ENV = "VIAJANTE_JUDGE_KEY"
@@ -99,6 +102,9 @@ REQUIRED_PROMPT_IDS = frozenset(
     }
 )
 TIER_ORDER = ("smoke", "easy", "medium", "hard", "insane")
+VALID_TIERS = (*TIER_ORDER, HOLDOUT_TIER)
+MIN_HOLDOUT_CASES = 8
+MAX_HOLDOUT_CASES = 12
 
 
 class PromptCorpusError(RuntimeError):
@@ -164,7 +170,7 @@ def _parse_case(raw: object, *, path: Path, line_no: int) -> PromptCase:
     expect = raw.get("expect")
     if not isinstance(ident, str) or not ident.strip():
         raise PromptCorpusError(f"{path.name}:{line_no} missing id")
-    if tier not in TIER_ORDER:
+    if tier not in VALID_TIERS:
         raise PromptCorpusError(f"{path.name}:{line_no} invalid tier {tier!r}")
     if not isinstance(prompt, str) or not prompt.strip():
         raise PromptCorpusError(f"{path.name}:{line_no} empty prompt is forbidden")
@@ -184,6 +190,28 @@ def _parse_case(raw: object, *, path: Path, line_no: int) -> PromptCase:
     )
 
 
+def _load_jsonl_file(path: Path, *, seen: set[str]) -> list[PromptCase]:
+    if not path.is_file():
+        raise PromptCorpusError(f"dropped prompt file: {path.name}")
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        raise PromptCorpusError(f"empty prompt file is forbidden: {path.name}")
+    cases: list[PromptCase] = []
+    file_count = 0
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        row = _parse_case(json.loads(line), path=path, line_no=line_no)
+        if row.id in seen:
+            raise PromptCorpusError(f"duplicate prompt id: {row.id}")
+        seen.add(row.id)
+        cases.append(row)
+        file_count += 1
+    if file_count < 1:
+        raise PromptCorpusError(f"empty prompt file is forbidden: {path.name}")
+    return cases
+
+
 def load_prompt_cases(root: Optional[Path] = None) -> list[PromptCase]:
     directory = prompts_dir(root)
     data = load_manifest(root)
@@ -199,6 +227,8 @@ def load_prompt_cases(root: Optional[Path] = None) -> list[PromptCase]:
     missing = set(REQUIRED_PROMPT_FILES) - listed
     if missing:
         raise PromptCorpusError(f"prompt manifest dropped required files: {sorted(missing)}")
+    if HOLDOUT_NAME in listed:
+        raise PromptCorpusError("holdout.jsonl must not be in the weekday prompt manifest")
     extra = listed - set(REQUIRED_PROMPT_FILES)
     if extra:
         raise PromptCorpusError(f"prompt manifest added undeclared files: {sorted(extra)}")
@@ -206,29 +236,32 @@ def load_prompt_cases(root: Optional[Path] = None) -> list[PromptCase]:
     cases: list[PromptCase] = []
     seen: set[str] = set()
     for name in names:
-        path = directory / name
-        if not path.is_file():
-            raise PromptCorpusError(f"dropped prompt file: {name}")
-        text = path.read_text(encoding="utf-8")
-        if not text.strip():
-            raise PromptCorpusError(f"empty prompt file is forbidden: {name}")
-        file_count = 0
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            if not line.strip():
-                continue
-            row = _parse_case(json.loads(line), path=path, line_no=line_no)
-            if row.id in seen:
-                raise PromptCorpusError(f"duplicate prompt id: {row.id}")
-            seen.add(row.id)
-            cases.append(row)
-            file_count += 1
-        if file_count < 1:
-            raise PromptCorpusError(f"empty prompt file is forbidden: {name}")
+        cases.extend(_load_jsonl_file(directory / name, seen=seen))
+    return cases
+
+
+def load_holdout_cases(root: Optional[Path] = None) -> list[PromptCase]:
+    """Operator overfitting set. Not part of the weekday 90."""
+    path = prompts_dir(root) / HOLDOUT_NAME
+    cases = _load_jsonl_file(path, seen=set())
+    if not MIN_HOLDOUT_CASES <= len(cases) <= MAX_HOLDOUT_CASES:
+        raise PromptCorpusError(
+            f"holdout must have {MIN_HOLDOUT_CASES}-{MAX_HOLDOUT_CASES} cases ({len(cases)})"
+        )
+    for row in cases:
+        if not row.id.startswith("holdout-"):
+            raise PromptCorpusError(f"{row.id} must use holdout- prefix")
+        if row.tier != HOLDOUT_TIER:
+            raise PromptCorpusError(f"{row.id} must have tier={HOLDOUT_TIER}")
+        if row.lang != "en":
+            raise PromptCorpusError(f"{row.id} must be English (lang=en)")
     return cases
 
 
 def validate_prompt_corpus(root: Optional[Path] = None) -> list[PromptCase]:
     cases = load_prompt_cases(root)
+    if any(row.tier == HOLDOUT_TIER or row.id.startswith("holdout-") for row in cases):
+        raise PromptCorpusError("holdout cases must not be in the weekday prompt battery")
     if len(cases) < MIN_PROMPT_CASES:
         raise PromptCorpusError(
             f"prompt corpus shrank below {MIN_PROMPT_CASES} cases ({len(cases)})"
@@ -630,14 +663,14 @@ def format_prompt_report(
     return "\n".join(lines) + "\n"
 
 
-def run_prompt_bench(*, root: Optional[Path] = None) -> int:
+def run_prompt_bench(*, root: Optional[Path] = None, holdout: bool = False) -> int:
     if os.environ.get(LIVE_ENV) == "1":
         print(
             "note: prompt battery does not scrape; VIAJANTE_BENCH_LIVE is ignored",
             file=sys.stderr,
         )
     try:
-        cases = validate_prompt_corpus(root)
+        cases = load_holdout_cases(root) if holdout else validate_prompt_corpus(root)
     except PromptCorpusError as exc:
         print("prompts: fail", flush=True)
         print(f"error: {exc}", file=sys.stderr)

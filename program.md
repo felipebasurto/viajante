@@ -5,9 +5,9 @@ A looping agent reads it, runs **one** keep-or-revert experiment, then
 stops. There is no loop script in this repo.
 
 Before choosing a hypothesis, read `bench-history.md` (one screen).
-Do not redo a listed keep or loss. After a keep or revert, append one
-row to the speed table with this host's real numbers. Never invent a
-figure.
+Do not redo a listed keep or loss. Do not open `tests/prompts/holdout.jsonl`.
+After a keep or revert, append one row to the speed table with this host's
+real numbers. Never invent a figure.
 
 ## Goal
 
@@ -50,9 +50,10 @@ for insane/llm cases.
    lower** than `score_ms` in `bench-baseline.json`. `score_ms` is wall
    time on this machine. A few tens of ms can be noise; if the delta is
    that small, run the bench once more and keep only if both runs are
-   strictly lower. Do not average runs into a fake score.
-7. **Revert** the experiment files if the gate fails or `score_ms` is
-   worse or equal. Do not revert unrelated work on the branch.
+   strictly lower. Do not average runs into a fake score. Then apply
+   **Anti-maxxing** (cold `viajante --help`).
+7. **Revert** the experiment files if the gate fails, `score_ms` is worse
+   or equal, or cold `--help` got slower. Do not revert unrelated work.
 8. Open or update a pull request. **Never merge to main.** A human merges.
    Update `bench-baseline.json` only in a winning PR, and only when a
    human is ready to merge that win. Do not rewrite the baseline to hide
@@ -99,18 +100,35 @@ outside the repo, or `VIAJANTE_JUDGE_KEY` as override; optional
 answer: record `score_1_100` plus a one-line reason, not pass/fail as
 the only output. Unset key prints `judge: skip`; do not invent a score.
 Judge wall time and live scrapes are never `score_ms`.
-Empty or dropped prompt files fail the prompts run.
+Empty or dropped prompt files fail the prompts run. Holdout is **not**
+in that weekday 90. Do not add `holdout.jsonl` to `manifest.json`.
+Operator-only: `uv run viajante bench --prompts --holdout`.
 
-## Hard to game
+## Anti-maxxing
 
-- Do not skip tests, shrink `tests/bench/`, or drop a fixture from
-  `manifest.json`.
-- Do not delete, empty, or shrink `tests/prompts/` to look faster.
-- Do not add empty fixtures to “win”. New files belong there only when
-  they are real owned parse cases already covered by tests.
-- Do not lower `--top` or the baggage buffer to make ranking cheaper.
-- Do not delete tests, skip ruff, or stub parsers to go faster.
-- Do not count `sweep_ms`, live Google, or LLM-judge latency in the score.
+`score_ms` is unittest + the owned parse corpus. A keep that only moves
+import taxes or unittest-only caches is suspect. After BEFORE/AFTER
+`uv run viajante bench`, also time a COLD CLI on this host:
+`uv run viajante --help` twice, discard the first, keep the second wall
+ms. If that cold help is strictly worse than this host's pre-change cold
+help, REVERT even if `score_ms` won. Record both numbers in the PR.
+
+Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
+coverage, drop a fixture from `manifest.json`, add empty fixtures, lower
+`--top` or the baggage buffer, or stub parsers to win `score_ms`. Do not
+count `sweep_ms`, live Google, or LLM-judge latency.
+
+Do not edit `JUDGE_SYSTEM_PROMPT`, `invention_reason`, or existing prompt
+`expect` fields to raise the 1–100 mean. Invented price/route stays
+automatic 0.
+
+Existing smoke→insane rows are frozen except to fix a real planner bug
+(wrong IATA, dropped dests). New hardness goes in new files
+(brutal/holdout), not by rewriting old prompts to be easier.
+
+Looping speed agents read this file and `bench-history.md` only. They
+must not open `tests/prompts/holdout.jsonl` when choosing a hypothesis.
+Holdout is the operator overfitting check, not the weekday 90.
 
 ## Constraints (already in AGENTS.md)
 
@@ -144,7 +162,8 @@ honest.
 ## After the run
 
 - Write the recorded `score_ms` (and `tests_ms` / `parse_ms`) in the PR
-  body next to the baseline.
+  body next to the baseline. For a speed keep, also record cold
+  `viajante --help` ms (pre-change vs second run), per Anti-maxxing.
 - If it is a win, say so and leave baseline update for the human merge.
 - If it is a loss or a fail, the PR should show the revert, or not exist.
 - Stop. The scheduler starts the next experiment, not this checkout.

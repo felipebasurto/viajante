@@ -44,7 +44,8 @@ bench only; this battery does not scrape.
 ## Files
 
 Listed in `manifest.json`. Empty or dropped files fail the prompts run,
-same spirit as the parse corpus floors.
+same spirit as the parse corpus floors. `holdout.jsonl` is **not** listed;
+see `holdout.md`. Looping speed agents must not open it to pick work.
 
 Each JSONL row: `id`, `tier`, `lang` (`en`), `prompt`, `expect`, `judge`
 (`deterministic` or `llm`). `expect` is the checkable contract (origin IATA,
