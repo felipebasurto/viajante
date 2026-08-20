@@ -506,6 +506,32 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(normalize_trip_kind("one_way"), "one-way")
         self.assertEqual(normalize_trip_kind("round_trip"), "rt")
 
+    def test_parse_flight_plan_rt_open_jaw_is_packaged_multi(self) -> None:
+        plan = parse_flight_plan(
+            ["YVR-LHR:2026-10-09", "LGW-YVR:2026-10-13"],
+            trip="rt",
+            max_stops=1,
+        )
+        self.assertIsInstance(plan, MultiCity)
+        assert isinstance(plan, MultiCity)
+        self.assertEqual(
+            [(leg.origin, leg.destination, leg.departure_date) for leg in plan.legs],
+            [
+                ("YVR", "LHR", date(2026, 10, 9)),
+                ("LGW", "YVR", date(2026, 10, 13)),
+            ],
+        )
+        self.assertEqual(plan_unit_count(plan), 1)
+        mirrored = parse_flight_plan(
+            ["YVR-LHR:2026-10-09:2026-10-13"],
+            trip="rt",
+            max_stops=1,
+        )
+        self.assertIsInstance(mirrored, RoundTrip)
+        assert isinstance(mirrored, RoundTrip)
+        self.assertEqual(mirrored.destination, "LHR")
+        self.assertEqual(mirrored.legs[1].origin, "LHR")
+
     def test_parse_flight_plan_multi(self) -> None:
         plan = parse_flight_plan(
             ["MAD-BCN:2026-09-01", "BCN-FCO:2026-09-04"],

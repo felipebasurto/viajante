@@ -841,6 +841,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Trip kind (default one-way). rt/round-trip and multi POST one package. "
             "Sugar without --trip stays two one-ways. "
+            "Open-jaw --trip rt is two ORIGIN-DEST:DATE routes (one package). "
             "Aliases: oneway, one_way, round-trip, round_trip."
         ),
     )

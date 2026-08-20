@@ -362,7 +362,16 @@ def _parse_round_trip_plan(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-) -> RoundTrip:
+) -> RoundTrip | MultiCity:
+    if len(specs) == 2:
+        return _parse_open_jaw_rt_package(
+            specs,
+            max_stops=max_stops,
+            adults=adults,
+            cabin=cabin,
+            bags=bags,
+            carry_on=carry_on,
+        )
     if len(specs) != 1:
         raise ValueError(f"--trip rt expects exactly one {RT_GRAMMAR}")
     spec = specs[0]
@@ -379,6 +388,31 @@ def _parse_round_trip_plan(
         destination,
         outbound,
         inbound,
+        max_stops=max_stops,
+        adults=adults,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+    )
+
+
+def _parse_open_jaw_rt_package(
+    specs: Sequence[str],
+    *,
+    max_stops: int,
+    adults: int,
+    cabin: FlightCabin,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+) -> MultiCity:
+    """Two DATE legs under --trip rt are one open-jaw package, not a mirrored RT.
+
+    ``ORIGIN-DEST:OUT:BACK`` always returns from DEST. YVR-LHR out + LGW-YVR
+    back cannot use that grammar without dropping LGW, so we POST a two-leg
+    multi-city package instead. No invented fare.
+    """
+    return _parse_multi_city_plan(
+        specs,
         max_stops=max_stops,
         adults=adults,
         cabin=cabin,

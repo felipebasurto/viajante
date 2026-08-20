@@ -4,9 +4,9 @@ import unittest
 from datetime import date
 
 from viajante.airports import is_known_iata
-from viajante.flights import parse_flight_plan
+from viajante.flights import parse_flight_plan, plan_unit_count
 from viajante.models import HotelQuery, MultiCity, RoundTrip
-from viajante.prompt_plan import plan_prompt
+from viajante.prompt_plan import plan_prompt, plan_to_trips
 
 
 class PromptPlanSmokeTests(unittest.TestCase):
@@ -161,6 +161,35 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertGreaterEqual(len(plan.route_specs), 2)
         parsed = parse_flight_plan(plan.route_specs, trip="multi", max_stops=1)
         self.assertIsInstance(parsed, MultiCity)
+
+    def test_packaged_open_jaw_yvr_lhr_lgw_builds_search(self) -> None:
+        plan = plan_prompt(
+            "YVR-LHR on 2026-10-09 and LGW-YVR on 2026-10-13 as a packaged "
+            "round-trip --trip rt. Do not invent a fare."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.origin, "YVR")
+        self.assertEqual(
+            list(plan.route_specs),
+            ["YVR-LHR:2026-10-09", "LGW-YVR:2026-10-13"],
+        )
+        self.assertIn("LHR", "".join(plan.route_specs))
+        self.assertIn("LGW", "".join(plan.route_specs))
+        self.assertNotEqual(plan.route_specs, ("YVR-LHR:2026-10-09:2026-10-13",))
+        self.assertNotIn("€", plan.notes)
+        self.assertNotRegex(plan.notes, r"\bEUR\b")
+        parsed = plan_to_trips(plan)
+        self.assertIsInstance(parsed, MultiCity)
+        assert isinstance(parsed, MultiCity)
+        self.assertEqual(
+            [(leg.origin, leg.destination, leg.departure_date) for leg in parsed.legs],
+            [
+                ("YVR", "LHR", date(2026, 10, 9)),
+                ("LGW", "YVR", date(2026, 10, 13)),
+            ],
+        )
+        self.assertEqual(plan_unit_count(parsed), 1)
 
 
 class PromptPlanHardTests(unittest.TestCase):

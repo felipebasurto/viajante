@@ -12,12 +12,14 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional, Sequence, Tuple, cast
 
 from viajante.airports import is_known_iata
-from viajante.models import FETCH_LANGUAGE
+from viajante.flights import FlightPlan, parse_flight_plan
+from viajante.models import FETCH_LANGUAGE, FlightCabin
 
 Intent = str
+_PLAN_CABINS = frozenset({"economy", "premium-economy", "business", "first"})
 
 
 def _fold(text: str) -> str:
@@ -1224,6 +1226,27 @@ def _no_overnight_codes(raw: str, folded: str) -> list[str]:
     if "no overnight" in folded or "not overnight" in folded or "never overnight" in folded:
         return ["any"]
     return []
+
+
+def plan_to_trips(plan: PromptPlan) -> FlightPlan:
+    """Build the owned search plan. Does not fetch and does not invent fares."""
+    if plan.intent != "flights":
+        raise ValueError(f"plan_to_trips requires a flights plan, got {plan.intent!r}")
+    if plan.refuse:
+        raise ValueError("plan_to_trips cannot search a refused plan: " + ", ".join(plan.refuse))
+    if not plan.route_specs:
+        raise ValueError("plan_to_trips needs route_specs")
+    cabin = cast(
+        FlightCabin,
+        plan.cabin if plan.cabin in _PLAN_CABINS else "economy",
+    )
+    return parse_flight_plan(
+        plan.route_specs,
+        trip=plan.trip or "one-way",
+        max_stops=plan.max_stops if plan.max_stops is not None else 1,
+        adults=plan.adults if plan.adults is not None else 1,
+        cabin=cabin,
+    )
 
 
 def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
