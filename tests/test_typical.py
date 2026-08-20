@@ -160,6 +160,8 @@ class VsTypicalTests(unittest.TestCase):
         omitted = with_typical(_offer(price_eur=289.0), None)
         self.assertIsNone(omitted.typical_eur)
         self.assertIsNone(omitted.vs_typical)
+        self.assertIsNone(stamped.cheapest_date)
+        self.assertIsNone(omitted.cheapest_date)
 
 
 class TypicalSearchTests(unittest.TestCase):
@@ -194,6 +196,11 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertEqual(offer.price_eur, 289.0)
         self.assertEqual(offer.typical_eur, 360.0)
         self.assertEqual(offer.vs_typical, "below")
+        self.assertEqual(offer.cheapest_date, date(2026, 9, 15))
+        self.assertEqual(offer.cheapest_eur, 300.0)
+        payload = offer.to_dict()
+        self.assertEqual(payload["cheapest_date"], "2026-09-15")
+        self.assertEqual(payload["cheapest_eur"], 300.0)
 
     def test_no_calendar_method_does_not_invent_a_typical(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
@@ -213,6 +220,9 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertEqual(offer.price_eur, 412.0)
         self.assertIsNone(offer.typical_eur)
         self.assertIsNone(offer.vs_typical)
+        self.assertIsNone(offer.cheapest_date)
+        self.assertIsNone(offer.cheapest_eur)
+        self.assertNotIn("cheapest_date", offer.to_dict())
 
     def test_thin_calendar_omits_the_comparison(self) -> None:
         query = FlightQuery("LAX", "NRT", date(2026, 10, 1), max_stops=1)
@@ -237,6 +247,9 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertEqual(offer.price_eur, 612.0)
         self.assertIsNone(offer.typical_eur)
         self.assertIsNone(offer.vs_typical)
+        self.assertIsNone(offer.cheapest_date)
+        self.assertIsNone(offer.cheapest_eur)
+        self.assertNotIn("cheapest_date", offer.to_dict())
 
     def test_calendar_miss_does_not_fail_the_search_or_invent(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
@@ -255,6 +268,8 @@ class TypicalSearchTests(unittest.TestCase):
         assert isinstance(report.queries[0], QuerySuccess)
         self.assertIsNone(report.queries[0].offers[0].typical_eur)
         self.assertIsNone(report.queries[0].offers[0].vs_typical)
+        self.assertIsNone(report.queries[0].offers[0].cheapest_date)
+        self.assertNotIn("cheapest_date", report.queries[0].offers[0].to_dict())
 
     def test_same_route_reuses_one_calendar_fetch(self) -> None:
         first = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
@@ -302,6 +317,8 @@ class TypicalSearchTests(unittest.TestCase):
         assert isinstance(report.queries[0], QuerySuccess)
         self.assertIsNone(report.queries[0].offers[0].typical_eur)
         self.assertIsNone(report.queries[0].offers[0].vs_typical)
+        self.assertIsNone(report.queries[0].offers[0].cheapest_date)
+        self.assertNotIn("cheapest_date", report.queries[0].offers[0].to_dict())
 
     def test_failed_query_does_not_fetch_a_typical(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
@@ -363,6 +380,33 @@ class TypicalSearchTests(unittest.TestCase):
         offer = report.queries[0].offers[0]
         self.assertEqual(offer.typical_eur, 340.0)
         self.assertEqual(offer.vs_typical, "below")
+        self.assertEqual(offer.cheapest_date, date(2026, 9, 15))
+        self.assertEqual(offer.cheapest_eur, 300.0)
+
+    def test_cheapest_day_outside_the_window_is_not_used(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
+        source = FakeCalendarFlightSource(
+            {("JFK", "LHR", "2026-09-15", 1): (card(price="289 €"),)},
+            (
+                CompactCalendarDay(date(2026, 9, 14), 10.0),
+                CompactCalendarDay(date(2026, 9, 15), 300.0),
+                CompactCalendarDay(date(2026, 9, 16), 340.0),
+                CompactCalendarDay(date(2026, 9, 17), 360.0),
+            ),
+        )
+        report = _run_search(
+            (query,),
+            top=1,
+            source=source,
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 20),
+        )
+        assert isinstance(report.queries[0], QuerySuccess)
+        offer = report.queries[0].offers[0]
+        self.assertEqual(offer.typical_eur, 340.0)
+        self.assertEqual(offer.cheapest_date, date(2026, 9, 15))
+        self.assertEqual(offer.cheapest_eur, 300.0)
 
 
 class TypicalModelTests(unittest.TestCase):
@@ -396,6 +440,39 @@ class TypicalModelTests(unittest.TestCase):
                 baggage_buffer_eur=0,
                 needs_bag_verify=False,
                 vs_typical="below",
+            )
+        with self.assertRaises(ValueError):
+            FlightOffer(
+                airline="Air",
+                departure="08:00",
+                arrival="10:00",
+                price="€100",
+                price_eur=100.0,
+                duration="2 hr",
+                duration_hours=2.0,
+                stops="Nonstop",
+                stops_count=0,
+                baggage_buffer_eur=0,
+                needs_bag_verify=False,
+                cheapest_date=date(2026, 9, 15),
+                cheapest_eur=80.0,
+            )
+        with self.assertRaises(ValueError):
+            FlightOffer(
+                airline="Air",
+                departure="08:00",
+                arrival="10:00",
+                price="€100",
+                price_eur=100.0,
+                duration="2 hr",
+                duration_hours=2.0,
+                stops="Nonstop",
+                stops_count=0,
+                baggage_buffer_eur=0,
+                needs_bag_verify=False,
+                typical_eur=120.0,
+                vs_typical="near",
+                cheapest_date=date(2026, 9, 15),
             )
 
 

@@ -10,8 +10,12 @@ from unittest.mock import patch
 
 from viajante.cli import main
 from viajante.dates import (
+    EMPTY_DAY_MARK,
     MAX_DATE_WINDOW_DAYS,
     calendar_trip,
+    format_sparkline,
+    format_summary_line,
+    format_week_calendar,
     parse_route_pair,
     resolve_date_trip,
     search_dates,
@@ -24,8 +28,15 @@ from viajante.google_flights_rpc import (
     build_calendar_inner,
     parse_calendar_body,
 )
-from viajante.models import FlightQuery, RoundTrip, SearchErrorCode
-from viajante.typical import typical_eur_from_daily_prices
+from viajante.models import (
+    MIN_PRICED_DAYS_FOR_SUMMARY,
+    DatePriceRow,
+    FlightQuery,
+    RoundTrip,
+    SearchErrorCode,
+    owned_calendar_summary,
+)
+from viajante.typical import MIN_DAILY_PRICES, typical_eur_from_daily_prices
 
 
 def _calendar_body(rows: list[list[object]]) -> str:
@@ -328,6 +339,132 @@ class DateSearchTests(unittest.TestCase):
         self.assertIsNone(report.days[1].price_eur)
 
 
+class CalendarPresentationTests(unittest.TestCase):
+    def test_summary_floor_matches_typical(self) -> None:
+        self.assertEqual(MIN_PRICED_DAYS_FOR_SUMMARY, MIN_DAILY_PRICES)
+        self.assertEqual(MIN_PRICED_DAYS_FOR_SUMMARY, 3)
+
+    def test_summary_uses_only_priced_days_and_skips_empty(self) -> None:
+        summary = owned_calendar_summary(
+            (
+                (date(2026, 9, 1), 81.0),
+                (date(2026, 9, 2), None),
+                (date(2026, 9, 3), 67.0),
+                (date(2026, 9, 4), 120.0),
+                (date(2026, 9, 5), 0.0),
+            )
+        )
+        assert summary is not None
+        self.assertEqual(summary.min_eur, 67.0)
+        self.assertEqual(summary.median_eur, 81.0)
+        self.assertEqual(summary.max_eur, 120.0)
+        self.assertEqual(summary.cheapest_date, date(2026, 9, 3))
+        self.assertEqual(summary.n_priced, 3)
+
+    def test_summary_omitted_when_fewer_than_three_priced_days(self) -> None:
+        self.assertIsNone(
+            owned_calendar_summary(
+                (
+                    (date(2026, 9, 1), 40.0),
+                    (date(2026, 9, 2), None),
+                    (date(2026, 9, 3), 55.0),
+                )
+            )
+        )
+
+    def test_tied_min_picks_the_earliest_owned_day(self) -> None:
+        summary = owned_calendar_summary(
+            (
+                (date(2026, 9, 2), 50.0),
+                (date(2026, 9, 1), 50.0),
+                (date(2026, 9, 3), 80.0),
+            )
+        )
+        assert summary is not None
+        self.assertEqual(summary.cheapest_date, date(2026, 9, 1))
+        self.assertEqual(summary.min_eur, 50.0)
+
+    def test_search_dates_attaches_summary_from_owned_rows(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 81.0),
+                CompactCalendarDay(date(2026, 9, 2), None),
+                CompactCalendarDay(date(2026, 9, 3), 67.0),
+                CompactCalendarDay(date(2026, 9, 4), 90.0),
+            )
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 4), source=source)
+        assert report.summary is not None
+        self.assertEqual(report.summary.min_eur, 67.0)
+        self.assertEqual(report.summary.median_eur, 81.0)
+        self.assertEqual(report.summary.max_eur, 90.0)
+        self.assertEqual(report.summary.cheapest_date, date(2026, 9, 3))
+        self.assertEqual(report.summary.n_priced, 3)
+        self.assertEqual(report.to_dict()["summary"]["cheapest_date"], "2026-09-03")
+
+    def test_search_dates_omits_summary_when_the_grid_is_thin(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), None),
+                CompactCalendarDay(date(2026, 9, 3), 52.0),
+            )
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 3), source=source)
+        self.assertIsNone(report.summary)
+        self.assertNotIn("summary", report.to_dict())
+
+    def test_week_calendar_marks_empty_days_and_does_not_invent(self) -> None:
+        lines = format_week_calendar(
+            (
+                DatePriceRow(departure_date=date(2026, 9, 1), price_eur=40.0),
+                DatePriceRow(departure_date=date(2026, 9, 2), status="empty"),
+                DatePriceRow(departure_date=date(2026, 9, 3), price_eur=55.0),
+            )
+        )
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertIn("Mon", lines[0])
+        body = "\n".join(lines[1:])
+        self.assertIn("40", body)
+        self.assertIn("55", body)
+        self.assertIn(EMPTY_DAY_MARK, body)
+        self.assertNotIn("47", body)
+        self.assertIn("1-3 Sep", body)
+
+    def test_sparkline_marks_empty_and_skips_when_nothing_is_priced(self) -> None:
+        spark = format_sparkline(
+            (
+                DatePriceRow(departure_date=date(2026, 9, 1), price_eur=40.0),
+                DatePriceRow(departure_date=date(2026, 9, 2), status="empty"),
+                DatePriceRow(departure_date=date(2026, 9, 3), price_eur=80.0),
+            )
+        )
+        self.assertEqual(len(spark), 3)
+        self.assertEqual(spark[1], EMPTY_DAY_MARK)
+        self.assertEqual(spark[0], "▁")
+        self.assertEqual(spark[2], "█")
+        self.assertEqual(
+            format_sparkline((DatePriceRow(departure_date=date(2026, 9, 1), status="empty"),)),
+            "",
+        )
+
+    def test_summary_line_is_english(self) -> None:
+        summary = owned_calendar_summary(
+            (
+                (date(2026, 9, 1), 40.0),
+                (date(2026, 9, 2), 55.0),
+                (date(2026, 9, 3), 90.0),
+            )
+        )
+        assert summary is not None
+        line = format_summary_line(summary)
+        self.assertIn("min 40 €", line)
+        self.assertIn("median 55 €", line)
+        self.assertIn("max 90 €", line)
+        self.assertIn("cheapest 2026-09-01", line)
+        self.assertIn("3 priced", line)
+
+
 class DateCliTests(unittest.TestCase):
     def test_window_cap_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_dates") as search:
@@ -372,6 +509,42 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("2026-09-01", output)
         self.assertIn("40 €", output)
         self.assertIn("55 €", output)
+        self.assertIn("Mon", output)
+        self.assertNotIn("min ", output)
+        self.assertNotIn("median ", output)
+
+    def test_prints_week_calendar_summary_and_marks_empty(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 40.0),
+                CompactCalendarDay(date(2026, 9, 2), None),
+                CompactCalendarDay(date(2026, 9, 3), 90.0),
+                CompactCalendarDay(date(2026, 9, 4), 55.0),
+            )
+        )
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(
+                    [
+                        "dates",
+                        "MAD-BCN",
+                        "--from",
+                        "2026-09-01",
+                        "--to",
+                        "2026-09-04",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("Mon", output)
+        self.assertIn(EMPTY_DAY_MARK, output)
+        self.assertIn("min 40 €", output)
+        self.assertIn("median 55 €", output)
+        self.assertIn("max 90 €", output)
+        self.assertIn("cheapest 2026-09-01", output)
+        self.assertIn("3 priced", output)
+        self.assertNotIn("65 €", output)
 
     def test_dates_help_mentions_the_cap(self) -> None:
         buffer = io.StringIO()

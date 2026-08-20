@@ -143,6 +143,39 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(data["days"][1]["status"], "empty")
         self.assertIsNone(data["days"][1]["price_eur"])
 
+    def test_summary_is_omitted_when_fewer_than_three_priced_days(self) -> None:
+        self.assertNotIn("summary", self.data)
+
+    def test_summary_block_uses_only_priced_days(self) -> None:
+        report = DateCalendarReport(
+            searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
+            origin="MAD",
+            destination="BCN",
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 4),
+            days=(
+                DatePriceRow(departure_date=date(2026, 9, 1), price_eur=81.0),
+                DatePriceRow(departure_date=date(2026, 9, 2), status="empty"),
+                DatePriceRow(departure_date=date(2026, 9, 3), price_eur=67.0),
+                DatePriceRow(departure_date=date(2026, 9, 4), price_eur=120.0),
+            ),
+        )
+        data = report.to_dict()
+        self.assertEqual(
+            set(data),
+            REPORT_KEYS | {"summary"},
+        )
+        self.assertEqual(
+            set(data["summary"]),
+            {"min_eur", "median_eur", "max_eur", "cheapest_date", "n_priced"},
+        )
+        self.assertEqual(data["summary"]["min_eur"], 67.0)
+        self.assertEqual(data["summary"]["median_eur"], 81.0)
+        self.assertEqual(data["summary"]["max_eur"], 120.0)
+        self.assertEqual(data["summary"]["cheapest_date"], "2026-09-03")
+        self.assertEqual(data["summary"]["n_priced"], 3)
+        self.assertIsNone(data["days"][1]["price_eur"])
+
 
 if __name__ == "__main__":
     unittest.main()

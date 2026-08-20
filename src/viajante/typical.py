@@ -9,6 +9,7 @@ hardcoded city fare.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 from statistics import median
 from typing import Optional, Sequence
 
@@ -41,8 +42,22 @@ def vs_typical(price_eur: float, typical_eur: Optional[float]) -> Optional[VsTyp
     return "near"
 
 
-def with_typical(offer: FlightOffer, typical_eur: Optional[float]) -> FlightOffer:
+def with_typical(
+    offer: FlightOffer,
+    typical_eur: Optional[float],
+    *,
+    cheapest_date: Optional[date] = None,
+    cheapest_eur: Optional[float] = None,
+) -> FlightOffer:
     label = vs_typical(offer.price_eur, typical_eur)
     if typical_eur is None or label is None:
         return offer
-    return replace(offer, typical_eur=typical_eur, vs_typical=label)
+    if cheapest_date is None or cheapest_eur is None or cheapest_eur <= 0:
+        return replace(offer, typical_eur=typical_eur, vs_typical=label)
+    return replace(
+        offer,
+        typical_eur=typical_eur,
+        vs_typical=label,
+        cheapest_date=cheapest_date,
+        cheapest_eur=cheapest_eur,
+    )

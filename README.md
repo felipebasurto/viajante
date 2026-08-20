@@ -53,7 +53,7 @@ uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
 
 One adult, one-way, economy. Up to eight offers, ordered by ranked total. That is fare plus a 70 EUR buffer on known low-cost carriers, and connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. Norse is 289 € on fare. The buffer puts it behind British Airways at 359 € ranked. `--sort fare` or `--sort price` or `--baggage-buffer 0` turns the buffer off. `--sort duration` orders by elapsed time. `--sort departure` / `--sort arrival` order by local clocks. `--bags N` and `--carry-on` put those counts on the shopping request so returned prices are for that bag selection. Default is unset (same prices as before). If a compact card includes checked/carry counts, they are parsed onto the offer; missing bag data stays omitted. Offers whose parsed counts contradict the request are dropped. The 70 EUR buffer is a guess used only when bag counts are still unknown.
 
-`typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). `vs_typical` is `below`, `near` (±10%), or `above`. Both are `null` when the compact calendar misses, has fewer than three priced days, or the query is a packaged round-trip / multi-city. Never a guessed market average.
+`typical_eur` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). `vs_typical` is `below`, `near` (±10%), or `above`. When that median exists, `cheapest_date` / `cheapest_eur` point at the cheapest owned day in the same window. All four are omitted (typical/vs_typical `null`; cheapest keys absent) when the compact calendar misses, has fewer than three priced days, or the query is a packaged round-trip / multi-city. Never a guessed market average.
 
 Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026-09-15,2026-09-16`.
 
@@ -71,13 +71,18 @@ uv run viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
 ```
 
 ```text
-=== LAX -> NRT  2026-10-01 .. 2026-10-31 ===
+=== LAX -> NRT  2026-10-01 .. 2026-10-04 ===
+    Mon   Tue   Wed   Thu   Fri   Sat   Sun
+                      612   588   541     ·  1-4 Oct
+  █▆▁·
+  min 541 €  median 588 €  max 612 €  cheapest 2026-10-03  (3 priced)
   2026-10-01      612 €
   2026-10-02      588 €
   2026-10-03      541 €
+  2026-10-04        —
 ```
 
-One row per departure day, cheapest quote (EUR). The window is at most 31 days. Default is one-way. `--nights 5` (or `--trip rt --nights 5`) prices a packaged stay of that length for each outbound day. A missed day is empty, never a guessed fare. This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). `--fetch detail` is accepted and ignored.
+English week lines plus a sparkline of owned daily prices. Empty days are `·` in the grid (and `—` in the row list), never a guessed fare. `min` / `median` / `max` / cheapest date are computed only from priced days and omitted when fewer than three days have a price. The window is at most 31 days. Default is one-way. `--nights 5` (or `--trip rt --nights 5`) prices a packaged stay of that length for each outbound day. This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). `--fetch detail` is accepted and ignored. The `--save` JSON `summary` block is the same numbers.
 
 ## Explore
 
@@ -185,6 +190,8 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
           "price_eur": 289.0,
           "typical_eur": 340.0,
           "vs_typical": "below",
+          "cheapest_date": "2026-09-16",
+          "cheapest_eur": 300.0,
           "duration": "7 hr 25 min",
           "duration_hours": 7.42,
           "stops": "Nonstop",
@@ -212,7 +219,7 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
 }
 ```
 
-A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
+A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer’s `legs` list has outbound then return clocks. `typical_eur` / `vs_typical` are filled from that same-route date-grid median when it exists; otherwise both are `null`. `cheapest_date` / `cheapest_eur` appear only when that median exists and the cheapest owned day is in the grid; they are omitted, not invented, when the grid missed. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
 
 ## CLI reference
 
@@ -329,7 +336,7 @@ for result in report.queries:
             print(offer.total_price_eur, offer.title)
 ```
 
-`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
+`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
 
 ## Limits
 

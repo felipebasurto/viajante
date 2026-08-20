@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Literal, Mapping, Optional, Tuple, Union
+from statistics import median
+from typing import Literal, Mapping, Optional, Sequence, Tuple, Union
 
 from viajante.airports import is_known_iata
 
@@ -455,6 +456,8 @@ class FlightOffer:
     legs: Tuple[RawJourneyLeg, ...] = ()
     typical_eur: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
+    cheapest_date: Optional[date] = None
+    cheapest_eur: Optional[float] = None
     checked_bags: Optional[int] = None
     carry_on: Optional[int] = None
 
@@ -471,6 +474,12 @@ class FlightOffer:
             raise ValueError("typical_eur must be positive")
         if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
             raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
+        if (self.cheapest_date is None) != (self.cheapest_eur is None):
+            raise ValueError("cheapest_date and cheapest_eur must both be set or both omitted")
+        if self.cheapest_eur is not None and self.cheapest_eur <= 0:
+            raise ValueError("cheapest_eur must be positive")
+        if self.cheapest_date is not None and self.typical_eur is None:
+            raise ValueError("cheapest day is omitted unless typical_eur is set")
         _require_bag_count(self.checked_bags, role="checked_bags")
         _require_bag_count(self.carry_on, role="carry_on")
         if not self.legs:
@@ -518,6 +527,9 @@ class FlightOffer:
             payload["checked_bags"] = self.checked_bags
         if self.carry_on is not None:
             payload["carry_on"] = self.carry_on
+        if self.cheapest_date is not None and self.cheapest_eur is not None:
+            payload["cheapest_date"] = self.cheapest_date.isoformat()
+            payload["cheapest_eur"] = self.cheapest_eur
         return payload
 
 
@@ -614,6 +626,47 @@ class SearchReport:
 
 DateTripKind = Literal["one-way", "rt"]
 
+# Same floor as typical.MIN_DAILY_PRICES. Tests pin the two together.
+MIN_PRICED_DAYS_FOR_SUMMARY = 3
+
+
+@dataclass(frozen=True)
+class DateCalendarSummary:
+    """Min / median / max over owned priced days. Absent when the grid is thin."""
+
+    min_eur: float
+    median_eur: float
+    max_eur: float
+    cheapest_date: date
+    n_priced: int
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "min_eur": self.min_eur,
+            "median_eur": self.median_eur,
+            "max_eur": self.max_eur,
+            "cheapest_date": self.cheapest_date.isoformat(),
+            "n_priced": self.n_priced,
+        }
+
+
+def owned_calendar_summary(
+    pairs: Sequence[tuple[date, Optional[float]]],
+) -> Optional[DateCalendarSummary]:
+    """Stats from owned daily prices only. None if fewer than three priced days."""
+    priced = [(day, float(price)) for day, price in pairs if price is not None and price > 0]
+    if len(priced) < MIN_PRICED_DAYS_FOR_SUMMARY:
+        return None
+    prices = [price for _day, price in priced]
+    cheapest_date, min_eur = min(priced, key=lambda item: (item[1], item[0]))
+    return DateCalendarSummary(
+        min_eur=min_eur,
+        median_eur=float(median(prices)),
+        max_eur=max(prices),
+        cheapest_date=cheapest_date,
+        n_priced=len(priced),
+    )
+
 
 @dataclass(frozen=True)
 class DatePriceRow:
@@ -654,6 +707,7 @@ class DateCalendarReport:
     nights: Optional[int] = None
     fetch_backend: Optional[str] = "calendar"
     fetch_ms: Optional[int] = None
+    summary: Optional[DateCalendarSummary] = field(init=False, default=None)
     schema_version: int = field(init=False, default=1)
 
     def __post_init__(self) -> None:
@@ -663,6 +717,11 @@ class DateCalendarReport:
                 "searched_at",
                 self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
             )
+        object.__setattr__(
+            self,
+            "summary",
+            owned_calendar_summary([(row.departure_date, row.price_eur) for row in self.days]),
+        )
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -681,6 +740,8 @@ class DateCalendarReport:
         }
         if self.nights is not None:
             payload["nights"] = self.nights
+        if self.summary is not None:
+            payload["summary"] = self.summary.to_dict()
         return payload
 
 

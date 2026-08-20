@@ -226,6 +226,31 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(data["typical_eur"], 340.0)
         self.assertEqual(data["vs_typical"], "below")
         self.assertEqual(set(data), OFFER_KEYS)
+        self.assertNotIn("cheapest_date", data)
+        self.assertNotIn("cheapest_eur", data)
+
+    def test_cheapest_owned_day_is_an_extra_offer_key(self) -> None:
+        offer = FlightOffer(
+            airline="Norse Atlantic",
+            departure="21:15",
+            arrival="09:40",
+            price="€289",
+            price_eur=289.0,
+            duration="7 hr 25 min",
+            duration_hours=7.42,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer_eur=70,
+            needs_bag_verify=True,
+            typical_eur=340.0,
+            vs_typical="below",
+            cheapest_date=date(2026, 9, 16),
+            cheapest_eur=300.0,
+        )
+        data = offer.to_dict()
+        self.assertEqual(data["cheapest_date"], "2026-09-16")
+        self.assertEqual(data["cheapest_eur"], 300.0)
+        self.assertEqual(set(data), OFFER_KEYS | {"cheapest_date", "cheapest_eur"})
 
     def test_two_stop_offer_hides_string_layover_city(self) -> None:
         offer = FlightOffer(

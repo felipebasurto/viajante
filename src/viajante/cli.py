@@ -16,6 +16,9 @@ from viajante.bench import run_bench
 from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
+    format_sparkline,
+    format_summary_line,
+    format_week_calendar,
     parse_route_pair,
     resolve_date_trip,
     search_dates,
@@ -255,7 +258,10 @@ def _format_ranking_columns(offer: FlightOffer) -> str:
 def _format_typical(offer: FlightOffer) -> str:
     if offer.typical_eur is None or offer.vs_typical is None:
         return ""
-    return f"  {offer.vs_typical} typical {offer.typical_eur:.0f} €"
+    text = f"  {offer.vs_typical} typical {offer.typical_eur:.0f} €"
+    if offer.cheapest_date is not None and offer.cheapest_eur is not None:
+        text += f"  cheapest {offer.cheapest_date.isoformat()} {offer.cheapest_eur:.0f} €"
+    return text
 
 
 def _format_parsed_bags(offer: FlightOffer) -> str:
@@ -669,6 +675,14 @@ def _print_dates_report(report: DateCalendarReport) -> None:
         f"\n=== {report.origin} -> {report.destination}  "
         f"{report.start_date.isoformat()} .. {report.end_date.isoformat()}{stay} ==="
     )
+    for line in format_week_calendar(report.days):
+        print(line)
+    spark = format_sparkline(report.days)
+    if spark:
+        print(f"  {spark}")
+    if report.summary is not None:
+        print(format_summary_line(report.summary))
+    print()
     any_price = False
     for row in report.days:
         if row.status == "error" and row.error is not None:
@@ -1093,7 +1107,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     dates = sub.add_parser(
         "dates",
-        help="Cheapest fare per day for one route (compact table, quoted in EUR)",
+        help="Cheapest fare per day for one route (compact calendar, quoted in EUR)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=DATES_EXAMPLES,
     )

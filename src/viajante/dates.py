@@ -12,6 +12,7 @@ from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
 from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
 from viajante.models import (
     DateCalendarReport,
+    DateCalendarSummary,
     DatePriceRow,
     DateTripKind,
     FlightCabin,
@@ -24,6 +25,104 @@ from viajante.models import (
 from viajante.storage import write_json_atomic
 
 MAX_DATE_WINDOW_DAYS = 31
+
+EMPTY_DAY_MARK = "·"
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+_SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
+_CELL_WIDTH = 5
+
+
+def _english_day_label(day: date) -> str:
+    return f"{day.day} {_MONTHS[day.month - 1]}"
+
+
+def _week_span_label(start: date, end: date) -> str:
+    if start == end:
+        return _english_day_label(start)
+    if start.month == end.month and start.year == end.year:
+        return f"{start.day}-{end.day} {_MONTHS[start.month - 1]}"
+    return f"{_english_day_label(start)}-{_english_day_label(end)}"
+
+
+def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
+    """English week lines of owned daily prices. Empty or missing days are ·."""
+    if not days:
+        return ()
+    by_day = {row.departure_date: row for row in days}
+    start = min(by_day)
+    end = max(by_day)
+    first_monday = date.fromordinal(start.toordinal() - start.weekday())
+    header = "  " + " ".join(f"{name:>{_CELL_WIDTH}}" for name in _WEEKDAYS)
+    lines = [header]
+    cursor = first_monday
+    while cursor <= end:
+        cells: list[str] = []
+        in_window = False
+        for offset in range(7):
+            day = date.fromordinal(cursor.toordinal() + offset)
+            if day < start or day > end:
+                cells.append(" " * _CELL_WIDTH)
+                continue
+            in_window = True
+            row = by_day.get(day)
+            price = None if row is None else row.price_eur
+            if price is None or price <= 0:
+                cells.append(f"{EMPTY_DAY_MARK:>{_CELL_WIDTH}}")
+            else:
+                cells.append(f"{price:>{_CELL_WIDTH}.0f}")
+        if in_window:
+            week_end = date.fromordinal(cursor.toordinal() + 6)
+            label = _week_span_label(max(cursor, start), min(week_end, end))
+            lines.append("  " + " ".join(cells) + f"  {label}")
+        cursor = date.fromordinal(cursor.toordinal() + 7)
+    return tuple(lines)
+
+
+def format_sparkline(days: Sequence[DatePriceRow]) -> str:
+    """One glyph per owned row. Empty days are ·; never a guessed height."""
+    owned = [row.price_eur for row in days if row.price_eur is not None and row.price_eur > 0]
+    if not owned:
+        return ""
+    lo = min(owned)
+    hi = max(owned)
+    span = hi - lo
+    n_levels = len(_SPARK_BLOCKS)
+    chars: list[str] = []
+    for row in days:
+        price = row.price_eur
+        if price is None or price <= 0:
+            chars.append(EMPTY_DAY_MARK)
+            continue
+        if span == 0:
+            chars.append(_SPARK_BLOCKS[0])
+            continue
+        index = int(round((price - lo) / span * (n_levels - 1)))
+        chars.append(_SPARK_BLOCKS[max(0, min(n_levels - 1, index))])
+    return "".join(chars)
+
+
+def format_summary_line(summary: DateCalendarSummary) -> str:
+    return (
+        f"  min {summary.min_eur:.0f} €  "
+        f"median {summary.median_eur:.0f} €  "
+        f"max {summary.max_eur:.0f} €  "
+        f"cheapest {summary.cheapest_date.isoformat()}  "
+        f"({summary.n_priced} priced)"
+    )
 
 
 class CalendarSource(Protocol):

@@ -81,7 +81,7 @@ Each route and each comma-separated date is a separate sequential query. `--max-
 
 Use sweep to shortlist a 10–20 route batch. Use `--bags N` / `--carry-on` on sweep when the user asked for bags. Use `--fetch detail` (or a second invocation) when they want times or the full card set. Do not mix backends across legs of one report unless that fallback fired.
 
-For “when is this route cheap?” use `viajante dates ORIGIN-DEST --from --to` (31-day cap, one cheapest-EUR row per departure day). For a stay, add `--nights N` so it is one packaged calendar, not a month of one-day searches. For “where is cheap from this airport?” use `viajante explore ORIGIN --from --days`. Do not brute-force comma date lists or every airport when these commands exist. `viajante airports london` resolves IATA codes offline.
+For “when is this route cheap?” use `viajante dates ORIGIN-DEST --from --to` (31-day cap, one cheapest-EUR row per departure day, English week calendar plus min/median/max from priced days only). For a stay, add `--nights N` so it is one packaged calendar, not a month of one-day searches. For “where is cheap from this airport?” use `viajante explore ORIGIN --from --days`. Do not brute-force comma date lists or every airport when these commands exist. `viajante airports london` resolves IATA codes offline.
 
 ## Timing
 
@@ -127,7 +127,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Hote
 - Ranking adds 70 EUR to known low-cost fares by default when bag counts are still unknown. `--bags N` / `--carry-on` put those counts on the shopping request so prices come back for that selection. Default is unset. If a compact card includes checked/carry counts, they are parsed; missing bag data stays omitted. Default `--sort ranked` orders by that total; `--sort fare` / `--sort price` order by cabin fare; `--sort duration` by elapsed time; `--sort departure` / `--sort arrival` by local clocks. `--depart-window 06:00-20:00` (or hours `6-20`) drops departures outside that inclusive window. Report the ranked total when a buffer was added. Use `--baggage-buffer 0` for hand luggage only.
 - The low-cost list is partial. Never tell the user an airline includes a bag because it is absent from the list.
 - Remind the user to verify checked baggage on Google Flights before booking.
-- When an offer has `typical_eur` / `vs_typical`, that number is the median of owned cheapest-per-day calendar prices for the same origin-destination. If those fields are null, omit the comparison. Do not invent a market average.
+- When an offer has `typical_eur` / `vs_typical`, that number is the median of owned cheapest-per-day calendar prices for the same origin-destination. `cheapest_date` / `cheapest_eur` (when present) are the cheapest owned day in that same window. If those fields are null or omitted, skip the comparison. Do not invent a market average.
 
 ### Hotels
 

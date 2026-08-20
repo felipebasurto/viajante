@@ -60,6 +60,8 @@ def _offer(
     booking_token: Optional[str] = None,
     typical_eur: Optional[float] = None,
     vs_typical: Optional[VsTypical] = None,
+    cheapest_date: Optional[date] = None,
+    cheapest_eur: Optional[float] = None,
     checked_bags: Optional[int] = None,
     carry_on: Optional[int] = None,
 ) -> FlightOffer:
@@ -80,6 +82,8 @@ def _offer(
         booking_token=booking_token,
         typical_eur=typical_eur,
         vs_typical=vs_typical,
+        cheapest_date=cheapest_date,
+        cheapest_eur=cheapest_eur,
         checked_bags=checked_bags,
         carry_on=carry_on,
     )
@@ -333,6 +337,24 @@ class ReportRenderingTests(unittest.TestCase):
             _report(_offer(price_eur=289.0, typical_eur=340.0, vs_typical="below"))
         )
         self.assertIn("below typical 340 €", with_typical)
+        silent = _rendered(_report(_offer(price_eur=289.0)))
+        self.assertNotIn("typical", silent)
+
+    def test_typical_label_prints_cheapest_owned_day_when_present(self) -> None:
+        output = _rendered(
+            _report(
+                _offer(
+                    price_eur=289.0,
+                    typical_eur=340.0,
+                    vs_typical="below",
+                    cheapest_date=date(2026, 9, 16),
+                    cheapest_eur=300.0,
+                )
+            )
+        )
+        self.assertIn("below typical 340 €", output)
+        self.assertIn("cheapest 2026-09-16 300 €", output)
+        self.assertNotIn("cheapest", _rendered(_report(_offer(price_eur=289.0))))
 
     def test_parsed_bag_counts_print_when_present(self) -> None:
         output = _rendered(_report(_offer(checked_bags=1, carry_on=1)))

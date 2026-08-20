@@ -8,7 +8,7 @@ import time
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Callable, Literal, Optional, Protocol, Sequence, Tuple
+from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple
 
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
@@ -21,6 +21,7 @@ from viajante.google_flights import (
     RawFlightCard,
 )
 from viajante.models import (
+    DateCalendarSummary,
     FetchBackend,
     FlightCabin,
     FlightLeg,
@@ -38,6 +39,7 @@ from viajante.models import (
     Trip,
     normalize_country,
     normalize_currency,
+    owned_calendar_summary,
 )
 from viajante.orchestration import (
     MAX_ATTEMPTS,
@@ -56,7 +58,7 @@ from viajante.parsers import (
     parse_stops_count,
 )
 from viajante.storage import default_state_dir, write_json_atomic
-from viajante.typical import TYPICAL_WINDOW_DAYS, typical_eur_from_daily_prices, with_typical
+from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
 DEFAULT_BAGGAGE_BUFFER_EUR = 70
 DEFAULT_TOP = 8
@@ -859,11 +861,24 @@ def _typical_cache_key(
     )
 
 
-def _typical_eur_from_source(
+def _summary_from_calendar_days(
+    days: Optional[Sequence[Any]],
+    start: date,
+    end: date,
+) -> Optional[DateCalendarSummary]:
+    if not days:
+        return None
+    in_window = [
+        (row.departure_date, row.price_eur) for row in days if start <= row.departure_date <= end
+    ]
+    return owned_calendar_summary(in_window)
+
+
+def _calendar_summary_from_source(
     source: _FlightSource,
     query: FlightQuery,
-    cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[float]],
-) -> Optional[float]:
+    cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[DateCalendarSummary]],
+) -> Optional[DateCalendarSummary]:
     fetch_calendar = getattr(source, "fetch_calendar", None)
     if not callable(fetch_calendar):
         return None
@@ -876,25 +891,31 @@ def _typical_eur_from_source(
     except Exception:
         cache[key] = None
         return None
-    typical = typical_eur_from_daily_prices(
-        [row.price_eur for row in days] if days is not None else ()
-    )
-    cache[key] = typical
-    return typical
+    summary = _summary_from_calendar_days(days, start, end)
+    cache[key] = summary
+    return summary
 
 
 def _stamp_typical(
     trip: Trip,
     offers: Tuple[FlightOffer, ...],
     source: _FlightSource,
-    cache: dict[tuple[str, str, date, int, int, str], Optional[float]],
+    cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[DateCalendarSummary]],
 ) -> Tuple[FlightOffer, ...]:
     if not offers or not isinstance(trip, FlightQuery):
         return offers
-    typical = _typical_eur_from_source(source, trip, cache)
-    if typical is None:
+    summary = _calendar_summary_from_source(source, trip, cache)
+    if summary is None:
         return offers
-    return tuple(with_typical(offer, typical) for offer in offers)
+    return tuple(
+        with_typical(
+            offer,
+            summary.median_eur,
+            cheapest_date=summary.cheapest_date,
+            cheapest_eur=summary.min_eur,
+        )
+        for offer in offers
+    )
 
 
 def _run_search(
@@ -923,7 +944,9 @@ def _run_search(
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
     results: list[QueryResult] = []
-    typical_cache: dict[tuple[str, str, date, int, int, int, int, int, str], Optional[float]] = {}
+    typical_cache: dict[
+        tuple[str, str, date, int, int, int, int, int, str], Optional[DateCalendarSummary]
+    ] = {}
 
     def _success_from_cards(trip: Trip, cards: Sequence[RawFlightCard]) -> QuerySuccess:
         eligible = [
@@ -971,8 +994,8 @@ def _run_search(
                 if callable(fetch_pair) and isinstance(trip, FlightQuery):
                     start, end = _typical_window(trip.departure_date)
                     cards, days = fetch_pair(trip, start, end)
-                    typical_cache[_typical_cache_key(trip)] = typical_eur_from_daily_prices(
-                        [row.price_eur for row in days] if days is not None else ()
+                    typical_cache[_typical_cache_key(trip)] = _summary_from_calendar_days(
+                        days, start, end
                     )
                 else:
                     cards = source.fetch(trip)
@@ -1018,8 +1041,9 @@ def _run_search(
         if batch_rows is not None:
             for trip, (cards_or_exc, days) in zip(trips, batch_rows, strict=True):
                 if not isinstance(cards_or_exc, BaseException):
-                    typical_cache[_typical_cache_key(trip)] = typical_eur_from_daily_prices(
-                        [row.price_eur for row in days] if days is not None else ()
+                    start, end = _typical_window(trip.departure_date)
+                    typical_cache[_typical_cache_key(trip)] = _summary_from_calendar_days(
+                        days, start, end
                     )
                     results.append(_success_from_cards(trip, cards_or_exc))
                     continue
