@@ -5,8 +5,13 @@ from datetime import date
 
 from viajante.airports import is_known_iata
 from viajante.flights import parse_flight_plan, plan_unit_count
-from viajante.models import HotelQuery, MultiCity, RoundTrip
+from viajante.google_flights_rpc import build_shopping_inner
+from viajante.models import HotelQuery, MultiCity, RoundTrip, Trip
 from viajante.prompt_plan import _IATA_TO_ENGLISH, plan_prompt, plan_to_trips
+
+
+def _shopping_bags_slot(trip: Trip) -> object:
+    return build_shopping_inner(trip)[1][10]
 
 
 class PromptPlanSmokeTests(unittest.TestCase):
@@ -605,17 +610,79 @@ class PromptPlanBrutalTests(unittest.TestCase):
     def test_baggage_carry_on_only(self) -> None:
         plan = plan_prompt("JNB-SIN on 2026-11-03, carry-on only, max 1 stop.")
         self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertIsNone(plan.bags)
+        self.assertEqual(plan.carry_on, 1)
         self.assertEqual(plan.max_stops, 1)
+        parsed = plan_to_trips(plan)
+        self.assertIsNone(parsed[0].bags)
+        self.assertEqual(parsed[0].carry_on, 1)
+        self.assertEqual(_shopping_bags_slot(parsed[0]), [0, 1])
 
     def test_baggage_checked_1(self) -> None:
         plan = plan_prompt("DEL-LHR on 2026-11-10, 1 checked bag, business class, max 1 stop.")
         self.assertEqual(plan.baggage, "checked_1")
+        self.assertEqual(plan.bags, 1)
+        self.assertIsNone(plan.carry_on)
         self.assertEqual(plan.cabin, "business")
+        parsed = plan_to_trips(plan)
+        self.assertEqual(parsed[0].bags, 1)
+        self.assertIsNone(parsed[0].carry_on)
+        self.assertEqual(_shopping_bags_slot(parsed[0]), [1, 0])
 
     def test_baggage_no_checked(self) -> None:
         plan = plan_prompt("ICN-LAX on 2026-09-18, no checked bags, premium economy, max 1 stop.")
         self.assertEqual(plan.baggage, "no_checked")
+        self.assertEqual(plan.bags, 0)
+        self.assertIsNone(plan.carry_on)
         self.assertEqual(plan.cabin, "premium-economy")
+        parsed = plan_to_trips(plan)
+        self.assertEqual(parsed[0].bags, 0)
+        self.assertIsNone(parsed[0].carry_on)
+        self.assertEqual(_shopping_bags_slot(parsed[0]), [0, 0])
+
+    def test_baggage_unnamed_leaves_shopping_slot_none(self) -> None:
+        plan = plan_prompt("JNB-SIN on 2026-11-03, max 1 stop.")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+        parsed = plan_to_trips(plan)
+        self.assertIsNone(parsed[0].bags)
+        self.assertIsNone(parsed[0].carry_on)
+        self.assertIsNone(_shopping_bags_slot(parsed[0]))
+
+    def test_baggage_no_hold_luggage_is_bags_zero(self) -> None:
+        plan = plan_prompt("JNB-SIN on 2026-11-03, no hold luggage, max 1 stop.")
+        self.assertEqual(plan.baggage, "no_checked")
+        self.assertEqual(plan.bags, 0)
+        self.assertIsNone(plan.carry_on)
+        self.assertEqual(_shopping_bags_slot(plan_to_trips(plan)[0]), [0, 0])
+
+    def test_baggage_two_checked_ships_owned_count(self) -> None:
+        plan = plan_prompt("DEL-LHR on 2026-11-10, 2 checked bags, max 1 stop.")
+        self.assertIsNone(plan.baggage)
+        self.assertEqual(plan.bags, 2)
+        self.assertIsNone(plan.carry_on)
+        self.assertEqual(_shopping_bags_slot(plan_to_trips(plan)[0]), [2, 0])
+
+    def test_baggage_flags_fill_the_pair(self) -> None:
+        plan = plan_prompt("JNB-SIN on 2026-11-03 --bags 1 --carry-on, max 1 stop.")
+        self.assertEqual(plan.bags, 1)
+        self.assertEqual(plan.carry_on, 1)
+        self.assertEqual(_shopping_bags_slot(plan_to_trips(plan)[0]), [1, 1])
+
+    def test_baggage_contradiction_does_not_pick_one(self) -> None:
+        plan = plan_prompt("OSL-EWR on 2026-11-06, carry-on only and 2 checked bags, max 1 stop.")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+        self.assertIsNone(_shopping_bags_slot(plan_to_trips(plan)[0]))
+
+    def test_baggage_spanish_carry_on_only(self) -> None:
+        plan = plan_prompt("JNB-SIN el 2026-11-03, solo equipaje de mano, max 1 stop.")
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertEqual(plan.carry_on, 1)
+        self.assertIsNone(plan.bags)
+        self.assertEqual(_shopping_bags_slot(plan_to_trips(plan)[0]), [0, 1])
 
     def test_arrive_before(self) -> None:
         plan = plan_prompt("SFO-LHR on 2026-11-03, arrive before 09:00, max 1 stop.")

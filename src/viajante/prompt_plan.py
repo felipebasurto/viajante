@@ -370,10 +370,11 @@ _FLAG = re.compile(
     r"--(trip|max-stops|adults|children|infants-in-seat|infants-on-lap|cabin|rooms|"
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|currency|country|airlines|exclude-airlines|alliance|"
-    r"exclude-alliance|exclude-via|via)\s+(\S+)",
+    r"exclude-alliance|exclude-via|via|bags)\s+(\S+)",
     re.IGNORECASE,
 )
 _BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
+_BARE_CARRY_ON = re.compile(r"--carry-on\b", re.IGNORECASE)
 _ANY_CITY_AIRPORT = re.compile(
     r"\b(?:any(?:\s+of(?:\s+the)?)?|either)\s+([a-z]+(?:\s+[a-z]+){0,3})\s+airports?\b"
 )
@@ -625,16 +626,44 @@ _PREFER_AIRPORT_NAME = re.compile(
     re.IGNORECASE,
 )
 _VS_HUB = re.compile(r"\b(?:vs\.?|versus|compared\s+(?:to|with))\b", re.IGNORECASE)
+_BAG_NOUN = r"(?:bags?|luggage|baggage)"
 _CARRY_ON_ONLY = re.compile(
-    r"\b(?:carry[- ]on only|hand luggage only|cabin bag only)\b",
+    r"\b(?:"
+    + "|".join(
+        (
+            r"carry[- ]on only",
+            r"hand luggage only",
+            r"cabin bag only",
+            r"solo equipaje de mano",
+            r"nur handgepack",
+            r"bagage cabine uniquement",
+            r"uniquement bagage cabine",
+            r"solo bagaglio a mano",
+            r"so bagagem de mao",
+        )
+    )
+    + r")\b",
     re.IGNORECASE,
 )
 _NO_CHECKED = re.compile(
-    r"\bno checked(?:\s+(?:bags?|luggage|baggage))?\b",
+    r"\b(?:"
+    + "|".join(
+        (
+            r"no checked(?:\s+" + _BAG_NOUN + r")?",
+            r"no hold(?:\s+" + _BAG_NOUN + r")",
+            r"no bags",
+            r"sin (?:equipaje|maletas?) facturad[oa]s?",
+            r"ohne aufgegebenes gepack",
+            r"sans bagage(?:s)? en soute",
+            r"sem bagagem despachada",
+            r"senza bagaglio stiva",
+        )
+    )
+    + r")\b",
     re.IGNORECASE,
 )
-_CHECKED_ONE = re.compile(
-    r"\b(?:1|one)\s+checked(?:\s+(?:bag|bags|luggage|baggage))?\b",
+_CHECKED_N = re.compile(
+    _COUNT + r"\s+checked(?:\s+" + _BAG_NOUN + r")?\b",
     re.IGNORECASE,
 )
 _ARRIVE_BEFORE = re.compile(
@@ -832,6 +861,8 @@ class PromptPlan:
     refuse: Tuple[str, ...] = ()
     hotels: bool = False
     baggage: Optional[str] = None
+    bags: Optional[int] = None
+    carry_on: Optional[int] = None
     include_airlines: Tuple[str, ...] = ()
     exclude_airlines: Tuple[str, ...] = ()
     alliance: Tuple[str, ...] = ()
@@ -896,6 +927,8 @@ class PromptPlan:
             "refuse": list(self.refuse),
             "hotels": self.hotels,
             "baggage": self.baggage,
+            "bags": self.bags,
+            "carry_on": self.carry_on,
             "include_airlines": list(self.include_airlines),
             "exclude_airlines": list(self.exclude_airlines),
             "alliance": list(self.alliance),
@@ -983,11 +1016,17 @@ def _nearby_city_name(folded: str) -> Optional[str]:
     return None
 
 
-def _wants_nearby(raw: str, folded: str) -> bool:
-    for match in _BARE_NEARBY.finditer(raw):
+def _has_bare_flag(raw: str, pattern: re.Pattern[str]) -> bool:
+    for match in pattern.finditer(raw):
         prefix = raw[max(0, match.start() - 9) : match.start()].casefold()
         if prefix.endswith("sin ") or prefix.endswith("without "):
             continue
+        return True
+    return False
+
+
+def _wants_nearby(raw: str, folded: str) -> bool:
+    if _has_bare_flag(raw, _BARE_NEARBY):
         return True
     return _nearby_city_name(folded) is not None
 
@@ -1632,14 +1671,49 @@ def _match_is_negated(text: str, start: int) -> bool:
     return bool(_NEGATION_BEFORE.search(prefix))
 
 
-def _baggage(folded: str) -> Optional[str]:
-    if _CARRY_ON_ONLY.search(folded):
+def _baggage_label(
+    *,
+    carry_only: bool,
+    no_checked: bool,
+    bags: Optional[int],
+) -> Optional[str]:
+    if carry_only:
         return "carry_on_only"
-    if _NO_CHECKED.search(folded):
+    if no_checked:
         return "no_checked"
-    if _CHECKED_ONE.search(folded):
+    if bags == 1:
         return "checked_1"
     return None
+
+
+def _bag_fields(
+    folded: str,
+    flags: Mapping[str, str],
+    raw: str,
+) -> tuple[Optional[str], Optional[int], Optional[int]]:
+    """Map named bag wording onto --bags N / --carry-on. Leave unset when unnamed."""
+    bags: Optional[int] = None
+    if "bags" in flags:
+        try:
+            value = int(flags["bags"])
+        except ValueError:
+            value = -1
+        if value >= 0:
+            bags = value
+    carry_on = 1 if _has_bare_flag(raw, _BARE_CARRY_ON) else None
+    carry_only = bool(_CARRY_ON_ONLY.search(folded))
+    no_checked = bool(_NO_CHECKED.search(folded))
+    checked_n = _int_after((_CHECKED_N,), folded)
+    if carry_only and checked_n is not None and checked_n >= 1:
+        # Carry-on only and N checked cannot both hold. Do not pick one.
+        return None, None, None
+    if bags is None and no_checked:
+        bags = 0
+    if bags is None and checked_n is not None:
+        bags = checked_n
+    if carry_on is None and carry_only:
+        carry_on = 1
+    return _baggage_label(carry_only=carry_only, no_checked=no_checked, bags=bags), bags, carry_on
 
 
 _ENGLISH_IATA_WORDS = frozenset(
@@ -1952,6 +2026,8 @@ def plan_to_trips(plan: PromptPlan) -> FlightPlan:
         infants_in_seat=plan.infants_in_seat if plan.infants_in_seat is not None else 0,
         infants_on_lap=plan.infants_on_lap if plan.infants_on_lap is not None else 0,
         cabin=cabin,
+        bags=plan.bags,
+        carry_on=plan.carry_on,
     )
     if not plan.nearby or not isinstance(parsed, tuple):
         return parsed
@@ -2462,7 +2538,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if departure is not None and departure < today and not plan_hotels:
         refuse.append("past_date")
 
-    baggage = _baggage(folded)
+    baggage, bags, carry_on = _bag_fields(folded, flags, raw)
     arrive_before = None
     arrive_hit = _ARRIVE_BEFORE.search(folded)
     if arrive_hit:
@@ -2681,6 +2757,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             cabin=cabin,
             max_stops=max_stops,
             days=nights_stay,
+            baggage=baggage,
+            bags=bags,
+            carry_on=carry_on,
             flex_days=_flex_days_value(folded, flags, dates),
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
@@ -2712,6 +2791,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             cabin=cabin,
             max_stops=max_stops,
             days=nights_stay if nights_stay is not None else days,
+            baggage=baggage,
+            bags=bags,
+            carry_on=carry_on,
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
             alliance=alliance,
@@ -2777,6 +2859,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         refuse=all_refuse,
         hotels=plan_hotels,
         baggage=baggage,
+        bags=bags,
+        carry_on=carry_on,
         include_airlines=include_airlines,
         exclude_airlines=exclude_airlines,
         alliance=alliance,
