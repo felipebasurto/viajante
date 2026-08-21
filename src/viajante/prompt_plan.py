@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Mapping, Optional, Sequence, Tuple, cast
 
-from viajante.airports import is_known_iata
+from viajante.airports import is_known_iata, same_city_iata
 from viajante.carriers import (
     ALLIANCE_PHRASES,
     airline_names_longest_first,
@@ -605,6 +605,7 @@ _PREFER_AIRPORT_NAME = re.compile(
     r"\b(?:use|into|out of|prefer)\s+(heathrow|gatwick|newark|kennedy)\b",
     re.IGNORECASE,
 )
+_VS_HUB = re.compile(r"\b(?:vs\.?|versus|compared\s+(?:to|with))\b", re.IGNORECASE)
 _CARRY_ON_ONLY = re.compile(
     r"\b(?:carry[- ]on only|hand luggage only|cabin bag only)\b",
     re.IGNORECASE,
@@ -1442,15 +1443,35 @@ def _around_the_world_notes(
     max_layover: Optional[float] = None,
 ) -> str:
     """Honesty line for an unnamed circumnavigation. No invented cities or fares."""
-    bits = ["Around-the-world shortlist"]
+    bits = ["Around-the-world shortlist", "circuit closes at the named origin"]
     if exclude_regions:
         bits.append("without " + ", ".join(exclude_regions))
     if max_layover is not None:
         bits.append(f"layover cap {max_layover:g}h")
     if max_stops is not None:
         bits.append(f"max_stops {max_stops} on every leg")
-    bits.append("do not invent fares")
+    bits.append("do not invent fares or hops")
     return "; ".join(bits)
+
+
+def _same_city_named_pairs(named: Sequence[str]) -> Tuple[Tuple[str, str], ...]:
+    """Owned same-city peers in prompt order. No invented codes."""
+    codes = [code for code in dict.fromkeys(named) if code]
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, code in enumerate(codes):
+        peers = set(same_city_iata(code))
+        if len(peers) < 2:
+            continue
+        for other in codes[index + 1 :]:
+            if other not in peers:
+                continue
+            key = (code, other) if code < other else (other, code)
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append((code, other))
+    return tuple(pairs)
 
 
 def _build_route_specs(
@@ -2278,6 +2299,60 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             "Keep both constraints; do not drop via or the nonstop. "
             "Do not invent a fare.",
         )
+    overlap_overnight = [code for code in via_airports if code in no_overnight and code != "any"]
+    if overlap_overnight:
+        joined = "/".join(overlap_overnight)
+        hours = f" with >={min_layover:g}h" if min_layover is not None else ""
+        overnight_hours = (
+            f" A {min_layover:g}h {joined} layover is an overnight."
+            if min_layover is not None
+            else " A long layover can be overnight."
+        )
+        notes = _append_note(
+            notes,
+            f"Connect {joined}{hours} and never overnight {joined}."
+            f"{overnight_hours} Keep both constraints; do not drop via or "
+            "no_overnight. keep_connect is require_overnight ∪ via. "
+            "Do not invent a fare.",
+        )
+    pair_airports = {code for left, right in known_pairs for code in (left, right)}
+    vs_hub = bool(_VS_HUB.search(folded))
+    ordered_named: list[str] = []
+    for token in _IATA_TOKEN_UPPER.findall(raw):
+        if token in named_airports:
+            _extend_unique(ordered_named, [token])
+    for name, code in _AIRPORT_NAME_TO_IATA.items():
+        if name in folded and code in named_airports:
+            _extend_unique(ordered_named, [code])
+    for left, right in _same_city_named_pairs(ordered_named):
+        if left in via_airports or right in via_airports:
+            continue
+        if left in pair_airports and right in pair_airports:
+            continue
+        if not (vs_hub or left in exclude_airports or right in exclude_airports):
+            continue
+        notes = _append_note(
+            notes,
+            f"Named {left} vs {right} is a constraint, not a license to invent "
+            "a second destination or a price.",
+        )
+    if rest_of_trip:
+        notes = _append_note(
+            notes,
+            "Prices and destinations only; do not plan hotels, trains, or the rest of the trip.",
+        )
+    if date_strategy == "fixed_then_plus_minus_1":
+        notes = _append_note(
+            notes,
+            "Do not brute-force a date matrix; shortlist then ±1 on 1-3 finalists.",
+        )
+    if exclude_regions and _is_explore(folded):
+        origin_bit = origin or "this origin"
+        dropped = ", ".join(exclude_regions)
+        notes = _append_note(
+            notes,
+            f"Priced {origin_bit} explore shortlist; drop {dropped}.",
+        )
     if nearby:
         notes = _append_note(
             notes,
@@ -2529,6 +2604,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_airports=tuple(exclude_airports),
             no_overnight=tuple(no_overnight),
             refuse=all_refuse,
+            notes=notes,
         )
 
     if intent == "flex":

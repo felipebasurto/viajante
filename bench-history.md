@@ -32,6 +32,7 @@ Numbers only where recorded. Do not invent a `judge_mean` or p50.
 | **61** | `viajante trip` / `search_trip` owned total = flight + hotel; omit if either miss / dates / currency | |
 | **62** | planner around/±N → `intent=flex`; cheapest week → `intent=dates`; packaged RT stays | Battery 186, gate fail:0, not judged. Cold `--help` 293→294 (did not veto). Rebased onto `3248285` (keeps #59). |
 | **60** | optional `--nearby` same-city IATA; default off; no invented codes; open-jaw not rewritten | |
+| **67** | leftover 95s: stamp shipped-constraint notes (via∩overnight, dest-vs-hub, ATW circuit, explore notes) | Battery 191, gate fail:0, not judged. `judge: skip`. `judge_mean:` blank — not invented. Cold `--help` 310.2→312.6 (did not veto). |
 
 ## Speed keep-or-revert (`score_ms` history; not weekday keep)
 
@@ -95,6 +96,7 @@ Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last *
 
 - **#65** honesty pass (merged `cdc97be`): planner maps shipped `--nearby` / via / packaged RT / occupancy / `search_trip`; hotel cities stay owned English; verdict `score_1_100 =` keyvals. Operator judged **97.6** / 57 scored / skip 1 — not a keep vs 97.9.
 - **#66** leftover skip + occupancy/cabin honesty (`cursor/honesty-verdict-planner-719a`): recover split-nested score/reason, sibling `notes`, missing comma, `91/100`, `reasoning_content`. No default score. Mixed cabin omits `--cabin`; conflicting `--adults` stay in notes; nonstop+via and free-cancel vs `--allow-non-refundable` keep both. English city labels compile from the owned alias table. Gate ok. `viajante bench --prompts` fail:0 (191 prompts, 133 pass, 58 skip, 0 scored). `judge: skip` (no key). `judge_mean:` blank — not invented. Cold `--help` this host origin/main 304.4/299.8 → branch 299.7/300.8 (did not veto). `score_ms` 1531 is not the keep. A DeepSeek 0 or keyless prose remains unparseable-without-invention. Not a keep vs 97.9.
+- **#67** leftover 95s honesty notes (`cursor/honest-leftover-95s-b590`): via ∩ no_overnight keep both (`keep_connect` still `require_overnight ∪ via`); named same-city dest-vs-hub from owned `same_city_iata` (no second dest, `--nearby` stays off); around-the-world notes name the circuit / no invented hops; explore no longer drops notes (rest-of-trip / exclude-region / ±1). Nonstop+via and free vs `--allow-non-refundable` left as #66 shipped. Gate ok. Unittest 745. `viajante bench --prompts` fail:0 (191 prompts, 133 pass, 58 skip, 0 scored). `judge: skip` (no key). `judge_mean:` blank — not invented. Cold `--help` this host origin/main 321.9/310.2 → branch 311.8/312.6 (did not veto). `score_ms` 1630 is not the keep. Operator judged **97.5** after #66 on `cc0d682` (58 scored, skip 0) is not a keep vs 97.9. Not judged on this host.
 
 ## Honesty leftovers (leave them)
 

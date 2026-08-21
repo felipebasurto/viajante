@@ -1106,6 +1106,81 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(_IATA_TO_ENGLISH["LHR"], "London")
         self.assertEqual(_IATA_TO_ENGLISH["LGW"], "Gatwick")
 
+    def test_via_and_no_overnight_notes_keep_both(self) -> None:
+        plan = plan_prompt(
+            "TBS-SIN on 2026-11-03 via IST, at least 12h connection, "
+            "never overnight in IST, max 1 stop."
+        )
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertIn("IST", plan.no_overnight)
+        self.assertEqual(plan.min_layover, 12.0)
+        self.assertNotIn("IST", plan.exclude_airports)
+        folded = plan.notes.casefold()
+        self.assertIn("ist", folded)
+        self.assertIn("overnight", folded)
+        self.assertIn("12", folded)
+        self.assertIn("keep both", folded)
+        self.assertNotIn("€", plan.notes)
+        ka = plan_prompt(
+            "მინდა გავფრინდე თბილისიდან სინგაპურში TBS-SIN 2026-11-03, "
+            "აუცილებლად გადავჯდე IST-ში, მინიმუმ 12 საათიანი გადაჯდომა, "
+            "მაგრამ IST-ში ღამის გათევა არასდროს. მაქსიმუმ 1 გადაჯდომა. "
+            "ტარიფი არ გამოიგონო."
+        )
+        self.assertEqual(ka.via_airports, ("IST",))
+        self.assertIn("IST", ka.no_overnight)
+        self.assertIn("overnight", ka.notes.casefold())
+        self.assertIn("12", ka.notes)
+
+    def test_explore_rest_of_trip_stamps_notes(self) -> None:
+        plan = plan_prompt(
+            "Search destinations and prices from YVR on 2026-09-15, not the rest of the trip"
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertIn("itinerary_rest", plan.refuse)
+        folded = plan.notes.casefold()
+        self.assertIn("destinations", folded)
+        self.assertIn("rest of the trip", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_same_city_vs_is_constraint_not_second_dest(self) -> None:
+        plan = plan_prompt(
+            "IAD-LHR on 2026-10-09 returning 2026-10-12, LHR vs LGW, business class, "
+            "carry-on only, arrive before 09:00, hotel in London, 2 adults, 1 room. "
+            "Plan both. Do not invent a fare or a hotel price."
+        )
+        self.assertEqual(plan.destination, "LHR")
+        self.assertFalse(plan.nearby)
+        self.assertEqual(plan.trip, "rt")
+        self.assertNotIn("LGW", "".join(plan.route_specs))
+        folded = plan.notes.casefold()
+        self.assertIn("lhr", folded)
+        self.assertIn("lgw", folded)
+        self.assertIn("constraint", folded)
+        self.assertIn("second destination", folded)
+        exclusive = plan_prompt("GRU-LHR on 2026-09-08, use LHR not LGW, max 1 stop.")
+        self.assertEqual(exclusive.destination, "LHR")
+        self.assertIn("LGW", exclusive.exclude_airports)
+        self.assertFalse(exclusive.nearby)
+        self.assertIn("lgw", exclusive.notes.casefold())
+        self.assertIn("constraint", exclusive.notes.casefold())
+
+    def test_around_the_world_notes_name_the_circuit(self) -> None:
+        plan = plan_prompt(
+            "Cheapest around the world from Vancouver starting 2026-11-01, max 2 stops each leg"
+        )
+        self.assertTrue(plan.around_the_world)
+        self.assertEqual(plan.destination, "YVR")
+        self.assertEqual(plan.trip, "multi")
+        self.assertEqual(plan.route_specs, ())
+        folded = plan.notes.casefold()
+        self.assertIn("circuit", folded)
+        self.assertIn("origin", folded)
+        self.assertIn("shortlist", folded)
+        self.assertIn("max_stops 2", folded)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotEqual(plan.origin, "MAD")
+
 
 class PromptPlanMatchTests(unittest.TestCase):
     def test_plan_to_dict_is_json_friendly(self) -> None:
