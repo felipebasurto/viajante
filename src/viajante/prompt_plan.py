@@ -1527,6 +1527,15 @@ def _around_the_world_notes(
     return "; ".join(bits)
 
 
+def _via_regions_notes() -> str:
+    """Honesty line for a named via-continents hop list. No invented codes or fares."""
+    return (
+        "Named via_regions is a shortlist constraint; "
+        "do not invent airport codes or a fare per hop; "
+        "keep the named regions and origin/dest/date."
+    )
+
+
 def _is_unnamed_dest_quote(folded: str, listed: Sequence[str]) -> bool:
     """True when the prompt asks to quote dests it never named. Named lists stay."""
     if listed:
@@ -2527,6 +2536,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_regions=exclude_regions,
             max_layover=max_layover,
         )
+    elif via_regions:
+        notes = _via_regions_notes()
     named_cabins = _named_cabins(folded)
     if "cabin" not in flags and len(named_cabins) >= 2:
         joined = " and ".join(named_cabins)

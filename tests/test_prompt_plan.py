@@ -503,10 +503,35 @@ class PromptPlanInsaneTests(unittest.TestCase):
         self.assertEqual(plan.intent, "flights")
         self.assertEqual(plan.origin, "YHZ")
         self.assertEqual(plan.destination, "NAN")
+        self.assertEqual(plan.departure_date, date(2026, 11, 2))
+        self.assertEqual(plan.trip, "one-way")
+        self.assertTrue(plan.split_packages)
         self.assertEqual(
             list(plan.via_regions),
             ["europe", "europe", "sub_saharan", "india", "china", "new_zealand"],
         )
+        # Named via_regions is a shortlist, not a license to invent hops or fares.
+        self.assertEqual(plan.via_airports, ())
+        self.assertEqual(plan.prefer_airports, ())
+        self.assertEqual(plan.route_specs, ("YHZ-NAN:2026-11-02",))
+        invented = {"LHR", "AMS", "CDG", "JNB", "NBO", "DEL", "BOM", "PEK", "PVG", "AKL"}
+        owned = " ".join(plan.route_specs) + " " + " ".join(plan.via_airports)
+        for code in invented:
+            self.assertNotIn(code, owned)
+            self.assertNotIn(code, plan.notes)
+        folded = plan.notes.casefold()
+        self.assertIn("via_regions", folded)
+        self.assertIn("shortlist", folded)
+        self.assertIn("constraint", folded)
+        self.assertIn("do not invent", folded)
+        self.assertIn("airport", folded)
+        self.assertIn("fare", folded)
+        self.assertIn("hop", folded)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotRegex(plan.notes, r"\bEUR\b")
+        unnamed = plan_prompt("Flights BOS-LHR on 2026-09-01")
+        self.assertEqual(unnamed.via_regions, ())
+        self.assertNotIn("via_regions", unnamed.notes.casefold())
 
     def test_contradictory_dates(self) -> None:
         plan = plan_prompt("Outbound JFK-LHR on 2026-09-20 and return on 2026-09-10")
@@ -1313,6 +1338,8 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIn("origin", folded)
         self.assertIn("shortlist", folded)
         self.assertIn("max_stops 2", folded)
+        self.assertEqual(plan.via_regions, ())
+        self.assertNotIn("via_regions", folded)
         self.assertNotIn("€", plan.notes)
         self.assertNotEqual(plan.origin, "MAD")
 
