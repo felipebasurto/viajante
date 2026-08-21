@@ -360,6 +360,8 @@ class PlanToHotelQueryTests(unittest.TestCase):
         self.assertEqual(plan.check_in, date(2026, 11, 6))
         self.assertEqual(plan.check_out, date(2026, 11, 10))
         self.assertEqual(plan.locale, "en")
+        self.assertTrue(plan.search_trip)
+        self.assertIn("search_trip", plan.notes)
         trips = plan_to_trips(plan)
         hotel = plan_to_hotel_query(plan)
         self.assertEqual(trips.origin, "SIN")

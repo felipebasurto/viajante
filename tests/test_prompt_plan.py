@@ -319,6 +319,16 @@ class PromptPlanMediumTests(unittest.TestCase):
         self.assertTrue(tokyo.nearby)
         self.assertEqual(tokyo.origin, "LAX")
         self.assertEqual(tokyo.destination, "NRT")
+        in_city = plan_prompt(
+            "One-way BOS to any airport in London on 2026-09-18. Do not invent a fare."
+        )
+        self.assertTrue(in_city.nearby)
+        self.assertEqual(in_city.destination, "LHR")
+        either = plan_prompt(
+            "One-way BOS to either London airport on 2026-09-18. Do not invent a fare."
+        )
+        self.assertTrue(either.nearby)
+        self.assertEqual(either.destination, "LHR")
         named = plan_prompt(
             "YVR-LHR on 2026-10-09 and LGW-YVR on 2026-10-13 as a packaged "
             "round-trip --trip rt --nearby. Do not invent a fare."
@@ -872,6 +882,132 @@ class PromptPlanBrutalTests(unittest.TestCase):
         plan = plan_prompt("JFK-SIN on 2026-11-03 --via IST --exclude-via DXB")
         self.assertEqual(plan.via_airports, ("IST",))
         self.assertEqual(plan.exclude_via, ("DXB",))
+
+    def test_via_city_names_map_to_owned_iata(self) -> None:
+        plan = plan_prompt(
+            "JFK-SIN on 2026-11-03 via Istanbul, not via Dubai, max 1 stop. Do not invent a fare."
+        )
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ("DXB",))
+        self.assertNotIn("DXB", plan.exclude_airports)
+        connecting = plan_prompt("JFK-SIN on 2026-11-03 connecting in IST, avoid DXB, max 1 stop.")
+        self.assertEqual(connecting.via_airports, ("IST",))
+        self.assertEqual(connecting.exclude_via, ("DXB",))
+        self.assertNotIn("DXB", connecting.exclude_airports)
+
+    def test_same_calendar_date_is_not_a_dates_grid(self) -> None:
+        plan = plan_prompt(
+            "Fly AKL-HNL departing 2026-11-03 after 10:00 Auckland local, and arrive "
+            "HNL before 09:00 on the same calendar date 2026-11-03. Max 1 stop. "
+            "Do not invent a fare."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "AKL")
+        self.assertEqual(plan.destination, "HNL")
+        self.assertEqual(plan.depart_after, "10:00")
+        self.assertEqual(plan.arrive_before, "09:00")
+
+    def test_overlapping_hotel_and_flight_sets_search_trip(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip ADD-NBO on 2026-10-09 returning 2026-10-13, --trip rt, "
+            "hotel in Nairobi those nights, 2 adults, 1 room. Print the owned trip total "
+            "when both searches succeed. Omit the sum if either side misses. "
+            "Do not invent a fare or a stay."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertTrue(plan.hotels)
+        self.assertTrue(plan.search_trip)
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.location, "Nairobi")
+        self.assertIn("search_trip", plan.notes)
+        self.assertIn("typical_eur", plan.notes)
+        self.assertNotIn("€", plan.notes)
+
+    def test_french_aller_retour_hotel_is_packaged_rt(self) -> None:
+        plan = plan_prompt(
+            "Vol aller-retour CDG-NRT le 2026-10-09, retour le 2026-10-16. "
+            "Deux adultes. Hôtel à Tokyo du 2026-10-09 au 2026-10-16, une chambre. "
+            "N'invente pas de tarif."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.trip, "rt")
+        self.assertTrue(plan.hotels)
+        self.assertTrue(plan.search_trip)
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.rooms, 1)
+        self.assertEqual(plan.location, "Tokyo")
+        self.assertEqual(plan.locale, "en")
+
+    def test_german_ruckflug_unterkunft_is_packaged_rt(self) -> None:
+        plan = plan_prompt(
+            "Hin- und Rückflug FRA-SIN am 2026-10-12, Rückflug am 2026-10-19. "
+            "Zwei Erwachsene. Unterkunft in Singapore vom 2026-10-12 bis 2026-10-19, "
+            "ein Zimmer. Keinen Tarif erfinden."
+        )
+        self.assertEqual(plan.trip, "rt")
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.rooms, 1)
+        self.assertEqual(plan.location, "Singapore")
+        self.assertEqual(plan.work_back_by, None)
+
+    def test_japanese_return_hotel_and_exclude_hnd(self) -> None:
+        plan = plan_prompt(
+            "成田からシンガポール、NRT-SIN、2026-10-20出発、2026-10-24戻り。往復。"
+            "大人2人。シンガポールの宿泊、部屋1。羽田HNDは使わない。運賃を作らないで。"
+        )
+        self.assertEqual(plan.trip, "rt")
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.rooms, 1)
+        self.assertEqual(plan.location, "Singapore")
+        self.assertIn("HND", plan.exclude_airports)
+        self.assertEqual(plan.locale, "en")
+
+    def test_inflected_hotel_cities_map_to_owned_english(self) -> None:
+        basque = plan_prompt(
+            "Bilbotik Parisera joan nahi dut, BIO-CDG 2026-10-09, itzuli 2026-10-12. "
+            "Bi heldu. Ostatua Parisen 2026-10-09-tik 2026-10-12-ra, gela bat. "
+            "Ez asmatu preziorik."
+        )
+        self.assertEqual(basque.trip, "rt")
+        self.assertTrue(basque.hotels)
+        self.assertEqual(basque.location, "Paris")
+        self.assertTrue(basque.search_trip)
+        icelandic = plan_prompt(
+            "Ég vil fljúga KEF-CPH 2026-10-09, lenda 2026-10-10 klukkan 00:15 "
+            "að staðartíma í Kaupmannahöfn, og innritun á gistihúsi þegar 2026-10-09. "
+            "Tveir fullorðnir, eitt herbergi, koma til baka 2026-10-12. Ekki búa til verð."
+        )
+        self.assertEqual(icelandic.trip, "rt")
+        self.assertTrue(icelandic.hotels)
+        self.assertEqual(icelandic.location, "Copenhagen")
+        self.assertEqual(icelandic.adults, 2)
+        self.assertEqual(icelandic.rooms, 1)
+        self.assertTrue(icelandic.search_trip)
+        welsh = plan_prompt(
+            "Hoffwn hedfan o Gaerdydd i Ddulyn, CWL-DUB ar 2026-10-16, dychwelyd 2026-10-19. "
+            "Dau oedolyn. Gwesty yn Nulyn o 2026-10-16 tan 2026-10-19, un ystafell. "
+            "Paid â dyfeisio pris."
+        )
+        self.assertTrue(welsh.hotels)
+        self.assertEqual(welsh.location, "Dublin")
+        self.assertEqual(welsh.adults, 2)
+        tamil = plan_prompt(
+            "MAA-SIN 2026-10-20 திரும்பு 2026-10-24. விமானத்தில் இரண்டு பெரியவர்கள். "
+            "சிங்கப்பூர் தங்குமிடத்தில் நான்கு பெரியவர்கள், இரண்டு அறைகள். "
+            "விலையை உருவாக்க வேண்டாம்."
+        )
+        self.assertTrue(tamil.hotels)
+        self.assertEqual(tamil.location, "Singapore")
+        self.assertTrue(tamil.search_trip)
+        same = plan_prompt(
+            "Packaged round-trip CHC-AKL on 2026-11-03 returning 2026-11-06, --trip rt, "
+            "business outbound and economy on the return for the same adult. "
+            "Do not invent a fare."
+        )
+        self.assertEqual(same.adults, 1)
+        self.assertEqual(same.trip, "rt")
 
 
 class PromptPlanMatchTests(unittest.TestCase):

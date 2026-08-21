@@ -93,6 +93,8 @@ Live 429 did not fire on this host, so it did not stop the batch. Unittest cover
 
 Battery on the operator box (judge): **79 → 88 → 89 → 98**, 0 fail. Last **real keep** `judge_mean`: **97.9** on `60d9ed4` (26 scored). Last judged: **95.7** on `22da78a` (35 scored, 23 skip) — not a keep vs 97.9 on `4faaabd`. Do not invent a mean. Import-path speed PRs did not re-run it. Weekday keep is 97.9, not the `score_ms` table above. Gate is suite + fail:0. `score_ms` is not the product trophy.
 
+- **#65** honesty pass (unmerged, `f25b27e` on `217da81`): planner maps shipped `--nearby` / via / packaged RT / occupancy / `search_trip` from named wording; hotel cities stay owned English; verdict recovery also parses `score_1_100 =` keyvals (no invented score). Gate ok. `viajante bench --prompts` fail:0 (191 prompts, 133 pass, 58 skip, 0 scored). `judge: skip` (no key). `judge_mean:` blank — not invented. Cold `--help` this host origin/main 320.5/334.2 → branch 323.2/307.8 (did not veto). `score_ms` 1470 is not the keep. Not a keep vs 97.9.
+
 ## Honesty leftovers (leave them)
 
 - Compact `--trip rt` with only the outbound in the bytes still has one leg. Do not invent the return.

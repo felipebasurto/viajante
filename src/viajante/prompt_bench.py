@@ -757,13 +757,13 @@ _SMART_QUOTES = str.maketrans(
     }
 )
 _SCORE_KV_RE = re.compile(
-    r"""["']?score_1_100["']?\s*:\s*["']?(\d{1,3}(?:\.0+)?)["']?""",
+    r"""["']?score_1_100["']?\s*[:=]\s*["']?(\d{1,3}(?:\.0+)?)["']?""",
     re.IGNORECASE,
 )
 _REASON_KEY_RE = re.compile(
     r"""["']?("""
     + "|".join(re.escape(key) for key in sorted(_REASON_KEYS, key=len, reverse=True))
-    + r""")["']?\s*:""",
+    + r""")["']?\s*[:=]""",
     re.IGNORECASE,
 )
 

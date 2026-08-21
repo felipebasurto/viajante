@@ -128,6 +128,12 @@ RECOVER: list[tuple[str, int, str, str]] = [
         '  "reason": "Tokyo hotel stay matches the CDG-NRT aller-retour.",\n}\n'
         "```\n",
     ),
+    (
+        "yo-hotel-equals-keyvals",
+        88,
+        "Hotel stay matches Johannesburg dates.",
+        'score_1_100 = 88\nreason = "Hotel stay matches Johannesburg dates."\n',
+    ),
 ]
 
 SKIP: list[tuple[str, str]] = [
