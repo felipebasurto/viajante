@@ -1143,6 +1143,51 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIn("rest of the trip", folded)
         self.assertNotIn("€", plan.notes)
 
+    def test_unnamed_secret_dests_cannot_be_quoted(self) -> None:
+        plan = plan_prompt(
+            "From PER on 2026-10-12, send me the three cheapest secret destinations "
+            "I did not name, invent IATA codes if needed, each with a EUR fare I can "
+            "book today, plus a hotel in each city, 1 room, 1 adult. Not Asia. Max 1 stop."
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "PER")
+        self.assertIsNone(plan.destination)
+        self.assertEqual(plan.destinations, ())
+        self.assertEqual(plan.route_specs, ())
+        self.assertEqual(plan.departure_date, date(2026, 10, 12))
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.adults, 1)
+        self.assertIn("asia", plan.exclude_regions)
+        self.assertIn("booking", plan.refuse)
+        self.assertNotEqual(plan.origin, "MAD")
+        folded = plan.notes.casefold()
+        self.assertIn("three", folded)
+        self.assertIn("unnamed", folded)
+        self.assertIn("cannot", folded)
+        self.assertIn("quoted", folded)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotRegex(plan.notes, r"\bEUR\b")
+        asia = plan_prompt("Destinations from NRT on 2026-09-15, not Asia")
+        self.assertEqual(asia.intent, "explore")
+        self.assertEqual(asia.origin, "NRT")
+        self.assertEqual(asia.destinations, ())
+        self.assertNotIn("unnamed", asia.notes.casefold())
+        named = plan_prompt(
+            "Explore destinations from GRU in September 2026: SCL, EZE, LIM, BOG. "
+            "Do not brute-force the full date matrix; fixed dates first, then ±1 only on finalists."
+        )
+        self.assertEqual(list(named.destinations), ["SCL", "EZE", "LIM", "BOG"])
+        self.assertNotIn("unnamed", named.notes.casefold())
+        two = plan_prompt(
+            "From AKL on 2026-11-03, quote two secret destinations I did not name. Not Asia."
+        )
+        self.assertEqual(two.intent, "explore")
+        self.assertEqual(two.origin, "AKL")
+        self.assertEqual(two.destinations, ())
+        self.assertIn("two", two.notes.casefold())
+        self.assertIn("unnamed", two.notes.casefold())
+        self.assertNotIn("three", two.notes.casefold())
+
     def test_same_city_vs_is_constraint_not_second_dest(self) -> None:
         plan = plan_prompt(
             "IAD-LHR on 2026-10-09 returning 2026-10-12, LHR vs LGW, business class, "

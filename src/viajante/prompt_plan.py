@@ -516,6 +516,25 @@ _LISTED_DESTS = re.compile(
     r"(?:destinations?|destinos)\b[^:\n]{0,120}:\s*"
     r"((?:[A-Za-z]{3}(?:\s*,\s*)+)+[A-Za-z]{3})"
 )
+# Quote N secret/unnamed dests the prompt never named. Do not invent IATA.
+_UNNAMED_DEST_QUOTE = re.compile(
+    r"\b(?:secret|unnamed)\s+destinations?\b|"
+    r"\bdestinations?\b.{0,48}?\b(?:i|we|you)\s+did(?:\s+not|'t)\s+name\b"
+)
+_UNNAMED_DEST_COUNT = re.compile(
+    r"\b(\d+|one|two|three|four|five|six|seven|eight)\s+"
+    r"(?:cheapest\s+)?(?:secret|unnamed)\s+destinations?\b"
+)
+_ENGLISH_COUNT_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+}
 _FIXED_DATES_FIRST = re.compile(r"fixed(?: natural)? dates first")
 _PLUS_MINUS_1 = re.compile(r"(?:±|\+/-)\s*1")
 _PLUS_MINUS_N = re.compile(r"(?:±|\+/-|plus\s+(?:or\s+)?minus)\s*(\d+)")
@@ -1454,6 +1473,31 @@ def _around_the_world_notes(
     return "; ".join(bits)
 
 
+def _is_unnamed_dest_quote(folded: str, listed: Sequence[str]) -> bool:
+    """True when the prompt asks to quote dests it never named. Named lists stay."""
+    if listed:
+        return False
+    return bool(_UNNAMED_DEST_QUOTE.search(folded))
+
+
+def _unnamed_dest_quote_count(folded: str) -> Optional[int]:
+    match = _UNNAMED_DEST_COUNT.search(folded)
+    if match is None:
+        return None
+    return _int_token(match.group(1))
+
+
+def _unnamed_dest_quote_notes(count: Optional[int]) -> str:
+    """Honesty line: unnamed dests cannot be quoted. No invented cities or fares."""
+    if count is None:
+        lead = "Unnamed dests cannot be quoted"
+    else:
+        word = _ENGLISH_COUNT_WORDS.get(count, str(count))
+        noun = "dest" if count == 1 else "dests"
+        lead = f"{word.capitalize()} unnamed {noun} cannot be quoted"
+    return f"{lead}. Do not invent a shortlist, IATA, or hotels. Explore without fake dests."
+
+
 def _same_city_named_pairs(named: Sequence[str]) -> Tuple[Tuple[str, str], ...]:
     """Owned same-city peers in prompt order. No invented codes."""
     codes = [code for code in dict.fromkeys(named) if code]
@@ -2190,6 +2234,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         exclude_airports = still_exclude
 
     destinations = _listed_destinations(raw, origin)
+    unnamed_dest_quote = _is_unnamed_dest_quote(folded, destinations)
+    if unnamed_dest_quote:
+        destinations = ()
 
     trip = _trip_kind(folded, flags, len(pairs), date_count=len(dates))
     split_return = bool(_ASKED_TWO_ONE_WAYS.search(folded))
@@ -2352,6 +2399,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         notes = _append_note(
             notes,
             f"Priced {origin_bit} explore shortlist; drop {dropped}.",
+        )
+    if unnamed_dest_quote:
+        notes = _append_note(
+            notes,
+            _unnamed_dest_quote_notes(_unnamed_dest_quote_count(folded)),
         )
     if nearby:
         notes = _append_note(
@@ -2533,6 +2585,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         extra_refuse.append("itinerary_rest")
         extra_refuse.append("hotels")
         extra_refuse.append("booking")
+    if unnamed_dest_quote:
+        extra_refuse.append("booking")
+        extra_refuse.append("hotels")
 
     if intent != "refuse":
         # keep invalid_iata as a hard refuse even if other intent words exist
