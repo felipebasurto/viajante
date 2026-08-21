@@ -1466,5 +1466,77 @@ class PromptPlanMatchTests(unittest.TestCase):
         self.assertIsInstance(data["refuse"], list)
 
 
+class PromptPlanExcludeOriginRegionTests(unittest.TestCase):
+    """Named origin inside an excluded region is an honesty constraint, not a dest list."""
+
+    _INVENTED_NEIGHBORS = ("LHR", "CDG", "AMS", "JFK", "LAX", "SYD", "AKL", "MAD")
+
+    def test_nrt_exclude_asia_stamps_origin_inside_and_does_not_invent_dests(self) -> None:
+        plan = plan_prompt("Destinations from NRT on 2026-09-15, not Asia")
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "NRT")
+        self.assertEqual(plan.departure_date, date(2026, 9, 15))
+        self.assertIn("asia", plan.exclude_regions)
+        self.assertEqual(plan.destinations, ())
+        self.assertEqual(plan.route_specs, ())
+        self.assertIsNone(plan.destination)
+        folded = plan.notes.casefold()
+        self.assertIn("nrt", folded)
+        self.assertIn("inside", folded)
+        self.assertIn("excluded", folded)
+        self.assertIn("asia", folded)
+        self.assertIn("empty", folded)
+        self.assertIn("do not invent", folded)
+        self.assertIn("dest", folded)
+        self.assertIn("iata", folded)
+        self.assertIn("fare", folded)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotRegex(plan.notes, r"\bEUR\b")
+        owned = " ".join(plan.destinations) + " " + " ".join(plan.route_specs)
+        for code in self._INVENTED_NEIGHBORS:
+            self.assertNotIn(code, owned)
+            self.assertNotIn(code, plan.notes)
+
+    def test_origin_outside_excluded_region_does_not_get_inside_note(self) -> None:
+        plan = plan_prompt("Destinations from AKL on 2026-11-01, not Asia")
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "AKL")
+        self.assertIn("asia", plan.exclude_regions)
+        self.assertEqual(plan.destinations, ())
+        folded = plan.notes.casefold()
+        self.assertNotIn("sits inside", folded)
+        self.assertNotIn("inside excluded", folded)
+        self.assertIn("drop", folded)
+        self.assertIn("asia", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_unnamed_exclude_stays_unset(self) -> None:
+        plan = plan_prompt("Destinations from NRT on 2026-09-15")
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "NRT")
+        self.assertEqual(plan.exclude_regions, ())
+        self.assertEqual(plan.destinations, ())
+        folded = plan.notes.casefold()
+        self.assertNotIn("inside excluded", folded)
+        self.assertNotIn("sits inside", folded)
+
+    def test_named_asian_dests_from_bom_stay_and_do_not_invent_more(self) -> None:
+        plan = plan_prompt(
+            "Explore destinations from BOM in September 2026: BKK, NRT, HKG. "
+            "Not Asia. Do not invent fares."
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "BOM")
+        self.assertEqual(list(plan.destinations), ["BKK", "NRT", "HKG"])
+        self.assertIn("asia", plan.exclude_regions)
+        folded = plan.notes.casefold()
+        self.assertIn("inside", folded)
+        self.assertIn("excluded", folded)
+        owned = " ".join(plan.destinations)
+        for code in self._INVENTED_NEIGHBORS:
+            self.assertNotIn(code, owned)
+            self.assertNotIn(code, plan.notes)
+
+
 if __name__ == "__main__":
     unittest.main()

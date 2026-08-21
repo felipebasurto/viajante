@@ -1536,6 +1536,29 @@ def _via_regions_notes() -> str:
     )
 
 
+def _origin_in_excluded_regions(
+    origin: Optional[str],
+    exclude_regions: Sequence[str],
+) -> Tuple[str, ...]:
+    """Owned IANA tz prefix vs excluded region. Unknown tz cannot prove inside."""
+    if origin is None or not exclude_regions:
+        return ()
+    geo = airport_geo(origin)
+    if geo is None:
+        return ()
+    tz = geo[0].casefold()
+    return tuple(region for region in exclude_regions if tz.startswith(f"{region.casefold()}/"))
+
+
+def _origin_inside_excluded_region_notes(origin: str, regions: Sequence[str]) -> str:
+    """Honesty line: named origin sits in an excluded region. No invented dests or fares."""
+    dropped = ", ".join(regions)
+    return (
+        f"{origin} sits inside excluded {dropped}; priced shortlist may be empty. "
+        f"Do not invent dests, IATA, or fares outside {dropped}."
+    )
+
+
 def _is_unnamed_dest_quote(folded: str, listed: Sequence[str]) -> bool:
     """True when the prompt asks to quote dests it never named. Named lists stay."""
     if listed:
@@ -2613,12 +2636,19 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             "Do not brute-force a date matrix; shortlist then ±1 on 1-3 finalists.",
         )
     if exclude_regions and _is_explore(folded):
-        origin_bit = origin or "this origin"
-        dropped = ", ".join(exclude_regions)
-        notes = _append_note(
-            notes,
-            f"Priced {origin_bit} explore shortlist; drop {dropped}.",
-        )
+        origin_inside = _origin_in_excluded_regions(origin, exclude_regions)
+        if origin_inside and origin:
+            notes = _append_note(
+                notes,
+                _origin_inside_excluded_region_notes(origin, origin_inside),
+            )
+        else:
+            origin_bit = origin or "this origin"
+            dropped = ", ".join(exclude_regions)
+            notes = _append_note(
+                notes,
+                f"Priced {origin_bit} explore shortlist; drop {dropped}.",
+            )
     if unnamed_dest_quote:
         notes = _append_note(
             notes,
