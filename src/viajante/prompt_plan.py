@@ -11,10 +11,12 @@ import calendar
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
+from math import asin, cos, radians, sin, sqrt
 from typing import Any, Mapping, Optional, Sequence, Tuple, cast
+from zoneinfo import ZoneInfo
 
-from viajante.airports import is_known_iata, same_city_iata
+from viajante.airports import airport_geo, is_known_iata, same_city_iata
 from viajante.carriers import (
     ALLIANCE_PHRASES,
     airline_names_longest_first,
@@ -672,8 +674,8 @@ _ARRIVE_BEFORE = re.compile(
     re.IGNORECASE,
 )
 _DEPART_AFTER = re.compile(
-    r"\b(?:depart(?:ing|ure)?|leave)\s+"
-    r"(?:20\d{2}-\d{2}-\d{2}\s+)?"
+    r"\b(?:(?:depart(?:ing|ure)?|leave)\s+(?:20\d{2}-\d{2}-\d{2}\s+)?|"
+    r"(?:on\s+)?20\d{2}-\d{2}-\d{2}\s+)"
     r"after\s+"
     r"(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?"
     r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
@@ -735,29 +737,42 @@ _SORT_I18N_ALIASES = {
     "ankunft": "arrival",
 }
 _JA_NOT_IATA = re.compile(r"([A-Z]{3})は使わない")
-_WORK_BACK_BY = re.compile(
-    r"\b(?:must work|work|back(?:\s+in)?|in the office|muss)\s+"
-    r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag)"
-    r"(?:\s+(?:before|by|at|um))?\s+"
-    r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
-    re.IGNORECASE,
-)
-_WORK_BACK_JUMATATU = re.compile(
-    r"\bjumatatu\s+saa\s+(\d{1,2}(?::\d{2})?)",
-    re.IGNORECASE,
-)
-_WORK_BACK_UMSOMBULUKO = re.compile(
-    r"\bumsombuluko\s+ngo-?(\d{1,2}(?::\d{2})?)",
-    re.IGNORECASE,
-)
-_WEEKDAY_EN = {
+# Compile already-covered weekday aliases. Do not grow a per-language regex world.
+_WEEKDAY_ALIASES = {
+    "monday": "monday",
+    "tuesday": "tuesday",
+    "wednesday": "wednesday",
+    "thursday": "thursday",
+    "friday": "friday",
+    "saturday": "saturday",
+    "sunday": "sunday",
     "montag": "monday",
+    "jumatatu": "monday",
+    "umsombuluko": "monday",
 }
-_BACK_DAY_BEFORE = re.compile(
-    r"\bback\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+before\s+"
-    r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
+_WEEKDAY_ALT = "|".join(
+    sorted((re.escape(name) for name in _WEEKDAY_ALIASES), key=len, reverse=True)
+)
+_WEEKDAY_INDEX = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+_WORK_BACK_CONTEXT = r"(?:must work|work|back(?:\s+in)?|in the office|muss|kazi|ngisebenze)"
+_WORK_BACK_BY = re.compile(
+    rf"\b{_WORK_BACK_CONTEXT}\s+({_WEEKDAY_ALT})"
+    rf"(?:\s+(?:before|by|at|um|saa|ngo))?"
+    rf"\s*-?\s*{_CLOCK_TOKEN}",
     re.IGNORECASE,
 )
+_CIVIL_DEPART_HOUR = 6
+_CRUISE_KMH = 800.0
+_BLOCK_PAD_HOURS = 1.0
+_EARTH_RADIUS_KM = 6371.0
 _MIN_LAYOVER_H = re.compile(
     r"(?:at least|min(?:imum)?|no less than|≥|>=|მინიმუმ)\s*(\d+(?:\.\d+)?)\s*"
     r"(?:h\b|hours?\b|horas\b|საათ)",
@@ -1864,22 +1879,126 @@ def _carriers_from_prompt(
 
 
 def _work_back_by(folded: str) -> Optional[str]:
-    match = _BACK_DAY_BEFORE.search(folded) or _WORK_BACK_BY.search(folded)
-    if match is not None:
-        clock = _hhmm(match.group(2))
-        if clock is None:
-            return None
-        weekday = _WEEKDAY_EN.get(match.group(1).casefold(), match.group(1).casefold())
-        return f"{weekday} {clock}"
-    jumatatu = _WORK_BACK_JUMATATU.search(folded)
-    if jumatatu is not None:
-        clock = _hhmm(jumatatu.group(1))
-        return f"monday {clock}" if clock else None
-    umsombuluko = _WORK_BACK_UMSOMBULUKO.search(folded)
-    if umsombuluko is not None:
-        clock = _hhmm(umsombuluko.group(1))
-        return f"monday {clock}" if clock else None
-    return None
+    match = _WORK_BACK_BY.search(folded)
+    if match is None:
+        return None
+    clock = _hhmm(match.group(2))
+    if clock is None:
+        return None
+    weekday = _WEEKDAY_ALIASES.get(match.group(1).casefold())
+    if weekday is None:
+        return None
+    return f"{weekday} {clock}"
+
+
+def _great_circle_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    rlat1, rlon1, rlat2, rlon2 = (radians(lat1), radians(lon1), radians(lat2), radians(lon2))
+    dlat, dlon = rlat2 - rlat1, rlon2 - rlon1
+    chord = sin(dlat / 2) ** 2 + cos(rlat1) * cos(rlat2) * sin(dlon / 2) ** 2
+    return _EARTH_RADIUS_KM * 2 * asin(min(1.0, sqrt(chord)))
+
+
+def _min_block_hours(dep: str, arr: str) -> Optional[float]:
+    """Lower-bound airborne block. Not an airline schedule. Do not invent a fare."""
+    left = airport_geo(dep)
+    right = airport_geo(arr)
+    if left is None or right is None:
+        return None
+    km = _great_circle_km(left[1], left[2], right[1], right[2])
+    return km / _CRUISE_KMH + _BLOCK_PAD_HOURS
+
+
+def _next_weekday_on_or_after(day: date, weekday: str) -> Optional[date]:
+    want = _WEEKDAY_INDEX.get(weekday)
+    if want is None:
+        return None
+    return date.fromordinal(day.toordinal() + (want - day.weekday()) % 7)
+
+
+def _clock_hm(clock: str) -> Optional[tuple[int, int]]:
+    parts = clock.split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
+def _work_back_impossible_note(
+    *,
+    origin: Optional[str],
+    destination: Optional[str],
+    departure: Optional[date],
+    returning: Optional[date],
+    depart_after: Optional[str],
+    work_back_by: Optional[str],
+) -> Optional[str]:
+    """Note when the named office clock is timezone-impossible. Keep route and field.
+
+    Do not invent hops, a midnight departure, or a feasible IDL itinerary.
+    Civil earliest depart is 06:00 local when the prompt named no depart_after.
+    """
+    if work_back_by is None or origin is None or destination is None:
+        return None
+    bits = work_back_by.split()
+    if len(bits) != 2:
+        return None
+    weekday, clock = bits
+    work_hm = _clock_hm(clock)
+    if work_hm is None or weekday not in _WEEKDAY_INDEX:
+        return None
+    if returning is not None:
+        dep_code, arr_code, when = destination, origin, returning
+    elif departure is not None:
+        dep_code, arr_code, when = origin, destination, departure
+    else:
+        return None
+    if dep_code == arr_code:
+        return None
+    block = _min_block_hours(dep_code, arr_code)
+    dep_geo = airport_geo(dep_code)
+    arr_geo = airport_geo(arr_code)
+    if block is None or dep_geo is None or arr_geo is None:
+        return None
+    # Outbound depart_after does not move the return. One-way uses the named clock.
+    if returning is not None:
+        start_clock = f"{_CIVIL_DEPART_HOUR:02d}:00"
+    else:
+        start_clock = depart_after or f"{_CIVIL_DEPART_HOUR:02d}:00"
+    start_hm = _clock_hm(start_clock)
+    if start_hm is None:
+        return None
+    work_day = _next_weekday_on_or_after(when, weekday)
+    if work_day is None:
+        return None
+    try:
+        dep_tz = ZoneInfo(dep_geo[0])
+        arr_tz = ZoneInfo(arr_geo[0])
+        dep_local = datetime(
+            when.year, when.month, when.day, start_hm[0], start_hm[1], tzinfo=dep_tz
+        )
+        work_local = datetime(
+            work_day.year,
+            work_day.month,
+            work_day.day,
+            work_hm[0],
+            work_hm[1],
+            tzinfo=arr_tz,
+        )
+    except (ValueError, OSError, KeyError):
+        return None
+    eta = dep_local + timedelta(hours=block)
+    if eta <= work_local:
+        return None
+    return (
+        f"{dep_code}-{arr_code} on {when.isoformat()} cannot make {work_back_by} "
+        f"at {arr_code} (timezone/IDL). Keep both clocks; do not invent hops "
+        "or drop work_back_by. Do not invent a fare."
+    )
 
 
 def _named_iata_codes(raw: str, folded: str) -> set[str]:
@@ -2550,6 +2669,16 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     depart_window = _depart_window(folded, flags)
     sort = _sort_key(folded, flags)
     work_back_by = _work_back_by(folded)
+    impossible_clock = _work_back_impossible_note(
+        origin=origin if origin and is_known_iata(origin) else None,
+        destination=destination if destination and is_known_iata(destination) else None,
+        departure=departure,
+        returning=returning,
+        depart_after=depart_after,
+        work_back_by=work_back_by,
+    )
+    if impossible_clock:
+        notes = _append_note(notes, impossible_clock)
     jaw_airports: list[str] = []
     if trip == "rt" and len(known_pairs) >= 2:
         pair_counts: dict[str, int] = {}

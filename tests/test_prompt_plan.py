@@ -1294,6 +1294,118 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertNotEqual(plan.origin, "MAD")
 
 
+class PromptPlanWorkBackIdlTests(unittest.TestCase):
+    """Named work_back_by prompts. Keep the field; do not invent an IDL hop."""
+
+    def test_english_hnl_akl_sunday_night_cannot_make_monday_office(self) -> None:
+        plan = plan_prompt(
+            "HNL-AKL on 2026-11-08 after 21:00 Honolulu local, must work Monday "
+            "09:00 in Auckland. Max 1 stop. Do not invent a fare."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "HNL")
+        self.assertEqual(plan.destination, "AKL")
+        self.assertEqual(plan.work_back_by, "monday 09:00")
+        self.assertEqual(plan.depart_after, "21:00")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.route_specs, ("HNL-AKL:2026-11-08",))
+        folded = plan.notes.casefold()
+        self.assertIn("cannot make monday 09:00", folded)
+        self.assertIn("timezone/idl", folded)
+        self.assertIn("work_back_by", folded)
+        self.assertNotIn("syd", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_german_fra_akl_monday_return_cannot_make_frankfurt_office(self) -> None:
+        plan = plan_prompt(
+            "Hin- und Rückflug FRA-AKL am 2026-11-06, Rückflug am 2026-11-09. "
+            "Ich muss Montag 09:00 in Frankfurt im Büro sein. Ein Erwachsener. "
+            "Keinen Tarif erfinden."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "FRA")
+        self.assertEqual(plan.destination, "AKL")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.return_date, date(2026, 11, 9))
+        self.assertEqual(plan.work_back_by, "monday 09:00")
+        self.assertEqual(plan.adults, 1)
+        self.assertEqual(plan.route_specs, ("FRA-AKL:2026-11-06:2026-11-09",))
+        folded = plan.notes.casefold()
+        self.assertIn("cannot make monday 09:00", folded)
+        self.assertIn("akl-fra", folded)
+        self.assertIn("timezone/idl", folded)
+        self.assertNotIn("syd", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_swahili_nbo_lhr_keeps_jumatatu_office_clock(self) -> None:
+        plan = plan_prompt(
+            "Nataka ndege NBO-LHR tarehe 2026-11-06, kurudi 2026-11-09. "
+            "Lazima nifanye kazi Jumatatu saa 09:00 asubuhi mjini Nairobi. "
+            "Hoteli London kuanzia 2026-11-06 hadi 2026-11-09, watu wazima 2, "
+            "chumba 1. Usibuni bei ya tiketi wala hoteli."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "NBO")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.return_date, date(2026, 11, 9))
+        self.assertEqual(plan.work_back_by, "monday 09:00")
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.location, "London")
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.rooms, 1)
+        self.assertEqual(plan.locale, "en")
+        self.assertEqual(plan.route_specs, ("NBO-LHR:2026-11-06:2026-11-09",))
+        folded = plan.notes.casefold()
+        self.assertIn("cannot make monday 09:00", folded)
+        self.assertIn("lhr-nbo", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_zulu_jnb_syd_does_not_invent_monday_office(self) -> None:
+        plan = plan_prompt(
+            "Ngifuna ukundiza JNB-SYD ngomhla ka-2026-11-06, ngibuye ngomhla "
+            "ka-2026-11-09. Ngimele ngisebenze uMsombuluko ngo-09:00 eGoli. "
+            "Abantu abadala ababili. Indawo yokulala eSydney kusukela "
+            "2026-11-06 kuya 2026-11-09, ikamelo elilodwa. Ungaqambi intengo."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "JNB")
+        self.assertEqual(plan.destination, "SYD")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.return_date, date(2026, 11, 9))
+        self.assertEqual(plan.work_back_by, "monday 09:00")
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.location, "Sydney")
+        self.assertEqual(plan.route_specs, ("JNB-SYD:2026-11-06:2026-11-09",))
+        folded = plan.notes.casefold()
+        self.assertIn("cannot make monday 09:00", folded)
+        self.assertIn("syd-jnb", folded)
+        self.assertIn("timezone/idl", folded)
+        self.assertNotIn("akl", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_yyz_cdg_weekday_nofly_maps_work_back_by(self) -> None:
+        plan = plan_prompt(
+            "YYZ-CDG, weekday no-fly: depart after Friday 18:00 on 2026-10-09, "
+            "back Monday before 09:00 on 2026-10-12, hotel in Paris, 1 room, "
+            "1 adult, max 1 stop, carry-on only, no red-eye. Plan both. "
+            "Do not invent a fare or a hotel price."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "YYZ")
+        self.assertEqual(plan.destination, "CDG")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.depart_after, "18:00")
+        self.assertEqual(plan.work_back_by, "monday 09:00")
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.location, "Paris")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertEqual(plan.route_specs, ("YYZ-CDG:2026-10-09:2026-10-12",))
+        self.assertNotIn("cannot make monday 09:00", plan.notes.casefold())
+        self.assertNotIn("€", plan.notes)
+
+
 class PromptPlanMatchTests(unittest.TestCase):
     def test_plan_to_dict_is_json_friendly(self) -> None:
         plan = plan_prompt("Flights BOS-LHR on 2026-09-01")

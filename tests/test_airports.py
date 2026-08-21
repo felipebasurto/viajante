@@ -6,7 +6,13 @@ from contextlib import redirect_stdout
 from datetime import date
 from unittest.mock import patch
 
-from viajante.airports import get_airport, is_known_iata, lookup_airports, same_city_iata
+from viajante.airports import (
+    airport_geo,
+    get_airport,
+    is_known_iata,
+    lookup_airports,
+    same_city_iata,
+)
 from viajante.cli import main
 from viajante.models import FlightQuery
 
@@ -58,6 +64,16 @@ class AirportLookupTests(unittest.TestCase):
         self.assertEqual(set(tokyo), {"NRT", "HND"})
         self.assertEqual(same_city_iata("MAD"), ("MAD",))
         self.assertEqual(same_city_iata("XXX"), ())
+
+    def test_airport_geo_has_tz_for_idl_pair(self) -> None:
+        hnl = airport_geo("HNL")
+        akl = airport_geo("AKL")
+        assert hnl is not None and akl is not None
+        self.assertEqual(hnl[0], "Pacific/Honolulu")
+        self.assertEqual(akl[0], "Pacific/Auckland")
+        self.assertLess(hnl[2], 0)
+        self.assertGreater(akl[2], 0)
+        self.assertIsNone(airport_geo("XXX"))
 
 
 class AirportCliTests(unittest.TestCase):

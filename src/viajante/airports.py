@@ -197,6 +197,45 @@ def get_airport(code: str) -> Optional[Airport]:
     return _by_code().get(text)
 
 
+_GEO: Optional[dict[str, tuple[str, float, float]]] = None
+
+
+def _airport_geo_index() -> dict[str, tuple[str, float, float]]:
+    """IANA tz, lat, lon from the published CSV. Lazy; not paid at import."""
+    global _GEO
+    cached = _GEO
+    if cached is not None:
+        return cached
+    source = files("airportsdata").joinpath("airports.csv")
+    geo: dict[str, tuple[str, float, float]] = {}
+    with source.open(encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        header = next(reader)
+        iata_i = header.index("iata")
+        lat_i = header.index("lat")
+        lon_i = header.index("lon")
+        tz_i = header.index("tz")
+        for raw in reader:
+            code = raw[iata_i] if iata_i < len(raw) else ""
+            tz = raw[tz_i] if tz_i < len(raw) else ""
+            if not code or not tz:
+                continue
+            try:
+                geo[code] = (tz, float(raw[lat_i]), float(raw[lon_i]))
+            except (IndexError, TypeError, ValueError):
+                continue
+    _GEO = geo
+    return geo
+
+
+def airport_geo(code: str) -> Optional[tuple[str, float, float]]:
+    """IANA timezone, latitude, longitude. Omit when the published row has no tz."""
+    text = code.strip().upper()
+    if len(text) != 3 or not text.isalpha():
+        return None
+    return _airport_geo_index().get(text)
+
+
 def _by_city_country() -> dict[tuple[str, str], tuple[Airport, ...]]:
     """City+country → airports. Built from the code table; no city-name scan."""
     global _BY_CITY_COUNTRY
