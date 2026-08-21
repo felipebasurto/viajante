@@ -93,6 +93,7 @@ def search_flights_tool(
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -111,6 +112,7 @@ def search_flights_tool(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
+        price_cap_eur=price_cap,
     )
     trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
@@ -219,6 +221,7 @@ def search_explore_tool(
     adults: int = 1,
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
+    price_cap: Optional[int] = None,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -240,6 +243,7 @@ def search_explore_tool(
             adults=adults,
             cabin=cabin,
             max_stops=max_stops,
+            price_cap_eur=price_cap,
         )
     )
     return dict(report.to_dict())

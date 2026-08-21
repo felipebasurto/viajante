@@ -121,6 +121,45 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(report.destinations[1].price_eur, 61.0)
         self.assertTrue(source.closed)
 
+    def test_named_price_cap_drops_dests_without_an_owned_under_cap_fare(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (
+                    RawFlightCard(
+                        airline="Ryanair",
+                        departure="07:00",
+                        arrival="07:50",
+                        duration="1 hr",
+                        stops="Nonstop",
+                        price="€28",
+                    ),
+                ),
+                "LIS": (
+                    RawFlightCard(
+                        airline="Iberia",
+                        departure="09:00",
+                        arrival="09:50",
+                        duration="1 hr",
+                        stops="Nonstop",
+                        price="€250",
+                    ),
+                ),
+            },
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, price_cap_eur=200, source=source
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["OPO"])
+        self.assertEqual(report.destinations[0].price_eur, 28.0)
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS", "FCO"])
+        self.assertIsNone(unnamed.destinations[2].price_eur)
+
     def test_unknown_origin_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             search_explore("XXX", date(2026, 9, 1))

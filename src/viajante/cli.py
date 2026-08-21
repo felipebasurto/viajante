@@ -98,6 +98,7 @@ Examples:
   viajante flights JFK-LHR:2026-09-15 --exclude-airlines F9,NK --depart-window 7-12 --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --depart-window 06:00-20:00 --sort duration
   viajante flights JFK-LHR:2026-09-15 --airlines BA,AA --sort duration
+  viajante flights JFK-LHR:2026-09-15 --price-cap 200 --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --bags 1 --carry-on --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --max-duration 16 --min-layover 1 --max-layover 8
   viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep
@@ -120,6 +121,7 @@ EXPLORE_EXAMPLES = """\
 Examples:
   viajante explore JFK --from 2026-09-15 --days 7
   viajante explore NRT --month 2026-10
+  viajante explore SIN --from 2026-09-01 --price-cap 200
 """
 
 AIRPORTS_EXAMPLES = """\
@@ -175,6 +177,8 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     if args.bags is not None and args.bags < 0:
         raise ValueError("--bags must not be negative")
     carry_on = 1 if args.carry_on else None
+    if args.price_cap is not None and args.price_cap <= 0:
+        raise ValueError("--price-cap must be a positive EUR amount")
     if args.max_layover is not None and args.max_layover < 0:
         raise ValueError("--max-layover must not be negative")
     if args.min_layover is not None and args.min_layover < 0:
@@ -210,6 +214,7 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         cabin=args.cabin,
         bags=args.bags,
         carry_on=carry_on,
+        price_cap_eur=args.price_cap,
     )
     today = date.today()
     for departure in _plan_departure_dates(plan):
@@ -803,6 +808,7 @@ def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
         "infants_on_lap": 0,
         "bags": None,
         "carry_on": False,
+        "price_cap": None,
         "max_layover": None,
         "min_layover": None,
         "max_duration": None,
@@ -1122,6 +1128,8 @@ def _run_explore(args: argparse.Namespace) -> int:
             raise ValueError("--top must be a positive integer")
         if args.adults < 1:
             raise ValueError("--adults must be at least 1")
+        if args.price_cap is not None and args.price_cap <= 0:
+            raise ValueError("--price-cap must be a positive EUR amount")
         validate_explore_window(start, days)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1135,6 +1143,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         adults=args.adults,
         cabin=args.cabin,
         max_stops=args.max_stops,
+        price_cap_eur=args.price_cap,
         progress=lambda line: print(line, file=sys.stderr),
     )
     _print_explore_report(report)
@@ -1251,6 +1260,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="carry_on",
         help="Ask the shopping request for one carry-on (omit to leave unset)",
+    )
+    flights.add_argument(
+        "--price-cap",
+        type=int,
+        default=None,
+        metavar="EUR",
+        dest="price_cap",
+        help="Drop owned fares above this EUR amount (omit to leave unset; unnamed stays None)",
     )
     flights.add_argument(
         "--nearby",
@@ -1603,6 +1620,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Ask the shopping request for one carry-on (omit to leave unset)",
     )
     trip.add_argument(
+        "--price-cap",
+        type=int,
+        default=None,
+        metavar="EUR",
+        dest="price_cap",
+        help="Drop owned fares above this EUR amount (omit to leave unset; unnamed stays None)",
+    )
+    trip.add_argument(
         "--save",
         default=None,
         metavar="FILE",
@@ -1814,6 +1839,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="economy",
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
+    )
+    explore.add_argument(
+        "--price-cap",
+        type=int,
+        default=None,
+        metavar="EUR",
+        dest="price_cap",
+        help="Drop destinations whose owned cheapest fare exceeds this EUR amount",
     )
     explore.add_argument(
         "--save",

@@ -147,6 +147,16 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(trip.bags, 1)
         self.assertEqual(trip.carry_on, 1)
 
+    def test_search_flights_accepts_named_price_cap(self) -> None:
+        fake = _report(queries=[], currency="EUR")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool([f"MAD-BCN:{FUTURE}"], price_cap=200)
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.price_cap_eur, 200)
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool([f"MAD-BCN:{FUTURE}"])
+        self.assertIsNone(search.call_args.args[0][0].price_cap_eur)
+
     def test_search_flights_accepts_occupancy_and_locale_params(self) -> None:
         fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
@@ -245,6 +255,9 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["max_stops"], 0)
         self.assertEqual(payload["schema_version"], 1)
         self.assertNotIn("success", payload)
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool("SIN", FUTURE, price_cap=200)
+        self.assertEqual(search.call_args.kwargs["price_cap_eur"], 200)
 
     def test_search_hotels_defaults_to_google(self) -> None:
         fake = _report(provider="google-hotels", queries=[])

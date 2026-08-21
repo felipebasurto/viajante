@@ -191,10 +191,10 @@ def _constraints_from_segments(
             infants_in_seat=infants_in_seat,
             infants_on_lap=infants_on_lap,
         ),
+        None,  # 7 price-cap: RPC layout unknown; named cap is a local EUR post-filter
         None,
         None,
-        None,
-        _bags_constraint(bags=bags, carry_on=carry_on),  # [checked, carry_on]; 7 is price-cap
+        _bags_constraint(bags=bags, carry_on=carry_on),  # [checked, carry_on]
         None,
         None,
         segments,

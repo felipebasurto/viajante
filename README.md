@@ -287,6 +287,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--via` | off | Keep connecting offers whose parsed layover matches these IATA codes (`IST`). Post-filter on owned `layover_city` / `legs[].layovers`. Unknown layover cannot prove include (drop). Nonstops drop. |
 | `--exclude-via` | off | Drop connecting offers whose parsed layover matches these IATA codes (`DXB`). Unknown layover stays. Nonstops stay. |
 | `--max-duration` | off | Drop offers whose elapsed time exceeds this many hours. |
+| `--price-cap` | unset | Drop owned fares above this EUR amount. Inclusive. Unnamed stays unset. Index 7 on the shopping POST stays `None` (RPC layout unknown). Never invents a cap or a fare. |
 | `--save FILE` | off | Write the JSON report atomically. |
 
 | `dates` flag | Default | Behavior |
@@ -303,6 +304,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--month` | off | First of `YYYY-MM` plus that month's length. Do not combine with `--from`. |
 | `--top` | `12` | Destinations to price after the explore catalog. |
 | `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Applied when pricing each destination. |
+| `--price-cap` | unset | Drop destinations whose owned cheapest fare exceeds this EUR amount. Unknown price cannot prove the cap. |
 | `--save FILE` | off | Write the explore JSON atomically. |
 
 | `hotels` flag | Default | Behavior |

@@ -112,6 +112,7 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn("legs", data)
         self.assertNotIn("bags", data)
         self.assertNotIn("carry_on", data)
+        self.assertNotIn("price_cap_eur", data)
 
     def test_flight_query_bags_are_omitted_until_requested(self) -> None:
         data = FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=1, carry_on=0).to_dict()
@@ -119,6 +120,16 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["carry_on"], 0)
         with self.assertRaises(ValueError):
             FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=-1)
+
+    def test_flight_query_price_cap_is_omitted_until_named(self) -> None:
+        data = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=200).to_dict()
+        self.assertEqual(data["price_cap_eur"], 200)
+        unnamed = FlightQuery("MAD", "BCN", date(2026, 9, 1)).to_dict()
+        self.assertNotIn("price_cap_eur", unnamed)
+        with self.assertRaises(ValueError):
+            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=0)
+        with self.assertRaises(ValueError):
+            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=-1)
 
     def test_flight_leg_accepts_two_stops(self) -> None:
         leg = FlightLeg("MAD", "NRT", date(2026, 10, 1), max_stops=2)

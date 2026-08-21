@@ -35,6 +35,7 @@ from viajante.google_flights import (
     RawFlightCard,
     google_flights_url,
 )
+from viajante.google_flights_rpc import build_shopping_inner
 from viajante.models import (
     FlightOffer,
     FlightQuery,
@@ -412,6 +413,28 @@ class FlightsOrchestrationTests(unittest.TestCase):
         default = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1)
         self.assertIsNone(default[0].bags)
         self.assertIsNone(default[0].carry_on)
+        self.assertIsNone(default[0].price_cap_eur)
+
+    def test_named_price_cap_drops_owned_fares_above_the_cap(self) -> None:
+        under = card(price="199 €")
+        at_cap = card(price="200 €")
+        over = card(price="201 €")
+        self.assertIsNotNone(_normalize_offer(under, 1, price_cap_eur=200))
+        self.assertIsNotNone(_normalize_offer(at_cap, 1, price_cap_eur=200))
+        self.assertIsNone(_normalize_offer(over, 1, price_cap_eur=200))
+        self.assertIsNotNone(_normalize_offer(over, 1))
+        four_hundred = card(price="400 €")
+        over_four = card(price="401 €")
+        self.assertIsNotNone(_normalize_offer(four_hundred, 1, price_cap_eur=400))
+        self.assertIsNone(_normalize_offer(over_four, 1, price_cap_eur=400))
+
+    def test_parse_flight_plan_named_price_cap_stays_off_index_7(self) -> None:
+        plan = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1, price_cap_eur=200)
+        self.assertEqual(plan[0].price_cap_eur, 200)
+        self.assertIsNone(build_shopping_inner(plan[0])[1][7])
+        unnamed = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1)
+        self.assertIsNone(unnamed[0].price_cap_eur)
+        self.assertIsNone(build_shopping_inner(unnamed[0])[1][7])
 
     def test_unlabelled_stops_are_rejected_when_only_direct_flights_are_wanted(self) -> None:
         unknown = card(stops="Unknown", price="90 €", departure="14:00", arrival="15:00")

@@ -34,6 +34,7 @@ Numbers only where recorded. Do not invent a `judge_mean` or p50.
 | **60** | optional `--nearby` same-city IATA; default off; no invented codes; open-jaw not rewritten | |
 | **67** | leftover 95s: stamp shipped-constraint notes (via∩overnight, dest-vs-hub, ATW circuit, explore notes) | Battery 191, gate fail:0, not judged. `judge: skip`. `judge_mean:` blank — not invented. Cold `--help` 310.2→312.6 (did not veto). |
 | **69** | planner maps carry-on only / N checked / no hold luggage onto `--bags` / `--carry-on`; unnamed leaves index 10 None | Battery 191, gate fail:0. `judge: skip`. `judge_mean:` blank — not invented. Cold `--help` 299.4→301.6 (did not veto). |
+| **71** | named `--price-cap` / `price_cap_eur` is a local owned-EUR post-filter; shopping index 7 stays None (RPC layout unknown). Unnamed stays unset. Never invent a cap or a fare. | Battery 193, gate fail:0. `judge: skip`. `judge_mean:` blank — not invented. Cold `--help` 326.8→328.1 (did not veto). |
 
 ## Speed keep-or-revert (`score_ms` history; not weekday keep)
 

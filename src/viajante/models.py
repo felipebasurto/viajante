@@ -83,6 +83,13 @@ def _require_bag_count(value: Optional[int], *, role: str) -> None:
         raise ValueError(f"{role} must not be negative")
 
 
+def _require_price_cap(value: Optional[int]) -> None:
+    if value is None:
+        return
+    if value <= 0:
+        raise ValueError("price_cap_eur must be positive")
+
+
 def _optional_bag_fields(bags: Optional[int], carry_on: Optional[int]) -> dict[str, int]:
     payload: dict[str, int] = {}
     if bags is not None:
@@ -90,6 +97,12 @@ def _optional_bag_fields(bags: Optional[int], carry_on: Optional[int]) -> dict[s
     if carry_on is not None:
         payload["carry_on"] = carry_on
     return payload
+
+
+def _optional_price_cap_fields(price_cap_eur: Optional[int]) -> dict[str, int]:
+    if price_cap_eur is None:
+        return {}
+    return {"price_cap_eur": price_cap_eur}
 
 
 def _optional_occupancy_fields(
@@ -193,6 +206,7 @@ class FlightQuery:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
+    price_cap_eur: Optional[int] = None
     airlines: Optional[Tuple[str, ...]] = None
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
@@ -213,6 +227,7 @@ class FlightQuery:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
+        _require_price_cap(self.price_cap_eur)
         _require_airline_codes(self.airlines, role="airlines")
         _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
         _require_alliances(self.alliances, role="alliances")
@@ -247,6 +262,7 @@ class FlightQuery:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        payload.update(_optional_price_cap_fields(self.price_cap_eur))
         payload.update(
             _optional_carrier_fields(
                 self.airlines,
@@ -272,6 +288,7 @@ class RoundTrip:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
+    price_cap_eur: Optional[int] = None
     airlines: Optional[Tuple[str, ...]] = None
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
@@ -296,6 +313,7 @@ class RoundTrip:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
+        _require_price_cap(self.price_cap_eur)
         _require_airline_codes(self.airlines, role="airlines")
         _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
         _require_alliances(self.alliances, role="alliances")
@@ -320,6 +338,7 @@ class RoundTrip:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        payload.update(_optional_price_cap_fields(self.price_cap_eur))
         payload.update(
             _optional_carrier_fields(
                 self.airlines,
@@ -348,6 +367,7 @@ class MultiCity:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
+    price_cap_eur: Optional[int] = None
     airlines: Optional[Tuple[str, ...]] = None
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
@@ -368,6 +388,7 @@ class MultiCity:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
+        _require_price_cap(self.price_cap_eur)
         _require_airline_codes(self.airlines, role="airlines")
         _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
         _require_alliances(self.alliances, role="alliances")
@@ -396,6 +417,7 @@ class MultiCity:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
+        payload.update(_optional_price_cap_fields(self.price_cap_eur))
         payload.update(
             _optional_carrier_fields(
                 self.airlines,

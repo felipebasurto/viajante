@@ -372,7 +372,7 @@ _FLAG = re.compile(
     r"--(trip|max-stops|adults|children|infants-in-seat|infants-on-lap|cabin|rooms|"
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|currency|country|airlines|exclude-airlines|alliance|"
-    r"exclude-alliance|exclude-via|via|bags)\s+(\S+)",
+    r"exclude-alliance|exclude-via|via|bags|price-cap)\s+(\S+)",
     re.IGNORECASE,
 )
 _BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
@@ -1731,6 +1731,23 @@ def _bag_fields(
     return _baggage_label(carry_only=carry_only, no_checked=no_checked, bags=bags), bags, carry_on
 
 
+def _named_price_cap_eur(folded: str, flags: Mapping[str, str]) -> Optional[int]:
+    """Named cap only. Unnamed stays None. Do not invent a fare or a cap."""
+    if "price-cap" in flags:
+        try:
+            value = int(flags["price-cap"])
+        except ValueError:
+            return None
+        return value if value > 0 else None
+    cap = _PRICE_CAP_EUR_SIGN.search(folded)
+    if cap is None:
+        cap = _PRICE_CAP_EUR_WORD.search(folded)
+    if cap is None:
+        return None
+    value = int(cap.group(1))
+    return value if value > 0 else None
+
+
 _ENGLISH_IATA_WORDS = frozenset(
     {
         "to",
@@ -2147,6 +2164,7 @@ def plan_to_trips(plan: PromptPlan) -> FlightPlan:
         cabin=cabin,
         bags=plan.bags,
         carry_on=plan.carry_on,
+        price_cap_eur=plan.price_cap_eur,
     )
     if not plan.nearby or not isinstance(parsed, tuple):
         return parsed
@@ -2352,12 +2370,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if "viernes" in folded or "friday" in folded:
         weekday = "friday"
 
-    price_cap = None
-    cap = _PRICE_CAP_EUR_SIGN.search(folded)
-    if cap is None:
-        cap = _PRICE_CAP_EUR_WORD.search(folded)
-    if cap:
-        price_cap = int(cap.group(1))
+    price_cap = _named_price_cap_eur(folded, flags)
 
     origin: Optional[str] = None
     destination: Optional[str] = None

@@ -663,6 +663,18 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertIsNone(default[1][7])
         self.assertIsNone(default[1][10])
 
+    def test_named_price_cap_does_not_guess_constraints_index_7(self) -> None:
+        named = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=200)
+        inner = build_shopping_inner(named)
+        self.assertEqual(named.price_cap_eur, 200)
+        self.assertIsNone(inner[1][7])
+        four = FlightQuery("NRT", "ICN", date(2026, 10, 9), price_cap_eur=400)
+        self.assertEqual(four.price_cap_eur, 400)
+        self.assertIsNone(build_shopping_inner(four)[1][7])
+        unnamed = FlightQuery("MAD", "BCN", date(2026, 9, 1))
+        self.assertIsNone(unnamed.price_cap_eur)
+        self.assertIsNone(build_shopping_inner(unnamed)[1][7])
+
     def test_airline_include_fills_segment_index_7(self) -> None:
         query = FlightQuery(
             "MAD",

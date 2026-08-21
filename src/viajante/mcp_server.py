@@ -57,6 +57,7 @@ def build_server():
         sort: str = "ranked",
         bags: int | None = None,
         carry_on: int | None = None,
+        price_cap: int | None = None,
         children: int = 0,
         infants_in_seat: int = 0,
         infants_on_lap: int = 0,
@@ -87,6 +88,7 @@ def build_server():
                 sort=sort,  # type: ignore[arg-type]
                 bags=bags,
                 carry_on=carry_on,
+                price_cap=price_cap,
                 children=children,
                 infants_in_seat=infants_in_seat,
                 infants_on_lap=infants_on_lap,
@@ -160,6 +162,7 @@ def build_server():
         adults: int = 1,
         cabin: str = "economy",
         max_stops: int = 1,
+        price_cap: int | None = None,
     ) -> dict:
         return dict(
             search_explore_tool(
@@ -171,6 +174,7 @@ def build_server():
                 adults=adults,
                 cabin=cabin,  # type: ignore[arg-type]
                 max_stops=max_stops,
+                price_cap=price_cap,
             )
         )
 

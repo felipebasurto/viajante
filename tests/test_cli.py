@@ -273,6 +273,28 @@ class CliTests(unittest.TestCase):
         queries = search.call_args.args[0]
         self.assertIsNone(queries[0].bags)
         self.assertIsNone(queries[0].carry_on)
+        self.assertIsNone(queries[0].price_cap_eur)
+
+    def test_price_cap_flag_reaches_parsed_queries(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                code = main(["flights", ROUTE, "--price-cap", "200"])
+        self.assertEqual(code, 0)
+        queries = search.call_args.args[0]
+        self.assertEqual(queries[0].price_cap_eur, 200)
+
+    def test_price_cap_default_stays_unset(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(["flights", ROUTE])
+        queries = search.call_args.args[0]
+        self.assertIsNone(queries[0].price_cap_eur)
+
+    def test_non_positive_price_cap_is_rejected_before_searching(self) -> None:
+        with patch("viajante.cli.search_flights") as search:
+            self.assertEqual(main(["flights", ROUTE, "--price-cap", "0"]), 1)
+            self.assertEqual(main(["flights", ROUTE, "--price-cap", "-1"]), 1)
+            search.assert_not_called()
 
     def test_nearby_expands_london_and_keeps_named_open_jaw(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
@@ -853,6 +875,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--depart-window", help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--carry-on", help_text)
+        self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("duration", help_text)
         self.assertIn("departure", help_text)

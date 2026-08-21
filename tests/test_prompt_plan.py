@@ -684,6 +684,29 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIsNone(plan.bags)
         self.assertEqual(_shopping_bags_slot(plan_to_trips(plan)[0]), [0, 1])
 
+    def test_named_price_cap_fills_owned_path_and_leaves_index_7_none(self) -> None:
+        under = plan_prompt("JFK-LHR on 2026-09-15 under 200€")
+        self.assertEqual(under.price_cap_eur, 200)
+        parsed = plan_to_trips(under)
+        self.assertEqual(parsed[0].price_cap_eur, 200)
+        self.assertIsNone(build_shopping_inner(parsed[0])[1][7])
+        four = plan_prompt("NRT-ICN on 2026-10-09 --price-cap 400 EUR")
+        self.assertEqual(four.price_cap_eur, 400)
+        self.assertEqual(plan_to_trips(four)[0].price_cap_eur, 400)
+        self.assertIsNone(build_shopping_inner(plan_to_trips(four)[0])[1][7])
+
+    def test_unnamed_price_cap_leaves_index_7_none(self) -> None:
+        plan = plan_prompt("JNB-SIN on 2026-11-03, max 1 stop.")
+        self.assertIsNone(plan.price_cap_eur)
+        parsed = plan_to_trips(plan)
+        self.assertIsNone(parsed[0].price_cap_eur)
+        self.assertIsNone(build_shopping_inner(parsed[0])[1][7])
+
+    def test_spanish_named_price_cap_is_owned(self) -> None:
+        plan = plan_prompt("JFK-LHR el 2026-09-15, menos de 200 €")
+        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan_to_trips(plan)[0].price_cap_eur, 200)
+
     def test_arrive_before(self) -> None:
         plan = plan_prompt("SFO-LHR on 2026-11-03, arrive before 09:00, max 1 stop.")
         self.assertEqual(plan.arrive_before, "09:00")

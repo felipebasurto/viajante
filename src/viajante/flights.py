@@ -333,6 +333,7 @@ def parse_route_specs(
     cabin: FlightCabin = "economy",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -347,6 +348,7 @@ def parse_route_specs(
         "cabin": cabin,
         "bags": bags,
         "carry_on": carry_on,
+        "price_cap_eur": price_cap_eur,
     }
     queries: list[FlightQuery] = []
     for spec in specs:
@@ -428,6 +430,7 @@ def parse_flight_plan(
     cabin: FlightCabin = "economy",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -441,6 +444,7 @@ def parse_flight_plan(
         "cabin": cabin,
         "bags": bags,
         "carry_on": carry_on,
+        "price_cap_eur": price_cap_eur,
     }
     if kind == "one-way":
         return parse_route_specs(
@@ -480,6 +484,7 @@ def _parse_round_trip_plan(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -492,6 +497,7 @@ def _parse_round_trip_plan(
             cabin=cabin,
             bags=bags,
             carry_on=carry_on,
+            price_cap_eur=price_cap_eur,
             children=children,
             infants_in_seat=infants_in_seat,
             infants_on_lap=infants_on_lap,
@@ -520,6 +526,7 @@ def _parse_round_trip_plan(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
+        price_cap_eur=price_cap_eur,
     )
 
 
@@ -531,6 +538,7 @@ def _parse_open_jaw_rt_package(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -548,6 +556,7 @@ def _parse_open_jaw_rt_package(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
+        price_cap_eur=price_cap_eur,
         children=children,
         infants_in_seat=infants_in_seat,
         infants_on_lap=infants_on_lap,
@@ -562,6 +571,7 @@ def _parse_multi_city_plan(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -594,6 +604,7 @@ def _parse_multi_city_plan(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
+        price_cap_eur=price_cap_eur,
     )
 
 
@@ -885,6 +896,7 @@ def _normalize_offer(
     exclude_via: Optional[Sequence[str]] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
 ) -> Optional[FlightOffer]:
     price_text = raw.price or ""
     price_eur = parse_price_eur(price_text)
@@ -897,6 +909,8 @@ def _normalize_offer(
     if not _passes_depart_window(raw, depart_window):
         return None
     if not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
+        return None
+    if price_cap_eur is not None and price_eur > price_cap_eur:
         return None
     if not _passes_via_filters(raw, via=via, exclude_via=exclude_via):
         return None
@@ -1230,6 +1244,7 @@ def _run_search(
                     exclude_via=exclude_via,
                     bags=trip.bags,
                     carry_on=trip.carry_on,
+                    price_cap_eur=trip.price_cap_eur,
                 )
             )
             is not None

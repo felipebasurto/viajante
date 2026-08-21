@@ -56,6 +56,7 @@ def search_explore(
     adults: int = 1,
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
+    price_cap_eur: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
 ) -> ExploreReport:
@@ -64,6 +65,8 @@ def search_explore(
         raise ValueError("top must be positive")
     if top > MAX_EXPLORE_TOP:
         raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
+    if price_cap_eur is not None and price_cap_eur <= 0:
+        raise ValueError("price_cap_eur must be positive")
     origin = origin.strip().upper()
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
@@ -90,7 +93,10 @@ def search_explore(
                 max_stops=max_stops,
                 adults=adults,
                 cabin=cabin,
+                price_cap_eur=price_cap_eur,
             )
+            if price_cap_eur is not None and price is None:
+                continue
             priced.append(
                 ExploreDestination(
                     iata=place.iata,
@@ -129,6 +135,7 @@ def _cheapest_price(
     max_stops: int,
     adults: int,
     cabin: FlightCabin,
+    price_cap_eur: Optional[int] = None,
 ) -> Optional[float]:
     query = FlightQuery(
         origin=origin,
@@ -137,6 +144,7 @@ def _cheapest_price(
         max_stops=max_stops,
         adults=adults,
         cabin=cabin,
+        price_cap_eur=price_cap_eur,
     )
     try:
         cards = source.fetch(query)
@@ -145,6 +153,7 @@ def _cheapest_price(
     prices = [
         offer.price_eur
         for raw in cards
-        if (offer := _normalize_offer(raw, max_stops, buffer_eur=0)) is not None
+        if (offer := _normalize_offer(raw, max_stops, buffer_eur=0, price_cap_eur=price_cap_eur))
+        is not None
     ]
     return min(prices) if prices else None
