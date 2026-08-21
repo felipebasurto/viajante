@@ -576,6 +576,29 @@ class JudgeScoreTests(unittest.TestCase):
         self.assertEqual(already.score_1_100, 77)
         self.assertEqual(already.reason, "Nested parsed object, not a string.")
 
+        reasoning = parse_judge_verdict(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "reasoning_content": json.dumps(
+                                {
+                                    "score_1_100": 96,
+                                    "reason": "Unsatisfiable first and economy; cabin omitted.",
+                                }
+                            ),
+                        }
+                    }
+                ]
+            }
+        )
+        self.assertEqual(reasoning.score_1_100, 96)
+        self.assertEqual(
+            reasoning.reason,
+            "Unsatisfiable first and economy; cabin omitted.",
+        )
+
     def test_judge_instructions_do_not_punish_omitted_prices(self) -> None:
         prompt = JUDGE_SYSTEM_PROMPT
         self.assertIn("NO single correct answer", prompt)

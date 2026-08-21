@@ -134,6 +134,43 @@ RECOVER: list[tuple[str, int, str, str]] = [
         "Hotel stay matches Johannesburg dates.",
         'score_1_100 = 88\nreason = "Hotel stay matches Johannesburg dates."\n',
     ),
+    (
+        "brutal-cabin-split-nested",
+        96,
+        "Unsatisfiable first and economy on one seat; plan omitted cabin.",
+        '{\n  "score_1_100": 96,\n'
+        '  "evaluation": {\n'
+        '    "reason": "Unsatisfiable first and economy on one seat; plan omitted cabin."\n'
+        "  }\n"
+        "}",
+    ),
+    (
+        "brutal-cabin-reason-then-score",
+        94,
+        "Do not pick first cabin when the prompt also named economy.",
+        '{\n  "reason": "Do not pick first cabin when the prompt also named economy.",\n'
+        '  "result": {"score_1_100": 94}\n'
+        "}",
+    ),
+    (
+        "brutal-cabin-sibling-notes",
+        93,
+        "Unsatisfiable cabin: first class and economy on one seat. Do not pick a cabin.",
+        '{"score_1_100": 93, "notes": '
+        '"Unsatisfiable cabin: first class and economy on one seat. Do not pick a cabin."}',
+    ),
+    (
+        "brutal-cabin-missing-comma",
+        92,
+        "HEL-NRT max 1 stop carry-on; mixed cabin left unset.",
+        '{"score_1_100": 92 "reason": "HEL-NRT max 1 stop carry-on; mixed cabin left unset."}',
+    ),
+    (
+        "brutal-cabin-score-over-100",
+        91,
+        "Quote neither fare; mixed cabin is unsatisfiable.",
+        '{"score_1_100": "91/100", "reason": "Quote neither fare; mixed cabin is unsatisfiable."}',
+    ),
 ]
 
 SKIP: list[tuple[str, str]] = [
@@ -147,7 +184,8 @@ SKIP: list[tuple[str, str]] = [
     ("score-word", '{"score_1_100": "ninety", "reason": "ok"}'),
     ("empty", ""),
     (
-        "open-jaw-praise-without-json",
-        "YVR-LHR-LGW open jaw is a perfect 100. Packaged RT looks right.",
+        "score-with-nested-expect-notes",
+        '{"score_1_100": 90, "expect": {"notes": '
+        '"Unsatisfiable cabin: first class and economy on one seat."}}',
     ),
 ]

@@ -660,7 +660,10 @@ def parse_score_1_100(raw: object) -> Optional[int]:
     elif isinstance(raw, float) and raw.is_integer():
         score = int(raw)
     elif isinstance(raw, str):
-        score = _int_score_token(raw.strip())
+        token = raw.strip()
+        if token.endswith("/100"):
+            token = token[:-4].strip()
+        score = _int_score_token(token)
         if score is None:
             return None
     else:
@@ -757,7 +760,7 @@ _SMART_QUOTES = str.maketrans(
     }
 )
 _SCORE_KV_RE = re.compile(
-    r"""["']?score_1_100["']?\s*[:=]\s*["']?(\d{1,3}(?:\.0+)?)["']?""",
+    r"""["']?score_1_100["']?\s*[:=]\s*["']?(\d{1,3}(?:\.0+)?)(?:/100)?["']?""",
     re.IGNORECASE,
 )
 _REASON_KEY_RE = re.compile(
@@ -799,7 +802,13 @@ def _reason_from_mapping(obj: Mapping[str, Any]) -> str:
     return _reason_line(best) if len(best) >= 10 else ""
 
 
-def _verdict_from_obj(obj: object, *, depth: int = 0) -> Optional[JudgeResult]:
+def _verdict_from_obj(
+    obj: object,
+    *,
+    depth: int = 0,
+    pending_score: Optional[int] = None,
+    pending_reason: str = "",
+) -> Optional[JudgeResult]:
     """Walk a decoded object for score_1_100 + a non-empty reason. No invention."""
     if depth > 6 or obj is None:
         return None
@@ -809,16 +818,37 @@ def _verdict_from_obj(obj: object, *, depth: int = 0) -> Optional[JudgeResult]:
             lowered = {str(key).lower(): value for key, value in obj.items()}
             score = parse_score_1_100(lowered.get("score_1_100"))
         reason = _reason_from_mapping(obj)
+        if not reason and score is not None:
+            notes = obj.get("notes")
+            if not isinstance(notes, str):
+                lowered_notes = {str(key).lower(): value for key, value in obj.items()}
+                notes = lowered_notes.get("notes")
+            if isinstance(notes, str) and len(notes.strip()) >= 10:
+                reason = _reason_line(notes)
+        if score is None:
+            score = pending_score
+        if not reason:
+            reason = pending_reason
         if score is not None and reason:
             return JudgeResult(score, reason)
         for value in obj.values():
-            found = _verdict_from_obj(value, depth=depth + 1)
+            found = _verdict_from_obj(
+                value,
+                depth=depth + 1,
+                pending_score=score,
+                pending_reason=reason,
+            )
             if found is not None:
                 return found
         return None
     if isinstance(obj, list):
         for item in obj:
-            found = _verdict_from_obj(item, depth=depth + 1)
+            found = _verdict_from_obj(
+                item,
+                depth=depth + 1,
+                pending_score=pending_score,
+                pending_reason=pending_reason,
+            )
             if found is not None:
                 return found
         return None
@@ -898,11 +928,25 @@ def _quote_unquoted_keys(blob: str) -> str:
     )
 
 
+def _insert_missing_commas(blob: str) -> str:
+    """Insert a comma when DeepSeek omitted it between score_1_100 and the next key."""
+    return re.sub(
+        r"""(score_1_100["']?\s*[:=]\s*["']?\d{1,3}(?:\.0+)?(?:/100)?["']?)\s+(")""",
+        r"\1, \2",
+        blob,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
 def _loads_repaired(blob: str) -> Optional[object]:
     candidates = [blob, _unescape_raw_newlines_in_strings(blob)]
     stripped_commas = re.sub(r",(\s*[}\]])", r"\1", blob)
     candidates.append(stripped_commas)
     candidates.append(_quote_unquoted_keys(stripped_commas))
+    missing = _insert_missing_commas(blob)
+    candidates.append(missing)
+    candidates.append(_quote_unquoted_keys(missing))
     if "'" in blob and '"' not in blob:
         candidates.append(blob.replace("'", '"'))
         candidates.append(_unescape_raw_newlines_in_strings(blob.replace("'", '"')))
@@ -1037,6 +1081,11 @@ def _message_content(payload: Mapping[str, Any]) -> Optional[object]:
         return content
     if isinstance(content, dict):
         return content
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        return reasoning
+    if isinstance(reasoning, dict):
+        return reasoning
     return None
 
 

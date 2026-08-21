@@ -170,82 +170,91 @@ _CITY_IATA: dict[str, str] = {}
 for _alias, _iata in _CITY_IATA_RAW.items():
     _CITY_IATA[_fold(_alias)] = _iata
 
-_IATA_TO_ENGLISH = {
-    "MAD": "Madrid",
-    "BCN": "Barcelona",
-    "OPO": "Porto",
-    "LIS": "Lisbon",
-    "CDG": "Paris",
-    "FCO": "Rome",
-    "LHR": "London",
-    "JFK": "New York",
-    "NRT": "Tokyo",
-    "YHZ": "Halifax",
-    "NAN": "Fiji",
-    "PRG": "Prague",
-    "IST": "Istanbul",
-    "AKL": "Auckland",
-    "SYD": "Sydney",
-    "PEK": "Beijing",
-    "PVG": "Shanghai",
-    "DEL": "Delhi",
-    "NBO": "Nairobi",
-    "LOS": "Lagos",
-    "JNB": "Johannesburg",
-    "SUV": "Suva",
-    "BOS": "Boston",
-    "ORD": "Chicago",
-    "LAX": "Los Angeles",
-    "MIA": "Miami",
-    "CUN": "Cancun",
-    "DUB": "Dublin",
-    "AMS": "Amsterdam",
-    "FRA": "Frankfurt",
-    "MUC": "Munich",
-    "ZRH": "Zurich",
-    "VIE": "Vienna",
-    "BUD": "Budapest",
-    "WAW": "Warsaw",
-    "ATH": "Athens",
-    "DXB": "Dubai",
-    "SIN": "Singapore",
-    "HKG": "Hong Kong",
-    "ICN": "Seoul",
-    "KIX": "Osaka",
-    "MEL": "Melbourne",
-    "PMI": "Palma",
-    "VLC": "Valencia",
-    "SVQ": "Seville",
-    "BIO": "Bilbao",
-    "AGP": "Malaga",
-    "MXP": "Milan",
-    "NAP": "Naples",
-    "PMO": "Palermo",
-    "RAK": "Marrakech",
-    "YVR": "Vancouver",
-    "CPT": "Cape Town",
-    "EZE": "Buenos Aires",
-    "GRU": "Sao Paulo",
-    "SCL": "Santiago",
-    "CAI": "Cairo",
-    "BOM": "Mumbai",
-    "BKK": "Bangkok",
-    "CGK": "Jakarta",
-    "MNL": "Manila",
-    "HNL": "Honolulu",
-    "PER": "Perth",
-    "CHC": "Christchurch",
-    "ADD": "Addis Ababa",
-    "CMN": "Casablanca",
-    "LIM": "Lima",
-    "BOG": "Bogota",
-    "MEX": "Mexico City",
-    "YYZ": "Toronto",
-    "DOH": "Doha",
-    "LGW": "Gatwick",
-    "EWR": "Newark",
-    "CPH": "Copenhagen",
-}
+# English hotel/city labels compiled from aliases already in `_CITY_IATA_RAW`.
+# Do not grow one-off inflections; add an alias to that table instead.
+_ENGLISH_CITY_LABELS: tuple[str, ...] = (
+    "Madrid",
+    "Barcelona",
+    "Porto",
+    "Lisbon",
+    "Paris",
+    "Rome",
+    "London",
+    "New York",
+    "Tokyo",
+    "Halifax",
+    "Fiji",
+    "Prague",
+    "Istanbul",
+    "Auckland",
+    "Sydney",
+    "Beijing",
+    "Shanghai",
+    "Delhi",
+    "Nairobi",
+    "Lagos",
+    "Johannesburg",
+    "Suva",
+    "Boston",
+    "Chicago",
+    "Los Angeles",
+    "Miami",
+    "Cancun",
+    "Dublin",
+    "Amsterdam",
+    "Frankfurt",
+    "Munich",
+    "Zurich",
+    "Vienna",
+    "Budapest",
+    "Warsaw",
+    "Athens",
+    "Dubai",
+    "Singapore",
+    "Hong Kong",
+    "Seoul",
+    "Osaka",
+    "Melbourne",
+    "Palma",
+    "Valencia",
+    "Seville",
+    "Bilbao",
+    "Malaga",
+    "Milan",
+    "Naples",
+    "Palermo",
+    "Marrakech",
+    "Vancouver",
+    "Cape Town",
+    "Buenos Aires",
+    "Sao Paulo",
+    "Santiago",
+    "Cairo",
+    "Mumbai",
+    "Bangkok",
+    "Jakarta",
+    "Manila",
+    "Honolulu",
+    "Perth",
+    "Christchurch",
+    "Addis Ababa",
+    "Casablanca",
+    "Lima",
+    "Bogota",
+    "Mexico City",
+    "Toronto",
+    "Doha",
+    "Heathrow",
+    "Gatwick",
+    "Newark",
+    "Copenhagen",
+)
+_ENGLISH_LABEL_BY_FOLD: Mapping[str, str] = {_fold(label): label for label in _ENGLISH_CITY_LABELS}
+_IATA_TO_ENGLISH: dict[str, str] = {}
+for _alias, _iata in _CITY_IATA.items():
+    _label = _ENGLISH_LABEL_BY_FOLD.get(_alias)
+    if _label:
+        _IATA_TO_ENGLISH.setdefault(_iata, _label)
 
 _WORD_NUMBERS = {
     "un": 1,
@@ -284,7 +293,33 @@ _WORD_NUMBERS = {
     "seven": 7,
     "ocho": 8,
     "eight": 8,
+    "bat": 1,
+    "kan": 1,
+    "huk": 1,
+    "ஒரு": 1,
+    "አንድ": 1,
+    "ერთი": 1,
+    "нэг": 1,
+    "elilodwa": 1,
+    "واحدة": 1,
+    "واحد": 1,
+    "bi": 2,
+    "meji": 2,
+    "இரண்டு": 2,
+    "ሁለት": 2,
+    "ორი": 2,
+    "хоёр": 2,
+    "iskay": 2,
+    "ababili": 2,
+    "شخصان": 2,
+    "நான்கு": 4,
 }
+
+_OCCUPANCY_NUM = (
+    r"(\d+|"
+    + "|".join(re.escape(word) for word in sorted(_WORD_NUMBERS, key=len, reverse=True))
+    + r")"
+)
 
 _MONTHS = {
     "january": 1,
@@ -453,6 +488,14 @@ _DATES_CALENDAR = re.compile(
     r"|(?<!same\s)\bcalendar\b(?!\s+date)"
 )
 _DATES_COMMAND = re.compile(r"(?:^|\bviajante\s+)?dates\s+[a-z]{3}-[a-z]{3}\b")
+_FREE_CANCELLATION = re.compile(
+    r"\bfree cancellation\b|\bcancelaci[oó]n gratuita\b",
+    re.IGNORECASE,
+)
+_NONREFUNDABLE = re.compile(
+    r"\bnon-?refundable\b|\bno reembolsable\b|\bprepaid non-?refundable\b",
+    re.IGNORECASE,
+)
 _HOTEL_WORDS = re.compile(
     r"(?<![a-z0-9_])(?:hotels?|hoteles|hoteli|hoteeli|alojamiento|unterkunft|"
     r"hospedagem|gistihus[a-z]*|ostatua|gwesty|accommodation|lodging|tambo)"
@@ -487,18 +530,15 @@ _MAX_1_STOP = re.compile(
 _SIN_ESCALAS_MAS = re.compile(r"sin escalas de m[aá]s")
 _ESCALAS_SANAS = re.compile(r"escalas sanas")
 _NONSTOP = re.compile(r"\b(nonstop|directos?|sin escalas)\b")
-_COUNT = (
-    r"(\d+|eight|ocho|seven|siete|six|seis|five|cinco|"
-    r"four|cuatro|quatre|vier|quattro|"
-    r"three|trois|drei|tres|tre|"
-    r"two|dois|duas|deux|zwei|due|dos|tveir|dau|"
-    r"one|eine|uma|una|une|um|eitt|ein|un)"
+_COUNT = _OCCUPANCY_NUM
+_ADULT_STEMS = (
+    r"adults?|adultos?|adultes?|adulti|erwachsene[nrs]?|"
+    r"fullor[dð]nir|wazima|heldu|oedolyn|oedolion|"
+    r"agbalagba|abadala|hatun\s+runakuna|பெரியவர்கள்|"
+    r"ጎልማሶች|ზრდასრულ(?:ებ)?ი|том\s+хүн|بالغان"
 )
-_ADULTS = re.compile(
-    _COUNT + r"\s+(?:adults?|adultos?|adultes?|adulti|erwachsene[nrs]?|"
-    r"fullor[dð]nir|wazima|heldu|oedolyn|oedolion)\b"
-)
-_ADULTS_REVERSE = re.compile(r"(?:adults?|erwachsene|wazima|fullor[dð]nir|heldu|oedolyn)\s+(\d+)\b")
+_ADULTS = re.compile(_COUNT + r"\s+(?:" + _ADULT_STEMS + r")(?![A-Za-z0-9_])")
+_ADULTS_REVERSE = re.compile(r"(?:" + _ADULT_STEMS + r")\s+" + _COUNT)
 _SAME_ADULT = re.compile(r"\bsame\s+adult\b")
 _ADULTS_CJK = re.compile(r"(?:大人|성인)\s*(\d+)")
 _CHILDREN = re.compile(
@@ -510,14 +550,13 @@ _INFANTS_ON_LAP_EN = re.compile(_COUNT + r"\s+infants?\s+on[- ]laps?")
 _INFANTS_EN = re.compile(_COUNT + r"\s+infants?\b(?!\s+in[- ]seats?)(?!\s+on[- ]laps?)")
 _ROOMS_ES_PLURAL = re.compile(r"(\d+|una|un|one|dos|two)\s+habitaciones")
 _ROOMS_ES_SINGULAR = re.compile(r"(\d+|una|un|one)\s+habitaci[oó]n")
-_ROOMS_EN = re.compile(r"(\d+)\s+rooms?")
-_ROOMS_I18N = re.compile(
-    _COUNT + r"\s+(?:chambres?|zimmer|quartos?|herbergi|ystafell|chumba|gela)\b"
+_ROOM_STEMS = (
+    r"rooms?|chambres?|zimmer|quartos?|herbergi|ystafell|chumba|gela|"
+    r"habitaciones?|cuarto|ikamelo|yara|அறைகள்|அறை|ክፍል|ოთახი|өрөө|غرفة"
 )
-_ROOMS_REVERSE = re.compile(
-    r"(?:rooms?|chambres?|zimmer|quartos?|herbergi|ystafell|chumba|gela|"
-    r"habitaciones?)\s+(\d+)\b"
-)
+_ROOMS_EN = re.compile(_COUNT + r"\s+rooms?")
+_ROOMS_I18N = re.compile(_COUNT + r"\s+(?:" + _ROOM_STEMS + r")(?![A-Za-z0-9_])")
+_ROOMS_REVERSE = re.compile(r"(?:" + _ROOM_STEMS + r")\s+" + _COUNT)
 _ROOMS_CJK = re.compile(r"(?:部屋|객실|방)\s*(\d+)")
 _DAYS_ES = re.compile(r"(\d+)\s*d[ií]as")
 _DAYS_EN = re.compile(r"(\d+)\s+days")
@@ -1104,17 +1143,48 @@ def _hotel_location(text: str) -> Optional[str]:
     return _known_english_city(raw) if raw else None
 
 
+def _int_token(token: str) -> Optional[int]:
+    if token.isdigit():
+        return int(token)
+    return _WORD_NUMBERS.get(token)
+
+
 def _int_after(patterns: Sequence[re.Pattern[str]], folded: str) -> Optional[int]:
     for pattern in patterns:
         match = pattern.search(folded)
         if match is None:
             continue
-        token = match.group(1)
-        if token.isdigit():
-            return int(token)
-        if token in _WORD_NUMBERS:
-            return _WORD_NUMBERS[token]
+        value = _int_token(match.group(1))
+        if value is not None:
+            return value
     return None
+
+
+def _int_all(patterns: Sequence[re.Pattern[str]], folded: str) -> list[int]:
+    """Every occupancy number those patterns hit, in prompt order. No invented counts."""
+    hits: list[tuple[int, int, int]] = []
+    for pattern in patterns:
+        for match in pattern.finditer(folded):
+            value = _int_token(match.group(1))
+            if value is None:
+                continue
+            hits.append((match.start(), match.end(), value))
+    hits.sort()
+    values: list[int] = []
+    last_end = -1
+    for start, end, value in hits:
+        if start < last_end:
+            continue
+        values.append(value)
+        last_end = end
+    return values
+
+
+def _append_note(notes: str, extra: str) -> str:
+    extra = extra.strip()
+    if not extra:
+        return notes
+    return f"{notes} {extra}".strip() if notes else extra
 
 
 def _via_regions(folded: str) -> Tuple[str, ...]:
@@ -1215,20 +1285,31 @@ def _has_flight_words(folded: str) -> bool:
     return bool(_FLIGHT_WORDS.search(folded))
 
 
+def _named_cabins(folded: str) -> Tuple[str, ...]:
+    """Cabins the prompt named. Premium-economy is not also economy."""
+    named: list[str] = []
+    if "premium-economy" in folded or "premium economy" in folded:
+        named.append("premium-economy")
+    if _BUSINESS_CABIN.search(folded):
+        named.append("business")
+    if _FIRST_CABIN.search(folded):
+        named.append("first")
+    economy = _ECONOMY_CABIN.search(folded)
+    if economy is not None:
+        prefix = folded[max(0, economy.start() - 16) : economy.start()]
+        if "premium-" not in prefix and "premium " not in prefix:
+            named.append("economy")
+    return tuple(named)
+
+
 def _cabin(folded: str, flags: Mapping[str, str]) -> Optional[str]:
     if "cabin" in flags:
         value = flags["cabin"].casefold()
         if value in {"economy", "premium-economy", "business", "first"}:
             return value
-    if "premium-economy" in folded or "premium economy" in folded:
-        return "premium-economy"
-    if _BUSINESS_CABIN.search(folded):
-        return "business"
-    # Bare "first" is an English ordinal ("fixed dates first"), not first class.
-    if _FIRST_CABIN.search(folded):
-        return "first"
-    if _ECONOMY_CABIN.search(folded):
-        return "economy"
+    named = _named_cabins(folded)
+    if len(named) == 1:
+        return named[0]
     return None
 
 
@@ -1924,13 +2005,18 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             max_duration = float(dur.group(1))
 
     adults = None
+    adult_counts: list[int] = []
     if "adults" in flags:
         adults = int(flags["adults"])
     else:
-        adults = _int_after((_ADULTS,), folded)
-        if adults is None:
-            adults = _int_after((_ADULTS_REVERSE, _ADULTS_CJK), folded)
-        if adults is None and _SAME_ADULT.search(folded):
+        adult_counts = _int_all(
+            (_ADULTS, _ADULTS_REVERSE, _ADULTS_CJK),
+            folded,
+        )
+        unique_adults = list(dict.fromkeys(adult_counts))
+        if len(unique_adults) == 1:
+            adults = unique_adults[0]
+        elif not unique_adults and _SAME_ADULT.search(folded):
             adults = 1
 
     children = None
@@ -1954,10 +2040,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             infants_on_lap = _int_after((_INFANTS_EN,), folded)
 
     rooms = None
+    room_counts: list[int] = []
     if "rooms" in flags:
         rooms = int(flags["rooms"])
     else:
-        rooms = _int_after(
+        room_counts = _int_all(
             (
                 _ROOMS_ES_PLURAL,
                 _ROOMS_ES_SINGULAR,
@@ -1968,6 +2055,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             ),
             folded,
         )
+        unique_rooms = list(dict.fromkeys(room_counts))
+        if len(unique_rooms) == 1:
+            rooms = unique_rooms[0]
 
     days = None
     nights_stay: Optional[int] = None
@@ -2142,10 +2232,10 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             f"A packaged {od} with max {max_stops} stops cannot touch "
             f"{via_n} via-regions; do not emit one shopping request or invent fares."
         )
-    elif "open jaw" in folded and len(known_pairs) >= 2:
+    elif len(known_pairs) >= 2 and (trip == "rt" or "open jaw" in folded):
         notes = (
-            "Keep every dated open-jaw city pair on --trip multi; "
-            "do not collapse them into one origin-destination."
+            "Keep every dated open-jaw city pair; "
+            "do not collapse them into one origin-destination. Do not invent a fare."
         )
     elif set(require_overnight) & set(no_overnight) or (
         require_overnight and "any" in no_overnight
@@ -2161,12 +2251,39 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_regions=exclude_regions,
             max_layover=max_layover,
         )
-    if nearby:
-        extra = (
-            "Expand origin or dest with --nearby to owned same-city IATA; "
-            "keep named airports. Do not invent a fare."
+    named_cabins = _named_cabins(folded)
+    if "cabin" not in flags and len(named_cabins) >= 2:
+        joined = " and ".join(named_cabins)
+        notes = _append_note(
+            notes,
+            f"Unsatisfiable cabin: {joined} on one seat. Do not pick a cabin. "
+            "Do not invent a fare.",
         )
-        notes = f"{notes} {extra}".strip() if notes else extra
+    unique_adults = list(dict.fromkeys(adult_counts))
+    unique_rooms = list(dict.fromkeys(room_counts))
+    if len(unique_adults) >= 2:
+        flight_n, hotel_n = unique_adults[0], unique_adults[1]
+        room_bit = f" and {unique_rooms[-1]} rooms" if unique_rooms else ""
+        notes = _append_note(
+            notes,
+            f"Flights are {flight_n} adults; hotel is {hotel_n} adults{room_bit}. "
+            "Keep both occupancies; do not silently pick one --adults. "
+            "Do not invent a fare.",
+        )
+    if max_stops == 0 and via_airports:
+        via_joined = "/".join(via_airports)
+        notes = _append_note(
+            notes,
+            f"Nonstop max 0 stops cannot also be via {via_joined}. "
+            "Keep both constraints; do not drop via or the nonstop. "
+            "Do not invent a fare.",
+        )
+    if nearby:
+        notes = _append_note(
+            notes,
+            "Expand origin or dest with --nearby to owned same-city IATA; "
+            "keep named airports. Do not invent a fare.",
+        )
 
     departure = dates[0] if dates else None
     returning = dates[1] if len(dates) >= 2 else None
@@ -2194,19 +2311,26 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         if flight_start is not None and check_in is not None and check_out is not None:
             search_trip = flight_start <= check_out and check_in <= flight_end
     if search_trip:
-        extra = (
+        notes = _append_note(
+            notes,
             "Owned search_trip / trip_total is flight fare + hotel stay when dates "
             "overlap; omit the sum if either side misses, dates do not overlap, or "
-            "currencies differ. Do not invent a fare or a stay."
+            "currencies differ. Do not invent a fare or a stay.",
         )
-        notes = f"{notes} {extra}".strip() if notes else extra
     if trip == "rt":
-        extra = (
+        notes = _append_note(
+            notes,
             "Stamp typical_eur / vs_typical / typical_deal from the owned same-stay "
             "calendar when it has at least three priced days; omit on a miss or "
-            "multi-city. Do not invent a typical."
+            "multi-city. Do not invent a typical.",
         )
-        notes = f"{notes} {extra}".strip() if notes else extra
+    if plan_hotels and _FREE_CANCELLATION.search(folded) and _NONREFUNDABLE.search(folded):
+        notes = _append_note(
+            notes,
+            "Free cancellation only and prepaid non-refundable only cannot both hold. "
+            "Keep both; default search_hotels is free cancellation, "
+            "--allow-non-refundable is the opt-out. Do not invent a stay.",
+        )
 
     if departure is not None and departure < today and not plan_hotels:
         refuse.append("past_date")
@@ -2223,8 +2347,20 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     depart_window = _depart_window(folded, flags)
     sort = _sort_key(folded, flags)
     work_back_by = _work_back_by(folded)
+    jaw_airports: list[str] = []
+    if trip == "rt" and len(known_pairs) >= 2:
+        pair_counts: dict[str, int] = {}
+        for left, right in known_pairs:
+            pair_counts[left] = pair_counts.get(left, 0) + 1
+            pair_counts[right] = pair_counts.get(right, 0) + 1
+        for left, right in known_pairs:
+            for code in (left, right):
+                if pair_counts[code] == 1 and code not in jaw_airports:
+                    jaw_airports.append(code)
     if around:
         prefer_seed = (*use_airports, *via_airports, *require_overnight)
+    elif jaw_airports:
+        prefer_seed = (*use_airports, *via_airports, *require_overnight, *jaw_airports)
     else:
         prefer_seed = (
             origin,

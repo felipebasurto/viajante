@@ -6,7 +6,7 @@ from datetime import date
 from viajante.airports import is_known_iata
 from viajante.flights import parse_flight_plan, plan_unit_count
 from viajante.models import HotelQuery, MultiCity, RoundTrip
-from viajante.prompt_plan import plan_prompt, plan_to_trips
+from viajante.prompt_plan import _IATA_TO_ENGLISH, plan_prompt, plan_to_trips
 
 
 class PromptPlanSmokeTests(unittest.TestCase):
@@ -1008,6 +1008,103 @@ class PromptPlanBrutalTests(unittest.TestCase):
         )
         self.assertEqual(same.adults, 1)
         self.assertEqual(same.trip, "rt")
+        self.assertIsNone(same.cabin)
+        self.assertIn("business", same.notes.casefold())
+        self.assertIn("economy", same.notes.casefold())
+        self.assertNotIn("€", same.notes)
+
+    def test_mixed_first_and_economy_omits_cabin(self) -> None:
+        plan = plan_prompt(
+            "HEL-NRT on 2026-10-20, first class and economy for the same adult, "
+            "max 1 stop, carry-on only. Quote both cabin fares in EUR."
+        )
+        self.assertEqual(plan.origin, "HEL")
+        self.assertEqual(plan.destination, "NRT")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.adults, 1)
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertIsNone(plan.cabin)
+        self.assertIn("first", plan.notes.casefold())
+        self.assertIn("economy", plan.notes.casefold())
+        self.assertNotIn("€", plan.notes)
+        self.assertNotRegex(plan.notes, r"\bEUR\b")
+
+    def test_nonstop_via_keeps_both_constraints(self) -> None:
+        plan = plan_prompt(
+            "LAX-SIN on 2026-11-03 nonstop, max 0 stops, via DXB. Do not invent a fare."
+        )
+        self.assertEqual(plan.max_stops, 0)
+        self.assertEqual(plan.via_airports, ("DXB",))
+        self.assertIn("DXB", plan.notes)
+        self.assertIn("nonstop", plan.notes.casefold())
+        self.assertNotIn("€", plan.notes)
+
+    def test_flight_hotel_occupancy_mismatch_keeps_both(self) -> None:
+        plan = plan_prompt(
+            "Fly CPT-JNB on 2026-09-18 returning 2026-09-22, 2 adults. "
+            "Hotel in Johannesburg from 2026-09-18 to 2026-09-22, 4 adults, 2 rooms. "
+            "Do not invent a fare or a hotel price."
+        )
+        self.assertTrue(plan.hotels)
+        self.assertIsNone(plan.adults)
+        self.assertEqual(plan.rooms, 2)
+        self.assertIn("2 adults", plan.notes)
+        self.assertIn("4 adults", plan.notes)
+        self.assertIn("2 rooms", plan.notes)
+        tamil = plan_prompt(
+            "MAA-SIN 2026-10-20 திரும்பு 2026-10-24. விமானத்தில் இரண்டு பெரியவர்கள். "
+            "சிங்கப்பூர் தங்குமிடத்தில் நான்கு பெரியவர்கள், இரண்டு அறைகள். "
+            "விலையை உருவாக்க வேண்டாம்."
+        )
+        self.assertTrue(tamil.hotels)
+        self.assertEqual(tamil.location, "Singapore")
+        self.assertIsNone(tamil.adults)
+        self.assertEqual(tamil.rooms, 2)
+        self.assertIn("2 adults", tamil.notes)
+        self.assertIn("4 adults", tamil.notes)
+
+    def test_tamil_rt_hotel_maps_occupancy_flags(self) -> None:
+        plan = plan_prompt(
+            "சென்னையில் இருந்து சிங்கப்பூருக்கு பறக்க வேண்டும் MAA-SIN 2026-10-20, "
+            "திரும்பு 2026-10-24. இரண்டு பெரியவர்கள். சிங்கப்பூரில் தங்குமிடம் "
+            "2026-10-20 முதல் 2026-10-24, ஒரு அறை. விலையை உருவாக்க வேண்டாம்."
+        )
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.rooms, 1)
+        self.assertEqual(plan.location, "Singapore")
+        self.assertTrue(plan.search_trip)
+
+    def test_free_and_nonrefundable_keeps_both(self) -> None:
+        plan = plan_prompt(
+            "DXB-DOH on 2026-10-09 returning 2026-10-13, hotel in Doha, 2 adults, 1 room, "
+            "free cancellation only, and also only prepaid non-refundable rates. "
+            "Do not invent a fare or a hotel price."
+        )
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.adults, 2)
+        self.assertEqual(plan.rooms, 1)
+        self.assertEqual(plan.location, "Doha")
+        folded = plan.notes.casefold()
+        self.assertIn("free cancellation", folded)
+        self.assertIn("non-refundable", folded)
+        self.assertIn("allow-non-refundable", folded)
+
+    def test_packaged_open_jaw_prefers_both_airports(self) -> None:
+        plan = plan_prompt(
+            "YVR-LHR on 2026-10-09 and LGW-YVR on 2026-10-13 as a packaged "
+            "round-trip --trip rt. Do not invent a fare."
+        )
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(list(plan.route_specs), ["YVR-LHR:2026-10-09", "LGW-YVR:2026-10-13"])
+        self.assertEqual(list(plan.prefer_airports), ["LHR", "LGW"])
+        self.assertIn("open-jaw", plan.notes.casefold())
+        self.assertNotIn("€", plan.notes)
+
+    def test_english_city_labels_compile_from_aliases(self) -> None:
+        self.assertEqual(_IATA_TO_ENGLISH["CPH"], "Copenhagen")
+        self.assertEqual(_IATA_TO_ENGLISH["CDG"], "Paris")
+        self.assertEqual(_IATA_TO_ENGLISH["LHR"], "London")
+        self.assertEqual(_IATA_TO_ENGLISH["LGW"], "Gatwick")
 
 
 class PromptPlanMatchTests(unittest.TestCase):
