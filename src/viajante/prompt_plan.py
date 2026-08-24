@@ -1559,6 +1559,44 @@ def _origin_inside_excluded_region_notes(origin: str, regions: Sequence[str]) ->
     )
 
 
+def _weekday_nofly(folded: str) -> bool:
+    """English weekday-no-fly / weekend-only clock constraint. Do not grow language regexes."""
+    if "weekday no-fly" in folded or "weekday nofly" in folded:
+        return True
+    if "no-fly weekday" in folded or "nofly weekday" in folded:
+        return True
+    if "no weekday fly" in folded or "no weekday flying" in folded:
+        return True
+    if "no midweek fly" in folded or "no midweek flying" in folded:
+        return True
+    if "weekend only" in folded or "only weekend" in folded:
+        return True
+    if "weekends only" in folded or "only weekends" in folded:
+        return True
+    return False
+
+
+def _weekend_clocks(
+    weekday: Optional[str],
+    depart_after: Optional[str],
+    work_back_by: Optional[str],
+) -> bool:
+    """True when Friday depart_after and Monday work_back_by are already owned clocks."""
+    if weekday != "friday" or not depart_after or not work_back_by:
+        return False
+    return work_back_by.startswith("monday ")
+
+
+def _weekday_nofly_notes() -> str:
+    """Honesty line: weekday no-fly is an owned clock constraint. No invented hops or fares."""
+    return (
+        "Weekday no-fly is an owned clock constraint; "
+        "keep Friday depart_after and Monday work_back_by; "
+        "do not invent a midweek hop or drop a clock; "
+        "do not invent a fare."
+    )
+
+
 def _is_unnamed_dest_quote(folded: str, listed: Sequence[str]) -> bool:
     """True when the prompt asks to quote dests it never named. Named lists stay."""
     if listed:
@@ -2733,6 +2771,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     )
     if impossible_clock:
         notes = _append_note(notes, impossible_clock)
+    if _weekday_nofly(folded) or _weekend_clocks(weekday, depart_after, work_back_by):
+        notes = _append_note(notes, _weekday_nofly_notes())
     jaw_airports: list[str] = []
     if trip == "rt" and len(known_pairs) >= 2:
         pair_counts: dict[str, int] = {}

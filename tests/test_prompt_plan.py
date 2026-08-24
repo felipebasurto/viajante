@@ -740,6 +740,9 @@ class PromptPlanBrutalTests(unittest.TestCase):
         plan = plan_prompt("ORD-CDG on 2026-11-06, depart after Friday 18:00, max 1 stop.")
         self.assertEqual(plan.depart_after, "18:00")
         self.assertEqual(plan.weekday, "friday")
+        folded = plan.notes.casefold()
+        self.assertNotIn("weekday no-fly", folded)
+        self.assertNotIn("owned clock", folded)
 
     def test_depart_window_and_sort_by_duration(self) -> None:
         plan = plan_prompt(
@@ -1445,6 +1448,7 @@ class PromptPlanWorkBackIdlTests(unittest.TestCase):
         self.assertEqual(plan.origin, "YYZ")
         self.assertEqual(plan.destination, "CDG")
         self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.weekday, "friday")
         self.assertEqual(plan.depart_after, "18:00")
         self.assertEqual(plan.work_back_by, "monday 09:00")
         self.assertTrue(plan.hotels)
@@ -1536,6 +1540,75 @@ class PromptPlanExcludeOriginRegionTests(unittest.TestCase):
         for code in self._INVENTED_NEIGHBORS:
             self.assertNotIn(code, owned)
             self.assertNotIn(code, plan.notes)
+
+
+class PromptPlanWeekdayNoflyTests(unittest.TestCase):
+    """Weekday no-fly / weekend-only is an owned clock constraint. Do not invent hops."""
+
+    _INVENTED_HOPS = ("LHR", "AMS", "FRA", "JFK", "ORD", "DUB", "IST", "DOH")
+
+    def test_weekday_nofly_rt_keeps_clocks_stamps_note_and_does_not_invent_hops(self) -> None:
+        plan = plan_prompt(
+            "YYZ-CDG, weekday no-fly: depart after Friday 18:00 on 2026-10-09, "
+            "back Monday before 09:00 on 2026-10-12, hotel in Paris, 1 room, "
+            "1 adult, max 1 stop, carry-on only, no red-eye. Plan both. "
+            "Do not invent a fare or a hotel price."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "YYZ")
+        self.assertEqual(plan.destination, "CDG")
+        self.assertEqual(plan.trip, "rt")
+        self.assertEqual(plan.weekday, "friday")
+        self.assertEqual(plan.depart_after, "18:00")
+        self.assertEqual(plan.work_back_by, "monday 09:00")
+        self.assertEqual(plan.route_specs, ("YYZ-CDG:2026-10-09:2026-10-12",))
+        self.assertEqual(plan.via_airports, ())
+        self.assertTrue(set(plan.prefer_airports) <= {"YYZ", "CDG"})
+        folded = plan.notes.casefold()
+        self.assertIn("weekday no-fly", folded)
+        self.assertIn("owned clock", folded)
+        self.assertIn("depart_after", folded)
+        self.assertIn("work_back_by", folded)
+        self.assertIn("midweek", folded)
+        self.assertIn("do not invent", folded)
+        self.assertIn("fare", folded)
+        self.assertNotIn("cannot make monday 09:00", folded)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotRegex(plan.notes, r"\bEUR\b")
+        owned = " ".join(plan.route_specs) + " " + " ".join(plan.via_airports)
+        for code in self._INVENTED_HOPS:
+            self.assertNotIn(code, owned)
+            self.assertNotIn(code, plan.notes)
+
+    def test_prompt_without_weekday_constraint_does_not_get_nofly_note(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip ADD-NBO on 2026-10-09 returning 2026-10-13, --trip rt, "
+            "hotel in Nairobi those nights, 2 adults, 1 room. Print the owned trip total "
+            "when both searches succeed. Omit the sum if either side misses. "
+            "Do not invent a fare or a stay."
+        )
+        self.assertEqual(plan.trip, "rt")
+        self.assertIsNone(plan.weekday)
+        self.assertIsNone(plan.depart_after)
+        self.assertIsNone(plan.work_back_by)
+        folded = plan.notes.casefold()
+        self.assertNotIn("weekday no-fly", folded)
+        self.assertNotIn("owned clock", folded)
+        self.assertNotIn("midweek hop", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_unnamed_weekday_clocks_stay_unset(self) -> None:
+        plan = plan_prompt("Flights BOS-LHR on 2026-09-01")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertIsNone(plan.weekday)
+        self.assertIsNone(plan.depart_after)
+        self.assertIsNone(plan.work_back_by)
+        folded = plan.notes.casefold()
+        self.assertNotIn("weekday no-fly", folded)
+        self.assertNotIn("owned clock", folded)
+        self.assertNotIn("depart_after", folded)
+        self.assertNotIn("work_back_by", folded)
 
 
 if __name__ == "__main__":
