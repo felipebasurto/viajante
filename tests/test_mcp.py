@@ -191,7 +191,38 @@ class McpHandlerTests(unittest.TestCase):
         self.assertNotIn("fetch", kwargs)
         self.assertEqual(kwargs["trip"], "one-way")
         self.assertIsNone(kwargs["nights"])
+        self.assertIsNone(kwargs["bags"])
+        self.assertIsNone(kwargs["carry_on"])
+        self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["airlines"])
+        self.assertIsNone(kwargs["exclude_airlines"])
+        self.assertIsNone(kwargs["price_cap_eur"])
         self.assertEqual(payload["schema_version"], 1)
+
+    def test_search_dates_forwards_owned_shop_filters(self) -> None:
+        fake = _report(days=[])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool(
+                "MAD-BCN",
+                FUTURE,
+                FUTURE_OUT,
+                bags=1,
+                carry_on=1,
+                via="LIS",
+                exclude_via="DXB",
+                airlines="IB",
+                exclude_airlines="FR",
+                price_cap=200,
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["bags"], 1)
+        self.assertEqual(kwargs["carry_on"], 1)
+        self.assertEqual(kwargs["via"], ("LIS",))
+        self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["airlines"], ("IB",))
+        self.assertEqual(kwargs["exclude_airlines"], ("FR",))
+        self.assertEqual(kwargs["price_cap_eur"], 200)
 
     def test_search_dates_accepts_nights_as_round_trip(self) -> None:
         fake = _report(days=[], trip="rt", nights=5)
@@ -232,6 +263,28 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.args[3], 3)
         self.assertEqual(payload["nights"], 7)
         self.assertNotIn("fetch", kwargs)
+        self.assertIsNone(kwargs["bags"])
+        self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["airlines"])
+        self.assertIsNone(kwargs["price_cap_eur"])
+
+    def test_search_flex_forwards_owned_shop_filters(self) -> None:
+        fake = _report(chosen_date=FUTURE, offers=[])
+        with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
+            search_flex_tool(
+                "BOS-LHR",
+                FUTURE,
+                3,
+                bags=1,
+                via="IST",
+                airlines="BA",
+                price_cap=400,
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["bags"], 1)
+        self.assertEqual(kwargs["via"], ("IST",))
+        self.assertEqual(kwargs["airlines"], ("BA",))
+        self.assertEqual(kwargs["price_cap_eur"], 400)
 
     def test_search_flex_past_around_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_flex") as search:

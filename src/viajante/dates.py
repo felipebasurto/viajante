@@ -15,6 +15,7 @@ from viajante.flights import (
     _rank_offers,
     classify_failure,
     normalize_trip_kind,
+    parse_via_airports,
 )
 from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
 from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
@@ -205,7 +206,14 @@ def calendar_trip(
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
     nights: Optional[int] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
+    airlines: Optional[Sequence[str]] = None,
+    exclude_airlines: Optional[Sequence[str]] = None,
 ) -> FlightQuery | RoundTrip:
+    airline_codes = tuple(airlines) if airlines is not None else None
+    exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     if nights is None:
         return FlightQuery(
             origin=origin,
@@ -214,6 +222,11 @@ def calendar_trip(
             max_stops=max_stops,
             adults=adults,
             cabin=cabin,
+            bags=bags,
+            carry_on=carry_on,
+            price_cap_eur=price_cap_eur,
+            airlines=airline_codes,
+            exclude_airlines=exclude_codes,
         )
     return RoundTrip(
         origin=origin,
@@ -223,7 +236,55 @@ def calendar_trip(
         max_stops=max_stops,
         adults=adults,
         cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+        price_cap_eur=price_cap_eur,
+        airlines=airline_codes,
+        exclude_airlines=exclude_codes,
     )
+
+
+def _parse_via_pair(
+    via: Optional[Sequence[str]],
+    exclude_via: Optional[Sequence[str]],
+) -> tuple[Optional[tuple[str, ...]], Optional[tuple[str, ...]]]:
+    parsed_via = parse_via_airports(",".join(via), role="via") if via else None
+    parsed_exclude = (
+        parse_via_airports(",".join(exclude_via), role="exclude-via") if exclude_via else None
+    )
+    if parsed_via and parsed_exclude and set(parsed_via) & set(parsed_exclude):
+        raise ValueError("via and exclude-via must not share a code")
+    return parsed_via, parsed_exclude
+
+
+def _offers_from_cards(
+    cards: Sequence[RawFlightCard],
+    query: FlightQuery | RoundTrip,
+    *,
+    buffer_eur: int = 0,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
+) -> list[FlightOffer]:
+    """Apply the same owned shop post-filters search_flights uses."""
+    return [
+        offer
+        for raw in cards
+        if (
+            offer := _normalize_offer(
+                raw,
+                query.legs[0].max_stops,
+                buffer_eur=buffer_eur,
+                airlines=query.airlines,
+                exclude_airlines=query.exclude_airlines,
+                via=via,
+                exclude_via=exclude_via,
+                bags=query.bags,
+                carry_on=query.carry_on,
+                price_cap_eur=query.price_cap_eur,
+            )
+        )
+        is not None
+    ]
 
 
 def search_dates(
@@ -237,11 +298,19 @@ def search_dates(
     max_stops: int = 1,
     trip: str = "one-way",
     nights: Optional[int] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
+    airlines: Optional[Sequence[str]] = None,
+    exclude_airlines: Optional[Sequence[str]] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport:
     validate_date_window(start, end)
     kind, stay = resolve_date_trip(trip, nights)
+    parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
     seed = calendar_trip(
         origin,
         destination,
@@ -250,6 +319,11 @@ def search_dates(
         adults=adults,
         cabin=cabin,
         nights=stay,
+        bags=bags,
+        carry_on=carry_on,
+        price_cap_eur=price_cap_eur,
+        airlines=airlines,
+        exclude_airlines=exclude_airlines,
     )
     report_progress = progress or (lambda _: None)
     stay_label = ""
@@ -270,7 +344,16 @@ def search_dates(
             days = _rows_from_calendar(start, end, compact, nights=stay)
         except CompactParseMiss:
             report_progress("calendar miss; pricing each day with shopping sweep")
-            days = _sweep_per_day(client, seed, start, end, stay, report_progress)
+            days = _sweep_per_day(
+                client,
+                seed,
+                start,
+                end,
+                stay,
+                report_progress,
+                via=parsed_via,
+                exclude_via=parsed_exclude_via,
+            )
             backend = "sweep"
         except Exception as exc:
             error = classify_failure(exc)
@@ -355,6 +438,13 @@ def search_flex(
     top: int = DEFAULT_TOP,
     buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     sort: FlightSort = "ranked",
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
+    airlines: Optional[Sequence[str]] = None,
+    exclude_airlines: Optional[Sequence[str]] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> FlexSearchReport:
@@ -373,6 +463,7 @@ def search_flex(
         )
     start, end = flex_window(around, flex_days)
     kind, stay = resolve_date_trip(trip, nights)
+    parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
     seed = calendar_trip(
         origin,
         destination,
@@ -381,6 +472,11 @@ def search_flex(
         adults=adults,
         cabin=cabin,
         nights=stay,
+        bags=bags,
+        carry_on=carry_on,
+        price_cap_eur=price_cap_eur,
+        airlines=airlines,
+        exclude_airlines=exclude_airlines,
     )
     report_progress = progress or (lambda _: None)
     stay_label = ""
@@ -426,6 +522,11 @@ def search_flex(
                     adults=adults,
                     cabin=cabin,
                     nights=stay,
+                    bags=bags,
+                    carry_on=carry_on,
+                    price_cap_eur=price_cap_eur,
+                    airlines=airlines,
+                    exclude_airlines=exclude_airlines,
                 )
                 report_progress(f"chosen {chosen.isoformat()}; pricing that day")
                 backend = "calendar_then_sweep"
@@ -434,18 +535,13 @@ def search_flex(
                 except Exception as exc:
                     error = classify_failure(exc)
                     cards = ()
-                eligible = [
-                    offer
-                    for raw in cards
-                    if (
-                        offer := _normalize_offer(
-                            raw,
-                            shop.legs[0].max_stops,
-                            buffer_eur=buffer_eur,
-                        )
-                    )
-                    is not None
-                ]
+                eligible = _offers_from_cards(
+                    cards,
+                    shop,
+                    buffer_eur=buffer_eur,
+                    via=parsed_via,
+                    exclude_via=parsed_exclude_via,
+                )
                 ranked = _rank_offers(eligible, top=top, sort=sort)
                 if typical is not None:
                     offers = tuple(with_typical(offer, typical) for offer in ranked)
@@ -523,12 +619,11 @@ def _row_from_day_cards(
     query: FlightQuery | RoundTrip,
     cards: Sequence[RawFlightCard],
     returning: Optional[date],
+    *,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
 ) -> DatePriceRow:
-    offers = [
-        offer
-        for raw in cards
-        if (offer := _normalize_offer(raw, query.legs[0].max_stops, buffer_eur=0)) is not None
-    ]
+    offers = _offers_from_cards(cards, query, via=via, exclude_via=exclude_via)
     if not offers:
         return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
     best = min(offers, key=lambda offer: offer.price_eur)
@@ -565,6 +660,9 @@ def _sweep_per_day(
     end: date,
     nights: Optional[int],
     progress: Callable[[str], None],
+    *,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
@@ -584,6 +682,11 @@ def _sweep_per_day(
                     adults=seed.adults,
                     cabin=seed.cabin,
                     nights=nights,
+                    bags=seed.bags,
+                    carry_on=seed.carry_on,
+                    price_cap_eur=seed.price_cap_eur,
+                    airlines=seed.airlines,
+                    exclude_airlines=seed.exclude_airlines,
                 ),
             )
         )
@@ -598,7 +701,16 @@ def _sweep_per_day(
             if isinstance(result, BaseException):
                 rows.append(_row_from_day_error(cursor, result, returning))
             else:
-                rows.append(_row_from_day_cards(cursor, day_query, result, returning))
+                rows.append(
+                    _row_from_day_cards(
+                        cursor,
+                        day_query,
+                        result,
+                        returning,
+                        via=via,
+                        exclude_via=exclude_via,
+                    )
+                )
         return tuple(rows)
 
     rows: list[DatePriceRow] = []
@@ -609,7 +721,16 @@ def _sweep_per_day(
         except Exception as exc:
             rows.append(_row_from_day_error(cursor, exc, returning))
             continue
-        rows.append(_row_from_day_cards(cursor, day_query, cards, returning))
+        rows.append(
+            _row_from_day_cards(
+                cursor,
+                day_query,
+                cards,
+                returning,
+                via=via,
+                exclude_via=exclude_via,
+            )
+        )
     return tuple(rows)
 
 

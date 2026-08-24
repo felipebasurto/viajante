@@ -150,6 +150,13 @@ def search_dates_tool(
     cabin: FlightCabin = "economy",
     trip: str = "one-way",
     nights: Optional[int] = None,
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    via: Optional[str] = None,
+    exclude_via: Optional[str] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -168,6 +175,13 @@ def search_dates_tool(
             cabin=cabin,
             trip=kind,
             nights=stay,
+            airlines=parse_airline_codes(airlines),
+            exclude_airlines=parse_airline_codes(exclude_airlines),
+            via=parse_via_airports(via),
+            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+            bags=bags,
+            carry_on=carry_on,
+            price_cap_eur=price_cap,
         )
     )
     return dict(report.to_dict())
@@ -186,6 +200,13 @@ def search_flex_tool(
     top: int = DEFAULT_TOP,
     baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     sort: FlightSort = "ranked",
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    via: Optional[str] = None,
+    exclude_via: Optional[str] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
@@ -206,6 +227,13 @@ def search_flex_tool(
             top=top,
             buffer_eur=baggage_buffer,
             sort=sort,
+            airlines=parse_airline_codes(airlines),
+            exclude_airlines=parse_airline_codes(exclude_airlines),
+            via=parse_via_airports(via),
+            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+            bags=bags,
+            carry_on=carry_on,
+            price_cap_eur=price_cap,
         )
     )
     return dict(report.to_dict())

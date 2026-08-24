@@ -23,8 +23,8 @@ After `uv sync` and `uv run playwright install chromium`, the entry point is ava
 
 ```bash
 uv run viajante flights ORIGIN-DEST:YYYY-MM-DD[,YYYY-MM-DD...] [--trip {one-way,rt,multi}] [--max-stops {0,1,2}] [--adults N] [--children N] [--infants-in-seat N] [--infants-on-lap N] [--cabin CABIN] [--currency CODE] [--country CC] [--bags N] [--carry-on] [--price-cap EUR] [--nearby] [--top N] [--baggage-buffer EUR] [--sort {ranked,fare,price,duration,departure,arrival}] [--airlines CODES] [--exclude-airlines CODES] [--alliance NAMES] [--exclude-alliance NAMES] [--depart-window START-END] [--fetch {auto,sweep,detail}] [--max-layover HOURS] [--min-layover HOURS] [--via CODES] [--exclude-via CODES] [--max-duration HOURS] [--save FILE]
-uv run viajante dates ORIGIN-DEST --from YYYY-MM-DD --to YYYY-MM-DD [--trip {one-way,rt}] [--nights N] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--fetch {auto,sweep,detail}] [--save FILE]
-uv run viajante flex ORIGIN-DEST --around YYYY-MM-DD --flex N [--nights N] [--trip {one-way,rt}] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--top N] [--save FILE]
+uv run viajante dates ORIGIN-DEST --from YYYY-MM-DD --to YYYY-MM-DD [--trip {one-way,rt}] [--nights N] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--bags N] [--carry-on] [--price-cap EUR] [--airlines CODES] [--exclude-airlines CODES] [--via CODES] [--exclude-via CODES] [--fetch {auto,sweep,detail}] [--save FILE]
+uv run viajante flex ORIGIN-DEST --around YYYY-MM-DD --flex N [--nights N] [--trip {one-way,rt}] [--max-stops {0,1,2}] [--adults N] [--cabin CABIN] [--top N] [--bags N] [--carry-on] [--price-cap EUR] [--airlines CODES] [--exclude-airlines CODES] [--via CODES] [--exclude-via CODES] [--save FILE]
 uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [--top N] [--adults N] [--cabin CABIN] [--max-stops {0,1}] [--price-cap EUR] [--save FILE]
 uv run viajante airports QUERY
 uv run viajante hotels LOCATION CHECK_IN CHECK_OUT [--source {booking,google}] [--adults N] [--rooms N] [--top N] [--min-rating SCORE] [--entire-home] [--allow-non-refundable] [--compare-cancellation] [--save FILE]

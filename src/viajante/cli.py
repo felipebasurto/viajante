@@ -978,6 +978,84 @@ def _dates_exit_code(report: DateCalendarReport) -> int:
     return 3
 
 
+def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--bags",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Checked bags on the shopping request (omit to leave unset)",
+    )
+    parser.add_argument(
+        "--carry-on",
+        action="store_true",
+        dest="carry_on",
+        help="Ask the shopping request for one carry-on (omit to leave unset)",
+    )
+    parser.add_argument(
+        "--price-cap",
+        type=int,
+        default=None,
+        metavar="EUR",
+        dest="price_cap",
+        help="Drop owned fares above this EUR amount (omit to leave unset; unnamed stays None)",
+    )
+    parser.add_argument(
+        "--airlines",
+        default=None,
+        metavar="CODES",
+        help="Airline IATA codes on the shopping request (comma-separated, e.g. BA,KL)",
+    )
+    parser.add_argument(
+        "--exclude-airlines",
+        default=None,
+        dest="exclude_airlines",
+        metavar="CODES",
+        help="Airline IATA codes to exclude from shopping (comma-separated, e.g. DL)",
+    )
+    parser.add_argument(
+        "--via",
+        default=None,
+        metavar="CODES",
+        dest="via",
+        help=(
+            "Keep connecting offers whose parsed layover matches these IATA codes "
+            "(comma-separated). Post-filter only; unknown layover cannot prove a via"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-via",
+        default=None,
+        metavar="CODES",
+        dest="exclude_via",
+        help=(
+            "Drop connecting offers whose parsed layover matches these IATA codes "
+            "(comma-separated). Unknown layover stays"
+        ),
+    )
+
+
+def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
+    carry_on = 1 if args.carry_on else None
+    if args.bags is not None and args.bags < 0:
+        raise ValueError("--bags must not be negative")
+    if args.price_cap is not None and args.price_cap <= 0:
+        raise ValueError("--price-cap must be a positive EUR amount")
+    via = parse_via_airports(args.via)
+    exclude_via = parse_via_airports(args.exclude_via, role="exclude-via")
+    if via and exclude_via and set(via) & set(exclude_via):
+        raise ValueError("--via and --exclude-via must not share a code")
+    return {
+        "bags": args.bags,
+        "carry_on": carry_on,
+        "price_cap_eur": args.price_cap,
+        "airlines": parse_airline_codes(args.airlines),
+        "exclude_airlines": parse_airline_codes(args.exclude_airlines),
+        "via": via,
+        "exclude_via": exclude_via,
+    }
+
+
 def _run_dates(args: argparse.Namespace) -> int:
     try:
         origin, destination = parse_route_pair(args.route)
@@ -987,7 +1065,19 @@ def _run_dates(args: argparse.Namespace) -> int:
             raise ValueError("--adults must be at least 1")
         validate_date_window(start, end)
         trip, nights = resolve_date_trip(args.trip, args.nights)
-        FlightQuery(origin, destination, start, max_stops=args.max_stops, adults=args.adults)
+        shop = _owned_shop_filters_from_args(args)
+        FlightQuery(
+            origin,
+            destination,
+            start,
+            max_stops=args.max_stops,
+            adults=args.adults,
+            bags=shop["bags"],
+            carry_on=shop["carry_on"],
+            price_cap_eur=shop["price_cap_eur"],
+            airlines=shop["airlines"],
+            exclude_airlines=shop["exclude_airlines"],
+        )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1003,6 +1093,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         trip=trip,
         nights=nights,
         progress=lambda line: print(line, file=sys.stderr),
+        **shop,
     )
     _print_dates_report(report)
     if args.save:
@@ -1072,7 +1163,19 @@ def _run_flex(args: argparse.Namespace) -> int:
             raise ValueError("--baggage-buffer must not be negative")
         start, _end = flex_window(around, args.flex_days)
         trip, nights = resolve_date_trip(args.trip, args.nights)
-        FlightQuery(origin, destination, start, max_stops=args.max_stops, adults=args.adults)
+        shop = _owned_shop_filters_from_args(args)
+        FlightQuery(
+            origin,
+            destination,
+            start,
+            max_stops=args.max_stops,
+            adults=args.adults,
+            bags=shop["bags"],
+            carry_on=shop["carry_on"],
+            price_cap_eur=shop["price_cap_eur"],
+            airlines=shop["airlines"],
+            exclude_airlines=shop["exclude_airlines"],
+        )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1091,6 +1194,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         buffer_eur=args.baggage_buffer,
         sort=args.sort,
         progress=lambda line: print(line, file=sys.stderr),
+        **shop,
     )
     _print_flex_report(report)
     if args.save:
@@ -1690,6 +1794,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
     )
+    _add_owned_shop_filters(dates)
     dates.add_argument(
         "--fetch",
         default="sweep",
@@ -1778,6 +1883,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=FLIGHT_SORTS,
         help="Offer order for the chosen day (default ranked)",
     )
+    _add_owned_shop_filters(flex)
     flex.add_argument(
         "--fetch",
         default="sweep",

@@ -108,6 +108,13 @@ def build_server():
         cabin: str = "economy",
         trip: str = "one-way",
         nights: int | None = None,
+        airlines: str | None = None,
+        exclude_airlines: str | None = None,
+        via: str | None = None,
+        exclude_via: str | None = None,
+        bags: int | None = None,
+        carry_on: int | None = None,
+        price_cap: int | None = None,
     ) -> dict:
         return dict(
             search_dates_tool(
@@ -119,6 +126,13 @@ def build_server():
                 cabin=cabin,  # type: ignore[arg-type]
                 trip=trip,
                 nights=nights,
+                airlines=airlines,
+                exclude_airlines=exclude_airlines,
+                via=via,
+                exclude_via=exclude_via,
+                bags=bags,
+                carry_on=carry_on,
+                price_cap=price_cap,
             )
         )
 
@@ -135,6 +149,13 @@ def build_server():
         top: int = DEFAULT_TOP,
         baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
         sort: str = "ranked",
+        airlines: str | None = None,
+        exclude_airlines: str | None = None,
+        via: str | None = None,
+        exclude_via: str | None = None,
+        bags: int | None = None,
+        carry_on: int | None = None,
+        price_cap: int | None = None,
     ) -> dict:
         return dict(
             search_flex_tool(
@@ -149,6 +170,13 @@ def build_server():
                 top=top,
                 baggage_buffer=baggage_buffer,
                 sort=sort,  # type: ignore[arg-type]
+                airlines=airlines,
+                exclude_airlines=exclude_airlines,
+                via=via,
+                exclude_via=exclude_via,
+                bags=bags,
+                carry_on=carry_on,
+                price_cap=price_cap,
             )
         )
 

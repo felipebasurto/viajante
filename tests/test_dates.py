@@ -25,6 +25,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
+from viajante.flights import _normalize_offer
 from viajante.google_flights import GoogleFlightsRejected, RawFlightCard
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
@@ -69,6 +70,7 @@ class FakeCalendarSource:
         self.closed = False
         self.calls = 0
         self.fetch_calls = 0
+        self.fetched_queries: list[object] = []
         self.config = SimpleNamespace(html_lang="en", currency="EUR")
 
     def fetch_calendar(self, query, start, end):
@@ -79,10 +81,36 @@ class FakeCalendarSource:
 
     def fetch(self, query):
         self.fetch_calls += 1
+        self.fetched_queries.append(query)
         return self.cards.get(query.departure_date, ())
 
     def close(self) -> None:
         self.closed = True
+
+
+def _card(**kwargs: object) -> RawFlightCard:
+    fields: dict[str, object] = {
+        "airline": "Iberia",
+        "departure": "08:00",
+        "arrival": "09:20",
+        "duration": "1 hr 20 min",
+        "stops": "Nonstop",
+        "price": "€90",
+    }
+    fields.update(kwargs)
+    return RawFlightCard(**fields)  # type: ignore[arg-type]
+
+
+def _flex_shop_source(*cards: RawFlightCard) -> FakeCalendarSource:
+    chosen = date(2026, 9, 12)
+    return FakeCalendarSource(
+        (
+            CompactCalendarDay(date(2026, 9, 11), 180.0),
+            CompactCalendarDay(chosen, 90.0),
+            CompactCalendarDay(date(2026, 9, 13), 140.0),
+        ),
+        cards={chosen: cards},
+    )
 
 
 class DateWindowTests(unittest.TestCase):
@@ -559,6 +587,77 @@ class DateCliTests(unittest.TestCase):
         self.assertIn(str(MAX_DATE_WINDOW_DAYS), help_text)
         self.assertIn("viajante dates LAX-NRT", help_text)
         self.assertIn("--nights", help_text)
+        self.assertIn("--bags", help_text)
+        self.assertIn("--carry-on", help_text)
+        self.assertIn("--via", help_text)
+        self.assertIn("--exclude-via", help_text)
+        self.assertIn("--airlines", help_text)
+        self.assertIn("--price-cap", help_text)
+
+    def test_dates_forwards_owned_shop_filters(self) -> None:
+        with (
+            patch("viajante.cli.search_dates") as search,
+            patch("viajante.cli._print_dates_report"),
+            patch("viajante.cli._dates_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "dates",
+                    "MAD-BCN",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                    "--bags",
+                    "1",
+                    "--carry-on",
+                    "--via",
+                    "LIS",
+                    "--exclude-via",
+                    "DXB",
+                    "--airlines",
+                    "IB",
+                    "--exclude-airlines",
+                    "FR",
+                    "--price-cap",
+                    "200",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["bags"], 1)
+        self.assertEqual(kwargs["carry_on"], 1)
+        self.assertEqual(kwargs["via"], ("LIS",))
+        self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["airlines"], ("IB",))
+        self.assertEqual(kwargs["exclude_airlines"], ("FR",))
+        self.assertEqual(kwargs["price_cap_eur"], 200)
+
+    def test_dates_unnamed_shop_filters_stay_unset(self) -> None:
+        with (
+            patch("viajante.cli.search_dates") as search,
+            patch("viajante.cli._print_dates_report"),
+            patch("viajante.cli._dates_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "dates",
+                    "MAD-BCN",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertIsNone(kwargs["bags"])
+        self.assertIsNone(kwargs["carry_on"])
+        self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["airlines"])
+        self.assertIsNone(kwargs["exclude_airlines"])
+        self.assertIsNone(kwargs["price_cap_eur"])
 
     def test_trip_rt_without_nights_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_dates") as search:
@@ -743,6 +842,159 @@ class FlexSearchTests(unittest.TestCase):
         self.assertIsNone(report.offers[0].typical_eur)
 
 
+class ShopFilterTests(unittest.TestCase):
+    def test_unnamed_filters_do_not_invent_constraints(self) -> None:
+        trip = calendar_trip("MAD", "BCN", date(2026, 9, 12))
+        self.assertIsNone(trip.bags)
+        self.assertIsNone(trip.carry_on)
+        self.assertIsNone(trip.price_cap_eur)
+        self.assertIsNone(trip.airlines)
+        self.assertIsNone(trip.exclude_airlines)
+        too_few = _card(checked_bags=0, carry_on=0, price="€40")
+        over_cap = _card(airline="Ryanair", airline_codes=("FR",), price="€401")
+        other_via = _card(stops="1 stop", layover_city="DXB", price="€80")
+        source = _flex_shop_source(too_few, over_cap, other_via)
+        report = search_flex("MAD", "BCN", date(2026, 9, 12), 1, source=source, buffer_eur=0)
+        prices = [offer.price_eur for offer in report.offers]
+        self.assertEqual(prices, [40.0, 80.0, 401.0])
+
+    def test_flex_shop_bags_drop_the_same_contradictions_as_search_flights(self) -> None:
+        silent = _card(price="€80")
+        too_few = _card(checked_bags=0, carry_on=1, price="€70")
+        enough = _card(checked_bags=1, carry_on=1, price="€90")
+        self.assertIsNotNone(_normalize_offer(silent, 1, bags=1, carry_on=1))
+        self.assertIsNone(_normalize_offer(too_few, 1, bags=1, carry_on=1))
+        self.assertIsNotNone(_normalize_offer(enough, 1, bags=1, carry_on=1))
+        source = _flex_shop_source(silent, too_few, enough)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            bags=1,
+            carry_on=1,
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], [80.0, 90.0])
+        self.assertEqual(source.fetch_calls, 1)
+        self.assertEqual(source.fetched_queries[0].bags, 1)
+        self.assertEqual(source.fetched_queries[0].carry_on, 1)
+
+    def test_flex_shop_via_airlines_and_price_cap_match_normalize(self) -> None:
+        via_lis = _card(stops="1 stop", layover_city="LIS", airline_codes=("IB",), price="€120")
+        via_dxb = _card(stops="1 stop", layover_city="DXB", airline_codes=("IB",), price="€90")
+        nonstop = _card(stops="Nonstop", airline_codes=("IB",), price="€110")
+        ryanair = _card(
+            airline="Ryanair",
+            airline_codes=("FR",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€60",
+        )
+        over_cap = _card(
+            airline="Iberia",
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€250",
+        )
+        cards = (via_lis, via_dxb, nonstop, ryanair, over_cap)
+        filters = dict(via=("LIS",), airlines=("IB",), price_cap_eur=200)
+        expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
+        kept = [offer.price_eur for offer in expected if offer is not None]
+        source = _flex_shop_source(*cards)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            **filters,
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], kept)
+        self.assertEqual(kept, [120.0])
+
+    def test_flex_shop_exclude_via_and_exclude_airlines_match_normalize(self) -> None:
+        keep = _card(stops="1 stop", layover_city="OPO", airline_codes=("IB",), price="€100")
+        drop_via = _card(stops="1 stop", layover_city="LIS", airline_codes=("IB",), price="€80")
+        drop_airline = _card(
+            airline="Ryanair",
+            airline_codes=("FR",),
+            stops="1 stop",
+            layover_city="OPO",
+            price="€70",
+        )
+        cards = (keep, drop_via, drop_airline)
+        filters = dict(exclude_via=("LIS",), exclude_airlines=("FR",))
+        expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
+        kept = [offer.price_eur for offer in expected if offer is not None]
+        source = _flex_shop_source(*cards)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            **filters,
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], kept)
+        self.assertEqual(kept, [100.0])
+
+    def test_dates_sweep_applies_the_same_shop_filters(self) -> None:
+        too_few = _card(checked_bags=0, price="€38")
+        enough = _card(
+            checked_bags=1,
+            airline_codes=("IB",),
+            layover_city="LIS",
+            stops="1 stop",
+            price="€45",
+        )
+        over_cap = _card(airline_codes=("IB",), price="€300")
+        iberia = _card(airline_codes=("IB",), layover_city="LIS", stops="1 stop", price="€90")
+        ryanair = _card(
+            airline="Ryanair",
+            airline_codes=("FR",),
+            layover_city="LIS",
+            stops="1 stop",
+            price="€70",
+        )
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (too_few, enough),
+                date(2026, 9, 2): (over_cap, iberia, ryanair),
+            },
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            source=source,
+            bags=1,
+            via=("LIS",),
+            airlines=("IB",),
+            price_cap_eur=200,
+        )
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertEqual(report.days[0].status, "ok")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].status, "ok")
+        self.assertEqual(report.days[1].price_eur, 90.0)
+
+    def test_dates_sweep_unnamed_keeps_contradicting_cards(self) -> None:
+        cheap_contradiction = _card(checked_bags=0, airline_codes=("FR",), price="€30")
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={date(2026, 9, 1): (cheap_contradiction,)},
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), source=source)
+        self.assertEqual(report.days[0].price_eur, 30.0)
+
+
 class FlexCliTests(unittest.TestCase):
     def test_flex_help_mentions_the_window(self) -> None:
         buffer = io.StringIO()
@@ -755,6 +1007,66 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("--nights", help_text)
         self.assertIn("viajante flex BOS-LHR", help_text)
         self.assertIn(str(MAX_FLEX_DAYS), help_text)
+        self.assertIn("--bags", help_text)
+        self.assertIn("--via", help_text)
+        self.assertIn("--airlines", help_text)
+        self.assertIn("--price-cap", help_text)
+
+    def test_flex_forwards_owned_shop_filters(self) -> None:
+        with (
+            patch("viajante.cli.search_flex") as search,
+            patch("viajante.cli._print_flex_report"),
+            patch("viajante.cli._flex_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "flex",
+                    "MAD-BCN",
+                    "--around",
+                    "2026-09-12",
+                    "--flex",
+                    "1",
+                    "--bags",
+                    "1",
+                    "--via",
+                    "LIS",
+                    "--airlines",
+                    "IB",
+                    "--price-cap",
+                    "200",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["bags"], 1)
+        self.assertEqual(kwargs["via"], ("LIS",))
+        self.assertEqual(kwargs["airlines"], ("IB",))
+        self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertIsNone(kwargs["carry_on"])
+        self.assertIsNone(kwargs["exclude_via"])
+
+    def test_flex_unnamed_shop_filters_stay_unset(self) -> None:
+        with (
+            patch("viajante.cli.search_flex") as search,
+            patch("viajante.cli._print_flex_report"),
+            patch("viajante.cli._flex_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "flex",
+                    "MAD-BCN",
+                    "--around",
+                    "2026-09-12",
+                    "--flex",
+                    "1",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertIsNone(kwargs["bags"])
+        self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["airlines"])
+        self.assertIsNone(kwargs["price_cap_eur"])
 
     def test_past_around_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_flex") as search:
