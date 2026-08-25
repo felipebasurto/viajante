@@ -224,6 +224,26 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
 
+    def test_search_dates_nearby_forwards(self) -> None:
+        fake = _report(days=[])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool("BOS-LHR", FUTURE, FUTURE_OUT, nearby=True)
+        self.assertTrue(search.call_args.kwargs["nearby"])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT)
+        self.assertFalse(search.call_args.kwargs["nearby"])
+
+    def test_search_dates_nearby_tuple_wraps_queries(self) -> None:
+        first = _report(origin="BOS", destination="LHR")
+        second = _report(origin="BOS", destination="LGW")
+        with patch("viajante.mcp_handlers.search_dates", return_value=(first, second)):
+            payload = search_dates_tool("BOS-LHR", FUTURE, FUTURE_OUT, nearby=True)
+        self.assertEqual(
+            payload["queries"],
+            [first.to_dict.return_value, second.to_dict.return_value],
+        )
+        self.assertNotIn("origin", payload)
+
     def test_search_dates_accepts_nights_as_round_trip(self) -> None:
         fake = _report(days=[], trip="rt", nights=5)
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
@@ -286,6 +306,15 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("BA",))
         self.assertEqual(kwargs["price_cap_eur"], 400)
 
+    def test_search_flex_nearby_forwards(self) -> None:
+        fake = _report(offers=[])
+        with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
+            search_flex_tool("BOS-LHR", FUTURE, 3, nearby=True)
+        self.assertTrue(search.call_args.kwargs["nearby"])
+        with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
+            search_flex_tool("MAD-BCN", FUTURE, 3)
+        self.assertFalse(search.call_args.kwargs["nearby"])
+
     def test_search_flex_past_around_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_flex") as search:
             with self.assertRaises(ValueError):
@@ -337,6 +366,15 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
+
+    def test_search_explore_nearby_forwards(self) -> None:
+        fake = _report(destinations=[])
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool("LHR", FUTURE, nearby=True)
+        self.assertTrue(search.call_args.kwargs["nearby"])
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool("MAD", FUTURE)
+        self.assertFalse(search.call_args.kwargs["nearby"])
 
     def test_search_hotels_defaults_to_google(self) -> None:
         fake = _report(provider="google-hotels", queries=[])
@@ -429,6 +467,34 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(trip.bags, 1)
         self.assertEqual(trip.carry_on, 1)
         self.assertEqual(trip.price_cap_eur, 200)
+
+    def test_search_trip_nearby_expands_before_search(self) -> None:
+        fake = _report(
+            flights={"queries": []},
+            hotels={"price_basis": "total_stay", "queries": []},
+        )
+        with patch("viajante.mcp_handlers.search_trip", return_value=fake) as search:
+            search_trip_tool(
+                [f"BOS-LHR:{FUTURE}:{FUTURE_OUT}"],
+                "London",
+                trip="rt",
+                nearby=True,
+            )
+        trips = search.call_args.args[0]
+        dests = {trip.destination for trip in trips}
+        self.assertGreater(len(trips), 1)
+        self.assertEqual(trips[0].destination, "LHR")
+        self.assertTrue({"LHR", "LGW", "STN"} <= dests)
+        with patch("viajante.mcp_handlers.search_trip", return_value=fake) as search:
+            search_trip_tool(
+                [f"BOS-LHR:{FUTURE}:{FUTURE_OUT}"],
+                "London",
+                trip="rt",
+            )
+        kept = search.call_args.args[0]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].destination, "LHR")
+        self.assertIsNone(kept[0].nearby_label)
 
     def test_search_trip_past_check_in_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_trip") as search:

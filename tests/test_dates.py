@@ -35,7 +35,9 @@ from viajante.google_flights_rpc import (
 )
 from viajante.models import (
     MIN_PRICED_DAYS_FOR_SUMMARY,
+    DateCalendarReport,
     DatePriceRow,
+    FlexSearchReport,
     FlightQuery,
     RoundTrip,
     SearchErrorCode,
@@ -71,10 +73,12 @@ class FakeCalendarSource:
         self.calls = 0
         self.fetch_calls = 0
         self.fetched_queries: list[object] = []
+        self.calendar_queries: list[object] = []
         self.config = SimpleNamespace(html_lang="en", currency="EUR")
 
     def fetch_calendar(self, query, start, end):
         self.calls += 1
+        self.calendar_queries.append(query)
         if isinstance(self.days, Exception):
             raise self.days
         return self.days
@@ -593,6 +597,7 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--exclude-via", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
+        self.assertIn("--nearby", help_text)
 
     def test_dates_forwards_owned_shop_filters(self) -> None:
         with (
@@ -658,6 +663,30 @@ class DateCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertFalse(kwargs["nearby"])
+
+    def test_dates_nearby_flag_forwards(self) -> None:
+        with (
+            patch("viajante.cli.search_dates") as search,
+            patch("viajante.cli._print_dates_report"),
+            patch("viajante.cli._dates_exit_code", return_value=0),
+        ):
+            err = io.StringIO()
+            with patch("sys.stderr", err):
+                code = main(
+                    [
+                        "dates",
+                        "BOS-LHR",
+                        "--from",
+                        "2026-09-01",
+                        "--to",
+                        "2026-09-02",
+                        "--nearby",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assertTrue(search.call_args.kwargs["nearby"])
+        self.assertIn("nearby London", err.getvalue())
 
     def test_trip_rt_without_nights_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_dates") as search:
@@ -1011,6 +1040,7 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("--via", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
+        self.assertIn("--nearby", help_text)
 
     def test_flex_forwards_owned_shop_filters(self) -> None:
         with (
@@ -1067,6 +1097,7 @@ class FlexCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertFalse(kwargs["nearby"])
 
     def test_past_around_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_flex") as search:
@@ -1127,6 +1158,85 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("chosen 2026-09-10", output)
         self.assertIn("350 €", output)
         self.assertIn("rt, 7 nights", output)
+
+
+class NearbyDateFlexTests(unittest.TestCase):
+    def test_dates_nearby_expands_london_and_default_keeps_heathrow(self) -> None:
+        priced = (CompactCalendarDay(date(2026, 9, 1), 80.0),)
+        off_source = FakeCalendarSource(priced)
+        off = search_dates("BOS", "LHR", date(2026, 9, 1), date(2026, 9, 1), source=off_source)
+        self.assertIsInstance(off, DateCalendarReport)
+        self.assertEqual((off.origin, off.destination), ("BOS", "LHR"))
+        self.assertIsNone(off.nearby_label)
+        self.assertEqual(off_source.calls, 1)
+        self.assertEqual(off_source.calendar_queries[0].destination, "LHR")
+
+        on_source = FakeCalendarSource(priced)
+        reports = search_dates(
+            "BOS", "LHR", date(2026, 9, 1), date(2026, 9, 1), nearby=True, source=on_source
+        )
+        self.assertIsInstance(reports, tuple)
+        pairs = [(row.origin, row.destination) for row in reports]
+        self.assertEqual(pairs[0], ("BOS", "LHR"))
+        dests = {dest for _origin, dest in pairs}
+        self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= dests)
+        self.assertNotIn("BQH", dests)
+        self.assertTrue(all(row.origin == "BOS" for row in reports))
+        self.assertTrue(all(row.nearby_label for row in reports))
+        self.assertNotIn("nearby_label", reports[0].to_dict())
+        self.assertEqual({query.destination for query in on_source.calendar_queries}, dests)
+
+    def test_dates_nearby_unknown_city_does_not_invent_codes(self) -> None:
+        source = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 40.0),))
+        report = search_dates(
+            "MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), nearby=True, source=source
+        )
+        self.assertIsInstance(report, DateCalendarReport)
+        self.assertEqual((report.origin, report.destination), ("MAD", "BCN"))
+        self.assertIsNone(report.nearby_label)
+        self.assertEqual(source.calls, 1)
+
+    def test_flex_nearby_expands_london_and_default_keeps_heathrow(self) -> None:
+        off_source = _flex_shop_source(_card(price="€90"))
+        off = search_flex("BOS", "LHR", date(2026, 9, 12), 3, source=off_source, buffer_eur=0)
+        self.assertIsInstance(off, FlexSearchReport)
+        self.assertEqual((off.origin, off.destination), ("BOS", "LHR"))
+        self.assertIsNone(off.nearby_label)
+        self.assertEqual(off_source.calls, 1)
+        self.assertEqual(off_source.fetch_calls, 1)
+
+        on_source = _flex_shop_source(_card(price="€90"))
+        reports = search_flex(
+            "BOS", "LHR", date(2026, 9, 12), 3, nearby=True, source=on_source, buffer_eur=0
+        )
+        self.assertIsInstance(reports, tuple)
+        dests = {row.destination for row in reports}
+        self.assertEqual(reports[0].destination, "LHR")
+        self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= dests)
+        self.assertNotIn("BQH", dests)
+        self.assertTrue(all(row.origin == "BOS" for row in reports))
+        self.assertTrue(all(row.nearby_label for row in reports))
+        self.assertNotIn("nearby_label", reports[0].to_dict())
+        self.assertEqual(on_source.calls, len(reports))
+        self.assertEqual(on_source.fetch_calls, len(reports))
+        self.assertEqual({query.destination for query in on_source.calendar_queries}, dests)
+
+    def test_flex_nearby_unknown_city_does_not_invent_codes(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 11), 80.0),
+                CompactCalendarDay(date(2026, 9, 12), 70.0),
+                CompactCalendarDay(date(2026, 9, 13), 90.0),
+            ),
+            cards={date(2026, 9, 12): (_card(price="€70"),)},
+        )
+        report = search_flex(
+            "MAD", "BCN", date(2026, 9, 12), 1, nearby=True, source=source, buffer_eur=0
+        )
+        self.assertIsInstance(report, FlexSearchReport)
+        self.assertEqual((report.origin, report.destination), ("MAD", "BCN"))
+        self.assertIsNone(report.nearby_label)
+        self.assertEqual(source.calls, 1)
 
 
 if __name__ == "__main__":

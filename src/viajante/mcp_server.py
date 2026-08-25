@@ -115,6 +115,7 @@ def build_server():
         bags: int | None = None,
         carry_on: int | None = None,
         price_cap: int | None = None,
+        nearby: bool = False,
     ) -> dict:
         return dict(
             search_dates_tool(
@@ -133,6 +134,7 @@ def build_server():
                 bags=bags,
                 carry_on=carry_on,
                 price_cap=price_cap,
+                nearby=nearby,
             )
         )
 
@@ -156,6 +158,7 @@ def build_server():
         bags: int | None = None,
         carry_on: int | None = None,
         price_cap: int | None = None,
+        nearby: bool = False,
     ) -> dict:
         return dict(
             search_flex_tool(
@@ -177,6 +180,7 @@ def build_server():
                 bags=bags,
                 carry_on=carry_on,
                 price_cap=price_cap,
+                nearby=nearby,
             )
         )
 
@@ -197,6 +201,7 @@ def build_server():
         bags: int | None = None,
         carry_on: int | None = None,
         price_cap: int | None = None,
+        nearby: bool = False,
     ) -> dict:
         return dict(
             search_explore_tool(
@@ -215,6 +220,7 @@ def build_server():
                 bags=bags,
                 carry_on=carry_on,
                 price_cap=price_cap,
+                nearby=nearby,
             )
         )
 
@@ -277,6 +283,7 @@ def build_server():
         entire_home: bool = False,
         free_cancellation: bool = True,
         source: str = "google",
+        nearby: bool = False,
     ) -> dict:
         return dict(
             search_trip_tool(
@@ -309,6 +316,7 @@ def build_server():
                 entire_home=entire_home,
                 free_cancellation=free_cancellation,
                 source=source,  # type: ignore[arg-type]
+                nearby=nearby,
             )
         )
 

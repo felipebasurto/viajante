@@ -90,7 +90,7 @@ uv run viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
   2026-10-04        —
 ```
 
-English week lines plus a sparkline of owned daily prices. Empty days are `·` in the grid (and `—` in the row list), never a guessed fare. `min` / `median` / `max` / cheapest date are computed only from priced days and omitted when fewer than three days have a price. The window is at most 31 days. Default is one-way. `--nights 5` (or `--trip rt --nights 5`) prices a packaged stay of that length for each outbound day. This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). `--fetch detail` is accepted and ignored. The `--save` JSON `summary` block is the same numbers.
+English week lines plus a sparkline of owned daily prices. Empty days are `·` in the grid (and `—` in the row list), never a guessed fare. `min` / `median` / `max` / cheapest date are computed only from priced days and omitted when fewer than three days have a price. The window is at most 31 days. Default is one-way. `--nights 5` (or `--trip rt --nights 5`) prices a packaged stay of that length for each outbound day. `--nearby` expands origin or dest to owned same-city IATA and searches each as a labeled alternative (default off; no invented codes). This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). `--fetch detail` is accepted and ignored. The `--save` JSON `summary` block is the same numbers.
 
 ## Flex
 
@@ -104,7 +104,7 @@ uv run viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
       350 €  below typical 440 €  7 hr         direct           18:00 -> 06:00     British Airways
 ```
 
-`--around` plus `--flex N` is the inclusive window (at most 31 days). The owned date-grid RPC finds the cheapest legal departure in that window, then one shopping POST prices that day. `--nights N` (or `--trip rt --nights N`) packages the stay. A calendar miss or a window with no priced day is empty: no per-day shopping sweep, no invented fare. `typical_eur` is the median of priced days in that same grid when there are at least three; `vs_typical` compares the shopping fare to that median. Fetch locale stays English.
+`--around` plus `--flex N` is the inclusive window (at most 31 days). The owned date-grid RPC finds the cheapest legal departure in that window, then one shopping POST prices that day. `--nights N` (or `--trip rt --nights N`) packages the stay. `--nearby` expands origin or dest to owned same-city IATA and searches each as a labeled alternative (default off; no invented codes). A calendar miss or a window with no priced day is empty: no per-day shopping sweep, no invented fare. `typical_eur` is the median of priced days in that same grid when there are at least three; `vs_typical` compares the shopping fare to that median. Fetch locale stays English.
 
 ## Explore
 
@@ -118,7 +118,7 @@ uv run viajante explore JFK --from 2026-09-15 --days 7
       221 €  LIS  Lisbon  Portugal
 ```
 
-Destinations Google lists from that origin, then a priced `--top` shortlist (default 12) on `--from`. `--month 2026-09` uses the first of that month. `--adults`, `--cabin`, and `--max-stops` apply when pricing each destination. Do not expand this into an airport matrix.
+Destinations Google lists from that origin, then a priced `--top` shortlist (default 12) on `--from`. `--month 2026-09` uses the first of that month. `--adults`, `--cabin`, and `--max-stops` apply when pricing each destination. `--nearby` expands the origin to owned same-city IATA and searches each as a labeled alternative (default off; no invented codes). Do not expand this into an airport matrix of destinations.
 
 ## Airports
 
@@ -162,7 +162,7 @@ The output separates what you asked for (`Filters`), what the site was told, and
 uv run viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --adults 2 --fetch sweep
 ```
 
-When a search names flights and a hotel on overlapping dates, viajante prints the owned cabin fare, the owned hotel stay, and their sum. Hotel `price_basis` stays `total_stay`. If either side misses (empty offers, fetch error, dates that do not overlap), the sum is omitted — never invented. `--adults` applies to both searches. Hotel check-in/out default to the earliest and latest flight dates when the route has two dates; override with `--check-in` / `--check-out`. Flight shop uses the same owned `--bags` / `--via` / `--airlines` / `--price-cap` post-filters as `viajante flights`; unnamed stays unset. MCP `search_trip` is the same join (Google hotels by default). `--save` writes both nested reports plus `trip_total` only when both sides hit.
+When a search names flights and a hotel on overlapping dates, viajante prints the owned cabin fare, the owned hotel stay, and their sum. Hotel `price_basis` stays `total_stay`. If either side misses (empty offers, fetch error, dates that do not overlap), the sum is omitted — never invented. `--adults` applies to both searches. Hotel check-in/out default to the earliest and latest flight dates when the route has two dates; override with `--check-in` / `--check-out`. Flight shop uses the same owned `--bags` / `--via` / `--airlines` / `--price-cap` post-filters as `viajante flights`; unnamed stays unset. `--nearby` expands origin or dest to owned same-city IATA (default off; named open-jaw stays; no invented codes). Nearby alternatives contribute the cheapest owned fare in that city group, not a sum of every airport. MCP `search_trip` is the same join (Google hotels by default). `--save` writes both nested reports plus `trip_total` only when both sides hit.
 
 ## HTTP or Chromium
 
@@ -296,6 +296,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--trip` / `--nights` | `one-way` / unset | One-way cheapest-per-day. `--nights N` (or `--trip rt --nights N`) is one packaged stay per departure day. `multi` is not supported. |
 | `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Same meaning as `flights` (`0`, `1`, or `2` stops). |
 | `--fetch` | `sweep` | Date-grid RPC. On a compact miss, each day is priced with shopping sweep. `detail` is ignored. |
+| `--nearby` | off | Expand origin or dest to owned same-city IATA and search each as a labeled alternative. Default off. Never invents a code. |
 | `--save FILE` | off | Write the calendar JSON atomically. |
 
 | `explore` flag | Default | Behavior |
@@ -306,6 +307,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Applied when pricing each destination. |
 | `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--via` / `--exclude-via` | unset | Same owned shop post-filters as `flights` / dates-flex. Unnamed stays unset. Destinations whose cheapest surviving offer contradicts are dropped. Compact catalog places are not post-filtered. Do not invent dests to fill `--top`. |
 | `--price-cap` | unset | Drop destinations whose cheapest surviving owned fare exceeds this EUR amount. Unknown price cannot prove the cap. |
+| `--nearby` | off | Expand origin to owned same-city IATA and search each as a labeled alternative. Default off. Never invents a code. |
 | `--save FILE` | off | Write the explore JSON atomically. |
 
 | `hotels` flag | Default | Behavior |

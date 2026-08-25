@@ -5,7 +5,12 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from viajante.flights import _normalize_offer
+from viajante.flights import (
+    _normalize_offer,
+    expand_nearby_trips,
+    parse_flight_plan,
+    parse_route_specs,
+)
 from viajante.google_flights import RawFlightCard
 from viajante.models import (
     AppliedHotelFilters,
@@ -578,6 +583,63 @@ class PlanToHotelQueryTests(unittest.TestCase):
         plan = plan_prompt("Flights SIN-MEL on 2026-11-06")
         with self.assertRaises(ValueError):
             plan_to_hotel_query(plan)
+
+
+class NearbyTripTests(unittest.TestCase):
+    def test_nearby_expands_london_and_does_not_sum_alternative_fares(self) -> None:
+        packaged = parse_flight_plan(
+            ["BOS-LHR:2026-09-18:2026-09-22"],
+            trip="rt",
+            max_stops=1,
+        )
+        off = expand_nearby_trips((packaged,), nearby=False)
+        self.assertEqual(len(off), 1)
+        self.assertEqual((off[0].origin, off[0].destination), ("BOS", "LHR"))
+        self.assertIsNone(off[0].nearby_label)
+
+        expanded = expand_nearby_trips((packaged,), nearby=True)
+        dests = {item.destination for item in expanded}
+        self.assertGreater(len(expanded), 1)
+        self.assertEqual((expanded[0].origin, expanded[0].destination), ("BOS", "LHR"))
+        self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= dests)
+        self.assertNotIn("BQH", dests)
+        self.assertTrue(all(item.origin == "BOS" for item in expanded))
+        self.assertTrue(all(item.nearby_label for item in expanded))
+
+        source = FakeFlightSource((_card(price="€90"),))
+        hotels = _hotel_report(
+            HotelQuerySuccess(
+                query=HotelQuery("London", date(2026, 9, 18), date(2026, 9, 22)),
+                applied=_applied(),
+                raw_count=1,
+                eligible_count=1,
+                offers=(_hotel_offer(total_price_eur=50),),
+            )
+        )
+        with (
+            patch("viajante.flights.GoogleFlightsHttpSource", return_value=source),
+            patch("viajante.trip.search_hotels", return_value=hotels),
+        ):
+            report = search_trip(
+                expanded,
+                HotelQuery("London", date(2026, 9, 18), date(2026, 9, 22)),
+                fetch="sweep",
+                buffer_eur=0,
+            )
+        fetched = {query.destination for query in source.fetched_queries}
+        self.assertEqual(fetched, dests)
+        self.assertIsNotNone(report.trip_total)
+        assert report.trip_total is not None
+        self.assertEqual(report.trip_total.flight_fare_eur, 90)
+        self.assertEqual(report.trip_total.hotel_stay_eur, 50)
+        self.assertEqual(report.trip_total.total_eur, 140)
+
+    def test_nearby_unknown_city_does_not_invent_codes(self) -> None:
+        queries = parse_route_specs(["MAD-BCN:2026-09-18"], max_stops=1)
+        expanded = expand_nearby_trips(queries, nearby=True)
+        self.assertEqual(len(expanded), 1)
+        self.assertEqual((expanded[0].origin, expanded[0].destination), ("MAD", "BCN"))
+        self.assertIsNone(expanded[0].nearby_label)
 
 
 if __name__ == "__main__":

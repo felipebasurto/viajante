@@ -11,6 +11,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
 
+from viajante.airports import get_airport
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
@@ -67,6 +68,21 @@ def _route_key(query: Trip) -> tuple[str, str, str]:
     return ("ow", query.origin, query.destination)
 
 
+def _city_or_code(code: str) -> str:
+    airport = get_airport(code)
+    if airport is None or not airport.city.strip():
+        return code
+    return airport.city
+
+
+def _fare_group_key(query: Trip) -> tuple[str, str, str]:
+    """Nearby alternatives share a city pair so trip_total takes min, not a sum."""
+    if isinstance(query, MultiCity) or not getattr(query, "nearby_label", None):
+        return _route_key(query)
+    kind = "rt" if isinstance(query, RoundTrip) else "ow"
+    return (kind, _city_or_code(query.origin), _city_or_code(query.destination))
+
+
 def _cheapest_fare(result: QuerySuccess) -> Optional[float]:
     if not result.offers:
         return None
@@ -96,7 +112,7 @@ def _owned_flight_fare(
     for result in overlapping:
         fare = _cheapest_fare(result)
         assert fare is not None
-        key = _route_key(result.query)
+        key = _fare_group_key(result.query)
         current = by_route.get(key)
         if current is None or fare < current:
             by_route[key] = fare

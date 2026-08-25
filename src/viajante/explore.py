@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence
 
 from viajante.airports import is_known_iata
-from viajante.flights import _normalize_offer, classify_failure, parse_via_airports
+from viajante.flights import (
+    _normalize_offer,
+    classify_failure,
+    expand_nearby_origins,
+    parse_via_airports,
+)
 from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
 from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.models import (
@@ -81,6 +86,90 @@ def _named_shop_filters(
     )
 
 
+def _one_or_many(reports: list[ExploreReport]) -> ExploreReport | tuple[ExploreReport, ...]:
+    if len(reports) == 1:
+        return reports[0]
+    return tuple(reports)
+
+
+def _explore_for_origin(
+    client: ExploreSource,
+    origin: str,
+    start: date,
+    *,
+    days: int,
+    top: int,
+    adults: int,
+    cabin: FlightCabin,
+    max_stops: int,
+    bags: Optional[int],
+    carry_on: Optional[int],
+    price_cap_eur: Optional[int],
+    airlines: Optional[Sequence[str]],
+    exclude_airlines: Optional[Sequence[str]],
+    parsed_via: Optional[tuple[str, ...]],
+    parsed_exclude_via: Optional[tuple[str, ...]],
+    drop_unpriced: bool,
+    nearby_label: Optional[str],
+    report_progress: Callable[[str], None],
+) -> ExploreReport:
+    nearby = f" ({nearby_label})" if nearby_label else ""
+    report_progress(
+        f"explore: from {origin} on {start.isoformat()} ({days}-day trip window){nearby}"
+    )
+    started = time.perf_counter()
+    error: Optional[SearchError] = None
+    destinations: tuple[ExploreDestination, ...] = ()
+    try:
+        places = tuple(client.fetch_explore(origin, start, adults=adults, cabin=cabin))
+    except Exception as exc:
+        error = classify_failure(exc)
+        places = ()
+    priced: list[ExploreDestination] = []
+    for index, place in enumerate(places[:top]):
+        report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
+        price = _cheapest_price(
+            client,
+            origin=origin,
+            destination=place.iata,
+            departure_date=start,
+            max_stops=max_stops,
+            adults=adults,
+            cabin=cabin,
+            bags=bags,
+            carry_on=carry_on,
+            price_cap_eur=price_cap_eur,
+            airlines=airlines,
+            exclude_airlines=exclude_airlines,
+            via=parsed_via,
+            exclude_via=parsed_exclude_via,
+        )
+        if drop_unpriced and price is None:
+            continue
+        priced.append(
+            ExploreDestination(
+                iata=place.iata,
+                city=place.city,
+                country=place.country,
+                price_eur=price,
+            )
+        )
+    priced.sort(key=lambda row: (row.price_eur is None, row.price_eur or 0.0, row.iata))
+    destinations = tuple(priced)
+    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
+    return ExploreReport(
+        searched_at=datetime.now(timezone.utc),
+        origin=origin,
+        start_date=start,
+        days=days,
+        destinations=destinations,
+        fetch_backend="explore",
+        fetch_ms=fetch_ms,
+        error=error,
+        nearby_label=nearby_label,
+    )
+
+
 def search_explore(
     origin: str,
     start: date,
@@ -97,9 +186,10 @@ def search_explore(
     exclude_airlines: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
-) -> ExploreReport:
+) -> ExploreReport | tuple[ExploreReport, ...]:
     validate_explore_window(start, days)
     if top <= 0:
         raise ValueError("top must be positive")
@@ -112,11 +202,6 @@ def search_explore(
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
     report_progress = progress or (lambda _: None)
-    report_progress(f"explore: from {origin} on {start.isoformat()} ({days}-day trip window)")
-    started = time.perf_counter()
-    client = source or GoogleFlightsHttpSource()
-    error: Optional[SearchError] = None
-    destinations: tuple[ExploreDestination, ...] = ()
     drop_unpriced = _named_shop_filters(
         bags=bags,
         carry_on=carry_on,
@@ -126,60 +211,48 @@ def search_explore(
         via=parsed_via,
         exclude_via=parsed_exclude_via,
     )
+    origins = expand_nearby_origins(origin, nearby=nearby)
+    client = source or GoogleFlightsHttpSource()
+    reports: list[ExploreReport] = []
     try:
-        try:
-            places = tuple(client.fetch_explore(origin, start, adults=adults, cabin=cabin))
-        except Exception as exc:
-            error = classify_failure(exc)
-            places = ()
-        priced: list[ExploreDestination] = []
-        for index, place in enumerate(places[:top]):
-            report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
-            price = _cheapest_price(
-                client,
-                origin=origin,
-                destination=place.iata,
-                departure_date=start,
-                max_stops=max_stops,
-                adults=adults,
-                cabin=cabin,
-                bags=bags,
-                carry_on=carry_on,
-                price_cap_eur=price_cap_eur,
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                via=parsed_via,
-                exclude_via=parsed_exclude_via,
-            )
-            if drop_unpriced and price is None:
-                continue
-            priced.append(
-                ExploreDestination(
-                    iata=place.iata,
-                    city=place.city,
-                    country=place.country,
-                    price_eur=price,
+        for code, label in origins:
+            reports.append(
+                _explore_for_origin(
+                    client,
+                    code,
+                    start,
+                    days=days,
+                    top=top,
+                    adults=adults,
+                    cabin=cabin,
+                    max_stops=max_stops,
+                    bags=bags,
+                    carry_on=carry_on,
+                    price_cap_eur=price_cap_eur,
+                    airlines=airlines,
+                    exclude_airlines=exclude_airlines,
+                    parsed_via=parsed_via,
+                    parsed_exclude_via=parsed_exclude_via,
+                    drop_unpriced=drop_unpriced,
+                    nearby_label=label,
+                    report_progress=report_progress,
                 )
             )
-        priced.sort(key=lambda row: (row.price_eur is None, row.price_eur or 0.0, row.iata))
-        destinations = tuple(priced)
     finally:
         client.close()
-    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return ExploreReport(
-        searched_at=datetime.now(timezone.utc),
-        origin=origin,
-        start_date=start,
-        days=days,
-        destinations=destinations,
-        fetch_backend="explore",
-        fetch_ms=fetch_ms,
-        error=error,
-    )
+    return _one_or_many(reports)
 
 
 def write_explore_report_atomic(report: ExploreReport, destination: Path) -> None:
     write_json_atomic(report.to_dict(), destination)
+
+
+def write_explore_reports_atomic(reports: Sequence[ExploreReport], destination: Path) -> None:
+    owned = tuple(reports)
+    if len(owned) == 1:
+        write_explore_report_atomic(owned[0], destination)
+        return
+    write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
 
 
 def _cheapest_price(

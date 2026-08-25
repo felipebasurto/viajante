@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional, Protocol, Sequence
+from typing import Callable, Optional, Protocol, Sequence, TypeVar
 
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
@@ -14,6 +14,7 @@ from viajante.flights import (
     _normalize_offer,
     _rank_offers,
     classify_failure,
+    expand_nearby_trips,
     normalize_trip_kind,
     parse_via_airports,
 )
@@ -39,6 +40,8 @@ from viajante.typical import typical_eur_from_daily_prices, vs_typical, with_typ
 
 MAX_DATE_WINDOW_DAYS = 31
 MAX_FLEX_DAYS = 15
+
+_T = TypeVar("_T")
 
 EMPTY_DAY_MARK = "·"
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -287,6 +290,71 @@ def _offers_from_cards(
     ]
 
 
+def _one_or_many(reports: list[_T]) -> _T | tuple[_T, ...]:
+    if len(reports) == 1:
+        return reports[0]
+    return tuple(reports)
+
+
+def _date_calendar_for_seed(
+    client: CalendarSource,
+    seed: FlightQuery | RoundTrip,
+    start: date,
+    end: date,
+    *,
+    kind: DateTripKind,
+    stay: Optional[int],
+    parsed_via: Optional[tuple[str, ...]],
+    parsed_exclude_via: Optional[tuple[str, ...]],
+    report_progress: Callable[[str], None],
+) -> DateCalendarReport:
+    stay_label = ""
+    if kind == "rt" and stay is not None:
+        night_word = "night" if stay == 1 else "nights"
+        stay_label = f", rt {stay} {night_word}"
+    nearby = f" ({seed.nearby_label})" if seed.nearby_label else ""
+    report_progress(
+        f"dates: {seed.origin} -> {seed.destination} "
+        f"{start.isoformat()} .. {end.isoformat()} "
+        f"(max {MAX_DATE_WINDOW_DAYS} days{stay_label}){nearby}"
+    )
+    started = time.perf_counter()
+    backend = "calendar"
+    try:
+        compact = client.fetch_calendar(seed, start, end)
+        days = _rows_from_calendar(start, end, compact, nights=stay)
+    except CompactParseMiss:
+        report_progress("calendar miss; pricing each day with shopping sweep")
+        days = _sweep_per_day(
+            client,
+            seed,
+            start,
+            end,
+            stay,
+            report_progress,
+            via=parsed_via,
+            exclude_via=parsed_exclude_via,
+        )
+        backend = "sweep"
+    except Exception as exc:
+        error = classify_failure(exc)
+        days = _error_rows(start, end, error, nights=stay)
+    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
+    return DateCalendarReport(
+        searched_at=datetime.now(timezone.utc),
+        origin=seed.origin,
+        destination=seed.destination,
+        start_date=start,
+        end_date=end,
+        days=days,
+        trip=kind,
+        nights=stay,
+        fetch_backend=backend,
+        fetch_ms=fetch_ms,
+        nearby_label=seed.nearby_label,
+    )
+
+
 def search_dates(
     origin: str,
     destination: str,
@@ -305,9 +373,10 @@ def search_dates(
     exclude_airlines: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
-) -> DateCalendarReport:
+) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
@@ -325,58 +394,42 @@ def search_dates(
         airlines=airlines,
         exclude_airlines=exclude_airlines,
     )
+    trips = expand_nearby_trips((seed,), nearby=nearby)
     report_progress = progress or (lambda _: None)
-    stay_label = ""
-    if kind == "rt" and stay is not None:
-        night_word = "night" if stay == 1 else "nights"
-        stay_label = f", rt {stay} {night_word}"
-    report_progress(
-        f"dates: {seed.origin} -> {seed.destination} "
-        f"{start.isoformat()} .. {end.isoformat()} "
-        f"(max {MAX_DATE_WINDOW_DAYS} days{stay_label})"
-    )
-    started = time.perf_counter()
     client = source or GoogleFlightsHttpSource()
-    backend = "calendar"
+    reports: list[DateCalendarReport] = []
     try:
-        try:
-            compact = client.fetch_calendar(seed, start, end)
-            days = _rows_from_calendar(start, end, compact, nights=stay)
-        except CompactParseMiss:
-            report_progress("calendar miss; pricing each day with shopping sweep")
-            days = _sweep_per_day(
-                client,
-                seed,
-                start,
-                end,
-                stay,
-                report_progress,
-                via=parsed_via,
-                exclude_via=parsed_exclude_via,
+        for item in trips:
+            if not isinstance(item, (FlightQuery, RoundTrip)):
+                continue
+            reports.append(
+                _date_calendar_for_seed(
+                    client,
+                    item,
+                    start,
+                    end,
+                    kind=kind,
+                    stay=stay,
+                    parsed_via=parsed_via,
+                    parsed_exclude_via=parsed_exclude_via,
+                    report_progress=report_progress,
+                )
             )
-            backend = "sweep"
-        except Exception as exc:
-            error = classify_failure(exc)
-            days = _error_rows(start, end, error, nights=stay)
     finally:
         client.close()
-    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return DateCalendarReport(
-        searched_at=datetime.now(timezone.utc),
-        origin=seed.origin,
-        destination=seed.destination,
-        start_date=start,
-        end_date=end,
-        days=days,
-        trip=kind,
-        nights=stay,
-        fetch_backend=backend,
-        fetch_ms=fetch_ms,
-    )
+    return _one_or_many(reports)
 
 
 def write_dates_report_atomic(report: DateCalendarReport, destination: Path) -> None:
     write_json_atomic(report.to_dict(), destination)
+
+
+def write_dates_reports_atomic(reports: Sequence[DateCalendarReport], destination: Path) -> None:
+    owned = tuple(reports)
+    if len(owned) == 1:
+        write_dates_report_atomic(owned[0], destination)
+        return
+    write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
 
 
 def flex_window(
@@ -424,6 +477,124 @@ def cheapest_priced_day(
     return min(priced, key=sort_key)
 
 
+def _flex_report_for_seed(
+    client: CalendarSource,
+    seed: FlightQuery | RoundTrip,
+    around: date,
+    flex_days: int,
+    start: date,
+    end: date,
+    *,
+    kind: DateTripKind,
+    stay: Optional[int],
+    max_stops: int,
+    adults: int,
+    cabin: FlightCabin,
+    bags: Optional[int],
+    carry_on: Optional[int],
+    price_cap_eur: Optional[int],
+    airlines: Optional[Sequence[str]],
+    exclude_airlines: Optional[Sequence[str]],
+    parsed_via: Optional[tuple[str, ...]],
+    parsed_exclude_via: Optional[tuple[str, ...]],
+    top: int,
+    buffer_eur: int,
+    sort: FlightSort,
+    report_progress: Callable[[str], None],
+) -> FlexSearchReport:
+    stay_label = ""
+    if kind == "rt" and stay is not None:
+        night_word = "night" if stay == 1 else "nights"
+        stay_label = f", rt {stay} {night_word}"
+    nearby = f" ({seed.nearby_label})" if seed.nearby_label else ""
+    report_progress(
+        f"flex: {seed.origin} -> {seed.destination} around {around.isoformat()} "
+        f"±{flex_days} {start.isoformat()} .. {end.isoformat()}{stay_label}{nearby}"
+    )
+    started = time.perf_counter()
+    backend: FlexFetchBackend = "calendar"
+    days: tuple[DatePriceRow, ...] = ()
+    offers: tuple[FlightOffer, ...] = ()
+    chosen: Optional[date] = None
+    returning: Optional[date] = None
+    error: Optional[SearchError] = None
+    typical: Optional[float] = None
+    try:
+        compact = client.fetch_calendar(seed, start, end)
+        days = _rows_from_calendar(start, end, compact, nights=stay)
+    except CompactParseMiss:
+        report_progress("calendar miss; no fare")
+        days = ()
+    except Exception as exc:
+        error = classify_failure(exc)
+        days = _error_rows(start, end, error, nights=stay)
+    else:
+        typical = typical_eur_from_daily_prices([row.price_eur for row in days])
+        winner = cheapest_priced_day(days, around)
+        if winner is None:
+            report_progress("no priced day in flex window; no fare")
+        else:
+            chosen = winner.departure_date
+            returning = winner.return_date
+            shop = calendar_trip(
+                seed.origin,
+                seed.destination,
+                chosen,
+                max_stops=max_stops,
+                adults=adults,
+                cabin=cabin,
+                nights=stay,
+                bags=bags,
+                carry_on=carry_on,
+                price_cap_eur=price_cap_eur,
+                airlines=airlines,
+                exclude_airlines=exclude_airlines,
+            )
+            report_progress(f"chosen {chosen.isoformat()}; pricing that day")
+            backend = "calendar_then_sweep"
+            try:
+                cards = client.fetch(shop)
+            except Exception as exc:
+                error = classify_failure(exc)
+                cards = ()
+            eligible = _offers_from_cards(
+                cards,
+                shop,
+                buffer_eur=buffer_eur,
+                via=parsed_via,
+                exclude_via=parsed_exclude_via,
+            )
+            ranked = _rank_offers(eligible, top=top, sort=sort)
+            if typical is not None:
+                offers = tuple(with_typical(offer, typical) for offer in ranked)
+            else:
+                offers = ranked
+    fare = min((offer.price_eur for offer in offers), default=None)
+    label = vs_typical(fare, typical) if fare is not None else None
+    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
+    return FlexSearchReport(
+        searched_at=datetime.now(timezone.utc),
+        origin=seed.origin,
+        destination=seed.destination,
+        around=around,
+        flex_days=flex_days,
+        start_date=start,
+        end_date=end,
+        days=days,
+        chosen_date=chosen,
+        return_date=returning,
+        offers=offers,
+        typical_eur=typical,
+        vs_typical=label,
+        trip=kind,
+        nights=stay,
+        fetch_backend=backend,
+        fetch_ms=fetch_ms,
+        error=error,
+        nearby_label=seed.nearby_label,
+    )
+
+
 def search_flex(
     origin: str,
     destination: str,
@@ -445,9 +616,10 @@ def search_flex(
     exclude_airlines: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
-) -> FlexSearchReport:
+) -> FlexSearchReport | tuple[FlexSearchReport, ...]:
     """Calendar window, then at most one shopping POST on the cheapest legal day.
 
     A compact calendar miss or a window with no priced day is empty: no
@@ -478,104 +650,55 @@ def search_flex(
         airlines=airlines,
         exclude_airlines=exclude_airlines,
     )
+    trips = expand_nearby_trips((seed,), nearby=nearby)
     report_progress = progress or (lambda _: None)
-    stay_label = ""
-    if kind == "rt" and stay is not None:
-        night_word = "night" if stay == 1 else "nights"
-        stay_label = f", rt {stay} {night_word}"
-    report_progress(
-        f"flex: {seed.origin} -> {seed.destination} around {around.isoformat()} "
-        f"±{flex_days} {start.isoformat()} .. {end.isoformat()}{stay_label}"
-    )
-    started = time.perf_counter()
     client = source or GoogleFlightsHttpSource()
-    backend: FlexFetchBackend = "calendar"
-    days: tuple[DatePriceRow, ...] = ()
-    offers: tuple[FlightOffer, ...] = ()
-    chosen: Optional[date] = None
-    returning: Optional[date] = None
-    error: Optional[SearchError] = None
-    typical: Optional[float] = None
+    reports: list[FlexSearchReport] = []
     try:
-        try:
-            compact = client.fetch_calendar(seed, start, end)
-            days = _rows_from_calendar(start, end, compact, nights=stay)
-        except CompactParseMiss:
-            report_progress("calendar miss; no fare")
-            days = ()
-        except Exception as exc:
-            error = classify_failure(exc)
-            days = _error_rows(start, end, error, nights=stay)
-        else:
-            typical = typical_eur_from_daily_prices([row.price_eur for row in days])
-            winner = cheapest_priced_day(days, around)
-            if winner is None:
-                report_progress("no priced day in flex window; no fare")
-            else:
-                chosen = winner.departure_date
-                returning = winner.return_date
-                shop = calendar_trip(
-                    seed.origin,
-                    seed.destination,
-                    chosen,
+        for item in trips:
+            if not isinstance(item, (FlightQuery, RoundTrip)):
+                continue
+            reports.append(
+                _flex_report_for_seed(
+                    client,
+                    item,
+                    around,
+                    flex_days,
+                    start,
+                    end,
+                    kind=kind,
+                    stay=stay,
                     max_stops=max_stops,
                     adults=adults,
                     cabin=cabin,
-                    nights=stay,
                     bags=bags,
                     carry_on=carry_on,
                     price_cap_eur=price_cap_eur,
                     airlines=airlines,
                     exclude_airlines=exclude_airlines,
-                )
-                report_progress(f"chosen {chosen.isoformat()}; pricing that day")
-                backend = "calendar_then_sweep"
-                try:
-                    cards = client.fetch(shop)
-                except Exception as exc:
-                    error = classify_failure(exc)
-                    cards = ()
-                eligible = _offers_from_cards(
-                    cards,
-                    shop,
+                    parsed_via=parsed_via,
+                    parsed_exclude_via=parsed_exclude_via,
+                    top=top,
                     buffer_eur=buffer_eur,
-                    via=parsed_via,
-                    exclude_via=parsed_exclude_via,
+                    sort=sort,
+                    report_progress=report_progress,
                 )
-                ranked = _rank_offers(eligible, top=top, sort=sort)
-                if typical is not None:
-                    offers = tuple(with_typical(offer, typical) for offer in ranked)
-                else:
-                    offers = ranked
+            )
     finally:
         client.close()
-    fare = min((offer.price_eur for offer in offers), default=None)
-    label = vs_typical(fare, typical) if fare is not None else None
-    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return FlexSearchReport(
-        searched_at=datetime.now(timezone.utc),
-        origin=seed.origin,
-        destination=seed.destination,
-        around=around,
-        flex_days=flex_days,
-        start_date=start,
-        end_date=end,
-        days=days,
-        chosen_date=chosen,
-        return_date=returning,
-        offers=offers,
-        typical_eur=typical,
-        vs_typical=label,
-        trip=kind,
-        nights=stay,
-        fetch_backend=backend,
-        fetch_ms=fetch_ms,
-        error=error,
-    )
+    return _one_or_many(reports)
 
 
 def write_flex_report_atomic(report: FlexSearchReport, destination: Path) -> None:
     write_json_atomic(report.to_dict(), destination)
+
+
+def write_flex_reports_atomic(reports: Sequence[FlexSearchReport], destination: Path) -> None:
+    owned = tuple(reports)
+    if len(owned) == 1:
+        write_flex_report_atomic(owned[0], destination)
+        return
+    write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
 
 
 def _return_for(day: date, nights: Optional[int], found: Optional[date] = None) -> Optional[date]:

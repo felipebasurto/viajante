@@ -41,6 +41,13 @@ def _as_trips(plan: object) -> tuple[Trip, ...]:
     return tuple(plan)  # type: ignore[arg-type]
 
 
+def _payload_from_reports(result: object) -> dict:
+    reports = result if isinstance(result, tuple) else (result,)
+    if len(reports) == 1:
+        return dict(reports[0].to_dict())
+    return {"queries": [dict(row.to_dict()) for row in reports]}
+
+
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
     today = date.today()
     for value in dates:
@@ -157,6 +164,7 @@ def search_dates_tool(
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
+    nearby: bool = False,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -182,9 +190,10 @@ def search_dates_tool(
             bags=bags,
             carry_on=carry_on,
             price_cap_eur=price_cap,
+            nearby=nearby,
         )
     )
-    return dict(report.to_dict())
+    return _payload_from_reports(report)
 
 
 def search_flex_tool(
@@ -207,6 +216,7 @@ def search_flex_tool(
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
+    nearby: bool = False,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
@@ -234,9 +244,10 @@ def search_flex_tool(
             bags=bags,
             carry_on=carry_on,
             price_cap_eur=price_cap,
+            nearby=nearby,
         )
     )
-    return dict(report.to_dict())
+    return _payload_from_reports(report)
 
 
 def search_explore_tool(
@@ -256,6 +267,7 @@ def search_explore_tool(
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
+    nearby: bool = False,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -284,9 +296,10 @@ def search_explore_tool(
             bags=bags,
             carry_on=carry_on,
             price_cap_eur=price_cap,
+            nearby=nearby,
         )
     )
-    return dict(report.to_dict())
+    return _payload_from_reports(report)
 
 
 def search_hotels_tool(
@@ -352,6 +365,7 @@ def search_trip_tool(
     entire_home: bool = False,
     free_cancellation: bool = True,
     source: HotelSourceName = "google",
+    nearby: bool = False,
 ) -> Mapping[str, object]:
     """Flights then hotel, one lock. trip_total omitted if either side missed."""
     if source == "google" and min_rating is not None and min_rating > 5:
@@ -369,7 +383,7 @@ def search_trip_tool(
         carry_on=carry_on,
         price_cap_eur=price_cap,
     )
-    trips = _as_trips(plan)
+    trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     window = stay_window_from_trips(trips)
     if check_in:

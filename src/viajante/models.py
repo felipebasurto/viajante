@@ -860,6 +860,7 @@ class DateCalendarReport:
     nights: Optional[int] = None
     fetch_backend: Optional[str] = "calendar"
     fetch_ms: Optional[int] = None
+    nearby_label: Optional[str] = None
     summary: Optional[DateCalendarSummary] = field(init=False, default=None)
     schema_version: int = field(init=False, default=1)
 
@@ -870,6 +871,8 @@ class DateCalendarReport:
                 "searched_at",
                 self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
             )
+        label = self.nearby_label.strip() if self.nearby_label else None
+        object.__setattr__(self, "nearby_label", label or None)
         object.__setattr__(
             self,
             "summary",
@@ -925,6 +928,7 @@ class FlexSearchReport:
     fetch_backend: Optional[FlexFetchBackend] = "calendar"
     fetch_ms: Optional[int] = None
     error: Optional[SearchError] = None
+    nearby_label: Optional[str] = None
     schema_version: int = field(init=False, default=1)
 
     def __post_init__(self) -> None:
@@ -942,6 +946,8 @@ class FlexSearchReport:
                 "searched_at",
                 self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
             )
+        label = self.nearby_label.strip() if self.nearby_label else None
+        object.__setattr__(self, "nearby_label", label or None)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -1001,6 +1007,7 @@ class ExploreReport:
     fetch_backend: Optional[str] = "explore"
     fetch_ms: Optional[int] = None
     error: Optional[SearchError] = None
+    nearby_label: Optional[str] = None
     schema_version: int = field(init=False, default=1)
 
     def __post_init__(self) -> None:
@@ -1010,6 +1017,8 @@ class ExploreReport:
                 "searched_at",
                 self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
             )
+        label = self.nearby_label.strip() if self.nearby_label else None
+        object.__setattr__(self, "nearby_label", label or None)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {

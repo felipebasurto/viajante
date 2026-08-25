@@ -325,6 +325,39 @@ def expand_nearby_trips(trips: Sequence[Trip], *, nearby: bool = False) -> Tuple
     return tuple(expanded) if expanded else tuple(trips)
 
 
+def expand_nearby_origins(
+    origin: str, *, nearby: bool = False
+) -> Tuple[tuple[str, Optional[str]], ...]:
+    """Fan an explore origin out to owned same-city IATA.
+
+    Default off. Returns ``(code, nearby_label)`` pairs. A city with no
+    second major stays the named seed, unlabeled. Does not invent codes.
+    """
+    seed = origin.strip().upper()
+    if not nearby:
+        return ((seed, None),)
+    codes = same_city_iata(seed)
+    if len(codes) < 2:
+        return ((codes[0] if codes else seed, None),)
+    city = _nearby_city(seed)
+    labeled: list[tuple[str, Optional[str]]] = []
+    for code in codes:
+        label = f"nearby {city} {code}" if city else f"nearby {code}"
+        labeled.append((code, label))
+    return tuple(labeled)
+
+
+def nearby_origin_notes(origin: str) -> Tuple[str, ...]:
+    """Stderr legend for explore ``--nearby``. No invented codes."""
+    codes = same_city_iata(origin)
+    if len(codes) < 2:
+        return ()
+    airport = get_airport(origin)
+    if airport is None or not airport.city.strip():
+        return ()
+    return (f"nearby {airport.city}: {', '.join(sorted(codes))}",)
+
+
 def parse_route_specs(
     specs: Sequence[str],
     *,

@@ -17,6 +17,7 @@ from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
     MAX_FLEX_DAYS,
+    calendar_trip,
     flex_window,
     format_sparkline,
     format_summary_line,
@@ -26,14 +27,14 @@ from viajante.dates import (
     search_dates,
     search_flex,
     validate_date_window,
-    write_dates_report_atomic,
-    write_flex_report_atomic,
+    write_dates_reports_atomic,
+    write_flex_reports_atomic,
 )
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     search_explore,
     validate_explore_window,
-    write_explore_report_atomic,
+    write_explore_reports_atomic,
 )
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
@@ -43,6 +44,7 @@ from viajante.flights import (
     _clock_minutes,
     expand_nearby_trips,
     nearby_notes,
+    nearby_origin_notes,
     normalize_trip_kind,
     parse_depart_window,
     parse_flight_plan,
@@ -109,12 +111,14 @@ Examples:
   viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --fetch sweep
   viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
+  viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14 --nearby
 """
 
 FLEX_EXAMPLES = """\
 Examples:
   viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
   viajante flex JFK-LHR --around 2026-09-15 --flex 3
+  viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nearby
 """
 
 EXPLORE_EXAMPLES = """\
@@ -122,6 +126,7 @@ Examples:
   viajante explore JFK --from 2026-09-15 --days 7
   viajante explore NRT --month 2026-10
   viajante explore SIN --from 2026-09-01 --price-cap 200
+  viajante explore LHR --from 2026-09-15 --nearby
 """
 
 AIRPORTS_EXAMPLES = """\
@@ -155,6 +160,7 @@ Examples:
   viajante trip DUB-JFK:2026-10-09:2026-10-13 --hotel "New York" --adults 2 --fetch sweep
   viajante trip LAX-NRT:2026-10-12:2026-10-20 --hotel Tokyo --trip rt --source google
   viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --bags 1 --via DXB
+  viajante trip BOS-LHR:2026-09-18:2026-09-22 --hotel London --trip rt --nearby
 """
 
 
@@ -869,6 +875,10 @@ def _run_trip(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    if getattr(args, "nearby", False):
+        for note in nearby_notes(trips):
+            print(note, file=sys.stderr)
+
     report = search_trip(
         trips,
         hotel_query,
@@ -905,9 +915,10 @@ def _print_dates_report(report: DateCalendarReport) -> None:
     if report.trip == "rt" and report.nights is not None:
         night_word = "night" if report.nights == 1 else "nights"
         stay = f"  (rt, {report.nights} {night_word})"
+    nearby = f"; {report.nearby_label}" if report.nearby_label else ""
     print(
         f"\n=== {report.origin} -> {report.destination}  "
-        f"{report.start_date.isoformat()} .. {report.end_date.isoformat()}{stay} ==="
+        f"{report.start_date.isoformat()} .. {report.end_date.isoformat()}{stay}{nearby} ==="
     )
     for line in format_week_calendar(report.days):
         print(line)
@@ -937,9 +948,10 @@ def _print_dates_report(report: DateCalendarReport) -> None:
 
 
 def _print_explore_report(report: ExploreReport) -> None:
+    nearby = f"; {report.nearby_label}" if report.nearby_label else ""
     print(
         f"\n=== From {report.origin}  {report.start_date.isoformat()}  "
-        f"({report.days}-day window) ==="
+        f"({report.days}-day window){nearby} ==="
     )
     if report.error is not None and not report.destinations:
         print(f"  ERROR: {report.error.message}")
@@ -975,6 +987,35 @@ def _dates_exit_code(report: DateCalendarReport) -> int:
     if failures == 0:
         return 0
     if failures == len(report.days):
+        return 2
+    return 3
+
+
+def _add_nearby_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--nearby",
+        action="store_true",
+        default=False,
+        help=(
+            "Expand origin or dest to owned same-city IATA and search each as a "
+            "labeled alternative (default off; named open-jaw airports stay)"
+        ),
+    )
+
+
+def _as_report_tuple(result: object) -> tuple:
+    if isinstance(result, tuple):
+        return result
+    return (result,)
+
+
+def _combine_exit_codes(codes: Sequence[int]) -> int:
+    owned = tuple(codes)
+    if not owned:
+        return 0
+    if all(code == 0 for code in owned):
+        return 0
+    if all(code == 2 for code in owned):
         return 2
     return 3
 
@@ -1083,7 +1124,26 @@ def _run_dates(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    report = search_dates(
+    nearby = bool(getattr(args, "nearby", False))
+    if nearby:
+        seed = calendar_trip(
+            origin,
+            destination,
+            start,
+            max_stops=args.max_stops,
+            adults=args.adults,
+            cabin=args.cabin,
+            nights=nights,
+            bags=shop["bags"],
+            carry_on=shop["carry_on"],
+            price_cap_eur=shop["price_cap_eur"],
+            airlines=shop["airlines"],
+            exclude_airlines=shop["exclude_airlines"],
+        )
+        for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
+            print(note, file=sys.stderr)
+
+    result = search_dates(
         origin,
         destination,
         start,
@@ -1093,15 +1153,18 @@ def _run_dates(args: argparse.Namespace) -> int:
         max_stops=args.max_stops,
         trip=trip,
         nights=nights,
+        nearby=nearby,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
     )
-    _print_dates_report(report)
+    reports = _as_report_tuple(result)
+    for report in reports:
+        _print_dates_report(report)
     if args.save:
         destination_path = Path(args.save)
-        write_dates_report_atomic(report, destination_path)
+        write_dates_reports_atomic(reports, destination_path)
         print(f"\nSaved {destination_path}")
-    return _dates_exit_code(report)
+    return _combine_exit_codes(_dates_exit_code(report) for report in reports)
 
 
 def _flex_exit_code(report: FlexSearchReport) -> int:
@@ -1117,10 +1180,11 @@ def _print_flex_report(report: FlexSearchReport) -> None:
     if report.trip == "rt" and report.nights is not None:
         night_word = "night" if report.nights == 1 else "nights"
         stay = f"  (rt, {report.nights} {night_word})"
+    nearby = f"; {report.nearby_label}" if report.nearby_label else ""
     print(
         f"\n=== {report.origin} -> {report.destination}  around {report.around.isoformat()} "
         f"±{report.flex_days}  {report.start_date.isoformat()} .. {report.end_date.isoformat()}"
-        f"{stay} ==="
+        f"{stay}{nearby} ==="
     )
     if report.error is not None and report.chosen_date is None:
         print(f"  ERROR: {report.error.message}")
@@ -1181,7 +1245,26 @@ def _run_flex(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    report = search_flex(
+    nearby = bool(getattr(args, "nearby", False))
+    if nearby:
+        seed = calendar_trip(
+            origin,
+            destination,
+            start,
+            max_stops=args.max_stops,
+            adults=args.adults,
+            cabin=args.cabin,
+            nights=nights,
+            bags=shop["bags"],
+            carry_on=shop["carry_on"],
+            price_cap_eur=shop["price_cap_eur"],
+            airlines=shop["airlines"],
+            exclude_airlines=shop["exclude_airlines"],
+        )
+        for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
+            print(note, file=sys.stderr)
+
+    result = search_flex(
         origin,
         destination,
         around,
@@ -1194,15 +1277,18 @@ def _run_flex(args: argparse.Namespace) -> int:
         top=args.top,
         buffer_eur=args.baggage_buffer,
         sort=args.sort,
+        nearby=nearby,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
     )
-    _print_flex_report(report)
+    reports = _as_report_tuple(result)
+    for report in reports:
+        _print_flex_report(report)
     if args.save:
         destination_path = Path(args.save)
-        write_flex_report_atomic(report, destination_path)
+        write_flex_reports_atomic(reports, destination_path)
         print(f"\nSaved {destination_path}")
-    return _flex_exit_code(report)
+    return _combine_exit_codes(_flex_exit_code(report) for report in reports)
 
 
 def _month_start(value: str) -> date:
@@ -1239,7 +1325,12 @@ def _run_explore(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    report = search_explore(
+    nearby = bool(getattr(args, "nearby", False))
+    if nearby:
+        for note in nearby_origin_notes(origin):
+            print(note, file=sys.stderr)
+
+    result = search_explore(
         origin,
         start,
         days=days,
@@ -1247,17 +1338,20 @@ def _run_explore(args: argparse.Namespace) -> int:
         adults=args.adults,
         cabin=args.cabin,
         max_stops=args.max_stops,
+        nearby=nearby,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
     )
-    _print_explore_report(report)
+    reports = _as_report_tuple(result)
+    for report in reports:
+        _print_explore_report(report)
     if args.save:
         destination_path = Path(args.save)
-        write_explore_report_atomic(report, destination_path)
+        write_explore_reports_atomic(reports, destination_path)
         print(f"\nSaved {destination_path}")
-    if report.error is not None and not report.destinations:
-        return 2
-    return 0
+    return _combine_exit_codes(
+        2 if report.error is not None and not report.destinations else 0 for report in reports
+    )
 
 
 def _run_airports(args: argparse.Namespace) -> int:
@@ -1373,15 +1467,7 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="price_cap",
         help="Drop owned fares above this EUR amount (omit to leave unset; unnamed stays None)",
     )
-    flights.add_argument(
-        "--nearby",
-        action="store_true",
-        default=False,
-        help=(
-            "Expand origin/dest to owned same-city IATA and search each as a "
-            "labeled alternative (default off; named open-jaw airports stay)"
-        ),
-    )
+    _add_nearby_flag(flights)
     flights.add_argument(
         "--top",
         type=int,
@@ -1711,6 +1797,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include non-refundable stays (default filters to free cancellation)",
     )
     _add_owned_shop_filters(trip)
+    _add_nearby_flag(trip)
     trip.add_argument(
         "--save",
         default=None,
@@ -1775,6 +1862,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cabin class (default economy)",
     )
     _add_owned_shop_filters(dates)
+    _add_nearby_flag(dates)
     dates.add_argument(
         "--fetch",
         default="sweep",
@@ -1864,6 +1952,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Offer order for the chosen day (default ranked)",
     )
     _add_owned_shop_filters(flex)
+    _add_nearby_flag(flex)
     flex.add_argument(
         "--fetch",
         default="sweep",
@@ -1927,6 +2016,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cabin class (default economy)",
     )
     _add_owned_shop_filters(explore)
+    _add_nearby_flag(explore)
     explore.add_argument(
         "--save",
         default=None,

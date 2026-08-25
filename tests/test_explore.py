@@ -62,9 +62,11 @@ class FakeExploreSource:
         self.prices = prices or {}
         self.closed = False
         self.fetched_queries: list[FlightQuery] = []
+        self.explore_origins: list[str] = []
         self.config = SimpleNamespace(html_lang="en", currency="EUR")
 
     def fetch_explore(self, origin, departure_date, *, adults=1, cabin="economy"):
+        self.explore_origins.append(origin)
         if isinstance(self.places, Exception):
             raise self.places
         return self.places
@@ -355,6 +357,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--via", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
+        self.assertIn("--nearby", help_text)
 
     def test_explore_forwards_owned_shop_filters(self) -> None:
         with (
@@ -409,6 +412,62 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertFalse(kwargs["nearby"])
+
+
+class NearbyExploreTests(unittest.TestCase):
+    def test_nearby_expands_london_origin_and_default_keeps_heathrow(self) -> None:
+        places = (CompactExplorePlace("OPO", "Porto", "Portugal"),)
+        prices = {
+            "OPO": (
+                _card(
+                    airline="Ryanair",
+                    departure="07:00",
+                    arrival="07:50",
+                    duration="1 hr",
+                    stops="Nonstop",
+                    price="€28",
+                ),
+            )
+        }
+        off_source = FakeExploreSource(places, prices=prices)
+        off = search_explore("LHR", date(2026, 9, 15), days=7, top=1, source=off_source)
+        self.assertEqual(off.origin, "LHR")
+        self.assertIsNone(off.nearby_label)
+        self.assertEqual(off_source.explore_origins, ["LHR"])
+
+        on_source = FakeExploreSource(places, prices=prices)
+        reports = search_explore(
+            "LHR", date(2026, 9, 15), days=7, top=1, nearby=True, source=on_source
+        )
+        self.assertIsInstance(reports, tuple)
+        origins = [row.origin for row in reports]
+        self.assertEqual(origins[0], "LHR")
+        self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= set(origins))
+        self.assertNotIn("BQH", origins)
+        self.assertTrue(all(row.nearby_label for row in reports))
+        self.assertNotIn("nearby_label", reports[0].to_dict())
+        self.assertEqual(on_source.explore_origins, origins)
+
+    def test_nearby_unknown_city_does_not_invent_codes(self) -> None:
+        source = FakeExploreSource((CompactExplorePlace("OPO", "Porto", "Portugal"),))
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, nearby=True, source=source)
+        self.assertEqual(report.origin, "MAD")
+        self.assertIsNone(report.nearby_label)
+        self.assertEqual(source.explore_origins, ["MAD"])
+
+    def test_explore_nearby_flag_forwards(self) -> None:
+        with (
+            patch("viajante.cli.search_explore") as search,
+            patch("viajante.cli._print_explore_report"),
+        ):
+            search.return_value = SimpleNamespace(error=None, destinations=())
+            err = io.StringIO()
+            with patch("sys.stderr", err):
+                code = main(["explore", "LHR", "--from", "2026-09-15", "--nearby"])
+        self.assertEqual(code, 0)
+        self.assertTrue(search.call_args.kwargs["nearby"])
+        self.assertIn("nearby London", err.getvalue())
 
 
 if __name__ == "__main__":

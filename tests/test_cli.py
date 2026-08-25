@@ -1681,6 +1681,7 @@ class TripCliTests(unittest.TestCase):
         self.assertIn("--via", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
+        self.assertIn("--nearby", help_text)
 
     def test_trip_forwards_owned_shop_filters(self) -> None:
         with (
@@ -1768,6 +1769,62 @@ class TripCliTests(unittest.TestCase):
         self.assertIsNone(trip.bags)
         self.assertIsNone(trip.carry_on)
         self.assertIsNone(trip.price_cap_eur)
+
+    def test_trip_nearby_expands_london_and_default_keeps_heathrow(self) -> None:
+        back = FUTURE_DATE + timedelta(days=4)
+        fake = TripSearchReport(
+            searched_at=SEARCHED_AT,
+            flights=_report(),
+            hotels=_sample_hotel_report(),
+            trip_total=None,
+        )
+        with (
+            patch("viajante.cli.search_trip", return_value=fake) as search,
+            patch("viajante.cli._print_report"),
+            patch("viajante.cli._print_hotel_report"),
+            patch("viajante.cli._print_trip_total"),
+        ):
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = main(
+                    [
+                        "trip",
+                        f"BOS-LHR:{FUTURE_DATE.isoformat()}:{back.isoformat()}",
+                        "--hotel",
+                        "London",
+                        "--trip",
+                        "rt",
+                        "--nearby",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        trips = search.call_args.args[0]
+        dests = {trip.destination for trip in trips}
+        self.assertGreater(len(trips), 1)
+        self.assertEqual((trips[0].origin, trips[0].destination), ("BOS", "LHR"))
+        self.assertTrue({"LHR", "LGW", "STN"} <= dests)
+        self.assertIn("nearby London", err.getvalue())
+        with (
+            patch("viajante.cli.search_trip", return_value=fake) as search,
+            patch("viajante.cli._print_report"),
+            patch("viajante.cli._print_hotel_report"),
+            patch("viajante.cli._print_trip_total"),
+        ):
+            code = main(
+                [
+                    "trip",
+                    f"BOS-LHR:{FUTURE_DATE.isoformat()}:{back.isoformat()}",
+                    "--hotel",
+                    "London",
+                    "--trip",
+                    "rt",
+                ]
+            )
+        self.assertEqual(code, 0)
+        trips = search.call_args.args[0]
+        self.assertEqual(len(trips), 1)
+        self.assertEqual(trips[0].destination, "LHR")
+        self.assertIsNone(trips[0].nearby_label)
 
 
 if __name__ == "__main__":
