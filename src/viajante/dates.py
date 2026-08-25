@@ -20,6 +20,7 @@ from viajante.flights import (
     expand_nearby_trips,
     keep_included_dest_trips,
     normalize_trip_kind,
+    parse_overnight_lists,
     parse_via_airports,
     validate_layover_hours,
 )
@@ -447,6 +448,8 @@ def _offers_from_cards(
     buffer_eur: int = 0,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -473,6 +476,8 @@ def _offers_from_cards(
                 max_duration_hours=max_duration_hours,
                 via=via,
                 exclude_via=exclude_via,
+                no_overnight=no_overnight,
+                require_overnight=require_overnight,
                 bags=query.bags,
                 carry_on=query.carry_on,
                 price_cap_eur=query.price_cap_eur,
@@ -498,6 +503,8 @@ def _date_calendar_for_seed(
     stay: Optional[int],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
+    parsed_no_overnight: Optional[tuple[str, ...]],
+    parsed_require_overnight: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
     arrive_before: Optional[int],
     depart_after: Optional[int],
@@ -534,6 +541,8 @@ def _date_calendar_for_seed(
             report_progress,
             via=parsed_via,
             exclude_via=parsed_exclude_via,
+            no_overnight=parsed_no_overnight,
+            require_overnight=parsed_require_overnight,
             depart_window=depart_window,
             arrive_before=arrive_before,
             depart_after=depart_after,
@@ -589,6 +598,8 @@ def search_dates(
     exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
     include_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
@@ -613,6 +624,9 @@ def search_dates(
     )
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
+    parsed_no_overnight, parsed_require_overnight = parse_overnight_lists(
+        no_overnight, require_overnight
+    )
     parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
     parsed_include_airports = _parse_include_airports(include_airports)
     seed = calendar_trip(
@@ -664,6 +678,8 @@ def search_dates(
                     stay=stay,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
+                    parsed_no_overnight=parsed_no_overnight,
+                    parsed_require_overnight=parsed_require_overnight,
                     depart_window=depart_window,
                     arrive_before=arrive_before,
                     depart_after=depart_after,
@@ -759,6 +775,8 @@ def _flex_report_for_seed(
     exclude_alliances: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
+    parsed_no_overnight: Optional[tuple[str, ...]],
+    parsed_require_overnight: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
     arrive_before: Optional[int],
     depart_after: Optional[int],
@@ -822,6 +840,8 @@ def _flex_report_for_seed(
                 buffer_eur=buffer_eur,
                 via=parsed_via,
                 exclude_via=parsed_exclude_via,
+                no_overnight=parsed_no_overnight,
+                require_overnight=parsed_require_overnight,
                 depart_window=depart_window,
                 arrive_before=arrive_before,
                 depart_after=depart_after,
@@ -895,6 +915,8 @@ def search_flex(
     exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
     include_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
@@ -932,6 +954,9 @@ def search_flex(
     start, end = flex_window(around, flex_days)
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
+    parsed_no_overnight, parsed_require_overnight = parse_overnight_lists(
+        no_overnight, require_overnight
+    )
     parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
     parsed_include_airports = _parse_include_airports(include_airports)
     seed = calendar_trip(
@@ -997,6 +1022,8 @@ def search_flex(
                     exclude_alliances=exclude_alliances,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
+                    parsed_no_overnight=parsed_no_overnight,
+                    parsed_require_overnight=parsed_require_overnight,
                     depart_window=depart_window,
                     arrive_before=arrive_before,
                     depart_after=depart_after,
@@ -1072,6 +1099,8 @@ def _row_from_day_cards(
     *,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -1084,6 +1113,8 @@ def _row_from_day_cards(
         query,
         via=via,
         exclude_via=exclude_via,
+        no_overnight=no_overnight,
+        require_overnight=require_overnight,
         depart_window=depart_window,
         arrive_before=arrive_before,
         depart_after=depart_after,
@@ -1131,6 +1162,8 @@ def _sweep_per_day(
     *,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -1165,6 +1198,8 @@ def _sweep_per_day(
                         returning,
                         via=via,
                         exclude_via=exclude_via,
+                        no_overnight=no_overnight,
+                        require_overnight=require_overnight,
                         depart_window=depart_window,
                         arrive_before=arrive_before,
                         depart_after=depart_after,
@@ -1191,6 +1226,8 @@ def _sweep_per_day(
                 returning,
                 via=via,
                 exclude_via=exclude_via,
+                no_overnight=no_overnight,
+                require_overnight=require_overnight,
                 depart_window=depart_window,
                 arrive_before=arrive_before,
                 depart_after=depart_after,

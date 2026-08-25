@@ -686,6 +686,22 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["exclude_airports"], ("HND",))
         self.assertEqual(search.call_args.kwargs["include_airports"], ("NRT", "HND"))
 
+    def test_overnight_flags_reach_the_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(
+                    [
+                        "flights",
+                        ROUTE,
+                        "--no-overnight",
+                        "IST",
+                        "--require-overnight",
+                        "IST",
+                    ]
+                )
+        self.assertEqual(search.call_args.kwargs["no_overnight"], ("IST",))
+        self.assertEqual(search.call_args.kwargs["require_overnight"], ("IST",))
+
     def test_layover_is_visible_on_one_stop_rows(self) -> None:
         output = _rendered(
             _report(
@@ -896,6 +912,8 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--min-layover", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--exclude-via", help_text)
+        self.assertIn("--no-overnight", help_text)
+        self.assertIn("--require-overnight", help_text)
         self.assertIn("--exclude-airports", help_text)
         self.assertIn("--include-airports", help_text)
         self.assertIn("--max-duration", help_text)
@@ -1712,6 +1730,8 @@ class TripCliTests(unittest.TestCase):
         help_text = buffer.getvalue()
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
+        self.assertIn("--no-overnight", help_text)
+        self.assertIn("--require-overnight", help_text)
         self.assertIn("--exclude-airports", help_text)
         self.assertIn("--include-airports", help_text)
         self.assertIn("--airlines", help_text)
@@ -1751,6 +1771,10 @@ class TripCliTests(unittest.TestCase):
                     "LIS",
                     "--exclude-via",
                     "DXB",
+                    "--no-overnight",
+                    "IST",
+                    "--require-overnight",
+                    "IST",
                     "--exclude-airports",
                     "HND",
                     "--include-airports",
@@ -1773,6 +1797,8 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
@@ -1814,6 +1840,8 @@ class TripCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["no_overnight"])
+        self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])

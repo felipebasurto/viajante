@@ -1681,6 +1681,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.infants_on_lap)
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
+        self.assertEqual(plan.no_overnight, ())
+        self.assertEqual(plan.require_overnight, ())
 
     def test_dates_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
         named = plan_prompt("Price calendar BOS-NRT from 2026-09-01 to 2026-09-14, not HND")
@@ -1716,6 +1718,73 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         vibe = plan_prompt("Flights BOS-NRT on 2026-11-12, Europe")
         self.assertEqual(vibe.intent, "flights")
         self.assertEqual(vibe.include_airports, ())
+
+    def test_dates_named_overnight_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, never overnight in IST"
+        )
+        self.assertEqual(named.intent, "dates")
+        self.assertIn("IST", named.no_overnight)
+        self.assertEqual(named.require_overnight, ())
+        required = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, must overnight in IST"
+        )
+        self.assertEqual(required.intent, "dates")
+        self.assertIn("IST", required.require_overnight)
+        flagged = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 "
+            "--no-overnight IST --require-overnight IST"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertIn("IST", flagged.no_overnight)
+        self.assertIn("IST", flagged.require_overnight)
+        vibe = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, red-eye")
+        self.assertEqual(vibe.intent, "dates")
+        self.assertEqual(vibe.no_overnight, ())
+        self.assertEqual(vibe.require_overnight, ())
+
+    def test_flex_named_overnight_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, no overnight")
+        self.assertEqual(named.intent, "flex")
+        self.assertIn("any", named.no_overnight)
+        required = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, must overnight in IST")
+        self.assertEqual(required.intent, "flex")
+        self.assertIn("IST", required.require_overnight)
+        both = plan_prompt(
+            "BOS-LHR around 12 Sep 2026, flex 3 days, must overnight in IST, never overnight in IST"
+        )
+        self.assertEqual(both.intent, "flex")
+        self.assertIn("IST", both.no_overnight)
+        self.assertIn("IST", both.require_overnight)
+        vibe = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, red-eye")
+        self.assertEqual(vibe.intent, "flex")
+        self.assertEqual(vibe.no_overnight, ())
+        self.assertEqual(vibe.require_overnight, ())
+
+    def test_explore_named_overnight_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, no overnight"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertIn("any", named.no_overnight)
+        required = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, must overnight in IST"
+        )
+        self.assertEqual(required.intent, "explore")
+        self.assertIn("IST", required.require_overnight)
+        both = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, "
+            "must overnight in IST, never overnight in IST"
+        )
+        self.assertEqual(both.intent, "explore")
+        self.assertIn("IST", both.no_overnight)
+        self.assertIn("IST", both.require_overnight)
+        vibe = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, red-eye"
+        )
+        self.assertEqual(vibe.intent, "explore")
+        self.assertEqual(vibe.no_overnight, ())
+        self.assertEqual(vibe.require_overnight, ())
 
     def test_dates_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -1891,6 +1960,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.infants_on_lap)
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
+        self.assertEqual(plan.no_overnight, ())
+        self.assertEqual(plan.require_overnight, ())
 
     def test_flex_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
         named = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days, not HND")
@@ -2055,6 +2126,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
         self.assertIsNone(plan.sort)
+        self.assertEqual(plan.no_overnight, ())
+        self.assertEqual(plan.require_overnight, ())
 
     def test_explore_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
         named = plan_prompt(

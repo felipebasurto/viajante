@@ -79,6 +79,8 @@ class McpHandlerTests(unittest.TestCase):
                 max_layover=6,
                 via="IST",
                 exclude_via="DXB",
+                no_overnight="IST",
+                require_overnight="any",
                 exclude_airports="HND",
                 include_airports="NRT,HND",
                 baggage_buffer=0,
@@ -96,6 +98,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["max_layover_hours"], 6)
         self.assertEqual(kwargs["via"], ("IST",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("any",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["buffer_eur"], 0)
@@ -203,6 +207,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["no_overnight"])
+        self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
@@ -260,6 +266,8 @@ class McpHandlerTests(unittest.TestCase):
                 carry_on=1,
                 via="LIS",
                 exclude_via="DXB",
+                no_overnight="IST",
+                require_overnight="IST",
                 exclude_airports="HND",
                 include_airports="NRT,HND",
                 airlines="IB",
@@ -279,6 +287,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
@@ -354,6 +364,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertNotIn("fetch", kwargs)
         self.assertIsNone(kwargs["bags"])
         self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["no_overnight"])
+        self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
@@ -407,6 +419,8 @@ class McpHandlerTests(unittest.TestCase):
                 3,
                 bags=1,
                 via="IST",
+                no_overnight="any",
+                require_overnight="IST",
                 exclude_airports="HND",
                 include_airports="NRT,HND",
                 airlines="BA",
@@ -423,6 +437,8 @@ class McpHandlerTests(unittest.TestCase):
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["bags"], 1)
         self.assertEqual(kwargs["via"], ("IST",))
+        self.assertEqual(kwargs["no_overnight"], ("any",))
+        self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("BA",))
@@ -469,6 +485,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertNotIn("success", payload)
         self.assertIsNone(search.call_args.kwargs["bags"])
         self.assertIsNone(search.call_args.kwargs["via"])
+        self.assertIsNone(search.call_args.kwargs["no_overnight"])
+        self.assertIsNone(search.call_args.kwargs["require_overnight"])
         self.assertIsNone(search.call_args.kwargs["exclude_airports"])
         self.assertIsNone(search.call_args.kwargs["include_airports"])
         self.assertIsNone(search.call_args.kwargs["airlines"])
@@ -525,6 +543,8 @@ class McpHandlerTests(unittest.TestCase):
                 carry_on=1,
                 via="LIS",
                 exclude_via="DXB",
+                no_overnight="IST",
+                require_overnight="IST",
                 exclude_airports="HND",
                 include_airports="NRT,HND",
                 airlines="IB",
@@ -544,6 +564,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
@@ -627,6 +649,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["no_overnight"])
+        self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
@@ -652,6 +676,8 @@ class McpHandlerTests(unittest.TestCase):
                 carry_on=1,
                 via="LIS",
                 exclude_via="DXB",
+                no_overnight="IST",
+                require_overnight="IST",
                 exclude_airports="HND",
                 include_airports="NRT,HND",
                 airlines="IB",
@@ -665,6 +691,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))

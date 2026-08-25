@@ -25,7 +25,7 @@ from viajante.google_flights_rpc import (
     build_shopping_inner,
     parse_explore_body,
 )
-from viajante.models import ExploreDestination, FlightQuery
+from viajante.models import ExploreDestination, FlightQuery, RawJourneyLeg, RawLayover, RawSegment
 from viajante.typical import (
     typical_eur_from_daily_prices,
     vs_typical,
@@ -63,6 +63,42 @@ def _card(**kwargs: object) -> RawFlightCard:
     }
     fields.update(kwargs)
     return RawFlightCard(**fields)  # type: ignore[arg-type]
+
+
+def _overnight_card(
+    *,
+    city: str = "IST",
+    inbound_arr: str | None = "22:00",
+    outbound_dep: str | None = "08:00",
+    hours: float | None = 10.0,
+    price: str = "€28",
+    origin: str = "MAD",
+    dest: str = "OPO",
+) -> RawFlightCard:
+    return _card(
+        stops="1 stop",
+        layover_city=city,
+        layover_hours=hours,
+        duration="20 hr",
+        price=price,
+        legs=(
+            RawJourneyLeg(
+                departure="10:00",
+                arrival="20:00",
+                duration="20 hr",
+                stops="1 stop",
+                segments=(
+                    RawSegment(
+                        origin=origin, destination=city, departure="10:00", arrival=inbound_arr
+                    ),
+                    RawSegment(
+                        origin=city, destination=dest, departure=outbound_dep, arrival="20:00"
+                    ),
+                ),
+                layovers=(RawLayover(city=city, hours=hours),),
+            ),
+        ),
+    )
 
 
 class FakeExploreSource:
@@ -508,6 +544,130 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(by_iata["LIS"], 28.0)
         self.assertEqual(by_iata["FCO"], 28.0)
 
+    def test_named_no_overnight_drops_dests_whose_cheapest_shop_is_overnight(self) -> None:
+        daytime = _overnight_card(
+            city="IST",
+            inbound_arr="12:00",
+            outbound_dep="14:00",
+            hours=2.0,
+            price="€90",
+            dest="OPO",
+        )
+        overnight = _overnight_card(
+            city="IST",
+            inbound_arr="22:00",
+            outbound_dep="08:00",
+            hours=10.0,
+            price="€28",
+            dest="LIS",
+        )
+        unknown = _card(stops="1 stop", layover_city="IST", layover_hours=18.0, price="€40")
+        nonstop = _card(stops="Nonstop", price="€70")
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (daytime, overnight),
+                "LIS": (overnight,),
+                "FCO": (unknown, nonstop),
+            },
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, source=source, no_overnight=("IST",)
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["FCO", "OPO"])
+        self.assertEqual(report.destinations[0].price_eur, 70.0)
+        self.assertEqual(report.destinations[1].price_eur, 90.0)
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
+        self.assertEqual(by_iata["OPO"], 28.0)
+        self.assertEqual(by_iata["LIS"], 28.0)
+        self.assertEqual(by_iata["FCO"], 40.0)
+
+    def test_named_require_overnight_keeps_only_owned_overnight_dests(self) -> None:
+        overnight = _overnight_card(
+            city="IST",
+            inbound_arr="22:00",
+            outbound_dep="08:00",
+            hours=10.0,
+            price="€80",
+            dest="OPO",
+        )
+        daytime = _overnight_card(
+            city="IST",
+            inbound_arr="12:00",
+            outbound_dep="14:00",
+            hours=2.0,
+            price="€28",
+            dest="LIS",
+        )
+        unknown = _card(stops="1 stop", layover_city="IST", layover_hours=18.0, price="€40")
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={"OPO": (overnight,), "LIS": (daytime,), "FCO": (unknown,)},
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, source=source, require_overnight=("IST",)
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["OPO"])
+        self.assertEqual(report.destinations[0].price_eur, 80.0)
+
+    def test_named_overnight_contradiction_does_not_pick_one(self) -> None:
+        overnight = _overnight_card(
+            city="IST",
+            inbound_arr="22:00",
+            outbound_dep="08:00",
+            hours=10.0,
+            price="€28",
+            dest="OPO",
+        )
+        daytime = _overnight_card(
+            city="IST",
+            inbound_arr="12:00",
+            outbound_dep="14:00",
+            hours=2.0,
+            price="€90",
+            dest="LIS",
+        )
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+            ),
+            prices={"OPO": (overnight,), "LIS": (daytime,)},
+        )
+        report = search_explore(
+            "MAD",
+            date(2026, 9, 1),
+            days=7,
+            top=2,
+            source=source,
+            no_overnight=("IST",),
+            require_overnight=("IST",),
+        )
+        self.assertEqual(report.destinations, ())
+
+    def test_explore_catalog_places_stay_unfiltered_for_named_overnight(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+            ),
+            prices={},
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=2, source=source, no_overnight=("any",)
+        )
+        self.assertEqual([row.iata for row in report.destinations], [])
+
     def test_named_alliance_rides_dest_shop_catalog_places_stay(self) -> None:
         iberia = _card(airline="Iberia", airline_codes=("IB",), price="€61")
         ryanair = _card(airline="Ryanair", airline_codes=("FR",), price="€28")
@@ -762,6 +922,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("viajante explore JFK", help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
+        self.assertIn("--no-overnight", help_text)
+        self.assertIn("--require-overnight", help_text)
         self.assertIn("--exclude-airports", help_text)
         self.assertIn("--include-airports", help_text)
         self.assertIn("--airlines", help_text)
@@ -802,6 +964,10 @@ class ExploreCliTests(unittest.TestCase):
                     "LIS",
                     "--exclude-via",
                     "DXB",
+                    "--no-overnight",
+                    "IST",
+                    "--require-overnight",
+                    "IST",
                     "--exclude-airports",
                     "HND",
                     "--include-airports",
@@ -836,6 +1002,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
@@ -863,6 +1031,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["no_overnight"])
+        self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])

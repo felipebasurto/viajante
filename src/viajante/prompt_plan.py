@@ -27,6 +27,7 @@ from viajante.flights import (
     FlightPlan,
     expand_nearby_trips,
     parse_flight_plan,
+    parse_overnight_airports,
     parse_via_airports,
 )
 from viajante.models import (
@@ -379,7 +380,8 @@ _FLAG = re.compile(
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|arrive-before|depart-after|currency|country|airlines|"
     r"exclude-airlines|alliance|"
-    r"exclude-alliance|exclude-via|exclude-airports|include-airports|via|bags|price-cap)\s+(\S+)",
+    r"exclude-alliance|exclude-via|exclude-airports|include-airports|via|"
+    r"no-overnight|require-overnight|bags|price-cap)\s+(\S+)",
     re.IGNORECASE,
 )
 _BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
@@ -2340,6 +2342,16 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_via,
             parse_via_airports(flags["exclude-via"], role="exclude-via") or (),
         )
+    if "no-overnight" in flags:
+        _extend_unique(
+            no_overnight,
+            parse_overnight_airports(flags["no-overnight"], role="no-overnight") or (),
+        )
+    if "require-overnight" in flags:
+        _extend_unique(
+            require_overnight,
+            parse_overnight_airports(flags["require-overnight"], role="require-overnight") or (),
+        )
     if "exclude-airports" in flags:
         _extend_unique(
             exclude_airports,
@@ -3033,6 +3045,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
             no_overnight=tuple(no_overnight),
+            require_overnight=tuple(require_overnight),
             refuse=all_refuse,
             baggage=baggage,
             bags=bags,
@@ -3077,6 +3090,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             flex_days=_flex_days_value(folded, flags, dates),
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
+            no_overnight=tuple(no_overnight),
+            require_overnight=tuple(require_overnight),
             alliance=alliance,
             exclude_alliance=exclude_alliance,
             depart_window=depart_window,
@@ -3120,6 +3135,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             price_cap_eur=price_cap,
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
+            no_overnight=tuple(no_overnight),
+            require_overnight=tuple(require_overnight),
             alliance=alliance,
             exclude_alliance=exclude_alliance,
             depart_window=depart_window,
