@@ -485,6 +485,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["infants_on_lap"], 0)
         self.assertEqual(search.call_args.kwargs["currency"], "EUR")
         self.assertIsNone(search.call_args.kwargs["country"])
+        self.assertEqual(search.call_args.kwargs["sort"], "price")
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("SIN", FUTURE, price_cap=200)
         self.assertEqual(search.call_args.kwargs["price_cap_eur"], 200)
@@ -565,6 +566,12 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("MAD", FUTURE)
         self.assertFalse(search.call_args.kwargs["nearby"])
+
+    def test_search_explore_forwards_named_sort(self) -> None:
+        fake = _report(destinations=[])
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool("MAD", FUTURE, sort="duration")
+        self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
     def test_search_hotels_defaults_to_google(self) -> None:
         fake = _report(provider="google-hotels", queries=[])

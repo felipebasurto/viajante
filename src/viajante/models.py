@@ -1088,6 +1088,9 @@ class ExploreDestination:
     city: str
     country: Optional[str]
     price_eur: Optional[float] = None
+    duration_hours: Optional[float] = None
+    departure: Optional[str] = None
+    arrival: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
     google_flights_url: Optional[str] = None
     typical_eur: Optional[float] = None
@@ -1098,6 +1101,10 @@ class ExploreDestination:
         _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
         if self.price_eur is None and self.typical_eur is not None:
             raise ValueError("typical requires an owned dest fare")
+        if self.price_eur is None and (
+            self.duration_hours is not None or self.departure or self.arrival
+        ):
+            raise ValueError("shop duration/clocks require an owned dest fare")
 
     def typical_deal(self) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
@@ -1109,6 +1116,12 @@ class ExploreDestination:
             "country": self.country,
             "price_eur": self.price_eur,
         }
+        if self.duration_hours is not None:
+            payload["duration_hours"] = self.duration_hours
+        if self.departure:
+            payload["departure"] = self.departure
+        if self.arrival:
+            payload["arrival"] = self.arrival
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:

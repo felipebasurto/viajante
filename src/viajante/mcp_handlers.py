@@ -352,6 +352,7 @@ def search_explore_tool(
     max_layover: Optional[float] = None,
     currency: str = "EUR",
     country: Optional[str] = None,
+    sort: FlightSort = "price",
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -396,6 +397,7 @@ def search_explore_tool(
             max_layover_hours=max_layover,
             currency=currency,
             country=country,
+            sort=sort,
         )
     )
     return _payload_from_reports(report)

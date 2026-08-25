@@ -9,7 +9,11 @@ from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import is_known_iata
 from viajante.flights import (
+    FLIGHT_SORTS,
+    FlightSort,
     _calendar_summary_from_source,
+    _cheapest_by_fare,
+    _clock_minutes,
     _normalize_offer,
     classify_failure,
     compare_nonstop_vs_one_stop,
@@ -23,6 +27,7 @@ from viajante.models import (
     ExploreDestination,
     ExploreReport,
     FlightCabin,
+    FlightOffer,
     FlightQuery,
     SearchError,
     StopsCompare,
@@ -138,6 +143,30 @@ def _one_or_many(reports: list[ExploreReport]) -> ExploreReport | tuple[ExploreR
     return tuple(reports)
 
 
+def _rank_explore_destinations(
+    dests: Sequence[ExploreDestination],
+    sort: FlightSort,
+) -> tuple[ExploreDestination, ...]:
+    """Re-rank shopped dests by an owned field. Missing key sorts last; never invent."""
+
+    def sort_key(row: ExploreDestination) -> tuple:
+        if sort == "duration":
+            missing = row.duration_hours is None
+            hours = row.duration_hours if row.duration_hours is not None else 0.0
+            return (missing, hours, row.price_eur is None, row.price_eur or 0.0, row.iata)
+        if sort == "departure":
+            minutes = _clock_minutes(row.departure)
+            missing = minutes is None
+            return (missing, minutes or 0, row.price_eur is None, row.price_eur or 0.0, row.iata)
+        if sort == "arrival":
+            minutes = _clock_minutes(row.arrival)
+            missing = minutes is None
+            return (missing, minutes or 0, row.price_eur is None, row.price_eur or 0.0, row.iata)
+        return (row.price_eur is None, row.price_eur or 0.0, row.iata)
+
+    return tuple(sorted(dests, key=sort_key))
+
+
 def _explore_for_origin(
     client: ExploreSource,
     origin: str,
@@ -172,6 +201,7 @@ def _explore_for_origin(
     nearby_label: Optional[str],
     currency: str,
     country: Optional[str],
+    sort: FlightSort,
     report_progress: Callable[[str], None],
 ) -> ExploreReport:
     nearby = f" ({nearby_label})" if nearby_label else ""
@@ -206,7 +236,7 @@ def _explore_for_origin(
     typical_cache: dict = {}
     for index, place in enumerate(places[:top]):
         report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
-        price, compare, shop = _cheapest_shop(
+        cheapest, compare, shop = _cheapest_shop(
             client,
             origin=origin,
             destination=place.iata,
@@ -233,6 +263,7 @@ def _explore_for_origin(
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
         )
+        price = cheapest.price_eur if cheapest is not None else None
         if drop_unpriced and price is None:
             continue
         dest = ExploreDestination(
@@ -240,6 +271,17 @@ def _explore_for_origin(
             city=place.city,
             country=place.country,
             price_eur=price,
+            duration_hours=cheapest.duration_hours if cheapest is not None else None,
+            departure=(
+                cheapest.departure
+                if cheapest is not None and _clock_minutes(cheapest.departure) is not None
+                else None
+            ),
+            arrival=(
+                cheapest.arrival
+                if cheapest is not None and _clock_minutes(cheapest.arrival) is not None
+                else None
+            ),
             stops_compare=compare,
             google_flights_url=google_flights_url(shop, currency=currency, country=country),
         )
@@ -248,8 +290,7 @@ def _explore_for_origin(
             if summary is not None:
                 dest = with_typical_dest(dest, summary.median_eur)
         priced.append(dest)
-    priced.sort(key=lambda row: (row.price_eur is None, row.price_eur or 0.0, row.iata))
-    destinations = tuple(priced)
+    destinations = _rank_explore_destinations(priced, sort)
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return ExploreReport(
         searched_at=datetime.now(timezone.utc),
@@ -297,6 +338,7 @@ def search_explore(
     nearby: bool = False,
     currency: str = "EUR",
     country: Optional[str] = None,
+    sort: FlightSort = "price",
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
 ) -> ExploreReport | tuple[ExploreReport, ...]:
@@ -307,6 +349,10 @@ def search_explore(
         raise ValueError("top must be positive")
     if top > MAX_EXPLORE_TOP:
         raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
+    if sort not in FLIGHT_SORTS:
+        raise ValueError(
+            "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
+        )
     if price_cap_eur is not None and price_cap_eur <= 0:
         raise ValueError("price_cap_eur must be positive")
     validate_layover_hours(
@@ -388,6 +434,7 @@ def search_explore(
                     nearby_label=label,
                     currency=currency,
                     country=country,
+                    sort=sort,
                     report_progress=report_progress,
                 )
             )
@@ -435,7 +482,7 @@ def _cheapest_shop(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
-) -> tuple[Optional[float], Optional[StopsCompare], FlightQuery]:
+) -> tuple[Optional[FlightOffer], Optional[StopsCompare], FlightQuery]:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     alliance_names = tuple(alliances) if alliances is not None else None
@@ -490,7 +537,7 @@ def _cheapest_shop(
     if not eligible:
         return None, None, query
     return (
-        min(offer.price_eur for offer in eligible),
+        _cheapest_by_fare(eligible),
         compare_nonstop_vs_one_stop(eligible),
         query,
     )
