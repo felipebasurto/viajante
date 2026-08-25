@@ -28,6 +28,7 @@ REPORT_KEYS = {
 REPORT_ERROR_KEYS = REPORT_KEYS | {"error"}
 DESTINATION_KEYS = {"iata", "city", "country", "price_eur"}
 DESTINATION_TYPICAL_KEYS = {"typical_eur", "vs_typical", "vs_typical_pct", "typical_deal"}
+DESTINATION_SHOP_CLOCK_KEYS = {"duration_hours", "departure", "arrival"}
 ERROR_KEYS = {"code", "message"}
 EXPLORE_FETCH_BACKENDS = {"explore"}
 FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
@@ -172,6 +173,35 @@ class ExploreJsonContractTests(unittest.TestCase):
         self.assertNotIn("vs_typical", catalog.to_dict())
         self.assertNotIn("vs_typical_pct", catalog.to_dict())
         self.assertNotIn("typical_deal", catalog.to_dict())
+
+    def test_owned_duration_and_clocks_are_extra_dest_keys_when_shopped(self) -> None:
+        dest = ExploreDestination(
+            iata="OPO",
+            city="Porto",
+            country="Portugal",
+            price_eur=42.0,
+            duration_hours=1.0,
+            departure="07:00",
+            arrival="07:50",
+        )
+        data = dest.to_dict()
+        self.assertEqual(set(data), DESTINATION_KEYS | DESTINATION_SHOP_CLOCK_KEYS)
+        self.assertEqual(data["duration_hours"], 1.0)
+        self.assertEqual(data["departure"], "07:00")
+        self.assertEqual(data["arrival"], "07:50")
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
+        self.assertNotIn("duration_hours", catalog.to_dict())
+        self.assertNotIn("departure", catalog.to_dict())
+        self.assertNotIn("arrival", catalog.to_dict())
+        silent = ExploreDestination(
+            iata="FCO",
+            city="Rome",
+            country="Italy",
+            price_eur=90.0,
+        )
+        self.assertIsNone(silent.duration_hours)
+        self.assertNotIn("duration_hours", silent.to_dict())
 
 
 if __name__ == "__main__":

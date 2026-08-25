@@ -129,6 +129,7 @@ Examples:
 EXPLORE_EXAMPLES = """\
 Examples:
   viajante explore JFK --from 2026-09-15 --days 7
+  viajante explore JFK --from 2026-09-15 --days 7 --sort duration
   viajante explore NRT --month 2026-10
   viajante explore SIN --from 2026-09-01 --price-cap 200
   viajante explore LHR --from 2026-09-15 --nearby
@@ -989,7 +990,10 @@ def _print_explore_report(report: ExploreReport) -> None:
     for row in report.destinations:
         price = f"{row.price_eur:>7.0f} €" if row.price_eur is not None else "      —"
         country = f"  {row.country}" if row.country else ""
-        print(f"  {price}  {row.iata}  {row.city}{country}{_format_typical_deal(row)}")
+        hours = ""
+        if row.duration_hours is not None:
+            hours = f"  {_format_layover_hours(row.duration_hours)}"
+        print(f"  {price}  {row.iata}  {row.city}{country}{hours}{_format_typical_deal(row)}")
         _print_google_flights_url(row.google_flights_url)
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare))
@@ -1576,6 +1580,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         cabin=args.cabin,
         max_stops=args.max_stops,
         nearby=nearby,
+        sort=args.sort,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
@@ -2303,6 +2308,16 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_currency_country_flags(explore)
     _add_owned_shop_filters(explore)
     _add_nearby_flag(explore)
+    explore.add_argument(
+        "--sort",
+        default="price",
+        choices=list(FLIGHT_SORTS),
+        help=(
+            "Order priced dests by cheapest fare (default), duration of that cheapest "
+            "offer, or its owned departure/arrival clock. Unnamed stays price. "
+            "A dest missing the sort key is not given a made-up duration or clock"
+        ),
+    )
     explore.add_argument(
         "--save",
         default=None,

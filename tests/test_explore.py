@@ -614,6 +614,112 @@ class ExploreSearchTests(unittest.TestCase):
             search_explore("XXX", date(2026, 9, 1))
 
 
+class ExploreSortTests(unittest.TestCase):
+    def test_named_duration_sort_orders_by_owned_hours_not_fare(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+            ),
+            prices={
+                "OPO": (
+                    _card(price="€40", duration="8 hr", departure="06:00", arrival="14:00"),
+                    _card(price="€90", duration="1 hr", departure="09:00", arrival="10:00"),
+                ),
+                "FCO": (_card(price="€120", duration="2 hr", departure="08:00", arrival="10:00"),),
+                "LIS": (_card(price="€50", duration="5 hr", departure="07:00", arrival="12:00"),),
+            },
+        )
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS", "FCO"])
+        self.assertEqual(unnamed.destinations[0].price_eur, 40.0)
+        self.assertEqual(unnamed.destinations[0].duration_hours, 8.0)
+        self.assertNotEqual(unnamed.destinations[0].duration_hours, 1.0)
+        ranked = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, sort="duration", source=source
+        )
+        self.assertEqual([row.iata for row in ranked.destinations], ["FCO", "LIS", "OPO"])
+        self.assertEqual([row.duration_hours for row in ranked.destinations], [2.0, 5.0, 8.0])
+        self.assertEqual(ranked.destinations[0].price_eur, 120.0)
+        self.assertEqual(ranked.destinations[2].duration_hours, 8.0)
+
+    def test_unnamed_sort_stays_cheapest_first(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+            ),
+            prices={
+                "FCO": (_card(price="€200", duration="1 hr"),),
+                "OPO": (_card(price="€40", duration="8 hr"),),
+            },
+        )
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        self.assertEqual([row.iata for row in report.destinations], ["OPO", "FCO"])
+        priced = search_explore("MAD", date(2026, 9, 1), days=7, top=2, sort="price", source=source)
+        self.assertEqual([row.iata for row in priced.destinations], ["OPO", "FCO"])
+        fare = search_explore("MAD", date(2026, 9, 1), days=7, top=2, sort="fare", source=source)
+        self.assertEqual([row.iata for row in fare.destinations], ["OPO", "FCO"])
+
+    def test_missing_duration_is_not_given_made_up_hours(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (_card(price="€90", duration="2 hr"),),
+                "LIS": (
+                    _card(
+                        price="€20",
+                        duration=None,
+                        departure=None,
+                        arrival=None,
+                    ),
+                ),
+            },
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, sort="duration", source=source
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["OPO", "LIS", "FCO"])
+        by_iata = {row.iata: row for row in report.destinations}
+        self.assertEqual(by_iata["OPO"].duration_hours, 2.0)
+        self.assertIsNone(by_iata["LIS"].duration_hours)
+        self.assertNotIn("duration_hours", by_iata["LIS"].to_dict())
+        self.assertIsNone(by_iata["FCO"].price_eur)
+        self.assertIsNone(by_iata["FCO"].duration_hours)
+        self.assertNotIn("duration_hours", by_iata["FCO"].to_dict())
+        self.assertNotEqual(by_iata["LIS"].duration_hours, 0.0)
+        self.assertNotEqual(by_iata["FCO"].duration_hours, 0.0)
+
+    def test_departure_sort_uses_owned_clock_of_cheapest_offer(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+            ),
+            prices={
+                "OPO": (_card(price="€30", duration="2 hr", departure="18:00", arrival="20:00"),),
+                "LIS": (_card(price="€80", duration="2 hr", departure="07:00", arrival="09:00"),),
+            },
+        )
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS"])
+        ranked = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=2, sort="departure", source=source
+        )
+        self.assertEqual([row.iata for row in ranked.destinations], ["LIS", "OPO"])
+        self.assertEqual(ranked.destinations[0].departure, "07:00")
+        self.assertEqual(ranked.destinations[1].departure, "18:00")
+
+    def test_unknown_sort_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            search_explore("MAD", date(2026, 9, 1), sort="fastest")  # type: ignore[arg-type]
+
+
 class ExploreCliTests(unittest.TestCase):
     def test_unknown_origin_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_explore") as search:
@@ -674,6 +780,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--max-layover", help_text)
         self.assertIn("--min-layover", help_text)
         self.assertIn("--max-duration", help_text)
+        self.assertIn("--sort", help_text)
+        self.assertIn("--sort duration", help_text)
 
     def test_explore_forwards_owned_shop_filters(self) -> None:
         with (
@@ -774,6 +882,49 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["infants_on_lap"], 0)
         self.assertEqual(kwargs["currency"], "EUR")
         self.assertIsNone(kwargs["country"])
+        self.assertEqual(kwargs["sort"], "price")
+
+    def test_explore_forwards_named_sort_duration(self) -> None:
+        with (
+            patch("viajante.cli.search_explore") as search,
+            patch("viajante.cli._print_explore_report"),
+        ):
+            search.return_value = SimpleNamespace(error=None, destinations=())
+            code = main(["explore", "MAD", "--from", "2026-09-01", "--sort", "duration"])
+        self.assertEqual(code, 0)
+        self.assertEqual(search.call_args.kwargs["sort"], "duration")
+
+    def test_explore_cli_prints_duration_sort_order(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (_card(price="€40", duration="8 hr"),),
+                "FCO": (_card(price="€120", duration="2 hr"),),
+            },
+        )
+        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(
+                    [
+                        "explore",
+                        "MAD",
+                        "--from",
+                        "2026-09-01",
+                        "--days",
+                        "7",
+                        "--sort",
+                        "duration",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertLess(output.index("FCO"), output.index("OPO"))
+        self.assertIn("2h", output)
+        self.assertIn("8h", output)
 
     def test_explore_forwards_named_occupancy(self) -> None:
         with (

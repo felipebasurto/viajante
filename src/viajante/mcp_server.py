@@ -285,6 +285,7 @@ def build_server():
         max_layover: float | None = None,
         currency: str = "EUR",
         country: str | None = None,
+        sort: str = "price",
     ) -> dict:
         return dict(
             search_explore_tool(
@@ -319,6 +320,7 @@ def build_server():
                 max_layover=max_layover,
                 currency=currency,
                 country=country,
+                sort=sort,  # type: ignore[arg-type]
             )
         )
 

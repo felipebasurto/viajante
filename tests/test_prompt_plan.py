@@ -2054,6 +2054,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.infants_on_lap)
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
+        self.assertIsNone(plan.sort)
 
     def test_explore_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -2214,6 +2215,33 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(vibe.max_layover)
         self.assertIsNone(vibe.min_layover)
         self.assertIsNone(vibe.max_duration)
+
+    def test_explore_named_sort_lands_vibe_does_not_invent(self) -> None:
+        flagged = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days --sort duration"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertEqual(flagged.sort, "duration")
+        named = plan_prompt(
+            "Explore cheap destinations from JFK starting 2026-09-15, 7 days, sort by duration"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertEqual(named.sort, "duration")
+        fastest = plan_prompt(
+            "Explore cheap destinations from JFK starting 2026-09-15, 7 days, fastest"
+        )
+        self.assertEqual(fastest.intent, "explore")
+        self.assertEqual(fastest.sort, "duration")
+        earliest = plan_prompt(
+            "Explore cheap destinations from JFK starting 2026-09-15, 7 days, earliest"
+        )
+        self.assertEqual(earliest.intent, "explore")
+        self.assertEqual(earliest.sort, "departure")
+        vibe = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days in Europe"
+        )
+        self.assertEqual(vibe.intent, "explore")
+        self.assertIsNone(vibe.sort)
 
     def test_explore_contradiction_does_not_pick_one(self) -> None:
         plan = plan_prompt(

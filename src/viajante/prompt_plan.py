@@ -722,6 +722,8 @@ _SORT_SHORTEST_FIRST = re.compile(
     re.IGNORECASE,
 )
 _SORT_EARLIEST_FIRST = re.compile(r"\bearliest(?:\s+departure)?\s+first\b", re.IGNORECASE)
+_SORT_FASTEST = re.compile(r"\bfastest\b", re.IGNORECASE)
+_SORT_EARLIEST = re.compile(r"\bearliest\b", re.IGNORECASE)
 _SORT_I18N = re.compile(
     r"\b(?:ordenar\s+por|trier\s+par|nach)\s+"
     r"(precio|tarifa|prix|preis|duracion|duree|dauer|salida|depart|abflug|"
@@ -1792,9 +1794,9 @@ def _sort_key(folded: str, flags: Mapping[str, str]) -> Optional[str]:
         return _SORT_ALIASES.get(token)
     if _SORT_CHEAPEST_FIRST.search(folded):
         return "price"
-    if _SORT_SHORTEST_FIRST.search(folded):
+    if _SORT_SHORTEST_FIRST.search(folded) or _SORT_FASTEST.search(folded):
         return "duration"
-    if _SORT_EARLIEST_FIRST.search(folded):
+    if _SORT_EARLIEST_FIRST.search(folded) or _SORT_EARLIEST.search(folded):
         return "departure"
     i18n = _SORT_I18N.search(folded)
     if i18n is not None:
@@ -3046,6 +3048,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             notes=notes,
             currency=currency,
             country=country,
+            sort=sort,
         )
 
     if intent == "flex":
