@@ -623,6 +623,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--exclude-airports", help_text)
+        self.assertIn("--include-airports", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
@@ -661,6 +662,8 @@ class ExploreCliTests(unittest.TestCase):
                     "DXB",
                     "--exclude-airports",
                     "HND",
+                    "--include-airports",
+                    "NRT,HND",
                     "--airlines",
                     "IB",
                     "--exclude-airlines",
@@ -692,6 +695,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
@@ -718,6 +722,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
         self.assertIsNone(kwargs["exclude_airports"])
+        self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["alliances"])
@@ -913,6 +918,87 @@ class ExcludeAirportsExploreTests(unittest.TestCase):
         self.assertEqual(empty.origin, "HND")
         self.assertEqual(empty.destinations, ())
         self.assertEqual(named_only.explore_origins, [])
+
+
+class IncludeAirportsExploreTests(unittest.TestCase):
+    def test_named_include_keeps_only_nrt_and_hnd(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("NRT", "Tokyo", "Japan"),
+            CompactExplorePlace("KIX", "Osaka", "Japan"),
+        )
+        prices = {
+            "HND": (_card(price="€40"),),
+            "NRT": (_card(price="€55"),),
+            "KIX": (_card(price="€70"),),
+        }
+        named = FakeExploreSource(places, prices=prices)
+        report = search_explore(
+            "SIN",
+            date(2026, 9, 15),
+            days=7,
+            top=3,
+            include_airports=("NRT", "HND"),
+            source=named,
+        )
+        iata = [row.iata for row in report.destinations]
+        self.assertEqual(iata, ["HND", "NRT"])
+        self.assertNotIn("KIX", iata)
+        self.assertEqual([query.destination for query in named.fetched_queries], ["HND", "NRT"])
+        unnamed = FakeExploreSource(places, prices=prices)
+        kept = search_explore("SIN", date(2026, 9, 15), days=7, top=3, source=unnamed)
+        unnamed_iata = [row.iata for row in kept.destinations]
+        self.assertEqual(unnamed_iata, ["HND", "NRT", "KIX"])
+        self.assertEqual(
+            [query.destination for query in unnamed.fetched_queries], ["HND", "NRT", "KIX"]
+        )
+
+    def test_named_include_empty_when_no_catalog_overlap(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("NRT", "Tokyo", "Japan"),
+        )
+        source = FakeExploreSource(places, prices={"HND": (_card(price="€40"),)})
+        report = search_explore(
+            "SIN",
+            date(2026, 9, 15),
+            days=7,
+            top=3,
+            include_airports=("LHR",),
+            source=source,
+        )
+        self.assertEqual(report.destinations, ())
+        self.assertEqual(source.fetched_queries, [])
+        self.assertNotIn("LHR", [row.iata for row in report.destinations])
+        self.assertNotIn("TYO", [row.iata for row in report.destinations])
+
+    def test_exclude_wins_on_include_overlap(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("NRT", "Tokyo", "Japan"),
+            CompactExplorePlace("KIX", "Osaka", "Japan"),
+        )
+        prices = {
+            "HND": (_card(price="€40"),),
+            "NRT": (_card(price="€55"),),
+            "KIX": (_card(price="€70"),),
+        }
+        source = FakeExploreSource(places, prices=prices)
+        report = search_explore(
+            "SIN",
+            date(2026, 9, 15),
+            days=7,
+            top=3,
+            include_airports=("NRT", "HND"),
+            exclude_airports=("HND",),
+            source=source,
+        )
+        iata = [row.iata for row in report.destinations]
+        self.assertEqual(iata, ["NRT"])
+        self.assertNotIn("HND", iata)
+        self.assertNotIn("KIX", iata)
+        self.assertNotIn("TYO", iata)
+        self.assertEqual([query.destination for query in source.fetched_queries], ["NRT"])
 
 
 class StopsCompareExploreShopTests(unittest.TestCase):

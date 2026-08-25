@@ -18,6 +18,7 @@ from viajante.flights import (
     compare_nonstop_vs_one_stop,
     drop_excluded_airport_trips,
     expand_nearby_trips,
+    keep_included_dest_trips,
     normalize_trip_kind,
     parse_via_airports,
     validate_layover_hours,
@@ -375,6 +376,16 @@ def _parse_exclude_airports(
     )
 
 
+def _parse_include_airports(
+    include_airports: Optional[Sequence[str]],
+) -> Optional[tuple[str, ...]]:
+    return (
+        parse_via_airports(",".join(include_airports), role="include-airports")
+        if include_airports
+        else None
+    )
+
+
 def _empty_dates_report(
     origin: str,
     destination: str,
@@ -579,6 +590,7 @@ def search_dates(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -602,6 +614,7 @@ def search_dates(
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
     parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
+    parsed_include_airports = _parse_include_airports(include_airports)
     seed = calendar_trip(
         origin,
         destination,
@@ -622,6 +635,7 @@ def search_dates(
         exclude_alliances=exclude_alliances,
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
+    trips = keep_included_dest_trips(trips, parsed_include_airports)
     trips = drop_excluded_airport_trips(trips, parsed_exclude_airports)
     if not trips:
         return _empty_dates_report(
@@ -882,6 +896,7 @@ def search_flex(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -918,6 +933,7 @@ def search_flex(
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
     parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
+    parsed_include_airports = _parse_include_airports(include_airports)
     seed = calendar_trip(
         origin,
         destination,
@@ -938,6 +954,7 @@ def search_flex(
         exclude_alliances=exclude_alliances,
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
+    trips = keep_included_dest_trips(trips, parsed_include_airports)
     trips = drop_excluded_airport_trips(trips, parsed_exclude_airports)
     if not trips:
         return _empty_flex_report(

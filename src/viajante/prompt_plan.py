@@ -379,7 +379,7 @@ _FLAG = re.compile(
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|arrive-before|depart-after|currency|country|airlines|"
     r"exclude-airlines|alliance|"
-    r"exclude-alliance|exclude-via|exclude-airports|via|bags|price-cap)\s+(\S+)",
+    r"exclude-alliance|exclude-via|exclude-airports|include-airports|via|bags|price-cap)\s+(\S+)",
     re.IGNORECASE,
 )
 _BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
@@ -875,6 +875,7 @@ class PromptPlan:
     split_packages: bool = False
     exclude_regions: Tuple[str, ...] = ()
     exclude_airports: Tuple[str, ...] = ()
+    include_airports: Tuple[str, ...] = ()
     via_regions: Tuple[str, ...] = ()
     via_airports: Tuple[str, ...] = ()
     exclude_via: Tuple[str, ...] = ()
@@ -943,6 +944,7 @@ class PromptPlan:
             "split_packages": self.split_packages,
             "exclude_regions": list(self.exclude_regions),
             "exclude_airports": list(self.exclude_airports),
+            "include_airports": list(self.include_airports),
             "via_regions": list(self.via_regions),
             "via_airports": list(self.via_airports),
             "exclude_via": list(self.exclude_via),
@@ -979,6 +981,7 @@ class PromptPlan:
             "refuse",
             "exclude_regions",
             "exclude_airports",
+            "include_airports",
             "no_overnight",
             "require_overnight",
             "prefer_airports",
@@ -2340,6 +2343,12 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_airports,
             parse_via_airports(flags["exclude-airports"], role="exclude-airports") or (),
         )
+    include_airports: list[str] = []
+    if "include-airports" in flags:
+        _extend_unique(
+            include_airports,
+            parse_via_airports(flags["include-airports"], role="include-airports") or (),
+        )
     via_airports = [code for code in via_airports if code not in exclude_via]
 
     if _NO_ASIA.search(folded) or "tercermundista" in folded:
@@ -2958,6 +2967,14 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         extra_refuse.append("missing_date")
 
     all_refuse = tuple(dict.fromkeys([*refuse, *extra_refuse]))
+    skip_include = {code for code in (origin, *via_airports, *require_overnight) if code}
+    if intent == "explore":
+        for code in destinations:
+            if code not in skip_include:
+                _extend_unique(include_airports, [code])
+        for code in prefer_airports:
+            if code not in skip_include:
+                _extend_unique(include_airports, [code])
     if intent != "refuse":
         # overlay refuses that are constraints, not the whole intent
         overlay = tuple(
@@ -3010,6 +3027,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             max_layover=max_layover,
             exclude_regions=tuple(exclude_regions),
             exclude_airports=tuple(exclude_airports),
+            include_airports=tuple(include_airports),
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
             no_overnight=tuple(no_overnight),
@@ -3071,6 +3089,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             currency=currency,
             country=country,
             exclude_airports=tuple(exclude_airports),
+            include_airports=tuple(include_airports),
         )
 
     if intent == "dates":
@@ -3111,6 +3130,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             currency=currency,
             country=country,
             exclude_airports=tuple(exclude_airports),
+            include_airports=tuple(include_airports),
         )
 
     if intent == "refuse":
@@ -3161,6 +3181,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         split_packages=split,
         exclude_regions=tuple(exclude_regions),
         exclude_airports=tuple(exclude_airports),
+        include_airports=tuple(include_airports),
         via_regions=via_regions,
         via_airports=tuple(via_airports),
         exclude_via=tuple(exclude_via),

@@ -80,6 +80,7 @@ class McpHandlerTests(unittest.TestCase):
                 via="IST",
                 exclude_via="DXB",
                 exclude_airports="HND",
+                include_airports="NRT,HND",
                 baggage_buffer=0,
                 sort="duration",
             )
@@ -96,6 +97,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["via"], ("IST",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["buffer_eur"], 0)
         self.assertEqual(kwargs["sort"], "duration")
 
@@ -202,6 +204,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
         self.assertIsNone(kwargs["exclude_airports"])
+        self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["alliances"])
@@ -258,6 +261,7 @@ class McpHandlerTests(unittest.TestCase):
                 via="LIS",
                 exclude_via="DXB",
                 exclude_airports="HND",
+                include_airports="NRT,HND",
                 airlines="IB",
                 exclude_airlines="FR",
                 alliance="star",
@@ -276,6 +280,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
@@ -350,6 +355,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["bags"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_airports"])
+        self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["alliances"])
         self.assertIsNone(kwargs["exclude_alliances"])
@@ -402,6 +408,7 @@ class McpHandlerTests(unittest.TestCase):
                 bags=1,
                 via="IST",
                 exclude_airports="HND",
+                include_airports="NRT,HND",
                 airlines="BA",
                 alliance="oneworld",
                 exclude_alliance="star",
@@ -417,6 +424,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["bags"], 1)
         self.assertEqual(kwargs["via"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("BA",))
         self.assertEqual(kwargs["alliances"], ("oneworld",))
         self.assertEqual(kwargs["exclude_alliances"], ("star",))
@@ -462,6 +470,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(search.call_args.kwargs["bags"])
         self.assertIsNone(search.call_args.kwargs["via"])
         self.assertIsNone(search.call_args.kwargs["exclude_airports"])
+        self.assertIsNone(search.call_args.kwargs["include_airports"])
         self.assertIsNone(search.call_args.kwargs["airlines"])
         self.assertIsNone(search.call_args.kwargs["alliances"])
         self.assertIsNone(search.call_args.kwargs["exclude_alliances"])
@@ -516,6 +525,7 @@ class McpHandlerTests(unittest.TestCase):
                 via="LIS",
                 exclude_via="DXB",
                 exclude_airports="HND",
+                include_airports="NRT,HND",
                 airlines="IB",
                 exclude_airlines="FR",
                 alliance="star",
@@ -534,6 +544,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
@@ -610,6 +621,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
         self.assertIsNone(kwargs["exclude_airports"])
+        self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
@@ -634,6 +646,7 @@ class McpHandlerTests(unittest.TestCase):
                 via="LIS",
                 exclude_via="DXB",
                 exclude_airports="HND",
+                include_airports="NRT,HND",
                 airlines="IB",
                 exclude_airlines="FR",
                 price_cap=200,
@@ -646,6 +659,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)

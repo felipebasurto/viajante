@@ -677,11 +677,14 @@ class ReportRenderingTests(unittest.TestCase):
                         "DXB",
                         "--exclude-airports",
                         "HND",
+                        "--include-airports",
+                        "NRT,HND",
                     ]
                 )
         self.assertEqual(search.call_args.kwargs["via"], ("IST",))
         self.assertEqual(search.call_args.kwargs["exclude_via"], ("DXB",))
         self.assertEqual(search.call_args.kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(search.call_args.kwargs["include_airports"], ("NRT", "HND"))
 
     def test_layover_is_visible_on_one_stop_rows(self) -> None:
         output = _rendered(
@@ -894,6 +897,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--via", help_text)
         self.assertIn("--exclude-via", help_text)
         self.assertIn("--exclude-airports", help_text)
+        self.assertIn("--include-airports", help_text)
         self.assertIn("--max-duration", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--exclude-airlines", help_text)
@@ -1709,6 +1713,7 @@ class TripCliTests(unittest.TestCase):
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--exclude-airports", help_text)
+        self.assertIn("--include-airports", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
@@ -1748,6 +1753,8 @@ class TripCliTests(unittest.TestCase):
                     "DXB",
                     "--exclude-airports",
                     "HND",
+                    "--include-airports",
+                    "NRT,HND",
                     "--airlines",
                     "IB",
                     "--exclude-airlines",
@@ -1767,6 +1774,7 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
+        self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
@@ -1807,6 +1815,7 @@ class TripCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
         self.assertIsNone(kwargs["exclude_airports"])
+        self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])

@@ -83,6 +83,16 @@ def _parse_exclude_airports(
     )
 
 
+def _parse_include_airports(
+    include_airports: Optional[Sequence[str]],
+) -> Optional[tuple[str, ...]]:
+    return (
+        parse_via_airports(",".join(include_airports), role="include-airports")
+        if include_airports
+        else None
+    )
+
+
 def _named_shop_filters(
     *,
     bags: Optional[int],
@@ -149,6 +159,7 @@ def _explore_for_origin(
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     parsed_exclude_airports: Optional[tuple[str, ...]],
+    parsed_include_airports: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
     arrive_before: Optional[int],
     depart_after: Optional[int],
@@ -183,7 +194,10 @@ def _explore_for_origin(
     except Exception as exc:
         error = classify_failure(exc)
         places = ()
+    allowed = frozenset(parsed_include_airports or ())
     blocked = frozenset(parsed_exclude_airports or ())
+    if allowed:
+        places = tuple(place for place in places if place.iata in allowed)
     if blocked:
         places = tuple(place for place in places if place.iata not in blocked)
     priced: list[ExploreDestination] = []
@@ -267,6 +281,7 @@ def search_explore(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -295,6 +310,7 @@ def search_explore(
     )
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
     parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
+    parsed_include_airports = _parse_include_airports(include_airports)
     origin = origin.strip().upper()
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
@@ -355,6 +371,7 @@ def search_explore(
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     parsed_exclude_airports=parsed_exclude_airports,
+                    parsed_include_airports=parsed_include_airports,
                     depart_window=depart_window,
                     arrive_before=arrive_before,
                     depart_after=depart_after,
