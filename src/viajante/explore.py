@@ -9,6 +9,7 @@ from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import is_known_iata
 from viajante.flights import (
+    _calendar_summary_from_source,
     _normalize_offer,
     classify_failure,
     compare_nonstop_vs_one_stop,
@@ -29,6 +30,7 @@ from viajante.models import (
     normalize_currency,
 )
 from viajante.storage import write_json_atomic
+from viajante.typical import with_typical_dest
 
 DEFAULT_EXPLORE_TOP = 12
 MAX_EXPLORE_TOP = 30
@@ -201,6 +203,7 @@ def _explore_for_origin(
     if blocked:
         places = tuple(place for place in places if place.iata not in blocked)
     priced: list[ExploreDestination] = []
+    typical_cache: dict = {}
     for index, place in enumerate(places[:top]):
         report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
         price, compare, shop = _cheapest_shop(
@@ -232,16 +235,19 @@ def _explore_for_origin(
         )
         if drop_unpriced and price is None:
             continue
-        priced.append(
-            ExploreDestination(
-                iata=place.iata,
-                city=place.city,
-                country=place.country,
-                price_eur=price,
-                stops_compare=compare,
-                google_flights_url=google_flights_url(shop, currency=currency, country=country),
-            )
+        dest = ExploreDestination(
+            iata=place.iata,
+            city=place.city,
+            country=place.country,
+            price_eur=price,
+            stops_compare=compare,
+            google_flights_url=google_flights_url(shop, currency=currency, country=country),
         )
+        if price is not None:
+            summary = _calendar_summary_from_source(client, shop, typical_cache)
+            if summary is not None:
+                dest = with_typical_dest(dest, summary.median_eur)
+        priced.append(dest)
     priced.sort(key=lambda row: (row.price_eur is None, row.price_eur or 0.0, row.iata))
     destinations = tuple(priced)
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))

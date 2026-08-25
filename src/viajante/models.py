@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
 from statistics import median
@@ -18,6 +18,56 @@ FlightCabin = Literal["economy", "premium-economy", "business", "first"]
 _CABINS: tuple[FlightCabin, ...] = ("economy", "premium-economy", "business", "first")
 VsTypical = Literal["below", "near", "above"]
 _VS_TYPICAL: tuple[VsTypical, ...] = ("below", "near", "above")
+NEAR_TYPICAL_RATIO = 0.10
+
+
+def vs_typical(price_eur: float, typical_eur: Optional[float]) -> Optional[VsTypical]:
+    """Coarse label against an owned typical. None when there is no typical."""
+    if typical_eur is None or typical_eur <= 0:
+        return None
+    if price_eur < typical_eur * (1.0 - NEAR_TYPICAL_RATIO):
+        return "below"
+    if price_eur > typical_eur * (1.0 + NEAR_TYPICAL_RATIO):
+        return "above"
+    return "near"
+
+
+def vs_typical_pct(price_eur: float, typical_eur: Optional[float]) -> Optional[int]:
+    """Signed percent of the fare versus an owned typical. None without a typical."""
+    if typical_eur is None or typical_eur <= 0:
+        return None
+    return int(round((price_eur / typical_eur - 1.0) * 100.0))
+
+
+def _require_typical_triple(
+    typical_eur: Optional[float],
+    vs: Optional[VsTypical],
+    pct: Optional[int],
+) -> None:
+    have = (typical_eur is None, vs is None, pct is None)
+    if len(set(have)) != 1:
+        raise ValueError(
+            "typical_eur, vs_typical, and vs_typical_pct must all be set or all omitted"
+        )
+    if typical_eur is not None and typical_eur <= 0:
+        raise ValueError("typical_eur must be positive")
+    if vs is not None and vs not in _VS_TYPICAL:
+        raise ValueError(f"invalid vs_typical: {vs!r}")
+
+
+def _typical_json(
+    typical_eur: Optional[float],
+    vs: Optional[VsTypical],
+    pct: Optional[int],
+) -> dict[str, object]:
+    if typical_eur is None or vs is None or pct is None:
+        return {}
+    return {
+        "typical_eur": typical_eur,
+        "vs_typical": vs,
+        "vs_typical_pct": pct,
+        "typical_deal": format_typical_deal(vs, typical_eur, pct),
+    }
 
 
 def format_typical_deal(
@@ -821,6 +871,26 @@ def owned_calendar_summary(
     )
 
 
+def _stamp_date_row_typical(
+    row: "DatePriceRow",
+    typical_eur: Optional[float],
+) -> "DatePriceRow":
+    """Stamp or omit the owned window median. Empty/error rows stay omitted."""
+    if row.status != "ok" or row.price_eur is None or row.price_eur <= 0:
+        if row.typical_eur is None:
+            return row
+        return replace(row, typical_eur=None, vs_typical=None, vs_typical_pct=None)
+    label = vs_typical(row.price_eur, typical_eur)
+    pct = vs_typical_pct(row.price_eur, typical_eur)
+    if typical_eur is None or label is None or pct is None:
+        if row.typical_eur is None:
+            return row
+        return replace(row, typical_eur=None, vs_typical=None, vs_typical_pct=None)
+    if row.typical_eur == typical_eur and row.vs_typical == label and row.vs_typical_pct == pct:
+        return row
+    return replace(row, typical_eur=typical_eur, vs_typical=label, vs_typical_pct=pct)
+
+
 @dataclass(frozen=True)
 class DatePriceRow:
     departure_date: date
@@ -832,6 +902,17 @@ class DatePriceRow:
     error: Optional[SearchError] = None
     stops_compare: Optional[StopsCompare] = None
     google_flights_url: Optional[str] = None
+    typical_eur: Optional[float] = None
+    vs_typical: Optional[VsTypical] = None
+    vs_typical_pct: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
+        if (self.status != "ok" or self.price_eur is None) and self.typical_eur is not None:
+            raise ValueError("empty/error rows omit typical")
+
+    def typical_deal(self) -> Optional[str]:
+        return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -849,6 +930,7 @@ class DatePriceRow:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
+        payload.update(_typical_json(self.typical_eur, self.vs_typical, self.vs_typical_pct))
         return payload
 
 
@@ -884,6 +966,12 @@ class DateCalendarReport:
             self,
             "summary",
             owned_calendar_summary([(row.departure_date, row.price_eur) for row in self.days]),
+        )
+        typical = None if self.summary is None else self.summary.median_eur
+        object.__setattr__(
+            self,
+            "days",
+            tuple(_stamp_date_row_typical(row, typical) for row in self.days),
         )
 
     def to_dict(self) -> Mapping[str, object]:
@@ -1002,6 +1090,17 @@ class ExploreDestination:
     price_eur: Optional[float] = None
     stops_compare: Optional[StopsCompare] = None
     google_flights_url: Optional[str] = None
+    typical_eur: Optional[float] = None
+    vs_typical: Optional[VsTypical] = None
+    vs_typical_pct: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
+        if self.price_eur is None and self.typical_eur is not None:
+            raise ValueError("typical requires an owned dest fare")
+
+    def typical_deal(self) -> Optional[str]:
+        return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -1014,6 +1113,7 @@ class ExploreDestination:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
+        payload.update(_typical_json(self.typical_eur, self.vs_typical, self.vs_typical_pct))
         return payload
 
 

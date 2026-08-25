@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 from contextlib import redirect_stdout
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -242,6 +242,9 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(report.days[0].status, "error")
         self.assertEqual(report.days[0].error.code, SearchErrorCode.REJECTED)
         self.assertEqual(report.days[1].error.code, SearchErrorCode.REJECTED)
+        self.assertIsNone(report.days[0].typical_eur)
+        self.assertIsNone(report.days[0].vs_typical)
+        self.assertNotIn("typical_eur", report.days[0].to_dict())
 
     def test_calendar_miss_falls_back_to_per_day_sweep(self) -> None:
         source = FakeCalendarSource(
@@ -441,6 +444,19 @@ class CalendarPresentationTests(unittest.TestCase):
         self.assertEqual(report.summary.cheapest_date, date(2026, 9, 3))
         self.assertEqual(report.summary.n_priced, 3)
         self.assertEqual(report.to_dict()["summary"]["cheapest_date"], "2026-09-03")
+        self.assertEqual(report.days[0].typical_eur, 81.0)
+        self.assertEqual(report.days[0].vs_typical, "near")
+        self.assertEqual(report.days[0].vs_typical_pct, 0)
+        self.assertEqual(report.days[1].typical_eur, None)
+        self.assertEqual(report.days[2].vs_typical, "below")
+        self.assertEqual(report.days[2].vs_typical_pct, -17)
+        self.assertEqual(report.days[2].typical_eur, 81.0)
+        self.assertEqual(report.days[3].vs_typical, "above")
+        self.assertEqual(report.days[0].typical_deal(), "near typical 81 € (0%)")
+        payload = report.days[2].to_dict()
+        self.assertEqual(payload["typical_eur"], 81.0)
+        self.assertEqual(payload["vs_typical"], "below")
+        self.assertNotIn("typical_eur", report.days[1].to_dict())
 
     def test_search_dates_omits_summary_when_the_grid_is_thin(self) -> None:
         source = FakeCalendarSource(
@@ -453,6 +469,60 @@ class CalendarPresentationTests(unittest.TestCase):
         report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 3), source=source)
         self.assertIsNone(report.summary)
         self.assertNotIn("summary", report.to_dict())
+        for row in report.days:
+            self.assertIsNone(row.typical_eur)
+            self.assertIsNone(row.vs_typical)
+            self.assertIsNone(row.vs_typical_pct)
+            self.assertIsNone(row.typical_deal())
+            self.assertNotIn("typical_eur", row.to_dict())
+            self.assertNotIn("vs_typical", row.to_dict())
+            self.assertNotIn("vs_typical_pct", row.to_dict())
+            self.assertNotIn("typical_deal", row.to_dict())
+
+    def test_empty_calendar_omits_the_typical_triple(self) -> None:
+        source = FakeCalendarSource(())
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        self.assertIsNone(report.summary)
+        self.assertTrue(report.days)
+        for row in report.days:
+            self.assertEqual(row.status, "empty")
+            self.assertIsNone(row.typical_eur)
+            self.assertIsNone(row.vs_typical)
+            self.assertNotIn("typical_eur", row.to_dict())
+
+    def test_thin_report_does_not_keep_an_invented_typical(self) -> None:
+        report = DateCalendarReport(
+            searched_at=datetime(2026, 8, 11, 10, 32, 0),
+            origin="MAD",
+            destination="BCN",
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 1),
+            days=(
+                DatePriceRow(
+                    departure_date=date(2026, 9, 1),
+                    price_eur=40.0,
+                    typical_eur=999.0,
+                    vs_typical="below",
+                    vs_typical_pct=-96,
+                ),
+            ),
+        )
+        self.assertIsNone(report.summary)
+        self.assertEqual(report.days[0].price_eur, 40.0)
+        self.assertIsNone(report.days[0].typical_eur)
+        self.assertIsNone(report.days[0].vs_typical)
+        self.assertIsNone(report.days[0].vs_typical_pct)
+        self.assertNotIn("typical_eur", report.days[0].to_dict())
+
+    def test_empty_row_rejects_typical(self) -> None:
+        with self.assertRaises(ValueError):
+            DatePriceRow(
+                departure_date=date(2026, 9, 1),
+                status="empty",
+                typical_eur=81.0,
+                vs_typical="near",
+                vs_typical_pct=0,
+            )
 
     def test_week_calendar_marks_empty_days_and_does_not_invent(self) -> None:
         lines = format_week_calendar(
@@ -553,6 +623,7 @@ class DateCliTests(unittest.TestCase):
         self.assertNotIn("min ", output)
         self.assertNotIn("median ", output)
         self.assertNotIn("Cheapest nonstop:", output)
+        self.assertNotIn("typical", output)
 
     def test_prints_week_calendar_summary_and_marks_empty(self) -> None:
         source = FakeCalendarSource(
@@ -586,6 +657,9 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("cheapest 2026-09-01", output)
         self.assertIn("3 priced", output)
         self.assertNotIn("65 €", output)
+        self.assertIn("below typical 55 € (−27%)", output)
+        self.assertIn("above typical 55 € (+64%)", output)
+        self.assertIn("near typical 55 € (0%)", output)
 
     def test_dates_help_mentions_the_cap(self) -> None:
         buffer = io.StringIO()
