@@ -657,9 +657,7 @@ class ExploreSortTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "FCO"])
-        priced = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=2, sort="price", source=source
-        )
+        priced = search_explore("MAD", date(2026, 9, 1), days=7, top=2, sort="price", source=source)
         self.assertEqual([row.iata for row in priced.destinations], ["OPO", "FCO"])
         fare = search_explore("MAD", date(2026, 9, 1), days=7, top=2, sort="fare", source=source)
         self.assertEqual([row.iata for row in fare.destinations], ["OPO", "FCO"])
@@ -892,9 +890,7 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli._print_explore_report"),
         ):
             search.return_value = SimpleNamespace(error=None, destinations=())
-            code = main(
-                ["explore", "MAD", "--from", "2026-09-01", "--sort", "duration"]
-            )
+            code = main(["explore", "MAD", "--from", "2026-09-01", "--sort", "duration"])
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
