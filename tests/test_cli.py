@@ -613,6 +613,29 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["depart_window"], (6 * 60, 20 * 60))
         self.assertEqual(search.call_args.kwargs["sort"], "departure")
 
+    def test_named_clock_filters_reach_the_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(
+                    [
+                        "flights",
+                        ROUTE,
+                        "--arrive-before",
+                        "10:00",
+                        "--depart-after",
+                        "18:00",
+                    ]
+                )
+        self.assertEqual(search.call_args.kwargs["arrive_before"], 10 * 60)
+        self.assertEqual(search.call_args.kwargs["depart_after"], 18 * 60)
+
+    def test_unnamed_clock_filters_stay_unset(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                main(["flights", ROUTE])
+        self.assertIsNone(search.call_args.kwargs["arrive_before"])
+        self.assertIsNone(search.call_args.kwargs["depart_after"])
+
     def test_sort_price_reaches_the_search(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
@@ -873,6 +896,8 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
         self.assertIn("--depart-window", help_text)
+        self.assertIn("--arrive-before", help_text)
+        self.assertIn("--depart-after", help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--carry-on", help_text)
         self.assertIn("--price-cap", help_text)
@@ -1722,6 +1747,10 @@ class TripCliTests(unittest.TestCase):
                     "FR",
                     "--price-cap",
                     "200",
+                    "--arrive-before",
+                    "10:00",
+                    "--depart-after",
+                    "18:00",
                 ]
             )
         self.assertEqual(code, 0)
@@ -1733,6 +1762,8 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["arrive_before"], 10 * 60)
+        self.assertEqual(kwargs["depart_after"], 18 * 60)
         trip = search.call_args.args[0][0]
         self.assertEqual(trip.bags, 1)
         self.assertEqual(trip.carry_on, 1)
@@ -1770,6 +1801,8 @@ class TripCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["arrive_before"])
+        self.assertIsNone(kwargs["depart_after"])
         trip = search.call_args.args[0][0]
         self.assertIsNone(trip.bags)
         self.assertIsNone(trip.carry_on)

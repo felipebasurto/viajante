@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from viajante.cli import main
 from viajante.explore import search_explore
-from viajante.flights import _normalize_offer, parse_depart_window
+from viajante.flights import _normalize_offer, parse_depart_window, parse_named_clock
 from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import (
     CompactExplorePlace,
@@ -363,6 +363,70 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(by_iata["LIS"], 28.0)
         self.assertEqual(by_iata["FCO"], 40.0)
 
+    def test_named_arrive_before_drops_dests_without_an_on_time_fare(self) -> None:
+        early = _card(arrival="09:00", price="€90")
+        late = _card(arrival="23:00", price="€28")
+        silent = _card(arrival=None, price="€40")
+        bound = parse_named_clock("10:00", role="arrive-before")
+        self.assertIsNotNone(_normalize_offer(early, 1, buffer_eur=0, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(late, 1, buffer_eur=0, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, buffer_eur=0, arrive_before=bound))
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (early, late),
+                "LIS": (late, silent),
+                "FCO": (silent,),
+            },
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, source=source, arrive_before=bound
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["OPO"])
+        self.assertEqual(report.destinations[0].price_eur, 90.0)
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
+        self.assertEqual(by_iata["OPO"], 28.0)
+        self.assertEqual(by_iata["LIS"], 28.0)
+        self.assertEqual(by_iata["FCO"], 40.0)
+
+    def test_named_depart_after_drops_dests_without_a_late_enough_fare(self) -> None:
+        late = _card(departure="19:00", price="€90")
+        early = _card(departure="08:00", price="€28")
+        silent = _card(departure=None, price="€40")
+        bound = parse_named_clock("18:00", role="depart-after")
+        self.assertIsNotNone(_normalize_offer(late, 1, buffer_eur=0, depart_after=bound))
+        self.assertIsNone(_normalize_offer(early, 1, buffer_eur=0, depart_after=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, buffer_eur=0, depart_after=bound))
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (late, early),
+                "LIS": (early, silent),
+                "FCO": (silent,),
+            },
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, source=source, depart_after=bound
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["OPO"])
+        self.assertEqual(report.destinations[0].price_eur, 90.0)
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
+        self.assertEqual(by_iata["OPO"], 28.0)
+        self.assertEqual(by_iata["LIS"], 28.0)
+        self.assertEqual(by_iata["FCO"], 40.0)
+
     def test_named_layover_and_duration_drop_dests_without_an_eligible_shop(self) -> None:
         nonstop = _card(stops="Nonstop", duration="1 hr 20 min", price="€90")
         short_hop = _card(
@@ -569,6 +633,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
+        self.assertIn("--arrive-before", help_text)
+        self.assertIn("--depart-after", help_text)
         self.assertIn("--max-layover", help_text)
         self.assertIn("--min-layover", help_text)
         self.assertIn("--max-duration", help_text)
@@ -604,6 +670,10 @@ class ExploreCliTests(unittest.TestCase):
                     "200",
                     "--depart-window",
                     "7-12",
+                    "--arrive-before",
+                    "10:00",
+                    "--depart-after",
+                    "18:00",
                     "--max-layover",
                     "3",
                     "--min-layover",
@@ -624,6 +694,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
+        self.assertEqual(kwargs["arrive_before"], 10 * 60)
+        self.assertEqual(kwargs["depart_after"], 18 * 60)
         self.assertEqual(kwargs["max_layover_hours"], 3)
         self.assertEqual(kwargs["min_layover_hours"], 1)
         self.assertEqual(kwargs["max_duration_hours"], 8)
@@ -647,6 +719,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_alliances"])
         self.assertIsNone(kwargs["price_cap_eur"])
         self.assertIsNone(kwargs["depart_window"])
+        self.assertIsNone(kwargs["arrive_before"])
+        self.assertIsNone(kwargs["depart_after"])
         self.assertIsNone(kwargs["max_layover_hours"])
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])

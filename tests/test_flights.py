@@ -20,6 +20,7 @@ from viajante.flights import (
     normalize_trip_kind,
     parse_depart_window,
     parse_flight_plan,
+    parse_named_clock,
     parse_route_specs,
     parse_via_airports,
     plan_unit_count,
@@ -1057,6 +1058,43 @@ class OfferFilterTests(unittest.TestCase):
             parse_depart_window("20:00-06:00")
         with self.assertRaises(ValueError):
             parse_depart_window("20-6")
+
+    def test_arrive_before_drops_late_arrival(self) -> None:
+        early = card(arrival="09:00", price="90 €")
+        on_bound = card(arrival="10:00", price="80 €")
+        late = card(arrival="23:00", price="40 €")
+        silent = card(arrival=None, price="70 €")
+        bound = parse_named_clock("10:00", role="arrive-before")
+        self.assertEqual(bound, 10 * 60)
+        self.assertIsNotNone(_normalize_offer(early, 1, arrive_before=bound))
+        self.assertIsNotNone(_normalize_offer(on_bound, 1, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(late, 1, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, arrive_before=bound))
+        self.assertIsNotNone(_normalize_offer(late, 1))
+        self.assertIsNotNone(_normalize_offer(silent, 1))
+
+    def test_depart_after_drops_early_depart(self) -> None:
+        late = card(departure="19:00", price="90 €")
+        on_bound = card(departure="18:00", price="80 €")
+        early = card(departure="08:00", price="40 €")
+        silent = card(departure=None, price="70 €")
+        bound = parse_named_clock("18:00", role="depart-after")
+        self.assertEqual(bound, 18 * 60)
+        self.assertIsNotNone(_normalize_offer(late, 1, depart_after=bound))
+        self.assertIsNotNone(_normalize_offer(on_bound, 1, depart_after=bound))
+        self.assertIsNone(_normalize_offer(early, 1, depart_after=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, depart_after=bound))
+        self.assertIsNotNone(_normalize_offer(early, 1))
+        self.assertIsNotNone(_normalize_offer(silent, 1))
+
+    def test_parse_named_clock_unnamed_stays_unset(self) -> None:
+        self.assertIsNone(parse_named_clock(None, role="arrive-before"))
+        with self.assertRaises(ValueError):
+            parse_named_clock("", role="arrive-before")
+        with self.assertRaises(ValueError):
+            parse_named_clock("morning", role="arrive-before")
+        with self.assertRaises(ValueError):
+            parse_named_clock("late", role="depart-after")
 
     def test_max_duration_drops_long_elapsed_time(self) -> None:
         short = card(duration="1 h 20 min", price="90 €")

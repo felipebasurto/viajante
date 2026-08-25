@@ -48,6 +48,7 @@ from viajante.flights import (
     normalize_trip_kind,
     parse_depart_window,
     parse_flight_plan,
+    parse_named_clock,
     parse_via_airports,
     search_flights,
     write_report_atomic,
@@ -200,6 +201,8 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     parse_alliances(args.alliance)
     parse_alliances(args.exclude_alliance)
     parse_depart_window(args.depart_window)
+    parse_named_clock(getattr(args, "arrive_before", None), role="arrive-before")
+    parse_named_clock(getattr(args, "depart_after", None), role="depart-after")
     parse_via_airports(args.via)
     parse_via_airports(args.exclude_via, role="exclude-via")
     if args.via and args.exclude_via:
@@ -752,6 +755,8 @@ def _run_flights(args: argparse.Namespace) -> int:
         alliances=parse_alliances(args.alliance),
         exclude_alliances=parse_alliances(args.exclude_alliance),
         depart_window=parse_depart_window(args.depart_window),
+        arrive_before=parse_named_clock(args.arrive_before, role="arrive-before"),
+        depart_after=parse_named_clock(args.depart_after, role="depart-after"),
         via=parse_via_airports(args.via),
         exclude_via=parse_via_airports(args.exclude_via, role="exclude-via"),
         currency=args.currency,
@@ -821,6 +826,8 @@ def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
         "alliance": None,
         "exclude_alliance": None,
         "depart_window": None,
+        "arrive_before": None,
+        "depart_after": None,
         "via": None,
         "exclude_via": None,
     }
@@ -1161,6 +1168,26 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         help="Keep local departures in START-END inclusive (hours 6-20 or clocks 06:00-20:00)",
     )
     parser.add_argument(
+        "--arrive-before",
+        default=None,
+        dest="arrive_before",
+        metavar="HH:MM",
+        help=(
+            "Keep local arrivals at or before HH:MM. Post-filter on owned offer clocks; "
+            "unknown arrival cannot prove the bound"
+        ),
+    )
+    parser.add_argument(
+        "--depart-after",
+        default=None,
+        dest="depart_after",
+        metavar="HH:MM",
+        help=(
+            "Keep local departures at or after HH:MM. Post-filter on owned offer clocks; "
+            "unknown departure cannot prove the bound"
+        ),
+    )
+    parser.add_argument(
         "--max-layover",
         type=float,
         default=None,
@@ -1218,6 +1245,10 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "via": via,
         "exclude_via": exclude_via,
         "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
+        "arrive_before": parse_named_clock(
+            getattr(args, "arrive_before", None), role="arrive-before"
+        ),
+        "depart_after": parse_named_clock(getattr(args, "depart_after", None), role="depart-after"),
         "max_layover_hours": max_layover,
         "min_layover_hours": min_layover,
         "max_duration_hours": max_duration,
@@ -1672,6 +1703,26 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="depart_window",
         metavar="START-END",
         help="Keep local departures in START-END inclusive (hours 6-20 or clocks 06:00-20:00)",
+    )
+    flights.add_argument(
+        "--arrive-before",
+        default=None,
+        dest="arrive_before",
+        metavar="HH:MM",
+        help=(
+            "Keep local arrivals at or before HH:MM. Post-filter on owned offer clocks; "
+            "unknown arrival cannot prove the bound"
+        ),
+    )
+    flights.add_argument(
+        "--depart-after",
+        default=None,
+        dest="depart_after",
+        metavar="HH:MM",
+        help=(
+            "Keep local departures at or after HH:MM. Post-filter on owned offer clocks; "
+            "unknown departure cannot prove the bound"
+        ),
     )
     flights.add_argument(
         "--fetch",

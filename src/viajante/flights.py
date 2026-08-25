@@ -714,6 +714,21 @@ def parse_depart_window(text: Optional[str]) -> Optional[Tuple[int, int]]:
     return start_hour * 60, end_hour * 60 + 59
 
 
+def parse_named_clock(text: Optional[str], *, role: str = "clock") -> Optional[int]:
+    """Parse a named HH:MM clock as minutes from midnight. Unnamed stays unset."""
+    if text is None:
+        return None
+    raw = text.strip()
+    if not raw:
+        raise ValueError(f"{role} must look like HH:MM")
+    minutes = _clock_token_minutes(raw)
+    if minutes is None:
+        minutes = _clock_minutes(raw)
+    if minutes is None:
+        raise ValueError(f"{role} must look like HH:MM")
+    return minutes
+
+
 def validate_layover_hours(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
@@ -890,6 +905,24 @@ def _passes_depart_window(raw: RawFlightCard, window: Optional[Tuple[int, int]])
     return start <= minutes <= end
 
 
+def _passes_arrive_before(clock_text: Optional[str], bound: Optional[int]) -> bool:
+    if bound is None:
+        return True
+    minutes = _clock_minutes(clock_text)
+    if minutes is None:
+        return False
+    return minutes <= bound
+
+
+def _passes_depart_after(clock_text: Optional[str], bound: Optional[int]) -> bool:
+    if bound is None:
+        return True
+    minutes = _clock_minutes(clock_text)
+    if minutes is None:
+        return False
+    return minutes >= bound
+
+
 def baggage_buffer_eur(
     airline_text: str,
     *,
@@ -943,6 +976,8 @@ def _normalize_offer(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
     max_duration_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     via: Optional[Sequence[str]] = None,
@@ -1006,7 +1041,7 @@ def _normalize_offer(
         )
         for leg in raw.legs
     )
-    return FlightOffer(
+    offer = FlightOffer(
         airline=raw.airline,
         departure=normalize_clock(raw.departure) or raw.departure,
         arrival=normalize_clock(raw.arrival) or raw.arrival,
@@ -1026,6 +1061,11 @@ def _normalize_offer(
         checked_bags=raw.checked_bags,
         carry_on=raw.carry_on,
     )
+    if not _passes_arrive_before(offer.arrival, arrive_before):
+        return None
+    if not _passes_depart_after(offer.departure, depart_after):
+        return None
+    return offer
 
 
 def _effective_cost(offer: FlightOffer) -> float:
@@ -1268,6 +1308,8 @@ def _run_search(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
@@ -1293,6 +1335,8 @@ def _run_search(
                         exclude_airlines if exclude_airlines is not None else trip.exclude_airlines
                     ),
                     depart_window=depart_window,
+                    arrive_before=arrive_before,
+                    depart_after=depart_after,
                     via=via,
                     exclude_via=exclude_via,
                     bags=trip.bags,
@@ -1467,6 +1511,8 @@ def _search_with_source(
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
@@ -1491,6 +1537,8 @@ def _search_with_source(
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
             via=via,
             exclude_via=exclude_via,
             retry_backoff=retry_backoff,
@@ -1515,6 +1563,8 @@ def search_flights(
     alliances: Optional[Sequence[str]] = None,
     exclude_alliances: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     currency: str = "EUR",
@@ -1583,6 +1633,8 @@ def search_flights(
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
             via=via,
             exclude_via=exclude_via,
         )
@@ -1606,6 +1658,8 @@ def search_flights(
                 airlines=airlines,
                 exclude_airlines=exclude_airlines,
                 depart_window=depart_window,
+                arrive_before=arrive_before,
+                depart_after=depart_after,
                 via=via,
                 exclude_via=exclude_via,
             )
@@ -1638,6 +1692,8 @@ def search_flights(
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
             via=via,
             exclude_via=exclude_via,
         )

@@ -798,6 +798,14 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.sort)
 
+    def test_morning_vibe_does_not_invent_arrive_before_or_depart_after(self) -> None:
+        plan = plan_prompt("JFK-LHR on 2026-09-15, arrive in the morning, depart late")
+        self.assertIsNone(plan.arrive_before)
+        self.assertIsNone(plan.depart_after)
+        flagged = plan_prompt("JFK-LHR on 2026-09-15 --arrive-before 10:00 --depart-after 18:00")
+        self.assertEqual(flagged.arrive_before, "10:00")
+        self.assertEqual(flagged.depart_after, "18:00")
+
     def test_prefer_airports_lhr_not_lgw(self) -> None:
         plan = plan_prompt("GRU-LHR on 2026-09-08, use LHR not LGW, max 1 stop.")
         self.assertEqual(plan.destination, "LHR")
@@ -1658,6 +1666,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
+        self.assertIsNone(plan.arrive_before)
+        self.assertIsNone(plan.depart_after)
         self.assertIsNone(plan.max_layover)
         self.assertIsNone(plan.min_layover)
         self.assertIsNone(plan.max_duration)
@@ -1742,6 +1752,26 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(vibe.intent, "dates")
         self.assertIsNone(vibe.depart_window)
 
+    def test_dates_named_arrive_before_depart_after_land_morning_vibe_does_not(self) -> None:
+        named = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, arrive before 10:00"
+        )
+        self.assertEqual(named.intent, "dates")
+        self.assertEqual(named.arrive_before, "10:00")
+        flagged = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 "
+            "--arrive-before 10:00 --depart-after 18:00"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertEqual(flagged.arrive_before, "10:00")
+        self.assertEqual(flagged.depart_after, "18:00")
+        vibe = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, arrive in the morning"
+        )
+        self.assertEqual(vibe.intent, "dates")
+        self.assertIsNone(vibe.arrive_before)
+        self.assertIsNone(vibe.depart_after)
+
     def test_dates_named_layover_and_duration_land_short_vibe_does_not(self) -> None:
         named = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, max 3h layover")
         self.assertEqual(named.intent, "dates")
@@ -1809,6 +1839,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
+        self.assertIsNone(plan.arrive_before)
+        self.assertIsNone(plan.depart_after)
         self.assertIsNone(plan.max_layover)
         self.assertIsNone(plan.min_layover)
         self.assertIsNone(plan.max_duration)
@@ -1873,6 +1905,21 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(vibe.intent, "flex")
         self.assertIsNone(vibe.depart_window)
 
+    def test_flex_named_arrive_before_depart_after_land_morning_vibe_does_not(self) -> None:
+        named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, depart after 18:00")
+        self.assertEqual(named.intent, "flex")
+        self.assertEqual(named.depart_after, "18:00")
+        flagged = plan_prompt(
+            "BOS-LHR around 12 Sep 2026, flex 3 days --arrive-before 10:00 --depart-after 18:00"
+        )
+        self.assertEqual(flagged.intent, "flex")
+        self.assertEqual(flagged.arrive_before, "10:00")
+        self.assertEqual(flagged.depart_after, "18:00")
+        vibe = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, leave in the morning")
+        self.assertEqual(vibe.intent, "flex")
+        self.assertIsNone(vibe.arrive_before)
+        self.assertIsNone(vibe.depart_after)
+
     def test_flex_named_layover_and_duration_land_short_vibe_does_not(self) -> None:
         named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights, max 3h layover")
         self.assertEqual(named.intent, "flex")
@@ -1933,6 +1980,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
+        self.assertIsNone(plan.arrive_before)
+        self.assertIsNone(plan.depart_after)
         self.assertIsNone(plan.max_layover)
         self.assertIsNone(plan.min_layover)
         self.assertIsNone(plan.max_duration)
@@ -2011,6 +2060,26 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         )
         self.assertEqual(vibe.intent, "explore")
         self.assertIsNone(vibe.depart_window)
+
+    def test_explore_named_arrive_before_depart_after_land_morning_vibe_does_not(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, arrive before 10:00"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertEqual(named.arrive_before, "10:00")
+        flagged = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days "
+            "--arrive-before 10:00 --depart-after 18:00"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertEqual(flagged.arrive_before, "10:00")
+        self.assertEqual(flagged.depart_after, "18:00")
+        vibe = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, arrive in the morning"
+        )
+        self.assertEqual(vibe.intent, "explore")
+        self.assertIsNone(vibe.arrive_before)
+        self.assertIsNone(vibe.depart_after)
 
     def test_explore_named_layover_and_duration_land_short_vibe_does_not(self) -> None:
         named = plan_prompt(

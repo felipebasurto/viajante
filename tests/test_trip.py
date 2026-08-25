@@ -9,6 +9,7 @@ from viajante.flights import (
     _normalize_offer,
     expand_nearby_trips,
     parse_flight_plan,
+    parse_named_clock,
     parse_route_specs,
 )
 from viajante.google_flights import RawFlightCard
@@ -501,6 +502,31 @@ class TripShopFilterTests(unittest.TestCase):
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
         self.assertEqual(report.trip_total.flight_fare_eur, 28.0)
+
+    def test_named_clock_filters_drop_late_arrivals_and_early_departs(self) -> None:
+        on_time = _card(arrival="09:00", departure="19:00", price="€90")
+        late_arrive = _card(arrival="23:00", departure="19:00", price="€40")
+        early_depart = _card(arrival="09:00", departure="08:00", price="€35")
+        silent = _card(arrival=None, departure=None, price="€28")
+        filters = dict(
+            arrive_before=parse_named_clock("10:00", role="arrive-before"),
+            depart_after=parse_named_clock("18:00", role="depart-after"),
+        )
+        expected = [
+            _normalize_offer(card, 1, buffer_eur=0, **filters)
+            for card in (on_time, late_arrive, early_depart, silent)
+        ]
+        kept = [offer.price_eur for offer in expected if offer is not None]
+        report, _source = _search_trip_cards(on_time, late_arrive, early_depart, silent, **filters)
+        result = report.flights.queries[0]
+        self.assertEqual([offer.price_eur for offer in result.offers], kept)
+        self.assertEqual(kept, [90.0])
+        unnamed, _ = _search_trip_cards(on_time, late_arrive, early_depart, silent)
+        unnamed_result = unnamed.flights.queries[0]
+        self.assertEqual(
+            [offer.price_eur for offer in unnamed_result.offers],
+            [28.0, 35.0, 40.0, 90.0],
+        )
 
     def test_trip_total_omitted_when_filters_empty_the_flight_side(self) -> None:
         too_few = _card(

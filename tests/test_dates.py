@@ -25,7 +25,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.flights import _normalize_offer, parse_depart_window
+from viajante.flights import _normalize_offer, parse_depart_window, parse_named_clock
 from viajante.google_flights import GoogleFlightsRejected, RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
@@ -611,6 +611,8 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
+        self.assertIn("--arrive-before", help_text)
+        self.assertIn("--depart-after", help_text)
         self.assertIn("--max-layover", help_text)
         self.assertIn("--min-layover", help_text)
         self.assertIn("--max-duration", help_text)
@@ -648,6 +650,10 @@ class DateCliTests(unittest.TestCase):
                     "200",
                     "--depart-window",
                     "7-12",
+                    "--arrive-before",
+                    "10:00",
+                    "--depart-after",
+                    "18:00",
                     "--max-layover",
                     "3",
                     "--min-layover",
@@ -668,6 +674,8 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
+        self.assertEqual(kwargs["arrive_before"], 10 * 60)
+        self.assertEqual(kwargs["depart_after"], 18 * 60)
         self.assertEqual(kwargs["max_layover_hours"], 3)
         self.assertEqual(kwargs["min_layover_hours"], 1)
         self.assertEqual(kwargs["max_duration_hours"], 8)
@@ -700,6 +708,8 @@ class DateCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_alliances"])
         self.assertIsNone(kwargs["price_cap_eur"])
         self.assertIsNone(kwargs["depart_window"])
+        self.assertIsNone(kwargs["arrive_before"])
+        self.assertIsNone(kwargs["depart_after"])
         self.assertIsNone(kwargs["max_layover_hours"])
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])
@@ -1210,6 +1220,54 @@ class ShopFilterTests(unittest.TestCase):
         )
         self.assertEqual([offer.price_eur for offer in unnamed.offers], [40.0, 70.0, 90.0])
 
+    def test_flex_shop_arrive_before_drops_late_arrivals(self) -> None:
+        early = _card(arrival="09:00", price="€90")
+        late = _card(arrival="23:00", price="€40")
+        silent = _card(arrival=None, price="€70")
+        bound = parse_named_clock("10:00", role="arrive-before")
+        self.assertIsNotNone(_normalize_offer(early, 1, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(late, 1, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, arrive_before=bound))
+        source = _flex_shop_source(early, late, silent)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            arrive_before=bound,
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], [90.0])
+        unnamed = search_flex(
+            "MAD", "BCN", date(2026, 9, 12), 1, source=_flex_shop_source(early, late, silent)
+        )
+        self.assertEqual([offer.price_eur for offer in unnamed.offers], [40.0, 70.0, 90.0])
+
+    def test_flex_shop_depart_after_drops_early_departs(self) -> None:
+        late = _card(departure="19:00", price="€90")
+        early = _card(departure="08:00", price="€40")
+        silent = _card(departure=None, price="€70")
+        bound = parse_named_clock("18:00", role="depart-after")
+        self.assertIsNotNone(_normalize_offer(late, 1, depart_after=bound))
+        self.assertIsNone(_normalize_offer(early, 1, depart_after=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, depart_after=bound))
+        source = _flex_shop_source(late, early, silent)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            depart_after=bound,
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], [90.0])
+        unnamed = search_flex(
+            "MAD", "BCN", date(2026, 9, 12), 1, source=_flex_shop_source(late, early, silent)
+        )
+        self.assertEqual([offer.price_eur for offer in unnamed.offers], [40.0, 70.0, 90.0])
+
     def test_dates_sweep_depart_window_unprices_off_window_days(self) -> None:
         morning = _card(departure="08:00", price="€45")
         evening = _card(departure="21:00", price="€30")
@@ -1254,6 +1312,52 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(report.days[0].price_eur, 45.0)
         self.assertEqual(report.days[1].price_eur, 30.0)
         self.assertEqual(source.fetch_calls, 0)
+
+    def test_dates_compact_calendar_named_clocks_stay_unfiltered(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 30.0),
+            )
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            source=source,
+            arrive_before=parse_named_clock("10:00", role="arrive-before"),
+            depart_after=parse_named_clock("18:00", role="depart-after"),
+        )
+        self.assertEqual(report.fetch_backend, "calendar")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].price_eur, 30.0)
+        self.assertEqual(source.fetch_calls, 0)
+
+    def test_dates_sweep_arrive_before_unprices_late_days(self) -> None:
+        early = _card(arrival="09:00", price="€45")
+        late = _card(arrival="23:00", price="€30")
+        silent = _card(arrival=None, price="€20")
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (early, late),
+                date(2026, 9, 2): (late, silent),
+            },
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            source=source,
+            arrive_before=parse_named_clock("10:00", role="arrive-before"),
+        )
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertEqual(report.days[0].status, "ok")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].status, "empty")
+        self.assertIsNone(report.days[1].price_eur)
 
     def test_flex_shop_layover_and_duration_drop_contradicting_offers(self) -> None:
         nonstop = _card(stops="Nonstop", duration="1 hr 20 min", price="€90")
@@ -1740,6 +1844,8 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
+        self.assertIn("--arrive-before", help_text)
+        self.assertIn("--depart-after", help_text)
         self.assertIn("--max-layover", help_text)
         self.assertIn("--min-layover", help_text)
         self.assertIn("--max-duration", help_text)
@@ -1772,6 +1878,10 @@ class FlexCliTests(unittest.TestCase):
                     "200",
                     "--depart-window",
                     "06:00-20:00",
+                    "--arrive-before",
+                    "10:00",
+                    "--depart-after",
+                    "18:00",
                     "--max-layover",
                     "3",
                     "--min-layover",
@@ -1789,6 +1899,8 @@ class FlexCliTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
         self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
+        self.assertEqual(kwargs["arrive_before"], 10 * 60)
+        self.assertEqual(kwargs["depart_after"], 18 * 60)
         self.assertEqual(kwargs["max_layover_hours"], 3)
         self.assertEqual(kwargs["min_layover_hours"], 1)
         self.assertEqual(kwargs["max_duration_hours"], 8)
@@ -1820,6 +1932,8 @@ class FlexCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_alliances"])
         self.assertIsNone(kwargs["price_cap_eur"])
         self.assertIsNone(kwargs["depart_window"])
+        self.assertIsNone(kwargs["arrive_before"])
+        self.assertIsNone(kwargs["depart_after"])
         self.assertIsNone(kwargs["max_layover_hours"])
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])

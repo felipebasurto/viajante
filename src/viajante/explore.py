@@ -85,6 +85,8 @@ def _named_shop_filters(
     via: Optional[Sequence[str]],
     exclude_via: Optional[Sequence[str]],
     depart_window: Optional[Tuple[int, int]],
+    arrive_before: Optional[int],
+    depart_after: Optional[int],
     max_layover_hours: Optional[float],
     min_layover_hours: Optional[float],
     max_duration_hours: Optional[float],
@@ -100,6 +102,8 @@ def _named_shop_filters(
         or bool(via)
         or bool(exclude_via)
         or depart_window is not None
+        or arrive_before is not None
+        or depart_after is not None
         or max_layover_hours is not None
         or min_layover_hours is not None
         or max_duration_hours is not None
@@ -135,6 +139,8 @@ def _explore_for_origin(
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
+    arrive_before: Optional[int],
+    depart_after: Optional[int],
     max_layover_hours: Optional[float],
     min_layover_hours: Optional[float],
     max_duration_hours: Optional[float],
@@ -190,6 +196,8 @@ def _explore_for_origin(
             via=parsed_via,
             exclude_via=parsed_exclude_via,
             depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
@@ -245,6 +253,8 @@ def search_explore(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
@@ -284,6 +294,8 @@ def search_explore(
         via=parsed_via,
         exclude_via=parsed_exclude_via,
         depart_window=depart_window,
+        arrive_before=arrive_before,
+        depart_after=depart_after,
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
         max_duration_hours=max_duration_hours,
@@ -316,6 +328,8 @@ def search_explore(
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     depart_window=depart_window,
+                    arrive_before=arrive_before,
+                    depart_after=depart_after,
                     max_layover_hours=max_layover_hours,
                     min_layover_hours=min_layover_hours,
                     max_duration_hours=max_duration_hours,
@@ -365,6 +379,8 @@ def _cheapest_shop(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
@@ -406,6 +422,8 @@ def _cheapest_shop(
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
                 depart_window=depart_window,
+                arrive_before=arrive_before,
+                depart_after=depart_after,
                 max_layover_hours=max_layover_hours,
                 min_layover_hours=min_layover_hours,
                 max_duration_hours=max_duration_hours,

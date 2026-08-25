@@ -377,7 +377,8 @@ _ISO_DATE = re.compile(r"(?<![0-9])(20\d{2}-\d{2}-\d{2})(?![0-9])")
 _FLAG = re.compile(
     r"--(trip|max-stops|adults|children|infants-in-seat|infants-on-lap|cabin|rooms|"
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
-    r"depart-window|currency|country|airlines|exclude-airlines|alliance|"
+    r"depart-window|arrive-before|depart-after|currency|country|airlines|"
+    r"exclude-airlines|alliance|"
     r"exclude-alliance|exclude-via|via|bags|price-cap)\s+(\S+)",
     re.IGNORECASE,
 )
@@ -1715,6 +1716,23 @@ def _hhmm(raw: str) -> Optional[str]:
     return f"{hour:02d}:{minute:02d}"
 
 
+def _named_hhmm(
+    folded: str,
+    flags: Mapping[str, str],
+    *,
+    flag: str,
+    pattern: re.Pattern[str],
+) -> Optional[str]:
+    """Named HH:MM only. Flags win; vibe wording does not invent a clock."""
+    flagged = flags.get(flag)
+    if flagged:
+        return _hhmm(flagged)
+    hit = pattern.search(folded)
+    if hit is None:
+        return None
+    return _hhmm(hit.group(1))
+
+
 def _window_side(raw: str) -> Optional[tuple[str, bool]]:
     """Canonical bound plus whether the prompt used a bare hour (CLI 6-20)."""
     text = raw.strip()
@@ -2787,14 +2805,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         refuse.append("past_date")
 
     baggage, bags, carry_on = _bag_fields(folded, flags, raw)
-    arrive_before = None
-    arrive_hit = _ARRIVE_BEFORE.search(folded)
-    if arrive_hit:
-        arrive_before = _hhmm(arrive_hit.group(1))
-    depart_after = None
-    depart_hit = _DEPART_AFTER.search(folded)
-    if depart_hit:
-        depart_after = _hhmm(depart_hit.group(1))
+    arrive_before = _named_hhmm(folded, flags, flag="arrive-before", pattern=_ARRIVE_BEFORE)
+    depart_after = _named_hhmm(folded, flags, flag="depart-after", pattern=_DEPART_AFTER)
     depart_window = _depart_window(folded, flags)
     sort = _sort_key(folded, flags)
     work_back_by = _work_back_by(folded)
@@ -3002,6 +3014,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             carry_on=carry_on,
             nearby=nearby,
             depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
             min_layover=min_layover,
             max_duration=max_duration,
             alliance=alliance,
@@ -3040,6 +3054,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             alliance=alliance,
             exclude_alliance=exclude_alliance,
             depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
             nearby=nearby,
             route_specs=(),
             locale=FETCH_LANGUAGE,
@@ -3079,6 +3095,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             alliance=alliance,
             exclude_alliance=exclude_alliance,
             depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
             nearby=nearby,
             route_specs=(),
             max_layover=max_layover,
