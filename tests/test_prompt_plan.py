@@ -1795,5 +1795,125 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.carry_on)
 
 
+class PromptPlanFamilyNearbyTests(unittest.TestCase):
+    """Named nearby wording lands on dates, flex, explore, and search_trip."""
+
+    def test_dates_named_nearby_lands_unnamed_stays_off(self) -> None:
+        named = plan_prompt("cheapest week BOS to any London airport from 2026-09-01 to 2026-09-14")
+        self.assertEqual(named.intent, "dates")
+        self.assertTrue(named.nearby)
+        self.assertEqual(named.origin, "BOS")
+        self.assertEqual(named.destination, "LHR")
+        self.assertEqual(named.destinations, ())
+        flagged = plan_prompt("Price calendar BOS-LHR from 2026-09-01 to 2026-09-14 --nearby")
+        self.assertEqual(flagged.intent, "dates")
+        self.assertTrue(flagged.nearby)
+        self.assertEqual(flagged.destination, "LHR")
+        unnamed = plan_prompt("Price calendar BOS-LHR from 2026-09-01 to 2026-09-14")
+        self.assertEqual(unnamed.intent, "dates")
+        self.assertFalse(unnamed.nearby)
+        mad = plan_prompt("Price calendar MAD-BCN from 2026-09-01 to 2026-09-14 --nearby")
+        self.assertEqual(mad.intent, "dates")
+        self.assertTrue(mad.nearby)
+        self.assertEqual(mad.origin, "MAD")
+        self.assertEqual(mad.destination, "BCN")
+        self.assertEqual(mad.destinations, ())
+        self.assertEqual(mad.route_specs, ())
+
+    def test_flex_named_nearby_lands_unnamed_stays_off(self) -> None:
+        named = plan_prompt("BOS to any London airport around 12 Sep 2026, flex 3 days, 7 nights")
+        self.assertEqual(named.intent, "flex")
+        self.assertTrue(named.nearby)
+        self.assertEqual(named.origin, "BOS")
+        self.assertEqual(named.destination, "LHR")
+        self.assertEqual(named.flex_days, 3)
+        self.assertEqual(named.destinations, ())
+        flagged = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights --nearby")
+        self.assertEqual(flagged.intent, "flex")
+        self.assertTrue(flagged.nearby)
+        unnamed = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights")
+        self.assertEqual(unnamed.intent, "flex")
+        self.assertFalse(unnamed.nearby)
+        mad = plan_prompt("MAD-BCN around 12 Sep 2026, flex 3 days --nearby")
+        self.assertEqual(mad.intent, "flex")
+        self.assertTrue(mad.nearby)
+        self.assertEqual(mad.origin, "MAD")
+        self.assertEqual(mad.destination, "BCN")
+        self.assertEqual(mad.destinations, ())
+        self.assertEqual(mad.route_specs, ())
+
+    def test_explore_named_nearby_lands_unnamed_stays_off(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from any London airport starting 2026-09-15, 7 days"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertTrue(named.nearby)
+        self.assertEqual(named.origin, "LHR")
+        self.assertEqual(named.destination, None)
+        self.assertEqual(named.destinations, ())
+        flagged = plan_prompt(
+            "Explore cheap destinations from LHR starting 2026-09-15, 7 days --nearby"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertTrue(flagged.nearby)
+        self.assertEqual(flagged.origin, "LHR")
+        unnamed = plan_prompt("Explore cheap destinations from LHR starting 2026-09-15, 7 days")
+        self.assertEqual(unnamed.intent, "explore")
+        self.assertFalse(unnamed.nearby)
+        mad = plan_prompt(
+            "Explore cheap destinations from MAD starting 2026-09-15, 7 days --nearby"
+        )
+        self.assertEqual(mad.intent, "explore")
+        self.assertTrue(mad.nearby)
+        self.assertEqual(mad.origin, "MAD")
+        self.assertEqual(mad.destinations, ())
+
+    def test_trip_named_nearby_lands_unnamed_stays_off(self) -> None:
+        named = plan_prompt(
+            "Packaged round-trip BOS to any London airport on 2026-09-18 returning "
+            "2026-09-22, --trip rt, hotel in London those nights, 2 adults, 1 room. "
+            "Print the owned trip total when both searches succeed. Omit the sum if "
+            "either side misses. Do not invent a fare or a stay."
+        )
+        self.assertEqual(named.intent, "flights")
+        self.assertTrue(named.search_trip)
+        self.assertTrue(named.nearby)
+        self.assertEqual(named.origin, "BOS")
+        self.assertEqual(named.destination, "LHR")
+        parsed = plan_to_trips(named)
+        self.assertEqual(parsed.origin, "BOS")
+        self.assertEqual(parsed.destination, "LHR")
+        flagged = plan_prompt(
+            "Packaged round-trip BOS-LHR on 2026-09-18 returning 2026-09-22, "
+            "--trip rt --nearby, hotel in London those nights, 2 adults, 1 room. "
+            "Print the owned trip total when both searches succeed. Omit the sum if "
+            "either side misses. Do not invent a fare or a stay."
+        )
+        self.assertTrue(flagged.search_trip)
+        self.assertTrue(flagged.nearby)
+        unnamed = plan_prompt(
+            "Packaged round-trip BOS-LHR on 2026-09-18 returning 2026-09-22, --trip rt, "
+            "hotel in London those nights, 2 adults, 1 room. Print the owned trip total "
+            "when both searches succeed. Omit the sum if either side misses. "
+            "Do not invent a fare or a stay."
+        )
+        self.assertTrue(unnamed.search_trip)
+        self.assertFalse(unnamed.nearby)
+        mad = plan_prompt(
+            "Packaged round-trip MAD-BCN on 2026-09-18 returning 2026-09-22, "
+            "--trip rt --nearby, hotel in Barcelona those nights, 2 adults, 1 room. "
+            "Print the owned trip total when both searches succeed. Omit the sum if "
+            "either side misses. Do not invent a fare or a stay."
+        )
+        self.assertTrue(mad.search_trip)
+        self.assertTrue(mad.nearby)
+        self.assertEqual(mad.origin, "MAD")
+        self.assertEqual(mad.destination, "BCN")
+        self.assertEqual(mad.destinations, ())
+        kept = plan_to_trips(mad)
+        self.assertEqual(kept.origin, "MAD")
+        self.assertEqual(kept.destination, "BCN")
+
+
 if __name__ == "__main__":
     unittest.main()

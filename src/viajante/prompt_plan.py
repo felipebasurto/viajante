@@ -2968,6 +2968,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             baggage=baggage,
             bags=bags,
             carry_on=carry_on,
+            nearby=nearby,
             notes=notes,
         )
 
