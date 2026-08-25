@@ -8,6 +8,7 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from viajante.airports import airport_geo
 from viajante.cli import main
 from viajante.explore import search_explore
 from viajante.flights import (
@@ -26,6 +27,7 @@ from viajante.google_flights_rpc import (
     parse_explore_body,
 )
 from viajante.models import ExploreDestination, FlightQuery, RawJourneyLeg, RawLayover, RawSegment
+from viajante.prompt_plan import plan_prompt
 from viajante.typical import (
     typical_eur_from_daily_prices,
     vs_typical,
@@ -926,6 +928,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--require-overnight", help_text)
         self.assertIn("--exclude-airports", help_text)
         self.assertIn("--include-airports", help_text)
+        self.assertIn("--exclude-regions", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
@@ -973,6 +976,8 @@ class ExploreCliTests(unittest.TestCase):
                     "HND",
                     "--include-airports",
                     "NRT,HND",
+                    "--exclude-regions",
+                    "asia",
                     "--airlines",
                     "IB",
                     "--exclude-airlines",
@@ -1007,6 +1012,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
+        self.assertEqual(kwargs["exclude_regions"], ("asia",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
@@ -1036,6 +1042,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
+        self.assertIsNone(kwargs["exclude_regions"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["alliances"])
@@ -1356,6 +1363,143 @@ class IncludeAirportsExploreTests(unittest.TestCase):
         self.assertNotIn("KIX", iata)
         self.assertNotIn("TYO", iata)
         self.assertEqual([query.destination for query in source.fetched_queries], ["NRT"])
+
+
+class ExcludeRegionsExploreTests(unittest.TestCase):
+    def test_named_asia_drops_asia_tz_unnamed_keeps_them(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("LHR", "London", "United Kingdom"),
+            CompactExplorePlace("AKL", "Auckland", "New Zealand"),
+        )
+        prices = {
+            "HND": (_card(price="€40"),),
+            "LHR": (_card(price="€55"),),
+            "AKL": (_card(price="€70"),),
+        }
+        named = FakeExploreSource(places, prices=prices)
+        report = search_explore(
+            "NRT",
+            date(2026, 9, 15),
+            days=7,
+            top=3,
+            exclude_regions=("asia",),
+            source=named,
+        )
+        iata = [row.iata for row in report.destinations]
+        self.assertEqual(iata, ["LHR", "AKL"])
+        self.assertNotIn("HND", iata)
+        self.assertEqual(report.origin, "NRT")
+        self.assertEqual([query.destination for query in named.fetched_queries], ["LHR", "AKL"])
+        unnamed = FakeExploreSource(places, prices=prices)
+        kept = search_explore("NRT", date(2026, 9, 15), days=7, top=3, source=unnamed)
+        unnamed_iata = [row.iata for row in kept.destinations]
+        self.assertEqual(unnamed_iata, ["HND", "LHR", "AKL"])
+        self.assertEqual(
+            [query.destination for query in unnamed.fetched_queries], ["HND", "LHR", "AKL"]
+        )
+
+    def test_unknown_tz_drops_under_named_filter(self) -> None:
+        places = (
+            CompactExplorePlace("OPO", "Porto", "Portugal"),
+            CompactExplorePlace("LHR", "London", "United Kingdom"),
+        )
+        prices = {"OPO": (_card(price="€10"),), "LHR": (_card(price="€55"),)}
+        real_geo = airport_geo
+
+        def fake_geo(code: str):
+            if code.strip().upper() == "OPO":
+                return None
+            return real_geo(code)
+
+        with patch("viajante.airports.airport_geo", side_effect=fake_geo):
+            named = FakeExploreSource(places, prices=prices)
+            report = search_explore(
+                "NRT",
+                date(2026, 9, 15),
+                days=7,
+                top=3,
+                exclude_regions=("asia",),
+                source=named,
+            )
+            iata = [row.iata for row in report.destinations]
+            self.assertEqual(iata, ["LHR"])
+            self.assertNotIn("OPO", iata)
+            self.assertEqual([query.destination for query in named.fetched_queries], ["LHR"])
+        unnamed = FakeExploreSource(places, prices=prices)
+        kept = search_explore("NRT", date(2026, 9, 15), days=7, top=3, source=unnamed)
+        self.assertEqual([row.iata for row in kept.destinations], ["OPO", "LHR"])
+
+    def test_empty_shortlist_does_not_invent_dests(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("ICN", "Seoul", "South Korea"),
+        )
+        source = FakeExploreSource(places, prices={"HND": (_card(price="€40"),)})
+        report = search_explore(
+            "NRT",
+            date(2026, 9, 15),
+            days=7,
+            top=3,
+            exclude_regions=("asia",),
+            source=source,
+        )
+        self.assertEqual(report.origin, "NRT")
+        self.assertEqual(report.destinations, ())
+        self.assertEqual(source.fetched_queries, [])
+        self.assertNotIn("LHR", [row.iata for row in report.destinations])
+        self.assertNotIn("AKL", [row.iata for row in report.destinations])
+        self.assertNotIn("SYD", [row.iata for row in report.destinations])
+
+    def test_include_exclude_iata_still_win_then_region_is_additional(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("NRT", "Tokyo", "Japan"),
+            CompactExplorePlace("LHR", "London", "United Kingdom"),
+        )
+        prices = {
+            "HND": (_card(price="€40"),),
+            "NRT": (_card(price="€55"),),
+            "LHR": (_card(price="€70"),),
+        }
+        source = FakeExploreSource(places, prices=prices)
+        report = search_explore(
+            "SIN",
+            date(2026, 9, 15),
+            days=7,
+            top=3,
+            include_airports=("NRT", "HND", "LHR"),
+            exclude_airports=("HND",),
+            exclude_regions=("asia",),
+            source=source,
+        )
+        iata = [row.iata for row in report.destinations]
+        self.assertEqual(iata, ["LHR"])
+        self.assertNotIn("HND", iata)
+        self.assertNotIn("NRT", iata)
+        self.assertEqual([query.destination for query in source.fetched_queries], ["LHR"])
+
+    def test_planner_not_asia_reaches_explore_filter(self) -> None:
+        plan = plan_prompt("Destinations from NRT on 2026-09-15, not Asia")
+        self.assertEqual(plan.intent, "explore")
+        self.assertIn("asia", plan.exclude_regions)
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("LHR", "London", "United Kingdom"),
+        )
+        prices = {"HND": (_card(price="€40"),), "LHR": (_card(price="€55"),)}
+        source = FakeExploreSource(places, prices=prices)
+        report = search_explore(
+            plan.origin or "NRT",
+            plan.departure_date or date(2026, 9, 15),
+            days=7,
+            top=3,
+            exclude_regions=plan.exclude_regions,
+            source=source,
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["LHR"])
+        self.assertNotIn("HND", [row.iata for row in report.destinations])
+        self.assertEqual([query.destination for query in source.fetched_queries], ["LHR"])
 
 
 class TypicalExploreDestTests(unittest.TestCase):

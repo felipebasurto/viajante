@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
-from viajante.airports import is_known_iata, lookup_airports
+from viajante.airports import is_known_iata, lookup_airports, parse_exclude_regions
 from viajante.bench import run_bench
 from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.dates import (
@@ -136,6 +136,7 @@ Examples:
   viajante explore LHR --from 2026-09-15 --nearby
   viajante explore JFK --from 2026-09-15 --depart-window 7-12
   viajante explore JFK --from 2026-09-15 --max-layover 3
+  viajante explore NRT --from 2026-09-15 --days 7 --exclude-regions asia
 """
 
 AIRPORTS_EXAMPLES = """\
@@ -1607,6 +1608,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args)
         validate_explore_window(start, days)
+        exclude_regions = parse_exclude_regions(getattr(args, "exclude_regions", None))
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1626,6 +1628,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         nearby=nearby,
         sort=args.sort,
         buffer_eur=args.baggage_buffer,
+        exclude_regions=exclude_regions,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
@@ -2379,6 +2382,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_currency_country_flags(explore)
     _add_owned_shop_filters(explore)
+    explore.add_argument(
+        "--exclude-regions",
+        default=None,
+        metavar="REGIONS",
+        dest="exclude_regions",
+        help=(
+            "Drop catalog dests whose owned IANA timezone sits in these regions "
+            "(comma-separated, e.g. asia,europe). Unknown tz cannot prove keep. "
+            "Unnamed stays unset (full catalog)"
+        ),
+    )
     _add_nearby_flag(explore)
     explore.add_argument(
         "--sort",

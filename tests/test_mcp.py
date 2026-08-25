@@ -501,6 +501,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(search.call_args.kwargs["require_overnight"])
         self.assertIsNone(search.call_args.kwargs["exclude_airports"])
         self.assertIsNone(search.call_args.kwargs["include_airports"])
+        self.assertIsNone(search.call_args.kwargs["exclude_regions"])
         self.assertIsNone(search.call_args.kwargs["airlines"])
         self.assertIsNone(search.call_args.kwargs["alliances"])
         self.assertIsNone(search.call_args.kwargs["exclude_alliances"])
@@ -572,6 +573,7 @@ class McpHandlerTests(unittest.TestCase):
                 require_overnight="IST",
                 exclude_airports="HND",
                 include_airports="NRT,HND",
+                exclude_regions="asia",
                 airlines="IB",
                 exclude_airlines="FR",
                 alliance="star",
@@ -593,6 +595,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
+        self.assertEqual(kwargs["exclude_regions"], ("asia",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))

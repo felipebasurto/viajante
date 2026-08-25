@@ -7,7 +7,7 @@ import threading
 from datetime import date
 from typing import Mapping, Optional, Sequence
 
-from viajante.airports import lookup_airports
+from viajante.airports import lookup_airports, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.dates import (
     flex_window,
@@ -357,6 +357,7 @@ def search_explore_tool(
     require_overnight: Optional[str] = None,
     exclude_airports: Optional[str] = None,
     include_airports: Optional[str] = None,
+    exclude_regions: Optional[str] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
@@ -405,6 +406,7 @@ def search_explore_tool(
             require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
             exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
             include_airports=parse_via_airports(include_airports, role="include-airports"),
+            exclude_regions=parse_exclude_regions(exclude_regions),
             bags=bags,
             carry_on=carry_on,
             price_cap_eur=price_cap,

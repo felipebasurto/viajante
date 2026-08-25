@@ -8,9 +8,13 @@ from unittest.mock import patch
 
 from viajante.airports import (
     airport_geo,
+    dest_blocked_by_exclude_regions,
     get_airport,
     is_known_iata,
     lookup_airports,
+    matching_excluded_regions,
+    owned_tz_region_tokens,
+    parse_exclude_regions,
     same_city_iata,
 )
 from viajante.cli import main
@@ -74,6 +78,34 @@ class AirportLookupTests(unittest.TestCase):
         self.assertLess(hnl[2], 0)
         self.assertGreater(akl[2], 0)
         self.assertIsNone(airport_geo("XXX"))
+
+
+class ExcludeRegionsParseTests(unittest.TestCase):
+    def test_named_asia_europe_are_owned_iana_prefixes(self) -> None:
+        tokens = owned_tz_region_tokens()
+        self.assertIn("asia", tokens)
+        self.assertIn("europe", tokens)
+        self.assertEqual(parse_exclude_regions("asia"), ("asia",))
+        self.assertEqual(parse_exclude_regions("Asia,EUROPE"), ("asia", "europe"))
+        self.assertIsNone(parse_exclude_regions(None))
+
+    def test_unknown_token_is_rejected_empty_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_exclude_regions("schengen")
+        with self.assertRaises(ValueError):
+            parse_exclude_regions("")
+        with self.assertRaises(ValueError):
+            parse_exclude_regions("india")
+
+    def test_nrt_proves_asia_unknown_tz_cannot_prove_keep(self) -> None:
+        self.assertEqual(matching_excluded_regions("NRT", ("asia",)), ("asia",))
+        self.assertEqual(matching_excluded_regions("LHR", ("asia",)), ())
+        self.assertEqual(matching_excluded_regions("XXX", ("asia",)), ())
+        self.assertFalse(dest_blocked_by_exclude_regions("LHR", ("asia",)))
+        self.assertTrue(dest_blocked_by_exclude_regions("NRT", ("asia",)))
+        self.assertTrue(dest_blocked_by_exclude_regions("XXX", ("asia",)))
+        self.assertFalse(dest_blocked_by_exclude_regions("NRT", ()))
+        self.assertFalse(dest_blocked_by_exclude_regions("XXX", ()))
 
 
 class AirportCliTests(unittest.TestCase):

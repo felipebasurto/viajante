@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
-from viajante.airports import is_known_iata
+from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
     FLIGHT_SORTS,
@@ -101,6 +101,12 @@ def _parse_include_airports(
         if include_airports
         else None
     )
+
+
+def _parse_exclude_regions(
+    exclude_regions: Optional[Sequence[str]],
+) -> Optional[tuple[str, ...]]:
+    return parse_exclude_regions(",".join(exclude_regions)) if exclude_regions else None
 
 
 def _named_shop_filters(
@@ -204,6 +210,7 @@ def _explore_for_origin(
     parsed_require_overnight: Optional[tuple[str, ...]],
     parsed_exclude_airports: Optional[tuple[str, ...]],
     parsed_include_airports: Optional[tuple[str, ...]],
+    parsed_exclude_regions: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
     arrive_before: Optional[int],
     depart_after: Optional[int],
@@ -246,6 +253,12 @@ def _explore_for_origin(
         places = tuple(place for place in places if place.iata in allowed)
     if blocked:
         places = tuple(place for place in places if place.iata not in blocked)
+    if parsed_exclude_regions:
+        places = tuple(
+            place
+            for place in places
+            if not dest_blocked_by_exclude_regions(place.iata, parsed_exclude_regions)
+        )
     priced: list[ExploreDestination] = []
     typical_cache: dict = {}
     for index, place in enumerate(places[:top]):
@@ -350,6 +363,7 @@ def search_explore(
     require_overnight: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
     include_airports: Optional[Sequence[str]] = None,
+    exclude_regions: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -390,6 +404,7 @@ def search_explore(
     )
     parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
     parsed_include_airports = _parse_include_airports(include_airports)
+    parsed_exclude_regions = _parse_exclude_regions(exclude_regions)
     origin = origin.strip().upper()
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
@@ -455,6 +470,7 @@ def search_explore(
                     parsed_require_overnight=parsed_require_overnight,
                     parsed_exclude_airports=parsed_exclude_airports,
                     parsed_include_airports=parsed_include_airports,
+                    parsed_exclude_regions=parsed_exclude_regions,
                     depart_window=depart_window,
                     arrive_before=arrive_before,
                     depart_after=depart_after,

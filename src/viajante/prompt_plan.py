@@ -16,7 +16,13 @@ from math import asin, cos, radians, sin, sqrt
 from typing import Any, Mapping, Optional, Sequence, Tuple, cast
 from zoneinfo import ZoneInfo
 
-from viajante.airports import airport_geo, is_known_iata, same_city_iata
+from viajante.airports import (
+    airport_geo,
+    is_known_iata,
+    matching_excluded_regions,
+    parse_exclude_regions,
+    same_city_iata,
+)
 from viajante.carriers import (
     ALLIANCE_PHRASES,
     airline_names_longest_first,
@@ -380,7 +386,7 @@ _FLAG = re.compile(
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|arrive-before|depart-after|currency|country|airlines|"
     r"exclude-airlines|alliance|"
-    r"exclude-alliance|exclude-via|exclude-airports|include-airports|via|"
+    r"exclude-alliance|exclude-via|exclude-airports|exclude-regions|include-airports|via|"
     r"no-overnight|require-overnight|bags|price-cap|baggage-buffer)\s+(\S+)",
     re.IGNORECASE,
 )
@@ -1595,13 +1601,7 @@ def _origin_in_excluded_regions(
     exclude_regions: Sequence[str],
 ) -> Tuple[str, ...]:
     """Owned IANA tz prefix vs excluded region. Unknown tz cannot prove inside."""
-    if origin is None or not exclude_regions:
-        return ()
-    geo = airport_geo(origin)
-    if geo is None:
-        return ()
-    tz = geo[0].casefold()
-    return tuple(region for region in exclude_regions if tz.startswith(f"{region.casefold()}/"))
+    return matching_excluded_regions(origin, exclude_regions)
 
 
 def _origin_inside_excluded_region_notes(origin: str, regions: Sequence[str]) -> str:
@@ -2394,6 +2394,10 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             include_airports,
             parse_via_airports(flags["include-airports"], role="include-airports") or (),
         )
+    if "exclude-regions" in flags:
+        parsed_regions = parse_exclude_regions(flags["exclude-regions"])
+        if parsed_regions:
+            _extend_unique(exclude_regions, parsed_regions)
     via_airports = [code for code in via_airports if code not in exclude_via]
 
     if _NO_ASIA.search(folded) or "tercermundista" in folded:

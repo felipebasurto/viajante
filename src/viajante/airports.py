@@ -6,7 +6,7 @@ import csv
 import marshal
 from dataclasses import dataclass
 from importlib.resources import files
-from typing import Mapping, Optional, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 # Passenger airports that should outrank general-aviation / municipal fields
 # when a city name matches several codes (London: LHR before BQH).
@@ -198,6 +198,7 @@ def get_airport(code: str) -> Optional[Airport]:
 
 
 _GEO: Optional[dict[str, tuple[str, float, float]]] = None
+_GEO_REGIONS: Optional[frozenset[str]] = None
 
 
 def _airport_geo_index() -> dict[str, tuple[str, float, float]]:
@@ -234,6 +235,73 @@ def airport_geo(code: str) -> Optional[tuple[str, float, float]]:
     if len(text) != 3 or not text.isalpha():
         return None
     return _airport_geo_index().get(text)
+
+
+def owned_tz_region_tokens() -> frozenset[str]:
+    """IANA continent prefixes already published on owned airport rows.
+
+    Built from ``tz`` (``Asia/Tokyo`` → ``asia``). Not a hand-made dest list.
+    """
+    global _GEO_REGIONS
+    cached = _GEO_REGIONS
+    if cached is not None:
+        return cached
+    tokens: set[str] = set()
+    for tz, _, _ in _airport_geo_index().values():
+        prefix, sep, _rest = tz.partition("/")
+        if sep and prefix:
+            tokens.add(prefix.casefold())
+    owned = frozenset(tokens)
+    _GEO_REGIONS = owned
+    return owned
+
+
+def parse_exclude_regions(text: Optional[str]) -> Optional[Tuple[str, ...]]:
+    """Parse comma-separated owned IANA region tokens for ``--exclude-regions``.
+
+    Unnamed stays unset. Unknown tokens are rejected; do not invent a region.
+    """
+    if text is None:
+        return None
+    parts = tuple(
+        part.strip().casefold().replace(" ", "_") for part in text.split(",") if part.strip()
+    )
+    if not parts:
+        raise ValueError("exclude-regions list must not be empty")
+    known = owned_tz_region_tokens()
+    parsed: list[str] = []
+    for token in parts:
+        if token not in known:
+            raise ValueError(f"unknown exclude-regions token: {token!r}")
+        if token not in parsed:
+            parsed.append(token)
+    return tuple(parsed)
+
+
+def matching_excluded_regions(
+    code: Optional[str],
+    exclude_regions: Sequence[str],
+) -> Tuple[str, ...]:
+    """Owned IANA tz prefix vs excluded region. Unknown tz cannot prove inside."""
+    if not code or not exclude_regions:
+        return ()
+    geo = airport_geo(code)
+    if geo is None:
+        return ()
+    tz = geo[0].casefold()
+    return tuple(region for region in exclude_regions if tz.startswith(f"{region.casefold()}/"))
+
+
+def dest_blocked_by_exclude_regions(
+    code: str,
+    exclude_regions: Sequence[str],
+) -> bool:
+    """Drop dest when a named region filter applies and owned tz cannot prove keep."""
+    if not exclude_regions:
+        return False
+    if airport_geo(code) is None:
+        return True
+    return bool(matching_excluded_regions(code, exclude_regions))
 
 
 def _by_city_country() -> dict[tuple[str, str], tuple[Airport, ...]]:

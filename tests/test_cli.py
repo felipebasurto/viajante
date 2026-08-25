@@ -916,6 +916,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--require-overnight", help_text)
         self.assertIn("--exclude-airports", help_text)
         self.assertIn("--include-airports", help_text)
+        self.assertNotIn("--exclude-regions", help_text)
         self.assertIn("--max-duration", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--exclude-airlines", help_text)

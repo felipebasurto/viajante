@@ -2233,6 +2233,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
         self.assertEqual(plan.include_airports, ())
+        self.assertEqual(plan.exclude_regions, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
@@ -2268,6 +2269,21 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         )
         self.assertEqual(vibe.intent, "explore")
         self.assertEqual(vibe.exclude_airports, ())
+
+    def test_explore_named_exclude_regions_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt("Destinations from NRT on 2026-09-15, not Asia")
+        self.assertEqual(named.intent, "explore")
+        self.assertIn("asia", named.exclude_regions)
+        flagged = plan_prompt(
+            "Explore cheap destinations from NRT starting 2026-09-15, 7 days --exclude-regions asia"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertIn("asia", flagged.exclude_regions)
+        vibe = plan_prompt(
+            "Explore cheap destinations from NRT starting 2026-09-15, 7 days, skip the Far East"
+        )
+        self.assertEqual(vibe.intent, "explore")
+        self.assertEqual(vibe.exclude_regions, ())
 
     def test_explore_named_include_airports_and_dest_list_lands_vibe_does_not_invent(self) -> None:
         flagged = plan_prompt(
