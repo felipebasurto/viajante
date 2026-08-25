@@ -11,6 +11,7 @@ from viajante.flights import _run_search
 from viajante.google_flights import NoFlightsFound, RawFlightCard
 from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
 from viajante.models import (
+    NEAR_TYPICAL_RATIO,
     FlightLeg,
     FlightOffer,
     FlightQuery,
@@ -131,6 +132,7 @@ class TypicalFromDailyPricesTests(unittest.TestCase):
         self.assertEqual(TYPICAL_WINDOW_DAYS, MAX_DATE_WINDOW_DAYS)
         self.assertEqual(MIN_DAILY_PRICES, 3)
         self.assertEqual(NEAR_RATIO, 0.10)
+        self.assertEqual(NEAR_RATIO, NEAR_TYPICAL_RATIO)
 
     def test_median_of_owned_daily_prices(self) -> None:
         self.assertEqual(

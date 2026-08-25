@@ -27,6 +27,7 @@ REPORT_KEYS = {
 }
 REPORT_ERROR_KEYS = REPORT_KEYS | {"error"}
 DESTINATION_KEYS = {"iata", "city", "country", "price_eur"}
+DESTINATION_TYPICAL_KEYS = {"typical_eur", "vs_typical", "vs_typical_pct", "typical_deal"}
 ERROR_KEYS = {"code", "message"}
 EXPLORE_FETCH_BACKENDS = {"explore"}
 FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
@@ -148,6 +149,29 @@ class ExploreJsonContractTests(unittest.TestCase):
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
         self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
         self.assertNotIn("booking_token", catalog.to_dict())
+
+    def test_typical_is_an_extra_dest_key_when_stamped(self) -> None:
+        dest = ExploreDestination(
+            iata="OPO",
+            city="Porto",
+            country="Portugal",
+            price_eur=80.0,
+            typical_eur=100.0,
+            vs_typical="below",
+            vs_typical_pct=-20,
+        )
+        data = dest.to_dict()
+        self.assertEqual(set(data), DESTINATION_KEYS | DESTINATION_TYPICAL_KEYS)
+        self.assertEqual(data["typical_eur"], 100.0)
+        self.assertEqual(data["vs_typical"], "below")
+        self.assertEqual(data["vs_typical_pct"], -20)
+        self.assertEqual(data["typical_deal"], "below typical 100 € (−20%)")
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
+        self.assertNotIn("typical_eur", catalog.to_dict())
+        self.assertNotIn("vs_typical", catalog.to_dict())
+        self.assertNotIn("vs_typical_pct", catalog.to_dict())
+        self.assertNotIn("typical_deal", catalog.to_dict())
 
 
 if __name__ == "__main__":

@@ -330,11 +330,17 @@ def format_stops_compare(compare: StopsCompare) -> str:
     return "\n".join(lines)
 
 
-def _format_typical(offer: FlightOffer) -> str:
-    line = offer.typical_deal()
+def _format_typical_deal(row: object) -> str:
+    line = getattr(row, "typical_deal", lambda: None)()
     if not line:
         return ""
-    text = f"  {line}"
+    return f"  {line}"
+
+
+def _format_typical(offer: FlightOffer) -> str:
+    text = _format_typical_deal(offer)
+    if not text:
+        return ""
     if offer.cheapest_date is not None and offer.cheapest_eur is not None:
         text += f"  cheapest {offer.cheapest_date.isoformat()} {offer.cheapest_eur:.0f} €"
     return text
@@ -959,7 +965,8 @@ def _print_dates_report(report: DateCalendarReport) -> None:
             extra += f"  {row.airline}"
         if row.stops_count is not None:
             extra += f"  {_format_stops(row.stops_count)}"
-        print(f"  {row.departure_date.isoformat()}  {row.price_eur:>7.0f} €{extra}")
+        deal = _format_typical_deal(row)
+        print(f"  {row.departure_date.isoformat()}  {row.price_eur:>7.0f} €{extra}{deal}")
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare))
     if any_price:
@@ -982,7 +989,7 @@ def _print_explore_report(report: ExploreReport) -> None:
     for row in report.destinations:
         price = f"{row.price_eur:>7.0f} €" if row.price_eur is not None else "      —"
         country = f"  {row.country}" if row.country else ""
-        print(f"  {price}  {row.iata}  {row.city}{country}")
+        print(f"  {price}  {row.iata}  {row.city}{country}{_format_typical_deal(row)}")
         _print_google_flights_url(row.google_flights_url)
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare))

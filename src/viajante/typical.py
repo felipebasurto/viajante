@@ -14,12 +14,18 @@ from datetime import date
 from statistics import median
 from typing import Optional, Sequence
 
-from viajante.models import FlightOffer, VsTypical
+from viajante.models import (
+    NEAR_TYPICAL_RATIO,
+    ExploreDestination,
+    FlightOffer,
+    vs_typical,
+    vs_typical_pct,
+)
 
 # Same cap as dates.MAX_DATE_WINDOW_DAYS. Tests pin the two together.
 TYPICAL_WINDOW_DAYS = 31
 MIN_DAILY_PRICES = 3
-NEAR_RATIO = 0.10
+NEAR_RATIO = NEAR_TYPICAL_RATIO
 
 
 def typical_eur_from_daily_prices(
@@ -30,24 +36,6 @@ def typical_eur_from_daily_prices(
     if len(owned) < MIN_DAILY_PRICES:
         return None
     return float(median(owned))
-
-
-def vs_typical(price_eur: float, typical_eur: Optional[float]) -> Optional[VsTypical]:
-    """Coarse label against an owned typical. None when there is no typical."""
-    if typical_eur is None or typical_eur <= 0:
-        return None
-    if price_eur < typical_eur * (1.0 - NEAR_RATIO):
-        return "below"
-    if price_eur > typical_eur * (1.0 + NEAR_RATIO):
-        return "above"
-    return "near"
-
-
-def vs_typical_pct(price_eur: float, typical_eur: Optional[float]) -> Optional[int]:
-    """Signed percent of the fare versus an owned typical. None without a typical."""
-    if typical_eur is None or typical_eur <= 0:
-        return None
-    return int(round((price_eur / typical_eur - 1.0) * 100.0))
 
 
 def with_typical(
@@ -75,4 +63,23 @@ def with_typical(
         vs_typical_pct=pct,
         cheapest_date=cheapest_date,
         cheapest_eur=cheapest_eur,
+    )
+
+
+def with_typical_dest(
+    dest: ExploreDestination,
+    typical_eur: Optional[float],
+) -> ExploreDestination:
+    """Stamp a shopped dest from the same-route calendar median flights uses."""
+    if dest.price_eur is None:
+        return dest
+    label = vs_typical(dest.price_eur, typical_eur)
+    pct = vs_typical_pct(dest.price_eur, typical_eur)
+    if typical_eur is None or label is None or pct is None:
+        return dest
+    return replace(
+        dest,
+        typical_eur=typical_eur,
+        vs_typical=label,
+        vs_typical_pct=pct,
     )

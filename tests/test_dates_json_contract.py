@@ -31,6 +31,7 @@ RT_REPORT_KEYS = REPORT_KEYS | {"nights"}
 DAY_KEYS = {"date", "price_eur", "airline", "stops_count", "status"}
 DAY_RETURN_KEYS = DAY_KEYS | {"return_date"}
 DAY_ERROR_KEYS = DAY_KEYS | {"error"}
+DAY_TYPICAL_KEYS = {"typical_eur", "vs_typical", "vs_typical_pct", "typical_deal"}
 ERROR_KEYS = {"code", "message"}
 DATE_FETCH_BACKENDS = {"calendar", "sweep"}
 FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
@@ -184,6 +185,35 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertIsNone(data["days"][1]["price_eur"])
         self.assertNotIn("stops_compare", data["days"][0])
         self.assertNotIn("stops_compare", data)
+        self.assertEqual(set(data["days"][0]), DAY_KEYS | DAY_TYPICAL_KEYS)
+        self.assertEqual(data["days"][0]["typical_eur"], 81.0)
+        self.assertEqual(data["days"][0]["vs_typical"], "near")
+        self.assertEqual(data["days"][0]["vs_typical_pct"], 0)
+        self.assertEqual(data["days"][0]["typical_deal"], "near typical 81 € (0%)")
+        self.assertEqual(set(data["days"][1]), DAY_KEYS)
+        self.assertNotIn("typical_eur", data["days"][1])
+        self.assertEqual(data["days"][2]["vs_typical"], "below")
+        self.assertEqual(data["days"][2]["vs_typical_pct"], -17)
+        self.assertEqual(data["days"][3]["vs_typical"], "above")
+        self.assertEqual(data["days"][3]["typical_eur"], 81.0)
+
+    def test_typical_is_an_extra_day_key_when_stamped(self) -> None:
+        row = DatePriceRow(
+            departure_date=date(2026, 9, 1),
+            price_eur=67.0,
+            typical_eur=81.0,
+            vs_typical="below",
+            vs_typical_pct=-17,
+        )
+        data = row.to_dict()
+        self.assertEqual(set(data), DAY_KEYS | DAY_TYPICAL_KEYS)
+        self.assertEqual(data["typical_deal"], "below typical 81 € (−17%)")
+        omitted = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=67.0).to_dict()
+        self.assertEqual(set(omitted), DAY_KEYS)
+        self.assertNotIn("typical_eur", omitted)
+        self.assertNotIn("vs_typical", omitted)
+        self.assertNotIn("vs_typical_pct", omitted)
+        self.assertNotIn("typical_deal", omitted)
 
     def test_stops_compare_is_an_extra_day_key_from_sweep_shop(self) -> None:
         side = StopsCompareSide(
