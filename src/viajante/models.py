@@ -905,11 +905,16 @@ class DatePriceRow:
     typical_eur: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
+    baggage_buffer_eur: Optional[int] = None
 
     def __post_init__(self) -> None:
         _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
         if (self.status != "ok" or self.price_eur is None) and self.typical_eur is not None:
             raise ValueError("empty/error rows omit typical")
+        if self.baggage_buffer_eur is not None and self.baggage_buffer_eur < 0:
+            raise ValueError("baggage_buffer_eur must not be negative")
+        if (self.status != "ok" or self.price_eur is None) and self.baggage_buffer_eur is not None:
+            raise ValueError("empty/error rows omit baggage buffer")
 
     def typical_deal(self) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
@@ -930,6 +935,8 @@ class DatePriceRow:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
+        if self.baggage_buffer_eur is not None:
+            payload["baggage_buffer_eur"] = self.baggage_buffer_eur
         payload.update(_typical_json(self.typical_eur, self.vs_typical, self.vs_typical_pct))
         return payload
 
@@ -1096,6 +1103,7 @@ class ExploreDestination:
     typical_eur: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
+    baggage_buffer_eur: Optional[int] = None
 
     def __post_init__(self) -> None:
         _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
@@ -1105,6 +1113,10 @@ class ExploreDestination:
             self.duration_hours is not None or self.departure or self.arrival
         ):
             raise ValueError("shop duration/clocks require an owned dest fare")
+        if self.baggage_buffer_eur is not None and self.baggage_buffer_eur < 0:
+            raise ValueError("baggage_buffer_eur must not be negative")
+        if self.price_eur is None and self.baggage_buffer_eur is not None:
+            raise ValueError("baggage buffer requires an owned dest fare")
 
     def typical_deal(self) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
@@ -1126,6 +1138,8 @@ class ExploreDestination:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
+        if self.baggage_buffer_eur is not None:
+            payload["baggage_buffer_eur"] = self.baggage_buffer_eur
         payload.update(_typical_json(self.typical_eur, self.vs_typical, self.vs_typical_pct))
         return payload
 

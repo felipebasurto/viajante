@@ -1359,6 +1359,8 @@ def _run_dates(args: argparse.Namespace) -> int:
         start = _parse_iso_date(args.start, "--from")
         end = _parse_iso_date(args.end, "--to")
         occupancy = _occupancy_from_args(args)
+        if args.baggage_buffer < 0:
+            raise ValueError("--baggage-buffer must not be negative")
         validate_date_window(start, end)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
@@ -1415,6 +1417,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         trip=trip,
         nights=nights,
         nearby=nearby,
+        buffer_eur=args.baggage_buffer,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
@@ -1599,6 +1602,8 @@ def _run_explore(args: argparse.Namespace) -> int:
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
         occupancy = _occupancy_from_args(args)
+        if args.baggage_buffer < 0:
+            raise ValueError("--baggage-buffer must not be negative")
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args)
         validate_explore_window(start, days)
@@ -1620,6 +1625,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         max_stops=args.max_stops,
         nearby=nearby,
         sort=args.sort,
+        buffer_eur=args.baggage_buffer,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
@@ -2210,6 +2216,13 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_owned_shop_filters(dates)
     _add_nearby_flag(dates)
     dates.add_argument(
+        "--baggage-buffer",
+        type=int,
+        default=DEFAULT_BAGGAGE_BUFFER_EUR,
+        metavar="EUR",
+        help=(f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR})"),
+    )
+    dates.add_argument(
         "--fetch",
         default="sweep",
         choices=["auto", "sweep", "detail"],
@@ -2372,10 +2385,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default="price",
         choices=list(FLIGHT_SORTS),
         help=(
-            "Order priced dests by cheapest fare (default), duration of that cheapest "
-            "offer, or its owned departure/arrival clock. Unnamed stays price. "
-            "A dest missing the sort key is not given a made-up duration or clock"
+            "Order priced dests by cheapest fare (default), ranked total (fare+buffer), "
+            "duration of that cheapest offer, or its owned departure/arrival clock. "
+            "Unnamed stays price. Buffer ranking only applies when sort is ranked. "
+            "A dest missing the sort key is not given a made-up duration, clock, or buffer"
         ),
+    )
+    explore.add_argument(
+        "--baggage-buffer",
+        type=int,
+        default=DEFAULT_BAGGAGE_BUFFER_EUR,
+        metavar="EUR",
+        help=(f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR})"),
     )
     explore.add_argument(
         "--save",

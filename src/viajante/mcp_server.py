@@ -145,6 +145,7 @@ def build_server():
         max_layover: float | None = None,
         currency: str = "EUR",
         country: str | None = None,
+        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     ) -> dict:
         return dict(
             search_dates_tool(
@@ -181,6 +182,7 @@ def build_server():
                 max_layover=max_layover,
                 currency=currency,
                 country=country,
+                baggage_buffer=baggage_buffer,
             )
         )
 
@@ -300,6 +302,7 @@ def build_server():
         currency: str = "EUR",
         country: str | None = None,
         sort: str = "price",
+        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     ) -> dict:
         return dict(
             search_explore_tool(
@@ -337,6 +340,7 @@ def build_server():
                 currency=currency,
                 country=country,
                 sort=sort,  # type: ignore[arg-type]
+                baggage_buffer=baggage_buffer,
             )
         )
 

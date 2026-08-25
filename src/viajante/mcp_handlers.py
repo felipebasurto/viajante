@@ -196,6 +196,7 @@ def search_dates_tool(
     max_layover: Optional[float] = None,
     currency: str = "EUR",
     country: Optional[str] = None,
+    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -239,6 +240,7 @@ def search_dates_tool(
             max_layover_hours=max_layover,
             currency=currency,
             country=country,
+            buffer_eur=baggage_buffer,
         )
     )
     return _payload_from_reports(report)
@@ -368,6 +370,7 @@ def search_explore_tool(
     currency: str = "EUR",
     country: Optional[str] = None,
     sort: FlightSort = "price",
+    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -415,6 +418,7 @@ def search_explore_tool(
             currency=currency,
             country=country,
             sort=sort,
+            buffer_eur=baggage_buffer,
         )
     )
     return _payload_from_reports(report)

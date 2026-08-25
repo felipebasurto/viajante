@@ -203,6 +203,22 @@ class ExploreJsonContractTests(unittest.TestCase):
         self.assertIsNone(silent.duration_hours)
         self.assertNotIn("duration_hours", silent.to_dict())
 
+    def test_baggage_buffer_is_an_extra_dest_key_when_shopped(self) -> None:
+        dest = ExploreDestination(
+            iata="OPO",
+            city="Porto",
+            country="Portugal",
+            price_eur=40.0,
+            baggage_buffer_eur=70,
+        )
+        data = dest.to_dict()
+        self.assertEqual(set(data), DESTINATION_KEYS | {"baggage_buffer_eur"})
+        self.assertEqual(data["baggage_buffer_eur"], 70)
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
+        self.assertNotIn("baggage_buffer_eur", catalog.to_dict())
+        self.assertNotIn("needs_bag_verify", catalog.to_dict())
+
 
 if __name__ == "__main__":
     unittest.main()

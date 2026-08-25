@@ -1403,6 +1403,20 @@ def _cheapest_by_fare(offers: Sequence[FlightOffer]) -> Optional[FlightOffer]:
     return min(offers, key=sort_key)
 
 
+def _cheapest_by_ranked(offers: Sequence[FlightOffer]) -> Optional[FlightOffer]:
+    """Cheapest by owned fare+buffer. Missing buffer stamp is fare alone; never invent."""
+    if not offers:
+        return None
+
+    def sort_key(offer: FlightOffer) -> tuple[float, float]:
+        duration = offer.duration_hours
+        if duration is None:
+            duration = UNKNOWN_DURATION_SORTS_LAST
+        return (_effective_cost(offer), duration)
+
+    return min(offers, key=sort_key)
+
+
 def compare_nonstop_vs_one_stop(offers: Sequence[FlightOffer]) -> Optional[StopsCompare]:
     """Cheapest cabin fare per stop bucket from one parsed set. No extra fetch."""
     nonstop = _cheapest_by_fare([offer for offer in offers if offer.stops_count == 0])

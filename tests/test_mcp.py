@@ -229,6 +229,18 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["country"])
         self.assertEqual(payload["schema_version"], 1)
 
+    def test_search_dates_unnamed_buffer_uses_the_default(self) -> None:
+        fake = _report(days=[])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT)
+        self.assertEqual(search.call_args.kwargs["buffer_eur"], 70)
+
+    def test_search_dates_forwards_named_buffer(self) -> None:
+        fake = _report(days=[])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT, baggage_buffer=0)
+        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+
     def test_search_dates_forwards_named_occupancy(self) -> None:
         fake = _report(days=[])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
@@ -507,6 +519,19 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("SIN", FUTURE, price_cap=200)
         self.assertEqual(search.call_args.kwargs["price_cap_eur"], 200)
+
+    def test_search_explore_unnamed_buffer_uses_the_default(self) -> None:
+        fake = _report(destinations=[])
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool("MAD", FUTURE)
+        self.assertEqual(search.call_args.kwargs["buffer_eur"], 70)
+
+    def test_search_explore_forwards_named_buffer(self) -> None:
+        fake = _report(destinations=[])
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool("MAD", FUTURE, baggage_buffer=0, sort="ranked")
+        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+        self.assertEqual(search.call_args.kwargs["sort"], "ranked")
 
     def test_search_explore_forwards_named_occupancy(self) -> None:
         fake = _report(destinations=[])

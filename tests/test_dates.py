@@ -733,6 +733,7 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--max-layover", help_text)
         self.assertIn("--min-layover", help_text)
         self.assertIn("--max-duration", help_text)
+        self.assertIn("--baggage-buffer", help_text)
 
     def test_dates_forwards_owned_shop_filters(self) -> None:
         with (
@@ -852,6 +853,7 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["infants_on_lap"], 0)
         self.assertEqual(kwargs["currency"], "EUR")
         self.assertIsNone(kwargs["country"])
+        self.assertEqual(kwargs["buffer_eur"], 70)
 
     def test_dates_forwards_named_occupancy(self) -> None:
         with (
@@ -1965,6 +1967,7 @@ class ShopFilterTests(unittest.TestCase):
             source=source,
             alliances=("star",),
             exclude_alliances=("oneworld",),
+            buffer_eur=0,
         )
         self.assertEqual(report.fetch_backend, "sweep")
         self.assertEqual(source.fetch_calls, 1)
@@ -2863,7 +2866,9 @@ class StopsCompareShopParityTests(unittest.TestCase):
                 date(2026, 9, 2): (_card(airline="Iberia", price="€38", stops="Nonstop"),),
             },
         )
-        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        report = search_dates(
+            "MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source, buffer_eur=0
+        )
         self.assertEqual(report.fetch_backend, "sweep")
         first = report.days[0].stops_compare
         assert first is not None
@@ -3078,6 +3083,113 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertIn("https://www.google.com/travel/flights", output)
         self.assertIn("tfs=", output)
         self.assertNotIn("booking_token=", output)
+
+
+class DatesBaggageBufferTests(unittest.TestCase):
+    def test_named_buffer_changes_sweep_winner_versus_zero(self) -> None:
+        cards = {
+            date(2026, 9, 1): (
+                _card(airline="Ryanair", price="€50"),
+                _card(airline="Iberia", price="€90"),
+            ),
+        }
+        off = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 1),
+            source=FakeCalendarSource(CompactParseMiss("no wrb.fr calendar payload"), cards=cards),
+            buffer_eur=0,
+        )
+        self.assertEqual(off.days[0].airline, "Ryanair")
+        self.assertEqual(off.days[0].price_eur, 50.0)
+        self.assertEqual(off.days[0].baggage_buffer_eur, 0)
+        named = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 1),
+            source=FakeCalendarSource(CompactParseMiss("no wrb.fr calendar payload"), cards=cards),
+            buffer_eur=70,
+        )
+        self.assertEqual(named.days[0].airline, "Iberia")
+        self.assertEqual(named.days[0].price_eur, 90.0)
+        self.assertEqual(named.days[0].baggage_buffer_eur, 0)
+        self.assertNotEqual(named.days[0].price_eur, 120.0)
+
+    def test_unnamed_buffer_uses_the_same_default_as_flex(self) -> None:
+        cards = {
+            date(2026, 9, 1): (
+                _card(airline="Ryanair", price="€50"),
+                _card(airline="Iberia", price="€90"),
+            ),
+        }
+        unnamed = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 1),
+            source=FakeCalendarSource(CompactParseMiss("no wrb.fr calendar payload"), cards=cards),
+        )
+        self.assertEqual(unnamed.days[0].airline, "Iberia")
+        self.assertEqual(unnamed.days[0].price_eur, 90.0)
+
+    def test_compact_cells_omit_buffer_and_do_not_invent_bag_verify(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 40.0),
+                CompactCalendarDay(date(2026, 9, 2), 90.0),
+            )
+        )
+        report = search_dates(
+            "MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source, buffer_eur=70
+        )
+        self.assertEqual(report.fetch_backend, "calendar")
+        self.assertEqual(report.days[0].price_eur, 40.0)
+        self.assertEqual(report.days[1].price_eur, 90.0)
+        self.assertIsNone(report.days[0].baggage_buffer_eur)
+        self.assertIsNone(report.days[1].baggage_buffer_eur)
+        self.assertNotIn("baggage_buffer_eur", report.days[0].to_dict())
+        self.assertNotIn("needs_bag_verify", report.days[0].to_dict())
+        self.assertEqual(source.fetch_calls, 0)
+
+    def test_cli_forwards_named_buffer_and_rejects_negative(self) -> None:
+        with (
+            patch("viajante.cli.search_dates") as search,
+            patch("viajante.cli._print_dates_report"),
+            patch("viajante.cli._dates_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "dates",
+                    "MAD-BCN",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                    "--baggage-buffer",
+                    "0",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+        with patch("viajante.cli.search_dates") as search:
+            self.assertEqual(
+                main(
+                    [
+                        "dates",
+                        "MAD-BCN",
+                        "--from",
+                        "2026-09-01",
+                        "--to",
+                        "2026-09-02",
+                        "--baggage-buffer",
+                        "-1",
+                    ]
+                ),
+                1,
+            )
+        search.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -381,7 +381,7 @@ _FLAG = re.compile(
     r"depart-window|arrive-before|depart-after|currency|country|airlines|"
     r"exclude-airlines|alliance|"
     r"exclude-alliance|exclude-via|exclude-airports|include-airports|via|"
-    r"no-overnight|require-overnight|bags|price-cap)\s+(\S+)",
+    r"no-overnight|require-overnight|bags|price-cap|baggage-buffer)\s+(\S+)",
     re.IGNORECASE,
 )
 _BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
@@ -604,6 +604,10 @@ _SANE_WORD = re.compile(r"\bsane\b")
 _MAX_DURATION = re.compile(r"max(?:imum)? duration\s*(\d+)")
 _PRICE_CAP_EUR_SIGN = re.compile(r"(?:under|menos de|below|<)\s*(\d+)\s*€")
 _PRICE_CAP_EUR_WORD = re.compile(r"(?:under|menos de|below)\s*(\d+)\s*(?:eur|euros)")
+_BAG_BUFFER_PROSE = re.compile(
+    r"rank(?:ing)?\s+with\s+a\s+(\d+)\s*€?\s*(?:eur|euro)?\s*bag\s+buffer",
+    re.IGNORECASE,
+)
 _ASKED_TWO_ONE_WAYS = re.compile(
     r"two one-way|two one ways|without --trip|without trip rt|"
     r"sin --trip|sin trip rt|dos one-way|separate tickets",
@@ -908,6 +912,7 @@ class PromptPlan:
     flex_days: Optional[int] = None
     currency: Optional[str] = None
     country: Optional[str] = None
+    baggage_buffer_eur: Optional[int] = None
 
     def to_dict(self) -> dict[str, Any]:
         def iso(value: Optional[date]) -> Optional[str]:
@@ -977,6 +982,7 @@ class PromptPlan:
             "flex_days": self.flex_days,
             "currency": self.currency,
             "country": self.country,
+            "baggage_buffer_eur": self.baggage_buffer_eur,
         }
 
     def matches(self, expect: Mapping[str, Any]) -> tuple[bool, str]:
@@ -1881,6 +1887,21 @@ def _named_price_cap_eur(folded: str, flags: Mapping[str, str]) -> Optional[int]
         return None
     value = int(cap.group(1))
     return value if value > 0 else None
+
+
+def _named_baggage_buffer_eur(folded: str, flags: Mapping[str, str]) -> Optional[int]:
+    """Named ranking buffer only. Unnamed stays None. Do not invent a fare or bags."""
+    if "baggage-buffer" in flags:
+        try:
+            value = int(flags["baggage-buffer"])
+        except ValueError:
+            return None
+        return value if value >= 0 else None
+    hit = _BAG_BUFFER_PROSE.search(folded)
+    if hit is None:
+        return None
+    value = int(hit.group(1))
+    return value if value >= 0 else None
 
 
 _ENGLISH_IATA_WORDS = frozenset(
@@ -2845,6 +2866,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         refuse.append("past_date")
 
     baggage, bags, carry_on = _bag_fields(folded, flags, raw)
+    baggage_buffer = _named_baggage_buffer_eur(folded, flags)
     arrive_before = _named_hhmm(folded, flags, flag="arrive-before", pattern=_ARRIVE_BEFORE)
     depart_after = _named_hhmm(folded, flags, flag="depart-after", pattern=_DEPART_AFTER)
     depart_window = _depart_window(folded, flags)
@@ -3074,6 +3096,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             currency=currency,
             country=country,
             sort=sort,
+            baggage_buffer_eur=baggage_buffer,
         )
 
     if intent == "flex":
@@ -3120,6 +3143,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             country=country,
             exclude_airports=tuple(exclude_airports),
             include_airports=tuple(include_airports),
+            baggage_buffer_eur=baggage_buffer,
         )
 
     if intent == "dates":
@@ -3163,6 +3187,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             country=country,
             exclude_airports=tuple(exclude_airports),
             include_airports=tuple(include_airports),
+            baggage_buffer_eur=baggage_buffer,
         )
 
     if intent == "refuse":
@@ -3240,4 +3265,5 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         notes=notes,
         currency=currency,
         country=country,
+        baggage_buffer_eur=baggage_buffer,
     )

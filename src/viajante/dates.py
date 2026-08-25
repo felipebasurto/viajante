@@ -12,6 +12,7 @@ from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
     FlightSort,
+    _cheapest_by_ranked,
     _normalize_offer,
     _rank_offers,
     classify_failure,
@@ -445,7 +446,7 @@ def _offers_from_cards(
     cards: Sequence[RawFlightCard],
     query: FlightQuery | RoundTrip,
     *,
-    buffer_eur: int = 0,
+    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     no_overnight: Optional[Sequence[str]] = None,
@@ -513,6 +514,7 @@ def _date_calendar_for_seed(
     max_duration_hours: Optional[float],
     currency: str,
     country: Optional[str],
+    buffer_eur: int,
     report_progress: Callable[[str], None],
 ) -> DateCalendarReport:
     stay_label = ""
@@ -549,6 +551,7 @@ def _date_calendar_for_seed(
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
+            buffer_eur=buffer_eur,
         )
         backend = "sweep"
     except Exception as exc:
@@ -611,12 +614,15 @@ def search_dates(
     nearby: bool = False,
     currency: str = "EUR",
     country: Optional[str] = None,
+    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
     currency = normalize_currency(currency)
     country = normalize_country(country)
+    if buffer_eur < 0:
+        raise ValueError("baggage buffer must not be negative")
     validate_layover_hours(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
@@ -688,6 +694,7 @@ def search_dates(
                     max_duration_hours=max_duration_hours,
                     currency=currency,
                     country=country,
+                    buffer_eur=buffer_eur,
                     report_progress=report_progress,
                 )
             )
@@ -1107,10 +1114,12 @@ def _row_from_day_cards(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
+    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
 ) -> DatePriceRow:
     offers = _offers_from_cards(
         cards,
         query,
+        buffer_eur=buffer_eur,
         via=via,
         exclude_via=exclude_via,
         no_overnight=no_overnight,
@@ -1124,7 +1133,9 @@ def _row_from_day_cards(
     )
     if not offers:
         return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
-    best = min(offers, key=lambda offer: offer.price_eur)
+    best = _cheapest_by_ranked(offers)
+    if best is None:
+        return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
     return DatePriceRow(
         departure_date=cursor,
         price_eur=best.price_eur,
@@ -1133,6 +1144,7 @@ def _row_from_day_cards(
         return_date=returning,
         status="ok",
         stops_compare=compare_nonstop_vs_one_stop(offers),
+        baggage_buffer_eur=best.baggage_buffer_eur,
     )
 
 
@@ -1170,6 +1182,7 @@ def _sweep_per_day(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
+    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
@@ -1206,6 +1219,7 @@ def _sweep_per_day(
                         max_layover_hours=max_layover_hours,
                         min_layover_hours=min_layover_hours,
                         max_duration_hours=max_duration_hours,
+                        buffer_eur=buffer_eur,
                     )
                 )
         return tuple(rows)
@@ -1234,6 +1248,7 @@ def _sweep_per_day(
                 max_layover_hours=max_layover_hours,
                 min_layover_hours=min_layover_hours,
                 max_duration_hours=max_duration_hours,
+                buffer_eur=buffer_eur,
             )
         )
     return tuple(rows)

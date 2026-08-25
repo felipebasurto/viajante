@@ -944,6 +944,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--max-duration", help_text)
         self.assertIn("--sort", help_text)
         self.assertIn("--sort duration", help_text)
+        self.assertIn("--baggage-buffer", help_text)
 
     def test_explore_forwards_owned_shop_filters(self) -> None:
         with (
@@ -1053,6 +1054,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["currency"], "EUR")
         self.assertIsNone(kwargs["country"])
         self.assertEqual(kwargs["sort"], "price")
+        self.assertEqual(kwargs["buffer_eur"], 70)
 
     def test_explore_forwards_named_sort_duration(self) -> None:
         with (
@@ -1685,6 +1687,116 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertIn("https://www.google.com/travel/flights", output)
         self.assertIn("tfs=", output)
         self.assertNotIn("booking_token=", output)
+
+
+class ExploreBaggageBufferTests(unittest.TestCase):
+    def test_ranked_buffer_reorders_shopped_dests_versus_zero(self) -> None:
+        places = (
+            CompactExplorePlace("OPO", "Porto", "Portugal"),
+            CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+        )
+        prices = {
+            "OPO": (_card(airline="Ryanair", price="€40"),),
+            "LIS": (_card(airline="Iberia", price="€90"),),
+        }
+        by_fare = search_explore(
+            "MAD",
+            date(2026, 9, 1),
+            days=7,
+            top=2,
+            source=FakeExploreSource(places, prices),
+            buffer_eur=70,
+        )
+        self.assertEqual([row.iata for row in by_fare.destinations], ["OPO", "LIS"])
+        self.assertEqual(by_fare.destinations[0].price_eur, 40.0)
+        ranked_off = search_explore(
+            "MAD",
+            date(2026, 9, 1),
+            days=7,
+            top=2,
+            sort="ranked",
+            buffer_eur=0,
+            source=FakeExploreSource(places, prices),
+        )
+        self.assertEqual([row.iata for row in ranked_off.destinations], ["OPO", "LIS"])
+        ranked = search_explore(
+            "MAD",
+            date(2026, 9, 1),
+            days=7,
+            top=2,
+            sort="ranked",
+            buffer_eur=70,
+            source=FakeExploreSource(places, prices),
+        )
+        self.assertEqual([row.iata for row in ranked.destinations], ["LIS", "OPO"])
+        self.assertEqual(ranked.destinations[0].price_eur, 90.0)
+        self.assertEqual(ranked.destinations[1].price_eur, 40.0)
+        self.assertEqual(ranked.destinations[1].baggage_buffer_eur, 70)
+        self.assertNotEqual(ranked.destinations[1].price_eur, 110.0)
+
+    def test_unnamed_sort_ignores_buffer_and_unnamed_buffer_uses_default(self) -> None:
+        places = (
+            CompactExplorePlace("OPO", "Porto", "Portugal"),
+            CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+        )
+        prices = {
+            "OPO": (_card(airline="Ryanair", price="€40"),),
+            "LIS": (_card(airline="Iberia", price="€90"),),
+        }
+        unnamed = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=2, source=FakeExploreSource(places, prices)
+        )
+        self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS"])
+        default_ranked = search_explore(
+            "MAD",
+            date(2026, 9, 1),
+            days=7,
+            top=2,
+            sort="ranked",
+            source=FakeExploreSource(places, prices),
+        )
+        self.assertEqual([row.iata for row in default_ranked.destinations], ["LIS", "OPO"])
+
+    def test_catalog_only_dest_omits_buffer_stamp(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={"OPO": (_card(airline="Ryanair", price="€40"),)},
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=2, sort="ranked", source=source
+        )
+        by_iata = {row.iata: row for row in report.destinations}
+        self.assertEqual(by_iata["OPO"].price_eur, 40.0)
+        self.assertEqual(by_iata["OPO"].baggage_buffer_eur, 70)
+        self.assertIsNone(by_iata["FCO"].price_eur)
+        self.assertIsNone(by_iata["FCO"].baggage_buffer_eur)
+        self.assertNotIn("baggage_buffer_eur", by_iata["FCO"].to_dict())
+        self.assertNotIn("needs_bag_verify", by_iata["FCO"].to_dict())
+
+    def test_cli_forwards_named_buffer(self) -> None:
+        with (
+            patch("viajante.cli.search_explore") as search,
+            patch("viajante.cli._print_explore_report"),
+        ):
+            search.return_value = SimpleNamespace(error=None, destinations=())
+            code = main(
+                [
+                    "explore",
+                    "MAD",
+                    "--from",
+                    "2026-09-01",
+                    "--sort",
+                    "ranked",
+                    "--baggage-buffer",
+                    "0",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+        self.assertEqual(search.call_args.kwargs["sort"], "ranked")
 
 
 if __name__ == "__main__":

@@ -9,10 +9,12 @@ from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import is_known_iata
 from viajante.flights import (
+    DEFAULT_BAGGAGE_BUFFER_EUR,
     FLIGHT_SORTS,
     FlightSort,
     _calendar_summary_from_source,
     _cheapest_by_fare,
+    _cheapest_by_ranked,
     _clock_minutes,
     _normalize_offer,
     classify_failure,
@@ -167,7 +169,11 @@ def _rank_explore_destinations(
             minutes = _clock_minutes(row.arrival)
             missing = minutes is None
             return (missing, minutes or 0, row.price_eur is None, row.price_eur or 0.0, row.iata)
-        return (row.price_eur is None, row.price_eur or 0.0, row.iata)
+        fare = row.price_eur if row.price_eur is not None else 0.0
+        if sort == "ranked":
+            buffer = row.baggage_buffer_eur or 0
+            return (row.price_eur is None, fare + buffer, row.iata)
+        return (row.price_eur is None, fare, row.iata)
 
     return tuple(sorted(dests, key=sort_key))
 
@@ -209,6 +215,7 @@ def _explore_for_origin(
     currency: str,
     country: Optional[str],
     sort: FlightSort,
+    buffer_eur: int,
     report_progress: Callable[[str], None],
 ) -> ExploreReport:
     nearby = f" ({nearby_label})" if nearby_label else ""
@@ -271,6 +278,8 @@ def _explore_for_origin(
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
+            buffer_eur=buffer_eur,
+            sort=sort,
         )
         price = cheapest.price_eur if cheapest is not None else None
         if drop_unpriced and price is None:
@@ -293,6 +302,7 @@ def _explore_for_origin(
             ),
             stops_compare=compare,
             google_flights_url=google_flights_url(shop, currency=currency, country=country),
+            baggage_buffer_eur=(cheapest.baggage_buffer_eur if cheapest is not None else None),
         )
         if price is not None:
             summary = _calendar_summary_from_source(client, shop, typical_cache)
@@ -350,6 +360,7 @@ def search_explore(
     currency: str = "EUR",
     country: Optional[str] = None,
     sort: FlightSort = "price",
+    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
 ) -> ExploreReport | tuple[ExploreReport, ...]:
@@ -360,6 +371,8 @@ def search_explore(
         raise ValueError("top must be positive")
     if top > MAX_EXPLORE_TOP:
         raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
+    if buffer_eur < 0:
+        raise ValueError("baggage buffer must not be negative")
     if sort not in FLIGHT_SORTS:
         raise ValueError(
             "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
@@ -453,6 +466,7 @@ def search_explore(
                     currency=currency,
                     country=country,
                     sort=sort,
+                    buffer_eur=buffer_eur,
                     report_progress=report_progress,
                 )
             )
@@ -502,6 +516,8 @@ def _cheapest_shop(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
+    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    sort: FlightSort = "price",
 ) -> tuple[Optional[FlightOffer], Optional[StopsCompare], FlightQuery]:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
@@ -536,7 +552,7 @@ def _cheapest_shop(
             offer := _normalize_offer(
                 raw,
                 max_stops,
-                buffer_eur=0,
+                buffer_eur=buffer_eur,
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
                 depart_window=depart_window,
@@ -558,8 +574,9 @@ def _cheapest_shop(
     ]
     if not eligible:
         return None, None, query
+    cheapest = _cheapest_by_ranked(eligible) if sort == "ranked" else _cheapest_by_fare(eligible)
     return (
-        _cheapest_by_fare(eligible),
+        cheapest,
         compare_nonstop_vs_one_stop(eligible),
         query,
     )
