@@ -376,6 +376,60 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(hotel.rooms, 1)
         self.assertEqual(hotel.location, "Melbourne")
 
+    def test_search_trip_unnamed_shop_filters_stay_unset(self) -> None:
+        fake = _report(
+            flights={"queries": []},
+            hotels={"price_basis": "total_stay", "queries": []},
+        )
+        with patch("viajante.mcp_handlers.search_trip", return_value=fake) as search:
+            search_trip_tool(
+                [f"SIN-MEL:{FUTURE}:{FUTURE_OUT}"],
+                "Melbourne",
+                trip="rt",
+            )
+        kwargs = search.call_args.kwargs
+        self.assertIsNone(kwargs["bags"])
+        self.assertIsNone(kwargs["carry_on"])
+        self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["airlines"])
+        self.assertIsNone(kwargs["exclude_airlines"])
+        self.assertIsNone(kwargs["price_cap_eur"])
+        trip = search.call_args.args[0][0]
+        self.assertIsNone(trip.bags)
+        self.assertIsNone(trip.price_cap_eur)
+
+    def test_search_trip_forwards_owned_shop_filters(self) -> None:
+        fake = _report(
+            flights={"queries": []},
+            hotels={"price_basis": "total_stay", "queries": []},
+        )
+        with patch("viajante.mcp_handlers.search_trip", return_value=fake) as search:
+            search_trip_tool(
+                [f"SIN-MEL:{FUTURE}:{FUTURE_OUT}"],
+                "Melbourne",
+                trip="rt",
+                bags=1,
+                carry_on=1,
+                via="LIS",
+                exclude_via="DXB",
+                airlines="IB",
+                exclude_airlines="FR",
+                price_cap=200,
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["bags"], 1)
+        self.assertEqual(kwargs["carry_on"], 1)
+        self.assertEqual(kwargs["via"], ("LIS",))
+        self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["airlines"], ("IB",))
+        self.assertEqual(kwargs["exclude_airlines"], ("FR",))
+        self.assertEqual(kwargs["price_cap_eur"], 200)
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.bags, 1)
+        self.assertEqual(trip.carry_on, 1)
+        self.assertEqual(trip.price_cap_eur, 200)
+
     def test_search_trip_past_check_in_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_trip") as search:
             with self.assertRaises(ValueError):

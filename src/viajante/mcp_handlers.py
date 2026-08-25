@@ -338,6 +338,11 @@ def search_trip_tool(
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    via: Optional[str] = None,
+    exclude_via: Optional[str] = None,
+    price_cap: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -362,6 +367,7 @@ def search_trip_tool(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
+        price_cap_eur=price_cap,
     )
     trips = _as_trips(plan)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
@@ -397,6 +403,13 @@ def search_trip_tool(
             buffer_eur=baggage_buffer,
             sort=sort,
             fetch=fetch,
+            airlines=parse_airline_codes(airlines),
+            exclude_airlines=parse_airline_codes(exclude_airlines),
+            via=parse_via_airports(via),
+            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+            bags=bags,
+            carry_on=carry_on,
+            price_cap_eur=price_cap,
             currency=currency,
             country=country,
             hotel_source=source,

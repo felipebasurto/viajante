@@ -28,7 +28,7 @@ uv run viajante flex ORIGIN-DEST --around YYYY-MM-DD --flex N [--nights N] [--tr
 uv run viajante explore ORIGIN --from YYYY-MM-DD [--days N] [--month YYYY-MM] [--top N] [--adults N] [--cabin CABIN] [--max-stops {0,1}] [--bags N] [--carry-on] [--price-cap EUR] [--airlines CODES] [--exclude-airlines CODES] [--via CODES] [--exclude-via CODES] [--save FILE]
 uv run viajante airports QUERY
 uv run viajante hotels LOCATION CHECK_IN CHECK_OUT [--source {booking,google}] [--adults N] [--rooms N] [--top N] [--min-rating SCORE] [--entire-home] [--allow-non-refundable] [--compare-cancellation] [--save FILE]
-uv run viajante trip ORIGIN-DEST:YYYY-MM-DD[:YYYY-MM-DD] --hotel LOCATION [--check-in DATE] [--check-out DATE] [--trip {one-way,rt,multi}] [--adults N] [--rooms N] [--fetch {auto,sweep,detail}] [--source {booking,google}] [--save FILE]
+uv run viajante trip ORIGIN-DEST:YYYY-MM-DD[:YYYY-MM-DD] --hotel LOCATION [--check-in DATE] [--check-out DATE] [--trip {one-way,rt,multi}] [--adults N] [--rooms N] [--bags N] [--carry-on] [--price-cap EUR] [--airlines CODES] [--exclude-airlines CODES] [--via CODES] [--exclude-via CODES] [--fetch {auto,sweep,detail}] [--source {booking,google}] [--save FILE]
 uv run viajante bench
 uv run viajante bench --prompts
 uv run viajante bench --prompts --timeit-sweep
@@ -36,7 +36,7 @@ uv run viajante bench --prompts --timeit-sweep
 
 Route grammar: `JFK-LHR:2026-09-15`, or several dates comma-separated on one route. `JFK-NRT:2026-10-09:2026-10-20` without `--trip` is sugar for outbound + return as two one-way queries. `--trip rt` POSTs one package. `--nearby` expands origin or dest to owned same-city IATA (default off; named open-jaw airports stay; no invented codes). You can still pass a return leg as a second route.
 
-MCP (stdio, no auth): `uv sync --extra mcp` then `viajante-mcp`. Tools: `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`. Flight filters, dates `nights`/`trip`/`max_stops`, flex `around`/`flex`/`nights`, explore `month`/`adults`/`cabin`/`max_stops` plus the same bags/via/airlines/`price-cap` shop filters as flights, hotels `source=google` by default, `search_trip` for an owned fare+stay sum. Keep the one-search process lock.
+MCP (stdio, no auth): `uv sync --extra mcp` then `viajante-mcp`. Tools: `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`. Flight filters, dates `nights`/`trip`/`max_stops`, flex `around`/`flex`/`nights`, explore `month`/`adults`/`cabin`/`max_stops`, `search_trip` for an owned fare+stay sum (same bags/via/airlines/`price-cap` shop filters as flights), hotels `source=google` by default. Keep the one-search process lock.
 
 ## Smoke
 
@@ -150,7 +150,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Succ
 - `--min-rating` is applied locally after the scrape. Booking is 0–10; Google Hotels is 0–5. It is not a Booking chip.
 - Treat cancellation, `lodging_kind`, and bed/bedroom/bathroom counts as observed evidence. Do not present unknown card evidence as confirmed. Do not guess “hotel” from the property title.
 - Remind the user to verify the final total and cancellation terms on Booking.com before booking.
-- `viajante trip` / `search_trip` is flights then hotels, one lock. Print owned fare + stay + sum when dates overlap and both sides return prices. Omit `trip_total` if either side misses, dates do not overlap, or currencies differ. Never invent a missing side.
+- `viajante trip` / `search_trip` is flights then hotels, one lock. Print owned fare + stay + sum when dates overlap and both sides return prices. Omit `trip_total` if either side misses, dates do not overlap, or currencies differ. Flight shop uses the same owned bags/via/airlines/`price-cap` post-filters as `search_flights`; unnamed stays unset. Never invent a missing side.
 
 ## Second opinion in the browser
 

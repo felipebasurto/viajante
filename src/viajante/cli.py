@@ -154,6 +154,7 @@ Examples:
   viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --adults 2
   viajante trip DUB-JFK:2026-10-09:2026-10-13 --hotel "New York" --adults 2 --fetch sweep
   viajante trip LAX-NRT:2026-10-12:2026-10-20 --hotel Tokyo --trip rt --source google
+  viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --bags 1 --via DXB
 """
 
 
@@ -863,6 +864,7 @@ def _run_trip(args: argparse.Namespace) -> int:
     try:
         trips = _parse_and_validate(args)
         hotel_query = _trip_hotel_query(args, trips)
+        shop = _owned_shop_filters_from_args(args)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -878,14 +880,13 @@ def _run_trip(args: argparse.Namespace) -> int:
         max_layover_hours=args.max_layover,
         min_layover_hours=args.min_layover,
         max_duration_hours=args.max_duration,
-        airlines=parse_airline_codes(args.airlines),
-        exclude_airlines=parse_airline_codes(args.exclude_airlines),
         alliances=parse_alliances(args.alliance),
         exclude_alliances=parse_alliances(args.exclude_alliance),
         depart_window=parse_depart_window(args.depart_window),
         currency=args.currency,
         country=args.country,
         hotel_source=getattr(args, "source", "booking"),
+        **shop,
     )
     _print_report(report.flights, sort=args.sort)
     _print_hotel_report(report.hotels)
@@ -1709,27 +1710,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include non-refundable stays (default filters to free cancellation)",
     )
-    trip.add_argument(
-        "--bags",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Checked bags on the shopping request (omit to leave unset)",
-    )
-    trip.add_argument(
-        "--carry-on",
-        action="store_true",
-        dest="carry_on",
-        help="Ask the shopping request for one carry-on (omit to leave unset)",
-    )
-    trip.add_argument(
-        "--price-cap",
-        type=int,
-        default=None,
-        metavar="EUR",
-        dest="price_cap",
-        help="Drop owned fares above this EUR amount (omit to leave unset; unnamed stays None)",
-    )
+    _add_owned_shop_filters(trip)
     trip.add_argument(
         "--save",
         default=None,

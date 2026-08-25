@@ -1669,6 +1669,106 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         search.assert_not_called()
 
+    def test_trip_help_lists_owned_shop_filters(self) -> None:
+        with patch("viajante.cli.search_trip") as search:
+            buffer = io.StringIO()
+            with patch("sys.stdout", buffer):
+                code = main(["trip", "--help"])
+        self.assertEqual(code, 0)
+        search.assert_not_called()
+        help_text = buffer.getvalue()
+        self.assertIn("--bags", help_text)
+        self.assertIn("--via", help_text)
+        self.assertIn("--airlines", help_text)
+        self.assertIn("--price-cap", help_text)
+
+    def test_trip_forwards_owned_shop_filters(self) -> None:
+        with (
+            patch("viajante.cli.search_trip") as search,
+            patch("viajante.cli._print_report"),
+            patch("viajante.cli._print_hotel_report"),
+            patch("viajante.cli._print_trip_total"),
+        ):
+            search.return_value = TripSearchReport(
+                searched_at=SEARCHED_AT,
+                flights=_report(),
+                hotels=_sample_hotel_report(),
+                trip_total=None,
+            )
+            code = main(
+                [
+                    "trip",
+                    "SIN-MEL:2026-11-06:2026-11-10",
+                    "--hotel",
+                    "Melbourne",
+                    "--trip",
+                    "rt",
+                    "--bags",
+                    "1",
+                    "--carry-on",
+                    "--via",
+                    "LIS",
+                    "--exclude-via",
+                    "DXB",
+                    "--airlines",
+                    "IB",
+                    "--exclude-airlines",
+                    "FR",
+                    "--price-cap",
+                    "200",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["bags"], 1)
+        self.assertEqual(kwargs["carry_on"], 1)
+        self.assertEqual(kwargs["via"], ("LIS",))
+        self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["airlines"], ("IB",))
+        self.assertEqual(kwargs["exclude_airlines"], ("FR",))
+        self.assertEqual(kwargs["price_cap_eur"], 200)
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.bags, 1)
+        self.assertEqual(trip.carry_on, 1)
+        self.assertEqual(trip.price_cap_eur, 200)
+
+    def test_trip_unnamed_shop_filters_stay_unset(self) -> None:
+        with (
+            patch("viajante.cli.search_trip") as search,
+            patch("viajante.cli._print_report"),
+            patch("viajante.cli._print_hotel_report"),
+            patch("viajante.cli._print_trip_total"),
+        ):
+            search.return_value = TripSearchReport(
+                searched_at=SEARCHED_AT,
+                flights=_report(),
+                hotels=_sample_hotel_report(),
+                trip_total=None,
+            )
+            code = main(
+                [
+                    "trip",
+                    "SIN-MEL:2026-11-06:2026-11-10",
+                    "--hotel",
+                    "Melbourne",
+                    "--trip",
+                    "rt",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertIsNone(kwargs["bags"])
+        self.assertIsNone(kwargs["carry_on"])
+        self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["airlines"])
+        self.assertIsNone(kwargs["exclude_airlines"])
+        self.assertIsNone(kwargs["price_cap_eur"])
+        trip = search.call_args.args[0][0]
+        self.assertIsNone(trip.bags)
+        self.assertIsNone(trip.carry_on)
+        self.assertIsNone(trip.price_cap_eur)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import unittest
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from viajante.flights import _normalize_offer
+from viajante.google_flights import RawFlightCard
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -22,6 +25,7 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    TripSearchReport,
     TripTotal,
 )
 from viajante.prompt_plan import plan_prompt, plan_to_hotel_query, plan_to_trips
@@ -99,6 +103,73 @@ def _hotel_report(
 
 def _applied() -> AppliedHotelFilters:
     return AppliedHotelFilters(chips=("free_cancellation=1",), url="https://example.test")
+
+
+def _card(**kwargs: object) -> RawFlightCard:
+    fields: dict[str, object] = {
+        "airline": "Iberia",
+        "departure": "08:00",
+        "arrival": "09:20",
+        "duration": "1 hr 20 min",
+        "stops": "Nonstop",
+        "price": "€90",
+    }
+    fields.update(kwargs)
+    return RawFlightCard(**fields)  # type: ignore[arg-type]
+
+
+class FakeFlightSource:
+    def __init__(self, cards: tuple[RawFlightCard, ...]) -> None:
+        self.cards = cards
+        self.fetched_queries: list[object] = []
+        self.closed = False
+        self.config = SimpleNamespace(html_lang="en", currency="EUR")
+
+    def fetch(self, query: object) -> tuple[RawFlightCard, ...]:
+        self.fetched_queries.append(query)
+        return self.cards
+
+    def reset(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _melbourne_stay() -> HotelSearchReport:
+    return _hotel_report(
+        HotelQuerySuccess(
+            query=HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10)),
+            applied=_applied(),
+            raw_count=1,
+            eligible_count=1,
+            offers=(_hotel_offer(total_price_eur=50),),
+        )
+    )
+
+
+def _sin_mel() -> RoundTrip:
+    return RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10))
+
+
+def _search_trip_cards(
+    *cards: RawFlightCard,
+    **filters: object,
+) -> tuple[TripSearchReport, FakeFlightSource]:
+    source = FakeFlightSource(cards)
+    hotels = _melbourne_stay()
+    with (
+        patch("viajante.flights.GoogleFlightsHttpSource", return_value=source),
+        patch("viajante.trip.search_hotels", return_value=hotels),
+    ):
+        report = search_trip(
+            (_sin_mel(),),
+            HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10)),
+            fetch="sweep",
+            buffer_eur=0,
+            **filters,  # type: ignore[arg-type]
+        )
+    return report, source
 
 
 class TripJoinTests(unittest.TestCase):
@@ -342,6 +413,137 @@ class TripJoinTests(unittest.TestCase):
             TripTotal(flight_fare_eur=0, hotel_stay_eur=10, total_eur=10, nights=1)
         with self.assertRaises(ValueError):
             TripTotal(flight_fare_eur=10, hotel_stay_eur=10, total_eur=21, nights=1)
+
+
+class TripShopFilterTests(unittest.TestCase):
+    def test_named_bags_via_airlines_price_cap_drop_the_same_cards_as_flights(self) -> None:
+        silent = _card(
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€40",
+        )
+        too_few = _card(
+            checked_bags=0,
+            carry_on=1,
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€28",
+        )
+        enough = _card(
+            checked_bags=1,
+            carry_on=1,
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€55",
+        )
+        via_dxb = _card(
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="DXB",
+            price="€60",
+        )
+        ryanair = _card(
+            airline="Ryanair",
+            airline_codes=("FR",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€35",
+        )
+        over_cap = _card(
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€250",
+        )
+        cards = (silent, too_few, enough, via_dxb, ryanair, over_cap)
+        filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap_eur=200)
+        expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
+        kept = [offer.price_eur for offer in expected if offer is not None]
+        report, source = _search_trip_cards(*cards, **filters)
+        result = report.flights.queries[0]
+        self.assertEqual(type(result).__name__, "QuerySuccess")
+        self.assertEqual([offer.price_eur for offer in result.offers], kept)
+        self.assertEqual(kept, [40.0, 55.0])
+        self.assertEqual(source.fetched_queries[0].bags, 1)
+        self.assertEqual(source.fetched_queries[0].carry_on, 1)
+        self.assertEqual(source.fetched_queries[0].airlines, ("IB",))
+        self.assertEqual(source.fetched_queries[0].price_cap_eur, 200)
+        self.assertIsNotNone(report.trip_total)
+        assert report.trip_total is not None
+        self.assertEqual(report.trip_total.flight_fare_eur, 40.0)
+        self.assertEqual(report.trip_total.hotel_stay_eur, 50.0)
+        self.assertEqual(report.trip_total.total_eur, 90.0)
+
+    def test_unnamed_shop_filters_keep_contradicting_cards(self) -> None:
+        cheap = _card(
+            checked_bags=0,
+            airline="Ryanair",
+            airline_codes=("FR",),
+            stops="1 stop",
+            layover_city="DXB",
+            price="€28",
+        )
+        report, source = _search_trip_cards(cheap)
+        result = report.flights.queries[0]
+        self.assertEqual([offer.price_eur for offer in result.offers], [28.0])
+        self.assertIsNone(source.fetched_queries[0].bags)
+        self.assertIsNone(source.fetched_queries[0].carry_on)
+        self.assertIsNone(source.fetched_queries[0].airlines)
+        self.assertIsNone(source.fetched_queries[0].price_cap_eur)
+        self.assertIsNotNone(report.trip_total)
+        assert report.trip_total is not None
+        self.assertEqual(report.trip_total.flight_fare_eur, 28.0)
+
+    def test_trip_total_omitted_when_filters_empty_the_flight_side(self) -> None:
+        too_few = _card(
+            checked_bags=0,
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€28",
+        )
+        over_cap = _card(
+            airline_codes=("IB",),
+            stops="1 stop",
+            layover_city="LIS",
+            price="€250",
+        )
+        report, _source = _search_trip_cards(
+            too_few,
+            over_cap,
+            bags=1,
+            via=("LIS",),
+            airlines=("IB",),
+            price_cap_eur=200,
+        )
+        result = report.flights.queries[0]
+        self.assertEqual(result.offers, ())
+        self.assertIsNone(report.trip_total)
+
+    def test_exclude_via_and_exclude_airlines_match_normalize(self) -> None:
+        keep = _card(stops="1 stop", layover_city="OPO", airline_codes=("IB",), price="€100")
+        drop_via = _card(stops="1 stop", layover_city="LIS", airline_codes=("IB",), price="€80")
+        drop_airline = _card(
+            airline="Ryanair",
+            airline_codes=("FR",),
+            stops="1 stop",
+            layover_city="OPO",
+            price="€70",
+        )
+        cards = (keep, drop_via, drop_airline)
+        filters = dict(exclude_via=("LIS",), exclude_airlines=("FR",))
+        expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
+        kept = [offer.price_eur for offer in expected if offer is not None]
+        report, _source = _search_trip_cards(*cards, **filters)
+        result = report.flights.queries[0]
+        self.assertEqual([offer.price_eur for offer in result.offers], kept)
+        self.assertEqual(kept, [100.0])
+        self.assertIsNotNone(report.trip_total)
+        assert report.trip_total is not None
+        self.assertEqual(report.trip_total.flight_fare_eur, 100.0)
 
 
 class PlanToHotelQueryTests(unittest.TestCase):

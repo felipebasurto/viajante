@@ -6,6 +6,7 @@ flight then hotel loops sequentially. Never invents a fare or a stay.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
@@ -144,6 +145,25 @@ def owned_trip_total(
     )
 
 
+def _overlay_trip_shop_filters(
+    trips: Sequence[Trip],
+    *,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
+) -> tuple[Trip, ...]:
+    overlay: dict[str, object] = {}
+    if bags is not None:
+        overlay["bags"] = bags
+    if carry_on is not None:
+        overlay["carry_on"] = carry_on
+    if price_cap_eur is not None:
+        overlay["price_cap_eur"] = price_cap_eur
+    if not overlay:
+        return tuple(trips)
+    return tuple(replace(trip, **overlay) for trip in trips)
+
+
 def search_trip(
     trips: Sequence[Trip],
     hotel_query: HotelQuery,
@@ -161,13 +181,23 @@ def search_trip(
     alliances: Optional[Sequence[str]] = None,
     exclude_alliances: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap_eur: Optional[int] = None,
     currency: str = "EUR",
     country: Optional[str] = None,
     hotel_source: HotelSourceName = "google",
 ) -> TripSearchReport:
     """Run flights then hotels sequentially. Omit trip_total when either misses."""
     flights = search_flights(
-        trips,
+        _overlay_trip_shop_filters(
+            trips,
+            bags=bags,
+            carry_on=carry_on,
+            price_cap_eur=price_cap_eur,
+        ),
         top=top,
         buffer_eur=buffer_eur,
         progress=progress,
@@ -181,6 +211,8 @@ def search_trip(
         alliances=alliances,
         exclude_alliances=exclude_alliances,
         depart_window=depart_window,
+        via=via,
+        exclude_via=exclude_via,
         currency=currency,
         country=country,
     )
