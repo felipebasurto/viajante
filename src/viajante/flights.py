@@ -841,9 +841,7 @@ def trip_dest_in_include_list(trip: Trip, include_airports: Optional[Sequence[st
         return True
     if isinstance(trip, MultiCity):
         home = trip.legs[0].origin if trip.legs else ""
-        return all(
-            leg.destination in allowed or leg.destination == home for leg in trip.legs
-        )
+        return all(leg.destination in allowed or leg.destination == home for leg in trip.legs)
     return trip.destination in allowed
 
 

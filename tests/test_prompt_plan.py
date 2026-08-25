@@ -1905,9 +1905,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(vibe.exclude_airports, ())
 
     def test_flex_named_include_airports_lands_vibe_does_not_invent(self) -> None:
-        flagged = plan_prompt(
-            "BOS-NRT around 12 Sep 2026, flex 3 days --include-airports NRT,HND"
-        )
+        flagged = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days --include-airports NRT,HND")
         self.assertEqual(flagged.intent, "flex")
         self.assertEqual(list(flagged.include_airports), ["NRT", "HND"])
         vibe = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days, Europe")

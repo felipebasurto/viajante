@@ -758,9 +758,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         query = FlightQuery("BOS", "NRT", date(2026, 10, 9), max_stops=1)
         source = FakeSource({("BOS", "NRT", "2026-10-09", 1): (card(airline="JAL"),)})
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
-            report = search_flights(
-                (query,), top=1, fetch="sweep", include_airports=("NRT", "HND")
-            )
+            report = search_flights((query,), top=1, fetch="sweep", include_airports=("NRT", "HND"))
         self.assertEqual(report.queries[0].query.destination, "NRT")
         self.assertEqual(report.queries[0].offers[0].airline, "JAL")
         self.assertEqual(source.fetch_calls, 1)
