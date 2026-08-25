@@ -1611,5 +1611,189 @@ class PromptPlanWeekdayNoflyTests(unittest.TestCase):
         self.assertNotIn("work_back_by", folded)
 
 
+class PromptPlanFamilyShopFilterTests(unittest.TestCase):
+    """Named bags / via / cap land on dates, flex, explore, and search_trip."""
+
+    def test_dates_named_bags_via_cap_land_on_dates_intent(self) -> None:
+        plan = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, "
+            "carry-on only, via IST, not via DXB, under 200€"
+        )
+        self.assertEqual(plan.intent, "dates")
+        self.assertEqual(plan.origin, "JFK")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertIsNone(plan.bags)
+        self.assertEqual(plan.carry_on, 1)
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ("DXB",))
+        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan.route_specs, ())
+
+    def test_dates_checked_bags_and_flag_cap_land(self) -> None:
+        plan = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, "
+            "1 checked bag, --price-cap 400 EUR"
+        )
+        self.assertEqual(plan.intent, "dates")
+        self.assertEqual(plan.bags, 1)
+        self.assertIsNone(plan.carry_on)
+        self.assertEqual(plan.price_cap_eur, 400)
+
+    def test_dates_unnamed_shop_filters_stay_unset(self) -> None:
+        plan = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14")
+        self.assertEqual(plan.intent, "dates")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+        self.assertEqual(plan.via_airports, ())
+        self.assertEqual(plan.exclude_via, ())
+        self.assertIsNone(plan.price_cap_eur)
+
+    def test_dates_contradiction_does_not_pick_one(self) -> None:
+        plan = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, carry-on only and 2 checked bags"
+        )
+        self.assertEqual(plan.intent, "dates")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+
+    def test_flex_named_bags_via_cap_land_on_flex_intent(self) -> None:
+        plan = plan_prompt(
+            "BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights, "
+            "carry-on only, via IST, not via DXB, under 200€"
+        )
+        self.assertEqual(plan.intent, "flex")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "LHR")
+        self.assertEqual(plan.flex_days, 3)
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertIsNone(plan.bags)
+        self.assertEqual(plan.carry_on, 1)
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ("DXB",))
+        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan.route_specs, ())
+
+    def test_flex_checked_bags_land(self) -> None:
+        plan = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 1 checked bag")
+        self.assertEqual(plan.intent, "flex")
+        self.assertEqual(plan.bags, 1)
+        self.assertIsNone(plan.carry_on)
+
+    def test_flex_unnamed_shop_filters_stay_unset(self) -> None:
+        plan = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights")
+        self.assertEqual(plan.intent, "flex")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+        self.assertEqual(plan.via_airports, ())
+        self.assertEqual(plan.exclude_via, ())
+        self.assertIsNone(plan.price_cap_eur)
+
+    def test_flex_contradiction_does_not_pick_one(self) -> None:
+        plan = plan_prompt(
+            "BOS-LHR around 12 Sep 2026, flex 3 days, carry-on only and 2 checked bags"
+        )
+        self.assertEqual(plan.intent, "flex")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+
+    def test_explore_named_bags_via_cap_land_on_explore_intent(self) -> None:
+        plan = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, "
+            "carry-on only, via IST, not via DXB, under 200€"
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.origin, "SIN")
+        self.assertEqual(plan.days, 7)
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertIsNone(plan.bags)
+        self.assertEqual(plan.carry_on, 1)
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ("DXB",))
+        self.assertEqual(plan.price_cap_eur, 200)
+
+    def test_explore_checked_bags_land(self) -> None:
+        plan = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, 2 checked bags"
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertEqual(plan.bags, 2)
+        self.assertIsNone(plan.carry_on)
+
+    def test_explore_unnamed_shop_filters_stay_unset(self) -> None:
+        plan = plan_prompt("Explore cheap destinations from SIN starting 2026-09-15, 7 days")
+        self.assertEqual(plan.intent, "explore")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+        self.assertEqual(plan.via_airports, ())
+        self.assertEqual(plan.exclude_via, ())
+        self.assertIsNone(plan.price_cap_eur)
+
+    def test_explore_contradiction_does_not_pick_one(self) -> None:
+        plan = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, "
+            "carry-on only and 2 checked bags"
+        )
+        self.assertEqual(plan.intent, "explore")
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+
+    def test_trip_named_bags_via_cap_land_on_search_trip(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip ADD-NBO on 2026-10-09 returning 2026-10-13, --trip rt, "
+            "hotel in Nairobi those nights, 2 adults, 1 room, carry-on only, "
+            "via IST, not via DXB, under 200€. Print the owned trip total "
+            "when both searches succeed. Omit the sum if either side misses. "
+            "Do not invent a fare or a stay."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertTrue(plan.search_trip)
+        self.assertTrue(plan.hotels)
+        self.assertEqual(plan.baggage, "carry_on_only")
+        self.assertIsNone(plan.bags)
+        self.assertEqual(plan.carry_on, 1)
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.exclude_via, ("DXB",))
+        self.assertEqual(plan.price_cap_eur, 200)
+        parsed = plan_to_trips(plan)
+        self.assertIsNone(parsed.bags)
+        self.assertEqual(parsed.carry_on, 1)
+        self.assertEqual(parsed.price_cap_eur, 200)
+
+    def test_trip_unnamed_shop_filters_stay_unset(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip ADD-NBO on 2026-10-09 returning 2026-10-13, --trip rt, "
+            "hotel in Nairobi those nights, 2 adults, 1 room. Print the owned trip total "
+            "when both searches succeed. Omit the sum if either side misses. "
+            "Do not invent a fare or a stay."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertTrue(plan.search_trip)
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+        self.assertEqual(plan.via_airports, ())
+        self.assertEqual(plan.exclude_via, ())
+        self.assertIsNone(plan.price_cap_eur)
+
+    def test_trip_contradiction_does_not_pick_one(self) -> None:
+        plan = plan_prompt(
+            "Packaged round-trip ADD-NBO on 2026-10-09 returning 2026-10-13, --trip rt, "
+            "hotel in Nairobi those nights, 2 adults, 1 room, "
+            "carry-on only and 2 checked bags. Do not invent a fare or a stay."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertTrue(plan.search_trip)
+        self.assertIsNone(plan.baggage)
+        self.assertIsNone(plan.bags)
+        self.assertIsNone(plan.carry_on)
+
+
 if __name__ == "__main__":
     unittest.main()

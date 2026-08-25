@@ -2460,7 +2460,12 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
                 origin = match
                 break
     if destination is None:
-        codes = [match for match in _IATA_TOKEN_UPPER.findall(raw) if is_known_iata(match)]
+        via_block = set(via_airports) | set(exclude_via)
+        codes = [
+            match
+            for match in _IATA_TOKEN_UPPER.findall(raw)
+            if is_known_iata(match) and match not in via_block
+        ]
         if len(codes) >= 2:
             destination = codes[1]
         elif len(codes) == 1 and origin and codes[0] != origin:
@@ -2956,8 +2961,13 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             max_layover=max_layover,
             exclude_regions=tuple(exclude_regions),
             exclude_airports=tuple(exclude_airports),
+            via_airports=tuple(via_airports),
+            exclude_via=tuple(exclude_via),
             no_overnight=tuple(no_overnight),
             refuse=all_refuse,
+            baggage=baggage,
+            bags=bags,
+            carry_on=carry_on,
             notes=notes,
         )
 
@@ -2983,6 +2993,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             baggage=baggage,
             bags=bags,
             carry_on=carry_on,
+            price_cap_eur=price_cap,
             flex_days=_flex_days_value(folded, flags, dates),
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
@@ -3017,6 +3028,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             baggage=baggage,
             bags=bags,
             carry_on=carry_on,
+            price_cap_eur=price_cap,
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
             alliance=alliance,
