@@ -205,6 +205,7 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     parse_named_clock(getattr(args, "depart_after", None), role="depart-after")
     parse_via_airports(args.via)
     parse_via_airports(args.exclude_via, role="exclude-via")
+    parse_via_airports(getattr(args, "exclude_airports", None), role="exclude-airports")
     if args.via and args.exclude_via:
         include = parse_via_airports(args.via) or ()
         exclude = parse_via_airports(args.exclude_via, role="exclude-via") or ()
@@ -737,7 +738,12 @@ def _run_flights(args: argparse.Namespace) -> int:
         return 1
 
     if getattr(args, "nearby", False):
-        for note in nearby_notes(queries):
+        for note in nearby_notes(
+            queries,
+            exclude_airports=parse_via_airports(
+                getattr(args, "exclude_airports", None), role="exclude-airports"
+            ),
+        ):
             print(note, file=sys.stderr)
 
     report = search_flights(
@@ -759,6 +765,9 @@ def _run_flights(args: argparse.Namespace) -> int:
         depart_after=parse_named_clock(args.depart_after, role="depart-after"),
         via=parse_via_airports(args.via),
         exclude_via=parse_via_airports(args.exclude_via, role="exclude-via"),
+        exclude_airports=parse_via_airports(
+            getattr(args, "exclude_airports", None), role="exclude-airports"
+        ),
         currency=args.currency,
         country=args.country,
     )
@@ -830,6 +839,7 @@ def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
         "depart_after": None,
         "via": None,
         "exclude_via": None,
+        "exclude_airports": None,
     }
     for key, value in defaults.items():
         if not hasattr(args, key):
@@ -880,7 +890,10 @@ def _run_trip(args: argparse.Namespace) -> int:
         return 1
 
     if getattr(args, "nearby", False):
-        for note in nearby_notes(trips):
+        for note in nearby_notes(
+            trips,
+            exclude_airports=shop.get("exclude_airports"),
+        ):
             print(note, file=sys.stderr)
 
     report = search_trip(
@@ -1161,6 +1174,17 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--exclude-airports",
+        default=None,
+        metavar="CODES",
+        dest="exclude_airports",
+        help=(
+            "Drop named origin/dest IATA in this list (comma-separated). "
+            "Explore catalog dests with those codes are dropped. Nearby cannot "
+            "sneak an excluded same-city code back. Unnamed stays unset"
+        ),
+    )
+    parser.add_argument(
         "--depart-window",
         default=None,
         dest="depart_window",
@@ -1244,6 +1268,9 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "exclude_alliances": parse_alliances(getattr(args, "exclude_alliance", None)),
         "via": via,
         "exclude_via": exclude_via,
+        "exclude_airports": parse_via_airports(
+            getattr(args, "exclude_airports", None), role="exclude-airports"
+        ),
         "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
         "arrive_before": parse_named_clock(
             getattr(args, "arrive_before", None), role="arrive-before"
@@ -1301,7 +1328,10 @@ def _run_dates(args: argparse.Namespace) -> int:
             exclude_alliances=shop["exclude_alliances"],
             **occupancy,
         )
-        for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
+        for note in nearby_notes(
+            expand_nearby_trips((seed,), nearby=True),
+            exclude_airports=shop.get("exclude_airports"),
+        ):
             print(note, file=sys.stderr)
 
     result = search_dates(
@@ -1437,7 +1467,10 @@ def _run_flex(args: argparse.Namespace) -> int:
             exclude_alliances=shop["exclude_alliances"],
             **occupancy,
         )
-        for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
+        for note in nearby_notes(
+            expand_nearby_trips((seed,), nearby=True),
+            exclude_airports=shop.get("exclude_airports"),
+        ):
             print(note, file=sys.stderr)
 
     result = search_flex(
@@ -1504,7 +1537,7 @@ def _run_explore(args: argparse.Namespace) -> int:
 
     nearby = bool(getattr(args, "nearby", False))
     if nearby:
-        for note in nearby_origin_notes(origin):
+        for note in nearby_origin_notes(origin, exclude_airports=shop.get("exclude_airports")):
             print(note, file=sys.stderr)
 
     result = search_explore(
@@ -1768,6 +1801,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Drop connecting offers whose parsed layover matches these IATA codes "
             "(comma-separated). Unknown layover stays"
+        ),
+    )
+    flights.add_argument(
+        "--exclude-airports",
+        default=None,
+        metavar="CODES",
+        dest="exclude_airports",
+        help=(
+            "Drop named origin/dest IATA in this list (comma-separated). "
+            "Nearby cannot sneak an excluded same-city code back. Unnamed stays unset"
         ),
     )
     flights.add_argument(

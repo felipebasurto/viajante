@@ -622,6 +622,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("viajante explore JFK", help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
+        self.assertIn("--exclude-airports", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
@@ -658,6 +659,8 @@ class ExploreCliTests(unittest.TestCase):
                     "LIS",
                     "--exclude-via",
                     "DXB",
+                    "--exclude-airports",
+                    "HND",
                     "--airlines",
                     "IB",
                     "--exclude-airlines",
@@ -688,6 +691,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
@@ -713,6 +717,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["alliances"])
@@ -837,6 +842,77 @@ class NearbyExploreTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(search.call_args.kwargs["nearby"])
         self.assertIn("nearby London", err.getvalue())
+
+
+class ExcludeAirportsExploreTests(unittest.TestCase):
+    def test_named_exclude_drops_hnd_unnamed_still_lists_it(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("NRT", "Tokyo", "Japan"),
+            CompactExplorePlace("KIX", "Osaka", "Japan"),
+        )
+        prices = {
+            "HND": (_card(price="€40"),),
+            "NRT": (_card(price="€55"),),
+            "KIX": (_card(price="€70"),),
+        }
+        named = FakeExploreSource(places, prices=prices)
+        report = search_explore(
+            "SIN", date(2026, 9, 15), days=7, top=3, exclude_airports=("HND",), source=named
+        )
+        iata = [row.iata for row in report.destinations]
+        self.assertEqual(iata, ["NRT", "KIX"])
+        self.assertNotIn("HND", iata)
+        self.assertEqual([query.destination for query in named.fetched_queries], ["NRT", "KIX"])
+        unnamed = FakeExploreSource(places, prices=prices)
+        kept = search_explore("SIN", date(2026, 9, 15), days=7, top=3, source=unnamed)
+        unnamed_iata = [row.iata for row in kept.destinations]
+        self.assertEqual(unnamed_iata, ["HND", "NRT", "KIX"])
+        self.assertEqual(
+            [query.destination for query in unnamed.fetched_queries], ["HND", "NRT", "KIX"]
+        )
+
+    def test_named_exclude_does_not_invent_a_replacement_dest(self) -> None:
+        places = (
+            CompactExplorePlace("HND", "Tokyo", "Japan"),
+            CompactExplorePlace("NRT", "Tokyo", "Japan"),
+        )
+        source = FakeExploreSource(places, prices={"HND": (_card(price="€40"),)})
+        report = search_explore(
+            "SIN", date(2026, 9, 15), days=7, top=2, exclude_airports=("HND",), source=source
+        )
+        iata = [row.iata for row in report.destinations]
+        self.assertEqual(iata, ["NRT"])
+        self.assertIsNone(report.destinations[0].price_eur)
+        self.assertNotIn("TYO", iata)
+        self.assertNotIn("HND", iata)
+        self.assertEqual([query.destination for query in source.fetched_queries], ["NRT"])
+
+    def test_nearby_does_not_sneak_excluded_origin_back(self) -> None:
+        places = (CompactExplorePlace("OPO", "Porto", "Portugal"),)
+        prices = {"OPO": (_card(price="€28"),)}
+        source = FakeExploreSource(places, prices=prices)
+        reports = search_explore(
+            "HND",
+            date(2026, 9, 15),
+            days=7,
+            top=1,
+            nearby=True,
+            exclude_airports=("HND",),
+            source=source,
+        )
+        rows = reports if isinstance(reports, tuple) else (reports,)
+        origins = [row.origin for row in rows]
+        self.assertNotIn("HND", origins)
+        self.assertIn("NRT", origins)
+        self.assertEqual(source.explore_origins, origins)
+        named_only = FakeExploreSource(places, prices=prices)
+        empty = search_explore(
+            "HND", date(2026, 9, 15), days=7, top=1, exclude_airports=("HND",), source=named_only
+        )
+        self.assertEqual(empty.origin, "HND")
+        self.assertEqual(empty.destinations, ())
+        self.assertEqual(named_only.explore_origins, [])
 
 
 class StopsCompareExploreShopTests(unittest.TestCase):

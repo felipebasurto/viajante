@@ -1664,6 +1664,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.carry_on)
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
+        self.assertEqual(plan.exclude_airports, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
@@ -1678,6 +1679,20 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.infants_on_lap)
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
+
+    def test_dates_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt("Price calendar BOS-NRT from 2026-09-01 to 2026-09-14, not HND")
+        self.assertEqual(named.intent, "dates")
+        self.assertEqual(named.destination, "NRT")
+        self.assertIn("HND", named.exclude_airports)
+        flagged = plan_prompt(
+            "Price calendar BOS-NRT from 2026-09-01 to 2026-09-14 --exclude-airports HND"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertIn("HND", flagged.exclude_airports)
+        vibe = plan_prompt("Price calendar BOS-NRT from 2026-09-01 to 2026-09-14, avoid Tokyo")
+        self.assertEqual(vibe.intent, "dates")
+        self.assertEqual(vibe.exclude_airports, ())
 
     def test_dates_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -1837,6 +1852,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.carry_on)
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
+        self.assertEqual(plan.exclude_airports, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
@@ -1851,6 +1867,18 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.infants_on_lap)
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
+
+    def test_flex_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days, not HND")
+        self.assertEqual(named.intent, "flex")
+        self.assertEqual(named.destination, "NRT")
+        self.assertIn("HND", named.exclude_airports)
+        flagged = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days --exclude-airports HND")
+        self.assertEqual(flagged.intent, "flex")
+        self.assertIn("HND", flagged.exclude_airports)
+        vibe = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days, avoid Tokyo")
+        self.assertEqual(vibe.intent, "flex")
+        self.assertEqual(vibe.exclude_airports, ())
 
     def test_flex_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 2 adults 1 child")
@@ -1978,6 +2006,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.carry_on)
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
+        self.assertEqual(plan.exclude_airports, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
@@ -1992,6 +2021,23 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.infants_on_lap)
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
+
+    def test_explore_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, not HND"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertIn("HND", named.exclude_airports)
+        flagged = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days --exclude-airports HND"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertIn("HND", flagged.exclude_airports)
+        vibe = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, avoid Tokyo"
+        )
+        self.assertEqual(vibe.intent, "explore")
+        self.assertEqual(vibe.exclude_airports, ())
 
     def test_explore_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -2149,7 +2195,37 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.carry_on)
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
+        self.assertEqual(plan.exclude_airports, ())
         self.assertIsNone(plan.price_cap_eur)
+
+    def test_trip_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Packaged round-trip NRT-SIN on 2026-10-20 returning 2026-10-24, --trip rt, "
+            "hotel in Singapore those nights, 2 adults, 1 room, not HND. "
+            "Print the owned trip total when both searches succeed. "
+            "Omit the sum if either side misses. Do not invent a fare or a stay."
+        )
+        self.assertEqual(named.intent, "flights")
+        self.assertTrue(named.search_trip)
+        self.assertIn("HND", named.exclude_airports)
+        flagged = plan_prompt(
+            "Packaged round-trip NRT-SIN on 2026-10-20 returning 2026-10-24, --trip rt, "
+            "hotel in Singapore those nights, 2 adults, 1 room --exclude-airports HND. "
+            "Print the owned trip total when both searches succeed. "
+            "Omit the sum if either side misses. Do not invent a fare or a stay."
+        )
+        self.assertEqual(flagged.intent, "flights")
+        self.assertTrue(flagged.search_trip)
+        self.assertIn("HND", flagged.exclude_airports)
+        vibe = plan_prompt(
+            "Packaged round-trip NRT-SIN on 2026-10-20 returning 2026-10-24, --trip rt, "
+            "hotel in Singapore those nights, 2 adults, 1 room, avoid Tokyo. "
+            "Print the owned trip total when both searches succeed. "
+            "Omit the sum if either side misses. Do not invent a fare or a stay."
+        )
+        self.assertEqual(vibe.intent, "flights")
+        self.assertTrue(vibe.search_trip)
+        self.assertEqual(vibe.exclude_airports, ())
 
     def test_trip_contradiction_does_not_pick_one(self) -> None:
         plan = plan_prompt(

@@ -16,6 +16,7 @@ from viajante.flights import (
     _rank_offers,
     classify_failure,
     compare_nonstop_vs_one_stop,
+    drop_excluded_airport_trips,
     expand_nearby_trips,
     normalize_trip_kind,
     parse_via_airports,
@@ -364,6 +365,70 @@ def _parse_via_pair(
     return parsed_via, parsed_exclude
 
 
+def _parse_exclude_airports(
+    exclude_airports: Optional[Sequence[str]],
+) -> Optional[tuple[str, ...]]:
+    return (
+        parse_via_airports(",".join(exclude_airports), role="exclude-airports")
+        if exclude_airports
+        else None
+    )
+
+
+def _empty_dates_report(
+    origin: str,
+    destination: str,
+    start: date,
+    end: date,
+    *,
+    kind: DateTripKind,
+    stay: Optional[int],
+    currency: str,
+) -> DateCalendarReport:
+    return DateCalendarReport(
+        searched_at=datetime.now(timezone.utc),
+        origin=origin,
+        destination=destination,
+        start_date=start,
+        end_date=end,
+        days=(),
+        trip=kind,
+        nights=stay,
+        fetch_backend="calendar",
+        fetch_ms=0,
+        currency=currency,
+    )
+
+
+def _empty_flex_report(
+    origin: str,
+    destination: str,
+    around: date,
+    flex_days: int,
+    start: date,
+    end: date,
+    *,
+    kind: DateTripKind,
+    stay: Optional[int],
+    currency: str,
+) -> FlexSearchReport:
+    return FlexSearchReport(
+        searched_at=datetime.now(timezone.utc),
+        origin=origin,
+        destination=destination,
+        around=around,
+        flex_days=flex_days,
+        start_date=start,
+        end_date=end,
+        days=(),
+        trip=kind,
+        nights=stay,
+        fetch_backend="calendar",
+        fetch_ms=0,
+        currency=currency,
+    )
+
+
 def _offers_from_cards(
     cards: Sequence[RawFlightCard],
     query: FlightQuery | RoundTrip,
@@ -513,6 +578,7 @@ def search_dates(
     exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    exclude_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -535,6 +601,7 @@ def search_dates(
     )
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
+    parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
     seed = calendar_trip(
         origin,
         destination,
@@ -555,6 +622,17 @@ def search_dates(
         exclude_alliances=exclude_alliances,
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
+    trips = drop_excluded_airport_trips(trips, parsed_exclude_airports)
+    if not trips:
+        return _empty_dates_report(
+            origin,
+            destination,
+            start,
+            end,
+            kind=kind,
+            stay=stay,
+            currency=currency,
+        )
     report_progress = progress or (lambda _: None)
     client = source or GoogleFlightsHttpSource(currency=currency, country=country)
     reports: list[DateCalendarReport] = []
@@ -803,6 +881,7 @@ def search_flex(
     exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    exclude_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -838,6 +917,7 @@ def search_flex(
     start, end = flex_window(around, flex_days)
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
+    parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
     seed = calendar_trip(
         origin,
         destination,
@@ -858,6 +938,19 @@ def search_flex(
         exclude_alliances=exclude_alliances,
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
+    trips = drop_excluded_airport_trips(trips, parsed_exclude_airports)
+    if not trips:
+        return _empty_flex_report(
+            origin,
+            destination,
+            around,
+            flex_days,
+            start,
+            end,
+            kind=kind,
+            stay=stay,
+            currency=currency,
+        )
     report_progress = progress or (lambda _: None)
     client = source or GoogleFlightsHttpSource(currency=currency, country=country)
     reports: list[FlexSearchReport] = []

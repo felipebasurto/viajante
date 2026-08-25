@@ -14,6 +14,7 @@ from viajante.flights import (
     _run_search,
     classify_failure,
     compare_nonstop_vs_one_stop,
+    drop_excluded_airport_trips,
     expand_nearby_trips,
     is_low_cost,
     nearby_notes,
@@ -673,6 +674,11 @@ class FlightsOrchestrationTests(unittest.TestCase):
         tokyo_dests = {item.destination for item in tokyo}
         self.assertEqual(tokyo[0].destination, "NRT")
         self.assertEqual(tokyo_dests, {"NRT", "HND"})
+        dropped = drop_excluded_airport_trips(tokyo, ("HND",))
+        self.assertEqual({item.destination for item in dropped}, {"NRT"})
+        self.assertNotIn("HND", [item.destination for item in dropped])
+        notes_ex = nearby_notes(tokyo, exclude_airports=("HND",))
+        self.assertTrue(all("HND" not in note for note in notes_ex))
 
         mad = expand_nearby_trips(
             parse_route_specs(["MAD-BCN:2026-09-01"], max_stops=1),
@@ -708,6 +714,44 @@ class FlightsOrchestrationTests(unittest.TestCase):
             [(leg.origin, leg.destination) for leg in kept[0].legs],
             [("YVR", "LHR"), ("LGW", "YVR")],
         )
+        excluded_jaw = drop_excluded_airport_trips(kept, ("LGW",))
+        self.assertEqual(excluded_jaw, ())
+
+    def test_named_exclude_airports_empties_without_inventing_a_substitute(self) -> None:
+        query = FlightQuery("BOS", "HND", date(2026, 10, 9), max_stops=1)
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            report = search_flights((query,), top=1, fetch="sweep", exclude_airports=("HND",))
+        ctor.assert_not_called()
+        self.assertEqual(len(report.queries), 1)
+        result = report.queries[0]
+        self.assertIsInstance(result, QuerySuccess)
+        self.assertEqual(result.query.destination, "HND")
+        self.assertEqual(result.offers, ())
+        self.assertEqual(result.raw_count, 0)
+        unnamed = FlightQuery("BOS", "HND", date(2026, 10, 9), max_stops=1)
+        source = FakeSource({("BOS", "HND", "2026-10-09", 1): (card(airline="ANA"),)})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            kept = search_flights((unnamed,), top=1, fetch="sweep")
+        self.assertEqual(kept.queries[0].offers[0].airline, "ANA")
+        self.assertEqual(source.fetch_calls, 1)
+
+    def test_nearby_exclude_keeps_owned_same_city_and_drops_hnd(self) -> None:
+        nrt = FlightQuery("BOS", "NRT", date(2026, 10, 9), max_stops=1)
+        hnd = FlightQuery(
+            "BOS", "HND", date(2026, 10, 9), max_stops=1, nearby_label="nearby Tokyo HND"
+        )
+        nrt_l = FlightQuery(
+            "BOS", "NRT", date(2026, 10, 9), max_stops=1, nearby_label="nearby Tokyo NRT"
+        )
+        source = FakeSource({("BOS", "NRT", "2026-10-09", 1): (card(airline="JAL"),)})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights((nrt_l, hnd), top=1, fetch="sweep", exclude_airports=("HND",))
+        self.assertEqual(len(report.queries), 1)
+        self.assertEqual(report.queries[0].query.destination, "NRT")
+        self.assertEqual(report.queries[0].offers[0].airline, "JAL")
+        self.assertEqual(source.fetch_calls, 1)
+        seed_only = drop_excluded_airport_trips((nrt,), ("HND",))
+        self.assertEqual(seed_only, (nrt,))
 
     def test_parse_flight_plan_occupancy(self) -> None:
         plan = parse_flight_plan(

@@ -73,6 +73,16 @@ def _parse_via_pair(
     return parsed_via, parsed_exclude
 
 
+def _parse_exclude_airports(
+    exclude_airports: Optional[Sequence[str]],
+) -> Optional[tuple[str, ...]]:
+    return (
+        parse_via_airports(",".join(exclude_airports), role="exclude-airports")
+        if exclude_airports
+        else None
+    )
+
+
 def _named_shop_filters(
     *,
     bags: Optional[int],
@@ -138,6 +148,7 @@ def _explore_for_origin(
     exclude_alliances: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
+    parsed_exclude_airports: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
     arrive_before: Optional[int],
     depart_after: Optional[int],
@@ -172,6 +183,9 @@ def _explore_for_origin(
     except Exception as exc:
         error = classify_failure(exc)
         places = ()
+    blocked = frozenset(parsed_exclude_airports or ())
+    if blocked:
+        places = tuple(place for place in places if place.iata not in blocked)
     priced: list[ExploreDestination] = []
     for index, place in enumerate(places[:top]):
         report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
@@ -252,6 +266,7 @@ def search_explore(
     exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    exclude_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -279,6 +294,7 @@ def search_explore(
         max_duration_hours=max_duration_hours,
     )
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
+    parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
     origin = origin.strip().upper()
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
@@ -300,7 +316,18 @@ def search_explore(
         min_layover_hours=min_layover_hours,
         max_duration_hours=max_duration_hours,
     )
-    origins = expand_nearby_origins(origin, nearby=nearby)
+    origins = expand_nearby_origins(origin, nearby=nearby, exclude_airports=parsed_exclude_airports)
+    if not origins:
+        return ExploreReport(
+            searched_at=datetime.now(timezone.utc),
+            origin=origin,
+            start_date=start,
+            days=days,
+            destinations=(),
+            fetch_backend="explore",
+            fetch_ms=0,
+            currency=currency,
+        )
     client = source or GoogleFlightsHttpSource(currency=currency, country=country)
     reports: list[ExploreReport] = []
     try:
@@ -327,6 +354,7 @@ def search_explore(
                     exclude_alliances=exclude_alliances,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
+                    parsed_exclude_airports=parsed_exclude_airports,
                     depart_window=depart_window,
                     arrive_before=arrive_before,
                     depart_after=depart_after,

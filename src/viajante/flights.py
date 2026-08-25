@@ -255,19 +255,25 @@ def _nearby_pair_label(
     return "; ".join(parts) if parts else None
 
 
-def nearby_notes(trips: Sequence[Trip]) -> Tuple[str, ...]:
+def nearby_notes(
+    trips: Sequence[Trip],
+    exclude_airports: Optional[Sequence[str]] = None,
+) -> Tuple[str, ...]:
     """Stderr legend for `--nearby` expands. Named open-jaw is not expanded."""
+    blocked = _blocked_iata(exclude_airports)
     notes: list[str] = []
     seen: set[tuple[str, str]] = set()
     for trip in trips:
         if isinstance(trip, MultiCity) or not getattr(trip, "nearby_label", None):
             continue
         for code in (trip.origin, trip.destination):
+            if code in blocked:
+                continue
             airport = get_airport(code)
             if airport is None or not airport.city.strip():
                 continue
             key = (airport.city, airport.country)
-            codes = same_city_iata(code)
+            codes = tuple(item for item in same_city_iata(code) if item not in blocked)
             if len(codes) < 2 or key in seen:
                 continue
             seen.add(key)
@@ -326,30 +332,42 @@ def expand_nearby_trips(trips: Sequence[Trip], *, nearby: bool = False) -> Tuple
 
 
 def expand_nearby_origins(
-    origin: str, *, nearby: bool = False
+    origin: str,
+    *,
+    nearby: bool = False,
+    exclude_airports: Optional[Sequence[str]] = None,
 ) -> Tuple[tuple[str, Optional[str]], ...]:
     """Fan an explore origin out to owned same-city IATA.
 
     Default off. Returns ``(code, nearby_label)`` pairs. A city with no
     second major stays the named seed, unlabeled. Does not invent codes.
+    Named ``exclude_airports`` drop matching codes; nearby cannot sneak
+    an excluded same-city code back.
     """
     seed = origin.strip().upper()
+    blocked = _blocked_iata(exclude_airports)
     if not nearby:
-        return ((seed, None),)
+        return () if seed in blocked else ((seed, None),)
     codes = same_city_iata(seed)
     if len(codes) < 2:
-        return ((codes[0] if codes else seed, None),)
+        kept = codes[0] if codes else seed
+        return () if kept in blocked else ((kept, None),)
     city = _nearby_city(seed)
     labeled: list[tuple[str, Optional[str]]] = []
     for code in codes:
+        if code in blocked:
+            continue
         label = f"nearby {city} {code}" if city else f"nearby {code}"
         labeled.append((code, label))
     return tuple(labeled)
 
 
-def nearby_origin_notes(origin: str) -> Tuple[str, ...]:
+def nearby_origin_notes(
+    origin: str, exclude_airports: Optional[Sequence[str]] = None
+) -> Tuple[str, ...]:
     """Stderr legend for explore ``--nearby``. No invented codes."""
-    codes = same_city_iata(origin)
+    blocked = _blocked_iata(exclude_airports)
+    codes = tuple(code for code in same_city_iata(origin) if code not in blocked)
     if len(codes) < 2:
         return ()
     airport = get_airport(origin)
@@ -763,6 +781,72 @@ def parse_via_airports(text: Optional[str], *, role: str = "via") -> Optional[Tu
         if code not in parsed:
             parsed.append(code)
     return tuple(parsed)
+
+
+def parse_exclude_airports(text: Optional[str]) -> Optional[Tuple[str, ...]]:
+    """Parse comma-separated IATA codes for ``--exclude-airports``."""
+    return parse_via_airports(text, role="exclude-airports")
+
+
+def _blocked_iata(exclude_airports: Optional[Sequence[str]]) -> frozenset[str]:
+    if not exclude_airports:
+        return frozenset()
+    return frozenset(code.strip().upper() for code in exclude_airports if str(code).strip())
+
+
+def trip_uses_excluded_airport(trip: Trip, exclude_airports: Optional[Sequence[str]]) -> bool:
+    """True when a named origin or dest is in the owned exclude list."""
+    blocked = _blocked_iata(exclude_airports)
+    if not blocked:
+        return False
+    if isinstance(trip, MultiCity):
+        return any(leg.origin in blocked or leg.destination in blocked for leg in trip.legs)
+    return trip.origin in blocked or trip.destination in blocked
+
+
+def drop_excluded_airport_trips(
+    trips: Sequence[Trip],
+    exclude_airports: Optional[Sequence[str]] = None,
+) -> Tuple[Trip, ...]:
+    """Drop trips whose origin or dest is in the named exclude list.
+
+    Does not invent a substitute airport. Named open-jaw stays unless a
+    named airport on that jaw is excluded. Nearby expansions that match
+    the list are dropped; remaining owned same-city codes stay.
+    """
+    blocked = _blocked_iata(exclude_airports)
+    if not blocked:
+        return tuple(trips)
+    return tuple(trip for trip in trips if not trip_uses_excluded_airport(trip, blocked))
+
+
+def _parse_exclude_airport_list(
+    exclude_airports: Optional[Sequence[str]],
+) -> Optional[Tuple[str, ...]]:
+    return (
+        parse_via_airports(",".join(exclude_airports), role="exclude-airports")
+        if exclude_airports
+        else None
+    )
+
+
+def _empty_excluded_flight_report(
+    trips: Sequence[Trip],
+    *,
+    currency: str,
+) -> SearchReport:
+    """Named origin/dest excluded and nearby did not keep an owned alt."""
+    seeds = tuple(trip for trip in trips if not getattr(trip, "nearby_label", None))
+    if not seeds:
+        seeds = tuple(trips[:1])
+    return SearchReport(
+        searched_at=datetime.now(timezone.utc),
+        queries=tuple(
+            QuerySuccess(query=trip, raw_count=0, eligible_count=0, offers=()) for trip in seeds
+        ),
+        currency=currency,
+        fetch_ms=0,
+    )
 
 
 def _via_aliases(code: str) -> Tuple[str, ...]:
@@ -1567,6 +1651,7 @@ def search_flights(
     depart_after: Optional[int] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    exclude_airports: Optional[Sequence[str]] = None,
     currency: str = "EUR",
     country: Optional[str] = None,
 ) -> SearchReport:
@@ -1587,6 +1672,7 @@ def search_flights(
     )
     if via and exclude_via and set(via) & set(exclude_via):
         raise ValueError("via and exclude-via must not share a code")
+    parsed_exclude_airports = _parse_exclude_airport_list(exclude_airports)
     if sort not in FLIGHT_SORTS:
         raise ValueError(
             "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
@@ -1595,8 +1681,12 @@ def search_flights(
         raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
     currency = normalize_currency(currency)
     country = normalize_country(country)
+    original = tuple(queries)
+    kept = drop_excluded_airport_trips(original, parsed_exclude_airports)
+    if not kept:
+        return _empty_excluded_flight_report(original, currency=currency)
     trips = _overlay_carrier_filters(
-        tuple(queries),
+        kept,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
         alliances=alliances,

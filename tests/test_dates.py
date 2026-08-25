@@ -600,6 +600,7 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--carry-on", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--exclude-via", help_text)
+        self.assertIn("--exclude-airports", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
@@ -638,6 +639,8 @@ class DateCliTests(unittest.TestCase):
                     "LIS",
                     "--exclude-via",
                     "DXB",
+                    "--exclude-airports",
+                    "HND",
                     "--airlines",
                     "IB",
                     "--exclude-airlines",
@@ -668,6 +671,7 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
@@ -702,6 +706,7 @@ class DateCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["alliances"])
@@ -1833,6 +1838,7 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn(str(MAX_FLEX_DAYS), help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
+        self.assertIn("--exclude-airports", help_text)
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
@@ -1868,6 +1874,8 @@ class FlexCliTests(unittest.TestCase):
                     "1",
                     "--via",
                     "LIS",
+                    "--exclude-airports",
+                    "HND",
                     "--airlines",
                     "IB",
                     "--alliance",
@@ -1894,6 +1902,7 @@ class FlexCliTests(unittest.TestCase):
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["bags"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
+        self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["alliances"], ("star",))
         self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
@@ -1927,6 +1936,7 @@ class FlexCliTests(unittest.TestCase):
         kwargs = search.call_args.kwargs
         self.assertIsNone(kwargs["bags"])
         self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["alliances"])
         self.assertIsNone(kwargs["exclude_alliances"])
@@ -2138,6 +2148,103 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertEqual((report.origin, report.destination), ("MAD", "BCN"))
         self.assertIsNone(report.nearby_label)
         self.assertEqual(source.calls, 1)
+
+
+class ExcludeAirportsDateFlexTests(unittest.TestCase):
+    def test_dates_named_dest_excluded_is_empty(self) -> None:
+        source = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        report = search_dates(
+            "BOS",
+            "HND",
+            date(2026, 9, 1),
+            date(2026, 9, 1),
+            exclude_airports=("HND",),
+            source=source,
+        )
+        self.assertIsInstance(report, DateCalendarReport)
+        self.assertEqual((report.origin, report.destination), ("BOS", "HND"))
+        self.assertEqual(report.days, ())
+        self.assertEqual(source.calls, 0)
+        unnamed = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        kept = search_dates("BOS", "HND", date(2026, 9, 1), date(2026, 9, 1), source=unnamed)
+        self.assertEqual(len(kept.days), 1)
+        self.assertEqual(kept.days[0].price_eur, 80.0)
+        self.assertEqual(unnamed.calls, 1)
+
+    def test_dates_named_origin_excluded_is_empty(self) -> None:
+        source = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        report = search_dates(
+            "HND",
+            "SIN",
+            date(2026, 9, 1),
+            date(2026, 9, 1),
+            exclude_airports=("HND",),
+            source=source,
+        )
+        self.assertIsInstance(report, DateCalendarReport)
+        self.assertEqual((report.origin, report.destination), ("HND", "SIN"))
+        self.assertEqual(report.days, ())
+        self.assertEqual(source.calls, 0)
+
+    def test_dates_nearby_does_not_sneak_excluded_code_back(self) -> None:
+        source = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        reports = search_dates(
+            "BOS",
+            "HND",
+            date(2026, 9, 1),
+            date(2026, 9, 1),
+            nearby=True,
+            exclude_airports=("HND",),
+            source=source,
+        )
+        rows = reports if isinstance(reports, tuple) else (reports,)
+        dests = {row.destination for row in rows}
+        self.assertNotIn("HND", dests)
+        self.assertIn("NRT", dests)
+        self.assertEqual({query.destination for query in source.calendar_queries}, dests)
+        self.assertNotIn("HND", {query.destination for query in source.calendar_queries})
+
+    def test_flex_named_dest_excluded_is_empty(self) -> None:
+        source = _flex_shop_source(_card(price="€90"))
+        report = search_flex(
+            "BOS",
+            "HND",
+            date(2026, 9, 12),
+            3,
+            exclude_airports=("HND",),
+            source=source,
+            buffer_eur=0,
+        )
+        self.assertIsInstance(report, FlexSearchReport)
+        self.assertEqual((report.origin, report.destination), ("BOS", "HND"))
+        self.assertEqual(report.days, ())
+        self.assertEqual(report.offers, ())
+        self.assertIsNone(report.chosen_date)
+        self.assertEqual(source.calls, 0)
+        self.assertEqual(source.fetch_calls, 0)
+        unnamed = _flex_shop_source(_card(price="€90"))
+        kept = search_flex("BOS", "HND", date(2026, 9, 12), 3, source=unnamed, buffer_eur=0)
+        self.assertEqual(kept.destination, "HND")
+        self.assertTrue(kept.offers)
+        self.assertEqual(unnamed.calls, 1)
+
+    def test_flex_nearby_does_not_sneak_excluded_code_back(self) -> None:
+        source = _flex_shop_source(_card(price="€90"))
+        reports = search_flex(
+            "BOS",
+            "HND",
+            date(2026, 9, 12),
+            3,
+            nearby=True,
+            exclude_airports=("HND",),
+            source=source,
+            buffer_eur=0,
+        )
+        rows = reports if isinstance(reports, tuple) else (reports,)
+        dests = {row.destination for row in rows}
+        self.assertNotIn("HND", dests)
+        self.assertIn("NRT", dests)
+        self.assertEqual({query.destination for query in source.calendar_queries}, dests)
 
 
 class StopsCompareShopParityTests(unittest.TestCase):

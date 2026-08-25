@@ -379,7 +379,7 @@ _FLAG = re.compile(
     r"max-layover|min-layover|max-duration|from|days|nights|flex|fetch|sort|"
     r"depart-window|arrive-before|depart-after|currency|country|airlines|"
     r"exclude-airlines|alliance|"
-    r"exclude-alliance|exclude-via|via|bags|price-cap)\s+(\S+)",
+    r"exclude-alliance|exclude-via|exclude-airports|via|bags|price-cap)\s+(\S+)",
     re.IGNORECASE,
 )
 _BARE_NEARBY = re.compile(r"--nearby\b", re.IGNORECASE)
@@ -2335,6 +2335,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_via,
             parse_via_airports(flags["exclude-via"], role="exclude-via") or (),
         )
+    if "exclude-airports" in flags:
+        _extend_unique(
+            exclude_airports,
+            parse_via_airports(flags["exclude-airports"], role="exclude-airports") or (),
+        )
     via_airports = [code for code in via_airports if code not in exclude_via]
 
     if _NO_ASIA.search(folded) or "tercermundista" in folded:
@@ -3065,6 +3070,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             max_duration=max_duration,
             currency=currency,
             country=country,
+            exclude_airports=tuple(exclude_airports),
         )
 
     if intent == "dates":
@@ -3104,6 +3110,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             max_duration=max_duration,
             currency=currency,
             country=country,
+            exclude_airports=tuple(exclude_airports),
         )
 
     if intent == "refuse":
