@@ -944,6 +944,9 @@ class GoogleFlightsHttpSource:
         *,
         adults: int = 1,
         cabin: FlightCabin = "economy",
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
     ) -> tuple[CompactExplorePlace, ...]:
         client = self._ensure_client()
         url, body = build_explore_request(
@@ -951,6 +954,9 @@ class GoogleFlightsHttpSource:
             departure_date,
             adults=adults,
             cabin=cabin,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
             html_lang=self._html_lang,
             currency=self._currency,
             country=self._country,

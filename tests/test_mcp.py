@@ -204,7 +204,28 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["max_layover_hours"])
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])
+        self.assertEqual(kwargs["children"], 0)
+        self.assertEqual(kwargs["infants_in_seat"], 0)
+        self.assertEqual(kwargs["infants_on_lap"], 0)
         self.assertEqual(payload["schema_version"], 1)
+
+    def test_search_dates_forwards_named_occupancy(self) -> None:
+        fake = _report(days=[])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool(
+                "MAD-BCN",
+                FUTURE,
+                FUTURE_OUT,
+                adults=2,
+                children=1,
+                infants_in_seat=1,
+                infants_on_lap=1,
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["adults"], 2)
+        self.assertEqual(kwargs["children"], 1)
+        self.assertEqual(kwargs["infants_in_seat"], 1)
+        self.assertEqual(kwargs["infants_on_lap"], 1)
 
     def test_search_dates_forwards_owned_shop_filters(self) -> None:
         fake = _report(days=[])
@@ -311,6 +332,27 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["max_layover_hours"])
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])
+        self.assertEqual(kwargs["children"], 0)
+        self.assertEqual(kwargs["infants_in_seat"], 0)
+        self.assertEqual(kwargs["infants_on_lap"], 0)
+
+    def test_search_flex_forwards_named_occupancy(self) -> None:
+        fake = _report(chosen_date=FUTURE, offers=[])
+        with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
+            search_flex_tool(
+                "BOS-LHR",
+                FUTURE,
+                3,
+                adults=2,
+                children=1,
+                infants_in_seat=1,
+                infants_on_lap=1,
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["adults"], 2)
+        self.assertEqual(kwargs["children"], 1)
+        self.assertEqual(kwargs["infants_in_seat"], 1)
+        self.assertEqual(kwargs["infants_on_lap"], 1)
 
     def test_search_flex_forwards_owned_shop_filters(self) -> None:
         fake = _report(chosen_date=FUTURE, offers=[])
@@ -382,9 +424,29 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(search.call_args.kwargs["max_layover_hours"])
         self.assertIsNone(search.call_args.kwargs["min_layover_hours"])
         self.assertIsNone(search.call_args.kwargs["max_duration_hours"])
+        self.assertEqual(search.call_args.kwargs["children"], 0)
+        self.assertEqual(search.call_args.kwargs["infants_in_seat"], 0)
+        self.assertEqual(search.call_args.kwargs["infants_on_lap"], 0)
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("SIN", FUTURE, price_cap=200)
         self.assertEqual(search.call_args.kwargs["price_cap_eur"], 200)
+
+    def test_search_explore_forwards_named_occupancy(self) -> None:
+        fake = _report(destinations=[])
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool(
+                "MAD",
+                FUTURE,
+                adults=2,
+                children=1,
+                infants_in_seat=1,
+                infants_on_lap=1,
+            )
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["adults"], 2)
+        self.assertEqual(kwargs["children"], 1)
+        self.assertEqual(kwargs["infants_in_seat"], 1)
+        self.assertEqual(kwargs["infants_on_lap"], 1)
 
     def test_search_explore_forwards_owned_shop_filters(self) -> None:
         fake = _report(destinations=[])

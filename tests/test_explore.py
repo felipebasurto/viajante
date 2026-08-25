@@ -64,10 +64,22 @@ class FakeExploreSource:
         self.closed = False
         self.fetched_queries: list[FlightQuery] = []
         self.explore_origins: list[str] = []
+        self.explore_occupancy: list[tuple[int, int, int, int]] = []
         self.config = SimpleNamespace(html_lang="en", currency="EUR")
 
-    def fetch_explore(self, origin, departure_date, *, adults=1, cabin="economy"):
+    def fetch_explore(
+        self,
+        origin,
+        departure_date,
+        *,
+        adults=1,
+        cabin="economy",
+        children=0,
+        infants_in_seat=0,
+        infants_on_lap=0,
+    ):
         self.explore_origins.append(origin)
+        self.explore_occupancy.append((adults, children, infants_in_seat, infants_on_lap))
         if isinstance(self.places, Exception):
             raise self.places
         return self.places
@@ -100,6 +112,16 @@ class ExploreParseTests(unittest.TestCase):
         inner = build_explore_inner("MAD", date(2026, 9, 1))
         self.assertEqual(inner[3][13][0][0], [[["MAD", 0]]])
         self.assertEqual(inner[3][13][0][1], [])
+        self.assertEqual(inner[3][6], [1, 0, 0, 0])
+        named = build_explore_inner(
+            "MAD",
+            date(2026, 9, 1),
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        self.assertEqual(named[3][6], [2, 1, 1, 1])
 
 
 class ExploreSearchTests(unittest.TestCase):
@@ -429,6 +451,45 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertIsNone(source.fetched_queries[-1].alliances)
         self.assertIsNone(source.fetched_queries[-1].exclude_alliances)
 
+    def test_named_occupancy_rides_dest_shop_unnamed_stays_default(self) -> None:
+        iberia = _card(airline="Iberia", airline_codes=("IB",), price="€61")
+        ryanair = _card(airline="Ryanair", airline_codes=("FR",), price="€28")
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+            ),
+            prices={"OPO": (ryanair,), "LIS": (iberia,)},
+        )
+        report = search_explore(
+            "MAD",
+            date(2026, 9, 1),
+            days=7,
+            top=2,
+            source=source,
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        self.assertEqual(source.explore_origins, ["MAD"])
+        self.assertEqual(source.explore_occupancy, [(2, 1, 1, 1)])
+        shop = source.fetched_queries[0]
+        self.assertEqual(shop.adults, 2)
+        self.assertEqual(shop.children, 1)
+        self.assertEqual(shop.infants_in_seat, 1)
+        self.assertEqual(shop.infants_on_lap, 1)
+        self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
+        self.assertEqual({row.iata for row in report.destinations}, {"OPO", "LIS"})
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        self.assertEqual(source.explore_occupancy[-1], (1, 0, 0, 0))
+        unnamed_shop = source.fetched_queries[-1]
+        self.assertEqual(unnamed_shop.children, 0)
+        self.assertEqual(unnamed_shop.infants_in_seat, 0)
+        self.assertEqual(unnamed_shop.infants_on_lap, 0)
+        self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
+        self.assertEqual({row.iata for row in unnamed.destinations}, {"OPO", "LIS"})
+
     def test_unknown_origin_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             search_explore("XXX", date(2026, 9, 1))
@@ -479,6 +540,9 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
+        self.assertIn("--children", help_text)
+        self.assertIn("--infants-in-seat", help_text)
+        self.assertIn("--infants-on-lap", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
@@ -564,6 +628,38 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])
         self.assertFalse(kwargs["nearby"])
+        self.assertEqual(kwargs["children"], 0)
+        self.assertEqual(kwargs["infants_in_seat"], 0)
+        self.assertEqual(kwargs["infants_on_lap"], 0)
+
+    def test_explore_forwards_named_occupancy(self) -> None:
+        with (
+            patch("viajante.cli.search_explore") as search,
+            patch("viajante.cli._print_explore_report"),
+        ):
+            search.return_value = SimpleNamespace(error=None, destinations=())
+            code = main(
+                [
+                    "explore",
+                    "MAD",
+                    "--from",
+                    "2026-09-01",
+                    "--adults",
+                    "2",
+                    "--children",
+                    "1",
+                    "--infants-in-seat",
+                    "1",
+                    "--infants-on-lap",
+                    "1",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["adults"], 2)
+        self.assertEqual(kwargs["children"], 1)
+        self.assertEqual(kwargs["infants_in_seat"], 1)
+        self.assertEqual(kwargs["infants_on_lap"], 1)
 
 
 class NearbyExploreTests(unittest.TestCase):

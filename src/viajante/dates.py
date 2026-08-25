@@ -201,12 +201,24 @@ def resolve_date_trip(
     return kind, nights
 
 
+def _occupancy_from_trip(trip: FlightQuery | RoundTrip) -> dict[str, int]:
+    return {
+        "adults": trip.adults,
+        "children": trip.children,
+        "infants_in_seat": trip.infants_in_seat,
+        "infants_on_lap": trip.infants_on_lap,
+    }
+
+
 def calendar_trip(
     origin: str,
     destination: str,
     start: date,
     *,
     adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
     nights: Optional[int] = None,
@@ -222,13 +234,18 @@ def calendar_trip(
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     alliance_names = tuple(alliances) if alliances is not None else None
     exclude_alliance_names = tuple(exclude_alliances) if exclude_alliances is not None else None
+    occupancy = {
+        "adults": adults,
+        "children": children,
+        "infants_in_seat": infants_in_seat,
+        "infants_on_lap": infants_on_lap,
+    }
     if nights is None:
         return FlightQuery(
             origin=origin,
             destination=destination,
             departure_date=start,
             max_stops=max_stops,
-            adults=adults,
             cabin=cabin,
             bags=bags,
             carry_on=carry_on,
@@ -237,6 +254,7 @@ def calendar_trip(
             exclude_airlines=exclude_codes,
             alliances=alliance_names,
             exclude_alliances=exclude_alliance_names,
+            **occupancy,
         )
     return RoundTrip(
         origin=origin,
@@ -244,7 +262,6 @@ def calendar_trip(
         departure_date=start,
         return_date=shift_day(start, nights),
         max_stops=max_stops,
-        adults=adults,
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
@@ -253,6 +270,7 @@ def calendar_trip(
         exclude_airlines=exclude_codes,
         alliances=alliance_names,
         exclude_alliances=exclude_alliance_names,
+        **occupancy,
     )
 
 
@@ -387,6 +405,9 @@ def search_dates(
     end: date,
     *,
     adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
     trip: str = "one-way",
@@ -422,6 +443,9 @@ def search_dates(
         start,
         max_stops=max_stops,
         adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
         cabin=cabin,
         nights=stay,
         bags=bags,
@@ -589,7 +613,6 @@ def _flex_report_for_seed(
                 seed.destination,
                 chosen,
                 max_stops=max_stops,
-                adults=adults,
                 cabin=cabin,
                 nights=stay,
                 bags=bags,
@@ -599,6 +622,7 @@ def _flex_report_for_seed(
                 exclude_airlines=exclude_airlines,
                 alliances=alliances,
                 exclude_alliances=exclude_alliances,
+                **_occupancy_from_trip(seed),
             )
             report_progress(f"chosen {chosen.isoformat()}; pricing that day")
             backend = "calendar_then_sweep"
@@ -656,6 +680,9 @@ def search_flex(
     flex_days: int,
     *,
     adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
     trip: str = "one-way",
@@ -707,6 +734,9 @@ def search_flex(
         start,
         max_stops=max_stops,
         adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
         cabin=cabin,
         nights=stay,
         bags=bags,
@@ -892,7 +922,6 @@ def _sweep_per_day(
                     seed.destination,
                     cursor,
                     max_stops=seed.legs[0].max_stops,
-                    adults=seed.adults,
                     cabin=seed.cabin,
                     nights=nights,
                     bags=seed.bags,
@@ -902,6 +931,7 @@ def _sweep_per_day(
                     exclude_airlines=seed.exclude_airlines,
                     alliances=seed.alliances,
                     exclude_alliances=seed.exclude_alliances,
+                    **_occupancy_from_trip(seed),
                 ),
             )
         )

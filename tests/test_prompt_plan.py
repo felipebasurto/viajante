@@ -1655,6 +1655,33 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.max_duration)
         self.assertEqual(plan.alliance, ())
         self.assertEqual(plan.exclude_alliance, ())
+        self.assertIsNone(plan.children)
+        self.assertIsNone(plan.infants_in_seat)
+        self.assertIsNone(plan.infants_on_lap)
+
+    def test_dates_named_occupancy_lands_family_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, 2 adults 1 child"
+        )
+        self.assertEqual(named.intent, "dates")
+        self.assertEqual(named.adults, 2)
+        self.assertEqual(named.children, 1)
+        self.assertIsNone(named.infants_in_seat)
+        self.assertIsNone(named.infants_on_lap)
+        flagged = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 "
+            "--adults 2 --children 1 --infants-in-seat 1 --infants-on-lap 1"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertEqual(flagged.adults, 2)
+        self.assertEqual(flagged.children, 1)
+        self.assertEqual(flagged.infants_in_seat, 1)
+        self.assertEqual(flagged.infants_on_lap, 1)
+        family = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 for a family")
+        self.assertEqual(family.intent, "dates")
+        self.assertIsNone(family.children)
+        self.assertIsNone(family.infants_in_seat)
+        self.assertIsNone(family.infants_on_lap)
 
     def test_dates_named_alliance_lands_does_not_invent_members(self) -> None:
         named = plan_prompt(
@@ -1760,6 +1787,27 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.max_duration)
         self.assertEqual(plan.alliance, ())
         self.assertEqual(plan.exclude_alliance, ())
+        self.assertIsNone(plan.children)
+        self.assertIsNone(plan.infants_in_seat)
+        self.assertIsNone(plan.infants_on_lap)
+
+    def test_flex_named_occupancy_lands_family_does_not_invent(self) -> None:
+        named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 2 adults 1 child")
+        self.assertEqual(named.intent, "flex")
+        self.assertEqual(named.adults, 2)
+        self.assertEqual(named.children, 1)
+        flagged = plan_prompt(
+            "BOS-LHR around 12 Sep 2026, flex 3 days "
+            "--adults 2 --children 1 --infants-in-seat 1 --infants-on-lap 1"
+        )
+        self.assertEqual(flagged.intent, "flex")
+        self.assertEqual(flagged.adults, 2)
+        self.assertEqual(flagged.children, 1)
+        self.assertEqual(flagged.infants_in_seat, 1)
+        self.assertEqual(flagged.infants_on_lap, 1)
+        family = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days for a family")
+        self.assertEqual(family.intent, "flex")
+        self.assertIsNone(family.children)
 
     def test_flex_named_alliance_lands_does_not_invent_members(self) -> None:
         named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights, Star Alliance only")
@@ -1851,6 +1899,31 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.max_duration)
         self.assertEqual(plan.alliance, ())
         self.assertEqual(plan.exclude_alliance, ())
+        self.assertIsNone(plan.children)
+        self.assertIsNone(plan.infants_in_seat)
+        self.assertIsNone(plan.infants_on_lap)
+
+    def test_explore_named_occupancy_lands_family_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, 2 adults 1 child"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertEqual(named.adults, 2)
+        self.assertEqual(named.children, 1)
+        flagged = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days "
+            "--adults 2 --children 1 --infants-in-seat 1 --infants-on-lap 1"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertEqual(flagged.adults, 2)
+        self.assertEqual(flagged.children, 1)
+        self.assertEqual(flagged.infants_in_seat, 1)
+        self.assertEqual(flagged.infants_on_lap, 1)
+        family = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days for a family"
+        )
+        self.assertEqual(family.intent, "explore")
+        self.assertIsNone(family.children)
 
     def test_explore_named_alliance_lands_does_not_invent_members(self) -> None:
         named = plan_prompt(

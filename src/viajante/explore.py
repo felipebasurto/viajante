@@ -38,6 +38,9 @@ class ExploreSource(Protocol):
         *,
         adults: int = 1,
         cabin: FlightCabin = "economy",
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
     ) -> Sequence[CompactExplorePlace]: ...
 
     def fetch(self, query: FlightQuery) -> Sequence[RawFlightCard]: ...
@@ -113,6 +116,9 @@ def _explore_for_origin(
     days: int,
     top: int,
     adults: int,
+    children: int,
+    infants_in_seat: int,
+    infants_on_lap: int,
     cabin: FlightCabin,
     max_stops: int,
     bags: Optional[int],
@@ -140,7 +146,17 @@ def _explore_for_origin(
     error: Optional[SearchError] = None
     destinations: tuple[ExploreDestination, ...] = ()
     try:
-        places = tuple(client.fetch_explore(origin, start, adults=adults, cabin=cabin))
+        places = tuple(
+            client.fetch_explore(
+                origin,
+                start,
+                adults=adults,
+                cabin=cabin,
+                children=children,
+                infants_in_seat=infants_in_seat,
+                infants_on_lap=infants_on_lap,
+            )
+        )
     except Exception as exc:
         error = classify_failure(exc)
         places = ()
@@ -154,6 +170,9 @@ def _explore_for_origin(
             departure_date=start,
             max_stops=max_stops,
             adults=adults,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
             cabin=cabin,
             bags=bags,
             carry_on=carry_on,
@@ -202,6 +221,9 @@ def search_explore(
     days: int = 7,
     top: int = DEFAULT_EXPLORE_TOP,
     adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
     bags: Optional[int] = None,
@@ -266,6 +288,9 @@ def search_explore(
                     days=days,
                     top=top,
                     adults=adults,
+                    children=children,
+                    infants_in_seat=infants_in_seat,
+                    infants_on_lap=infants_on_lap,
                     cabin=cabin,
                     max_stops=max_stops,
                     bags=bags,
@@ -311,6 +336,9 @@ def _cheapest_price(
     departure_date: date,
     max_stops: int,
     adults: int,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
@@ -336,6 +364,9 @@ def _cheapest_price(
         departure_date=departure_date,
         max_stops=max_stops,
         adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,

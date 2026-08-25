@@ -175,16 +175,7 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         raise ValueError("--top must be a positive integer")
     if args.baggage_buffer < 0:
         raise ValueError("--baggage-buffer must not be negative")
-    if args.adults < 1:
-        raise ValueError("--adults must be at least 1")
-    if args.children < 0:
-        raise ValueError("--children must not be negative")
-    if args.infants_in_seat < 0:
-        raise ValueError("--infants-in-seat must not be negative")
-    if args.infants_on_lap < 0:
-        raise ValueError("--infants-on-lap must not be negative")
-    if args.infants_on_lap > args.adults:
-        raise ValueError("--infants-on-lap cannot exceed --adults")
+    occupancy = _occupancy_from_args(args)
     args.currency = normalize_currency(args.currency)
     args.country = normalize_country(args.country)
     if args.bags is not None and args.bags < 0:
@@ -220,10 +211,10 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         args.routes,
         trip=args.trip,
         max_stops=args.max_stops,
-        adults=args.adults,
-        children=args.children,
-        infants_in_seat=args.infants_in_seat,
-        infants_on_lap=args.infants_on_lap,
+        adults=occupancy["adults"],
+        children=occupancy["children"],
+        infants_in_seat=occupancy["infants_in_seat"],
+        infants_on_lap=occupancy["infants_on_lap"],
         cabin=args.cabin,
         bags=args.bags,
         carry_on=carry_on,
@@ -1020,6 +1011,51 @@ def _combine_exit_codes(codes: Sequence[int]) -> int:
     return 3
 
 
+def _occupancy_from_args(args: argparse.Namespace) -> dict[str, int]:
+    children = int(getattr(args, "children", 0) or 0)
+    infants_in_seat = int(getattr(args, "infants_in_seat", 0) or 0)
+    infants_on_lap = int(getattr(args, "infants_on_lap", 0) or 0)
+    if args.adults < 1:
+        raise ValueError("--adults must be at least 1")
+    if children < 0:
+        raise ValueError("--children must not be negative")
+    if infants_in_seat < 0:
+        raise ValueError("--infants-in-seat must not be negative")
+    if infants_on_lap < 0:
+        raise ValueError("--infants-on-lap must not be negative")
+    if infants_on_lap > args.adults:
+        raise ValueError("--infants-on-lap cannot exceed --adults")
+    return {
+        "adults": args.adults,
+        "children": children,
+        "infants_in_seat": infants_in_seat,
+        "infants_on_lap": infants_on_lap,
+    }
+
+
+def _add_occupancy_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--children",
+        type=int,
+        default=0,
+        help="Children aged 2-11 (default 0)",
+    )
+    parser.add_argument(
+        "--infants-in-seat",
+        type=int,
+        default=0,
+        dest="infants_in_seat",
+        help="Infants in their own seat (default 0)",
+    )
+    parser.add_argument(
+        "--infants-on-lap",
+        type=int,
+        default=0,
+        dest="infants_on_lap",
+        help="Infants on lap (default 0)",
+    )
+
+
 def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--bags",
@@ -1164,8 +1200,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         origin, destination = parse_route_pair(args.route)
         start = _parse_iso_date(args.start, "--from")
         end = _parse_iso_date(args.end, "--to")
-        if args.adults < 1:
-            raise ValueError("--adults must be at least 1")
+        occupancy = _occupancy_from_args(args)
         validate_date_window(start, end)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
@@ -1174,7 +1209,6 @@ def _run_dates(args: argparse.Namespace) -> int:
             destination,
             start,
             max_stops=args.max_stops,
-            adults=args.adults,
             bags=shop["bags"],
             carry_on=shop["carry_on"],
             price_cap_eur=shop["price_cap_eur"],
@@ -1182,6 +1216,7 @@ def _run_dates(args: argparse.Namespace) -> int:
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],
             exclude_alliances=shop["exclude_alliances"],
+            **occupancy,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1194,7 +1229,6 @@ def _run_dates(args: argparse.Namespace) -> int:
             destination,
             start,
             max_stops=args.max_stops,
-            adults=args.adults,
             cabin=args.cabin,
             nights=nights,
             bags=shop["bags"],
@@ -1204,6 +1238,7 @@ def _run_dates(args: argparse.Namespace) -> int:
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],
             exclude_alliances=shop["exclude_alliances"],
+            **occupancy,
         )
         for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
             print(note, file=sys.stderr)
@@ -1213,7 +1248,6 @@ def _run_dates(args: argparse.Namespace) -> int:
         destination,
         start,
         end,
-        adults=args.adults,
         cabin=args.cabin,
         max_stops=args.max_stops,
         trip=trip,
@@ -1221,6 +1255,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         nearby=nearby,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
+        **occupancy,
     )
     reports = _as_report_tuple(result)
     for report in reports:
@@ -1285,8 +1320,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         around = _parse_iso_date(args.around, "--around")
         if args.flex_days < 1:
             raise ValueError("--flex must be at least 1")
-        if args.adults < 1:
-            raise ValueError("--adults must be at least 1")
+        occupancy = _occupancy_from_args(args)
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
         if args.baggage_buffer < 0:
@@ -1299,7 +1333,6 @@ def _run_flex(args: argparse.Namespace) -> int:
             destination,
             start,
             max_stops=args.max_stops,
-            adults=args.adults,
             bags=shop["bags"],
             carry_on=shop["carry_on"],
             price_cap_eur=shop["price_cap_eur"],
@@ -1307,6 +1340,7 @@ def _run_flex(args: argparse.Namespace) -> int:
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],
             exclude_alliances=shop["exclude_alliances"],
+            **occupancy,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1319,7 +1353,6 @@ def _run_flex(args: argparse.Namespace) -> int:
             destination,
             start,
             max_stops=args.max_stops,
-            adults=args.adults,
             cabin=args.cabin,
             nights=nights,
             bags=shop["bags"],
@@ -1329,6 +1362,7 @@ def _run_flex(args: argparse.Namespace) -> int:
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],
             exclude_alliances=shop["exclude_alliances"],
+            **occupancy,
         )
         for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
             print(note, file=sys.stderr)
@@ -1338,7 +1372,6 @@ def _run_flex(args: argparse.Namespace) -> int:
         destination,
         around,
         args.flex_days,
-        adults=args.adults,
         cabin=args.cabin,
         max_stops=args.max_stops,
         trip=trip,
@@ -1349,6 +1382,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         nearby=nearby,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
+        **occupancy,
     )
     reports = _as_report_tuple(result)
     for report in reports:
@@ -1386,8 +1420,7 @@ def _run_explore(args: argparse.Namespace) -> int:
             days = args.days
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
-        if args.adults < 1:
-            raise ValueError("--adults must be at least 1")
+        occupancy = _occupancy_from_args(args)
         shop = _owned_shop_filters_from_args(args)
         validate_explore_window(start, days)
     except ValueError as exc:
@@ -1404,12 +1437,12 @@ def _run_explore(args: argparse.Namespace) -> int:
         start,
         days=days,
         top=args.top,
-        adults=args.adults,
         cabin=args.cabin,
         max_stops=args.max_stops,
         nearby=nearby,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
+        **occupancy,
     )
     reports = _as_report_tuple(result)
     for report in reports:
@@ -1924,6 +1957,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of adults (default 1)",
     )
+    _add_occupancy_flags(dates)
     dates.add_argument(
         "--cabin",
         default="economy",
@@ -1995,6 +2029,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of adults (default 1)",
     )
+    _add_occupancy_flags(flex)
     flex.add_argument(
         "--cabin",
         default="economy",
@@ -2078,6 +2113,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of adults (default 1)",
     )
+    _add_occupancy_flags(explore)
     explore.add_argument(
         "--cabin",
         default="economy",

@@ -140,6 +140,9 @@ class DateWindowTests(unittest.TestCase):
         trip = calendar_trip("BOS", "LHR", date(2026, 11, 1), nights=5)
         self.assertIsInstance(trip, RoundTrip)
         self.assertEqual(trip.return_date, date(2026, 11, 6))
+        self.assertEqual(trip.children, 0)
+        self.assertEqual(trip.infants_in_seat, 0)
+        self.assertEqual(trip.infants_on_lap, 0)
 
     def test_round_trip_without_nights_is_invalid(self) -> None:
         with self.assertRaises(ValueError):
@@ -599,6 +602,9 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
+        self.assertIn("--children", help_text)
+        self.assertIn("--infants-in-seat", help_text)
+        self.assertIn("--infants-on-lap", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
@@ -695,6 +701,59 @@ class DateCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])
         self.assertFalse(kwargs["nearby"])
+        self.assertEqual(kwargs["children"], 0)
+        self.assertEqual(kwargs["infants_in_seat"], 0)
+        self.assertEqual(kwargs["infants_on_lap"], 0)
+
+    def test_dates_forwards_named_occupancy(self) -> None:
+        with (
+            patch("viajante.cli.search_dates") as search,
+            patch("viajante.cli._print_dates_report"),
+            patch("viajante.cli._dates_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "dates",
+                    "MAD-BCN",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                    "--adults",
+                    "2",
+                    "--children",
+                    "1",
+                    "--infants-in-seat",
+                    "1",
+                    "--infants-on-lap",
+                    "1",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["adults"], 2)
+        self.assertEqual(kwargs["children"], 1)
+        self.assertEqual(kwargs["infants_in_seat"], 1)
+        self.assertEqual(kwargs["infants_on_lap"], 1)
+
+    def test_dates_lap_infants_over_adults_is_rejected_before_search(self) -> None:
+        with patch("viajante.cli.search_dates") as search:
+            code = main(
+                [
+                    "dates",
+                    "MAD-BCN",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                    "--adults",
+                    "1",
+                    "--infants-on-lap",
+                    "2",
+                ]
+            )
+        self.assertEqual(code, 1)
+        search.assert_not_called()
 
     def test_dates_negative_max_layover_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_dates") as search:
@@ -929,6 +988,13 @@ class ShopFilterTests(unittest.TestCase):
         self.assertIsNone(trip.exclude_airlines)
         self.assertIsNone(trip.alliances)
         self.assertIsNone(trip.exclude_alliances)
+        self.assertEqual(trip.children, 0)
+        self.assertEqual(trip.infants_in_seat, 0)
+        self.assertEqual(trip.infants_on_lap, 0)
+        self.assertEqual(
+            build_calendar_inner(trip, date(2026, 9, 12), date(2026, 9, 13))[1][6],
+            [1, 0, 0, 0],
+        )
         too_few = _card(checked_bags=0, carry_on=0, price="€40")
         over_cap = _card(airline="Ryanair", airline_codes=("FR",), price="€401")
         other_via = _card(stops="1 stop", layover_city="DXB", price="€80")
@@ -1334,6 +1400,54 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(source.calendar_queries[0].alliances, ("star",))
         self.assertEqual(source.calendar_queries[0].exclude_alliances, ("oneworld",))
 
+    def test_dates_compact_calendar_occupancy_rides_calendar_trip(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 30.0),
+            )
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            source=source,
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        self.assertEqual(report.fetch_backend, "calendar")
+        seed = source.calendar_queries[0]
+        self.assertEqual(seed.adults, 2)
+        self.assertEqual(seed.children, 1)
+        self.assertEqual(seed.infants_in_seat, 1)
+        self.assertEqual(seed.infants_on_lap, 1)
+        self.assertEqual(
+            build_calendar_inner(seed, date(2026, 9, 1), date(2026, 9, 2))[1][6],
+            [2, 1, 1, 1],
+        )
+        unnamed_source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 30.0),
+            )
+        )
+        unnamed = search_dates(
+            "MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=unnamed_source
+        )
+        unnamed_seed = unnamed_source.calendar_queries[0]
+        self.assertEqual(unnamed.fetch_backend, "calendar")
+        self.assertEqual(unnamed_seed.adults, 1)
+        self.assertEqual(unnamed_seed.children, 0)
+        self.assertEqual(unnamed_seed.infants_in_seat, 0)
+        self.assertEqual(unnamed_seed.infants_on_lap, 0)
+        self.assertEqual(
+            build_calendar_inner(unnamed_seed, date(2026, 9, 1), date(2026, 9, 2))[1][6],
+            [1, 0, 0, 0],
+        )
+
     def test_dates_sweep_alliance_rides_the_shopping_request(self) -> None:
         iberia = _card(airline="Iberia", airline_codes=("IB",), price="€45")
         ryanair = _card(airline="Ryanair", airline_codes=("FR",), price="€30")
@@ -1360,6 +1474,42 @@ class ShopFilterTests(unittest.TestCase):
             [None, [["*A"]], [["*O"]]],
         )
         self.assertEqual(report.days[0].price_eur, 30.0)
+
+    def test_dates_sweep_occupancy_rides_the_shopping_request(self) -> None:
+        iberia = _card(airline="Iberia", airline_codes=("IB",), price="€45")
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={date(2026, 9, 1): (iberia,)},
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 1),
+            source=source,
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertEqual(source.fetch_calls, 1)
+        shop = source.fetched_queries[0]
+        self.assertEqual(shop.adults, 2)
+        self.assertEqual(shop.children, 1)
+        self.assertEqual(shop.infants_in_seat, 1)
+        self.assertEqual(shop.infants_on_lap, 1)
+        self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
+        unnamed_source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={date(2026, 9, 1): (iberia,)},
+        )
+        search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), source=unnamed_source)
+        unnamed_shop = unnamed_source.fetched_queries[0]
+        self.assertEqual(unnamed_shop.children, 0)
+        self.assertEqual(unnamed_shop.infants_in_seat, 0)
+        self.assertEqual(unnamed_shop.infants_on_lap, 0)
+        self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
 
     def test_flex_shop_alliance_rides_the_shopping_request(self) -> None:
         iberia = _card(airline="Iberia", airline_codes=("IB",), price="€90")
@@ -1401,6 +1551,45 @@ class ShopFilterTests(unittest.TestCase):
         self.assertIsNone(unnamed_source.fetched_queries[0].alliances)
         self.assertIsNone(unnamed_source.fetched_queries[0].exclude_alliances)
 
+    def test_flex_shop_occupancy_rides_the_shopping_request(self) -> None:
+        iberia = _card(airline="Iberia", airline_codes=("IB",), price="€90")
+        source = _flex_shop_source(iberia)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            adults=2,
+            children=1,
+            infants_in_seat=1,
+            infants_on_lap=1,
+        )
+        self.assertEqual(source.fetch_calls, 1)
+        seed = source.calendar_queries[0]
+        shop = source.fetched_queries[0]
+        self.assertEqual(seed.children, 1)
+        self.assertEqual(seed.infants_in_seat, 1)
+        self.assertEqual(seed.infants_on_lap, 1)
+        self.assertEqual(shop.adults, 2)
+        self.assertEqual(shop.children, 1)
+        self.assertEqual(shop.infants_in_seat, 1)
+        self.assertEqual(shop.infants_on_lap, 1)
+        self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
+        self.assertEqual(
+            build_calendar_inner(seed, date(2026, 9, 11), date(2026, 9, 13))[1][6],
+            [2, 1, 1, 1],
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], [90.0])
+        unnamed_source = _flex_shop_source(iberia)
+        search_flex("MAD", "BCN", date(2026, 9, 12), 1, source=unnamed_source, buffer_eur=0)
+        unnamed_shop = unnamed_source.fetched_queries[0]
+        self.assertEqual(unnamed_shop.children, 0)
+        self.assertEqual(unnamed_shop.infants_in_seat, 0)
+        self.assertEqual(unnamed_shop.infants_on_lap, 0)
+        self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
+
 
 class FlexCliTests(unittest.TestCase):
     def test_flex_help_mentions_the_window(self) -> None:
@@ -1419,6 +1608,9 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--alliance", help_text)
         self.assertIn("--exclude-alliance", help_text)
+        self.assertIn("--children", help_text)
+        self.assertIn("--infants-in-seat", help_text)
+        self.assertIn("--infants-on-lap", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
@@ -1506,6 +1698,40 @@ class FlexCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["min_layover_hours"])
         self.assertIsNone(kwargs["max_duration_hours"])
         self.assertFalse(kwargs["nearby"])
+        self.assertEqual(kwargs["children"], 0)
+        self.assertEqual(kwargs["infants_in_seat"], 0)
+        self.assertEqual(kwargs["infants_on_lap"], 0)
+
+    def test_flex_forwards_named_occupancy(self) -> None:
+        with (
+            patch("viajante.cli.search_flex") as search,
+            patch("viajante.cli._print_flex_report"),
+            patch("viajante.cli._flex_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "flex",
+                    "MAD-BCN",
+                    "--around",
+                    "2026-09-12",
+                    "--flex",
+                    "1",
+                    "--adults",
+                    "2",
+                    "--children",
+                    "1",
+                    "--infants-in-seat",
+                    "1",
+                    "--infants-on-lap",
+                    "1",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["adults"], 2)
+        self.assertEqual(kwargs["children"], 1)
+        self.assertEqual(kwargs["infants_in_seat"], 1)
+        self.assertEqual(kwargs["infants_on_lap"], 1)
 
     def test_past_around_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_flex") as search:
