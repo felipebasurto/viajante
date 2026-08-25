@@ -198,6 +198,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["depart_window"])
         self.assertEqual(payload["schema_version"], 1)
 
     def test_search_dates_forwards_owned_shop_filters(self) -> None:
@@ -214,6 +215,7 @@ class McpHandlerTests(unittest.TestCase):
                 airlines="IB",
                 exclude_airlines="FR",
                 price_cap=200,
+                depart_window="7-12",
             )
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["bags"], 1)
@@ -223,6 +225,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
 
     def test_search_dates_nearby_forwards(self) -> None:
         fake = _report(days=[])
@@ -287,6 +290,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["depart_window"])
 
     def test_search_flex_forwards_owned_shop_filters(self) -> None:
         fake = _report(chosen_date=FUTURE, offers=[])
@@ -299,12 +303,14 @@ class McpHandlerTests(unittest.TestCase):
                 via="IST",
                 airlines="BA",
                 price_cap=400,
+                depart_window="06:00-20:00",
             )
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["bags"], 1)
         self.assertEqual(kwargs["via"], ("IST",))
         self.assertEqual(kwargs["airlines"], ("BA",))
         self.assertEqual(kwargs["price_cap_eur"], 400)
+        self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
 
     def test_search_flex_nearby_forwards(self) -> None:
         fake = _report(offers=[])
@@ -340,6 +346,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(search.call_args.kwargs["bags"])
         self.assertIsNone(search.call_args.kwargs["via"])
         self.assertIsNone(search.call_args.kwargs["airlines"])
+        self.assertIsNone(search.call_args.kwargs["depart_window"])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("SIN", FUTURE, price_cap=200)
         self.assertEqual(search.call_args.kwargs["price_cap_eur"], 200)
@@ -357,6 +364,7 @@ class McpHandlerTests(unittest.TestCase):
                 airlines="IB",
                 exclude_airlines="FR",
                 price_cap=200,
+                depart_window="7-12",
             )
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["bags"], 1)
@@ -366,6 +374,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
 
     def test_search_explore_nearby_forwards(self) -> None:
         fake = _report(destinations=[])

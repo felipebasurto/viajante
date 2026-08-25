@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional, Protocol, Sequence
+from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import is_known_iata
 from viajante.flights import (
@@ -74,6 +74,7 @@ def _named_shop_filters(
     exclude_airlines: Optional[Sequence[str]],
     via: Optional[Sequence[str]],
     exclude_via: Optional[Sequence[str]],
+    depart_window: Optional[Tuple[int, int]],
 ) -> bool:
     return (
         bags is not None
@@ -83,6 +84,7 @@ def _named_shop_filters(
         or bool(exclude_airlines)
         or bool(via)
         or bool(exclude_via)
+        or depart_window is not None
     )
 
 
@@ -109,6 +111,7 @@ def _explore_for_origin(
     exclude_airlines: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
+    depart_window: Optional[Tuple[int, int]],
     drop_unpriced: bool,
     nearby_label: Optional[str],
     report_progress: Callable[[str], None],
@@ -143,6 +146,7 @@ def _explore_for_origin(
             exclude_airlines=exclude_airlines,
             via=parsed_via,
             exclude_via=parsed_exclude_via,
+            depart_window=depart_window,
         )
         if drop_unpriced and price is None:
             continue
@@ -186,6 +190,7 @@ def search_explore(
     exclude_airlines: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
     nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
@@ -210,6 +215,7 @@ def search_explore(
         exclude_airlines=exclude_airlines,
         via=parsed_via,
         exclude_via=parsed_exclude_via,
+        depart_window=depart_window,
     )
     origins = expand_nearby_origins(origin, nearby=nearby)
     client = source or GoogleFlightsHttpSource()
@@ -233,6 +239,7 @@ def search_explore(
                     exclude_airlines=exclude_airlines,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
+                    depart_window=depart_window,
                     drop_unpriced=drop_unpriced,
                     nearby_label=label,
                     report_progress=report_progress,
@@ -271,6 +278,7 @@ def _cheapest_price(
     exclude_airlines: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
 ) -> Optional[float]:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
@@ -301,6 +309,7 @@ def _cheapest_price(
                 buffer_eur=0,
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
+                depart_window=depart_window,
                 via=via,
                 exclude_via=exclude_via,
                 bags=query.bags,

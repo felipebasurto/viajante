@@ -112,6 +112,7 @@ Examples:
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --fetch sweep
   viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
   viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14 --nearby
+  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --depart-window 7-12
 """
 
 FLEX_EXAMPLES = """\
@@ -119,6 +120,7 @@ Examples:
   viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
   viajante flex JFK-LHR --around 2026-09-15 --flex 3
   viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nearby
+  viajante flex JFK-LHR --around 2026-09-15 --flex 3 --depart-window 06:00-20:00
 """
 
 EXPLORE_EXAMPLES = """\
@@ -127,6 +129,7 @@ Examples:
   viajante explore NRT --month 2026-10
   viajante explore SIN --from 2026-09-01 --price-cap 200
   viajante explore LHR --from 2026-09-15 --nearby
+  viajante explore JFK --from 2026-09-15 --depart-window 7-12
 """
 
 AIRPORTS_EXAMPLES = """\
@@ -892,7 +895,6 @@ def _run_trip(args: argparse.Namespace) -> int:
         max_duration_hours=args.max_duration,
         alliances=parse_alliances(args.alliance),
         exclude_alliances=parse_alliances(args.exclude_alliance),
-        depart_window=parse_depart_window(args.depart_window),
         currency=args.currency,
         country=args.country,
         hotel_source=getattr(args, "source", "booking"),
@@ -1075,6 +1077,13 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
             "(comma-separated). Unknown layover stays"
         ),
     )
+    parser.add_argument(
+        "--depart-window",
+        default=None,
+        dest="depart_window",
+        metavar="START-END",
+        help="Keep local departures in START-END inclusive (hours 6-20 or clocks 06:00-20:00)",
+    )
 
 
 def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
@@ -1095,6 +1104,7 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "exclude_airlines": parse_airline_codes(args.exclude_airlines),
         "via": via,
         "exclude_via": exclude_via,
+        "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
     }
 
 

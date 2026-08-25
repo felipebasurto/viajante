@@ -116,6 +116,7 @@ def build_server():
         carry_on: int | None = None,
         price_cap: int | None = None,
         nearby: bool = False,
+        depart_window: str | None = None,
     ) -> dict:
         return dict(
             search_dates_tool(
@@ -135,6 +136,7 @@ def build_server():
                 carry_on=carry_on,
                 price_cap=price_cap,
                 nearby=nearby,
+                depart_window=depart_window,
             )
         )
 
@@ -159,6 +161,7 @@ def build_server():
         carry_on: int | None = None,
         price_cap: int | None = None,
         nearby: bool = False,
+        depart_window: str | None = None,
     ) -> dict:
         return dict(
             search_flex_tool(
@@ -181,6 +184,7 @@ def build_server():
                 carry_on=carry_on,
                 price_cap=price_cap,
                 nearby=nearby,
+                depart_window=depart_window,
             )
         )
 
@@ -202,6 +206,7 @@ def build_server():
         carry_on: int | None = None,
         price_cap: int | None = None,
         nearby: bool = False,
+        depart_window: str | None = None,
     ) -> dict:
         return dict(
             search_explore_tool(
@@ -221,6 +226,7 @@ def build_server():
                 carry_on=carry_on,
                 price_cap=price_cap,
                 nearby=nearby,
+                depart_window=depart_window,
             )
         )
 

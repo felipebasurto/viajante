@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional, Protocol, Sequence, TypeVar
+from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
 
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
@@ -267,6 +267,7 @@ def _offers_from_cards(
     buffer_eur: int = 0,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
 ) -> list[FlightOffer]:
     """Apply the same owned shop post-filters search_flights uses."""
     return [
@@ -279,6 +280,7 @@ def _offers_from_cards(
                 buffer_eur=buffer_eur,
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
+                depart_window=depart_window,
                 via=via,
                 exclude_via=exclude_via,
                 bags=query.bags,
@@ -306,6 +308,7 @@ def _date_calendar_for_seed(
     stay: Optional[int],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
+    depart_window: Optional[Tuple[int, int]],
     report_progress: Callable[[str], None],
 ) -> DateCalendarReport:
     stay_label = ""
@@ -334,6 +337,7 @@ def _date_calendar_for_seed(
             report_progress,
             via=parsed_via,
             exclude_via=parsed_exclude_via,
+            depart_window=depart_window,
         )
         backend = "sweep"
     except Exception as exc:
@@ -373,6 +377,7 @@ def search_dates(
     exclude_airlines: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
     nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
@@ -412,6 +417,7 @@ def search_dates(
                     stay=stay,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
+                    depart_window=depart_window,
                     report_progress=report_progress,
                 )
             )
@@ -497,6 +503,7 @@ def _flex_report_for_seed(
     exclude_airlines: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
+    depart_window: Optional[Tuple[int, int]],
     top: int,
     buffer_eur: int,
     sort: FlightSort,
@@ -563,6 +570,7 @@ def _flex_report_for_seed(
                 buffer_eur=buffer_eur,
                 via=parsed_via,
                 exclude_via=parsed_exclude_via,
+                depart_window=depart_window,
             )
             ranked = _rank_offers(eligible, top=top, sort=sort)
             if typical is not None:
@@ -616,6 +624,7 @@ def search_flex(
     exclude_airlines: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
     nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
@@ -678,6 +687,7 @@ def search_flex(
                     exclude_airlines=exclude_airlines,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
+                    depart_window=depart_window,
                     top=top,
                     buffer_eur=buffer_eur,
                     sort=sort,
@@ -745,8 +755,11 @@ def _row_from_day_cards(
     *,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
 ) -> DatePriceRow:
-    offers = _offers_from_cards(cards, query, via=via, exclude_via=exclude_via)
+    offers = _offers_from_cards(
+        cards, query, via=via, exclude_via=exclude_via, depart_window=depart_window
+    )
     if not offers:
         return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
     best = min(offers, key=lambda offer: offer.price_eur)
@@ -786,6 +799,7 @@ def _sweep_per_day(
     *,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
@@ -832,6 +846,7 @@ def _sweep_per_day(
                         returning,
                         via=via,
                         exclude_via=exclude_via,
+                        depart_window=depart_window,
                     )
                 )
         return tuple(rows)
@@ -852,6 +867,7 @@ def _sweep_per_day(
                 returning,
                 via=via,
                 exclude_via=exclude_via,
+                depart_window=depart_window,
             )
         )
     return tuple(rows)

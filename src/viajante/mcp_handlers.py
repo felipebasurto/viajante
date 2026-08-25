@@ -165,6 +165,7 @@ def search_dates_tool(
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
     nearby: bool = False,
+    depart_window: Optional[str] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -191,6 +192,7 @@ def search_dates_tool(
             carry_on=carry_on,
             price_cap_eur=price_cap,
             nearby=nearby,
+            depart_window=parse_depart_window(depart_window),
         )
     )
     return _payload_from_reports(report)
@@ -217,6 +219,7 @@ def search_flex_tool(
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
     nearby: bool = False,
+    depart_window: Optional[str] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
@@ -245,6 +248,7 @@ def search_flex_tool(
             carry_on=carry_on,
             price_cap_eur=price_cap,
             nearby=nearby,
+            depart_window=parse_depart_window(depart_window),
         )
     )
     return _payload_from_reports(report)
@@ -268,6 +272,7 @@ def search_explore_tool(
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
     nearby: bool = False,
+    depart_window: Optional[str] = None,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -297,6 +302,7 @@ def search_explore_tool(
             carry_on=carry_on,
             price_cap_eur=price_cap,
             nearby=nearby,
+            depart_window=parse_depart_window(depart_window),
         )
     )
     return _payload_from_reports(report)

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from viajante.cli import main
 from viajante.explore import search_explore
-from viajante.flights import _normalize_offer
+from viajante.flights import _normalize_offer, parse_depart_window
 from viajante.google_flights import RawFlightCard
 from viajante.google_flights_rpc import (
     CompactExplorePlace,
@@ -308,6 +308,38 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(by_iata["FCO"], 70.0)
         self.assertEqual(by_iata["BCN"], 70.0)
 
+    def test_named_depart_window_drops_dests_without_an_in_window_fare(self) -> None:
+        morning = _card(departure="08:00", price="€90")
+        evening = _card(departure="21:00", price="€28")
+        silent = _card(departure=None, price="€40")
+        window = parse_depart_window("7-12")
+        self.assertIsNotNone(_normalize_offer(morning, 1, buffer_eur=0, depart_window=window))
+        self.assertIsNone(_normalize_offer(evening, 1, buffer_eur=0, depart_window=window))
+        self.assertIsNone(_normalize_offer(silent, 1, buffer_eur=0, depart_window=window))
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (morning, evening),
+                "LIS": (evening, silent),
+                "FCO": (silent,),
+            },
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=3, source=source, depart_window=window
+        )
+        self.assertEqual([row.iata for row in report.destinations], ["OPO"])
+        self.assertEqual(report.destinations[0].price_eur, 90.0)
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
+        self.assertEqual(by_iata["OPO"], 28.0)
+        self.assertEqual(by_iata["LIS"], 28.0)
+        self.assertEqual(by_iata["FCO"], 40.0)
+
     def test_unknown_origin_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             search_explore("XXX", date(2026, 9, 1))
@@ -358,6 +390,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
+        self.assertIn("--depart-window", help_text)
 
     def test_explore_forwards_owned_shop_filters(self) -> None:
         with (
@@ -384,6 +417,8 @@ class ExploreCliTests(unittest.TestCase):
                     "FR",
                     "--price-cap",
                     "200",
+                    "--depart-window",
+                    "7-12",
                 ]
             )
         self.assertEqual(code, 0)
@@ -395,6 +430,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
 
     def test_explore_unnamed_shop_filters_stay_unset(self) -> None:
         with (
@@ -412,6 +448,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["depart_window"])
         self.assertFalse(kwargs["nearby"])
 
 

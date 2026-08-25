@@ -25,7 +25,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.flights import _normalize_offer
+from viajante.flights import _normalize_offer, parse_depart_window
 from viajante.google_flights import GoogleFlightsRejected, RawFlightCard
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
@@ -598,6 +598,7 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
+        self.assertIn("--depart-window", help_text)
 
     def test_dates_forwards_owned_shop_filters(self) -> None:
         with (
@@ -626,6 +627,8 @@ class DateCliTests(unittest.TestCase):
                     "FR",
                     "--price-cap",
                     "200",
+                    "--depart-window",
+                    "7-12",
                 ]
             )
         self.assertEqual(code, 0)
@@ -637,6 +640,7 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
 
     def test_dates_unnamed_shop_filters_stay_unset(self) -> None:
         with (
@@ -663,6 +667,7 @@ class DateCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["depart_window"])
         self.assertFalse(kwargs["nearby"])
 
     def test_dates_nearby_flag_forwards(self) -> None:
@@ -1023,6 +1028,75 @@ class ShopFilterTests(unittest.TestCase):
         report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), source=source)
         self.assertEqual(report.days[0].price_eur, 30.0)
 
+    def test_flex_shop_depart_window_drops_off_clock_offers(self) -> None:
+        morning = _card(departure="08:00", price="€90")
+        evening = _card(departure="21:00", price="€40")
+        silent = _card(departure=None, price="€70")
+        window = parse_depart_window("7-12")
+        self.assertIsNotNone(_normalize_offer(morning, 1, depart_window=window))
+        self.assertIsNone(_normalize_offer(evening, 1, depart_window=window))
+        self.assertIsNone(_normalize_offer(silent, 1, depart_window=window))
+        source = _flex_shop_source(morning, evening, silent)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            depart_window=window,
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], [90.0])
+        unnamed = search_flex(
+            "MAD", "BCN", date(2026, 9, 12), 1, source=_flex_shop_source(morning, evening, silent)
+        )
+        self.assertEqual([offer.price_eur for offer in unnamed.offers], [40.0, 70.0, 90.0])
+
+    def test_dates_sweep_depart_window_unprices_off_window_days(self) -> None:
+        morning = _card(departure="08:00", price="€45")
+        evening = _card(departure="21:00", price="€30")
+        silent = _card(departure=None, price="€20")
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (morning, evening),
+                date(2026, 9, 2): (evening, silent),
+            },
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            source=source,
+            depart_window=parse_depart_window("7-12"),
+        )
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertEqual(report.days[0].status, "ok")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].status, "empty")
+        self.assertIsNone(report.days[1].price_eur)
+
+    def test_dates_compact_calendar_does_not_invent_a_clock(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 30.0),
+            )
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            source=source,
+            depart_window=parse_depart_window("7-12"),
+        )
+        self.assertEqual(report.fetch_backend, "calendar")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].price_eur, 30.0)
+        self.assertEqual(source.fetch_calls, 0)
+
 
 class FlexCliTests(unittest.TestCase):
     def test_flex_help_mentions_the_window(self) -> None:
@@ -1041,6 +1115,7 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
+        self.assertIn("--depart-window", help_text)
 
     def test_flex_forwards_owned_shop_filters(self) -> None:
         with (
@@ -1064,6 +1139,8 @@ class FlexCliTests(unittest.TestCase):
                     "IB",
                     "--price-cap",
                     "200",
+                    "--depart-window",
+                    "06:00-20:00",
                 ]
             )
         self.assertEqual(code, 0)
@@ -1072,6 +1149,7 @@ class FlexCliTests(unittest.TestCase):
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["exclude_via"])
 
@@ -1097,6 +1175,7 @@ class FlexCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["depart_window"])
         self.assertFalse(kwargs["nearby"])
 
     def test_past_around_is_rejected_before_search(self) -> None:
