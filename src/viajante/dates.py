@@ -215,9 +215,13 @@ def calendar_trip(
     price_cap_eur: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
 ) -> FlightQuery | RoundTrip:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
+    alliance_names = tuple(alliances) if alliances is not None else None
+    exclude_alliance_names = tuple(exclude_alliances) if exclude_alliances is not None else None
     if nights is None:
         return FlightQuery(
             origin=origin,
@@ -231,6 +235,8 @@ def calendar_trip(
             price_cap_eur=price_cap_eur,
             airlines=airline_codes,
             exclude_airlines=exclude_codes,
+            alliances=alliance_names,
+            exclude_alliances=exclude_alliance_names,
         )
     return RoundTrip(
         origin=origin,
@@ -245,6 +251,8 @@ def calendar_trip(
         price_cap_eur=price_cap_eur,
         airlines=airline_codes,
         exclude_airlines=exclude_codes,
+        alliances=alliance_names,
+        exclude_alliances=exclude_alliance_names,
     )
 
 
@@ -388,6 +396,8 @@ def search_dates(
     price_cap_eur: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
@@ -419,6 +429,8 @@ def search_dates(
         price_cap_eur=price_cap_eur,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
+        alliances=alliances,
+        exclude_alliances=exclude_alliances,
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
     report_progress = progress or (lambda _: None)
@@ -525,6 +537,8 @@ def _flex_report_for_seed(
     price_cap_eur: Optional[int],
     airlines: Optional[Sequence[str]],
     exclude_airlines: Optional[Sequence[str]],
+    alliances: Optional[Sequence[str]],
+    exclude_alliances: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
@@ -583,6 +597,8 @@ def _flex_report_for_seed(
                 price_cap_eur=price_cap_eur,
                 airlines=airlines,
                 exclude_airlines=exclude_airlines,
+                alliances=alliances,
+                exclude_alliances=exclude_alliances,
             )
             report_progress(f"chosen {chosen.isoformat()}; pricing that day")
             backend = "calendar_then_sweep"
@@ -652,6 +668,8 @@ def search_flex(
     price_cap_eur: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
@@ -696,6 +714,8 @@ def search_flex(
         price_cap_eur=price_cap_eur,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
+        alliances=alliances,
+        exclude_alliances=exclude_alliances,
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
     report_progress = progress or (lambda _: None)
@@ -723,6 +743,8 @@ def search_flex(
                     price_cap_eur=price_cap_eur,
                     airlines=airlines,
                     exclude_airlines=exclude_airlines,
+                    alliances=alliances,
+                    exclude_alliances=exclude_alliances,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     depart_window=depart_window,
@@ -878,6 +900,8 @@ def _sweep_per_day(
                     price_cap_eur=seed.price_cap_eur,
                     airlines=seed.airlines,
                     exclude_airlines=seed.exclude_airlines,
+                    alliances=seed.alliances,
+                    exclude_alliances=seed.exclude_alliances,
                 ),
             )
         )

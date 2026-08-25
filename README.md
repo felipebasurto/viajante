@@ -297,7 +297,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Same meaning as `flights` (`0`, `1`, or `2` stops). |
 | `--fetch` | `sweep` | Date-grid RPC. On a compact miss, each day is priced with shopping sweep. `detail` is ignored. |
 | `--nearby` | off | Expand origin or dest to owned same-city IATA and search each as a labeled alternative. Default off. Never invents a code. |
-| `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--via` / `--exclude-via` / `--depart-window` / `--max-layover` / `--min-layover` / `--max-duration` | unset | Same owned shop post-filters as `flights`. Applied to sweep-fallback cards only. Compact calendar cells have no clock and stay unfiltered. Unnamed stays unset. |
+| `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--alliance` / `--exclude-alliance` / `--via` / `--exclude-via` / `--depart-window` / `--max-layover` / `--min-layover` / `--max-duration` | unset | Same owned shop post-filters as `flights`. Alliances ride the shopping POST (no owned member list). Applied to sweep-fallback cards only. Compact calendar cells have no clock and no airline/alliance and stay unfiltered. Unnamed stays unset. |
 | `--save FILE` | off | Write the calendar JSON atomically. |
 
 | `explore` flag | Default | Behavior |
@@ -306,7 +306,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--month` | off | First of `YYYY-MM` plus that month's length. Do not combine with `--from`. |
 | `--top` | `12` | Destinations to price after the explore catalog. |
 | `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Applied when pricing each destination. |
-| `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--via` / `--exclude-via` | unset | Same owned shop post-filters as `flights` / dates-flex. Unnamed stays unset. Destinations whose cheapest surviving offer contradicts are dropped. Compact catalog places are not post-filtered. Do not invent dests to fill `--top`. |
+| `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--alliance` / `--exclude-alliance` / `--via` / `--exclude-via` | unset | Same owned shop post-filters as `flights` / dates-flex. Alliances ride dest shopping POSTs (no owned member list). Unnamed stays unset. Destinations whose cheapest surviving offer contradicts are dropped. Compact catalog places are not post-filtered. Do not invent dests to fill `--top`. |
 | `--depart-window` / `--max-layover` / `--min-layover` / `--max-duration` | unset | Same owned shop post-filters as `flights`. Applied to dest shop cards. Unknown clock or layover cannot prove the filter. Nonstops stay for max/min layover. |
 | `--price-cap` | unset | Drop destinations whose cheapest surviving owned fare exceeds this EUR amount. Unknown price cannot prove the cap. |
 | `--nearby` | off | Expand origin to owned same-city IATA and search each as a labeled alternative. Default off. Never invents a code. |
@@ -380,7 +380,7 @@ for result in report.queries:
             print(offer.total_price_eur, offer.title)
 ```
 
-`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_flex(..., around=..., flex=3)` is that grid plus one shopping search on the cheapest legal day. `search_trip` joins owned flight fare and hotel stay when dates overlap; flight shop takes the same bags/via/airlines/`price_cap` filters as `search_flights`. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
+`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. `search_flex(..., around=..., flex=3)` is that grid plus one shopping search on the cheapest legal day. Named `alliance` / `exclude_alliance` ride those shopping POSTs the same way as `search_flights`. `search_trip` joins owned flight fare and hotel stay when dates overlap; flight shop takes the same bags/via/airlines/alliance/`price_cap` filters as `search_flights`. `search_explore` and `lookup_airports` match the `explore` and `airports` commands.
 
 ## Limits
 

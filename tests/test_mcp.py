@@ -197,6 +197,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_via"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
+        self.assertIsNone(kwargs["alliances"])
+        self.assertIsNone(kwargs["exclude_alliances"])
         self.assertIsNone(kwargs["price_cap_eur"])
         self.assertIsNone(kwargs["depart_window"])
         self.assertIsNone(kwargs["max_layover_hours"])
@@ -217,6 +219,8 @@ class McpHandlerTests(unittest.TestCase):
                 exclude_via="DXB",
                 airlines="IB",
                 exclude_airlines="FR",
+                alliance="star",
+                exclude_alliance="oneworld",
                 price_cap=200,
                 depart_window="7-12",
                 max_layover=3,
@@ -230,6 +234,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
+        self.assertEqual(kwargs["alliances"], ("star",))
+        self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(kwargs["max_layover_hours"], 3)
@@ -298,6 +304,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["bags"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["airlines"])
+        self.assertIsNone(kwargs["alliances"])
+        self.assertIsNone(kwargs["exclude_alliances"])
         self.assertIsNone(kwargs["price_cap_eur"])
         self.assertIsNone(kwargs["depart_window"])
         self.assertIsNone(kwargs["max_layover_hours"])
@@ -314,6 +322,8 @@ class McpHandlerTests(unittest.TestCase):
                 bags=1,
                 via="IST",
                 airlines="BA",
+                alliance="oneworld",
+                exclude_alliance="star",
                 price_cap=400,
                 depart_window="06:00-20:00",
                 max_layover=3,
@@ -324,6 +334,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["bags"], 1)
         self.assertEqual(kwargs["via"], ("IST",))
         self.assertEqual(kwargs["airlines"], ("BA",))
+        self.assertEqual(kwargs["alliances"], ("oneworld",))
+        self.assertEqual(kwargs["exclude_alliances"], ("star",))
         self.assertEqual(kwargs["price_cap_eur"], 400)
         self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
         self.assertEqual(kwargs["max_layover_hours"], 3)
@@ -364,6 +376,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(search.call_args.kwargs["bags"])
         self.assertIsNone(search.call_args.kwargs["via"])
         self.assertIsNone(search.call_args.kwargs["airlines"])
+        self.assertIsNone(search.call_args.kwargs["alliances"])
+        self.assertIsNone(search.call_args.kwargs["exclude_alliances"])
         self.assertIsNone(search.call_args.kwargs["depart_window"])
         self.assertIsNone(search.call_args.kwargs["max_layover_hours"])
         self.assertIsNone(search.call_args.kwargs["min_layover_hours"])
@@ -384,6 +398,8 @@ class McpHandlerTests(unittest.TestCase):
                 exclude_via="DXB",
                 airlines="IB",
                 exclude_airlines="FR",
+                alliance="star",
+                exclude_alliance="oneworld",
                 price_cap=200,
                 depart_window="7-12",
                 max_layover=3,
@@ -397,6 +413,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
+        self.assertEqual(kwargs["alliances"], ("star",))
+        self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(kwargs["max_layover_hours"], 3)

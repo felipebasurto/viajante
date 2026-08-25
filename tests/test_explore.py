@@ -16,6 +16,7 @@ from viajante.google_flights_rpc import (
     CompactExplorePlace,
     CompactParseMiss,
     build_explore_inner,
+    build_shopping_inner,
     parse_explore_body,
 )
 from viajante.models import FlightQuery
@@ -387,6 +388,47 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(by_iata["LIS"], 28.0)
         self.assertEqual(by_iata["FCO"], 28.0)
 
+    def test_named_alliance_rides_dest_shop_catalog_places_stay(self) -> None:
+        iberia = _card(airline="Iberia", airline_codes=("IB",), price="€61")
+        ryanair = _card(airline="Ryanair", airline_codes=("FR",), price="€28")
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={"OPO": (ryanair,), "LIS": (iberia, ryanair), "FCO": (iberia,)},
+        )
+        report = search_explore(
+            "MAD",
+            date(2026, 9, 1),
+            days=7,
+            top=3,
+            source=source,
+            alliances=("star",),
+            exclude_alliances=("oneworld",),
+        )
+        self.assertEqual(source.explore_origins, ["MAD"])
+        self.assertEqual(
+            [query.destination for query in source.fetched_queries], ["OPO", "LIS", "FCO"]
+        )
+        shop = source.fetched_queries[0]
+        self.assertEqual(shop.alliances, ("star",))
+        self.assertEqual(shop.exclude_alliances, ("oneworld",))
+        self.assertEqual(
+            build_shopping_inner(shop)[1][13][0][7],
+            [None, [["*A"]], [["*O"]]],
+        )
+        by_iata = {row.iata: row.price_eur for row in report.destinations}
+        self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
+        self.assertEqual(by_iata["OPO"], 28.0)
+        self.assertEqual(by_iata["LIS"], 28.0)
+        self.assertEqual(by_iata["FCO"], 61.0)
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        self.assertEqual({row.iata for row in unnamed.destinations}, {"OPO", "LIS", "FCO"})
+        self.assertIsNone(source.fetched_queries[-1].alliances)
+        self.assertIsNone(source.fetched_queries[-1].exclude_alliances)
+
     def test_unknown_origin_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             search_explore("XXX", date(2026, 9, 1))
@@ -435,6 +477,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--airlines", help_text)
+        self.assertIn("--alliance", help_text)
+        self.assertIn("--exclude-alliance", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
@@ -465,6 +509,10 @@ class ExploreCliTests(unittest.TestCase):
                     "IB",
                     "--exclude-airlines",
                     "FR",
+                    "--alliance",
+                    "star",
+                    "--exclude-alliance",
+                    "oneworld",
                     "--price-cap",
                     "200",
                     "--depart-window",
@@ -485,6 +533,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
+        self.assertEqual(kwargs["alliances"], ("star",))
+        self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(kwargs["max_layover_hours"], 3)
@@ -506,6 +556,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_via"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
+        self.assertIsNone(kwargs["alliances"])
+        self.assertIsNone(kwargs["exclude_alliances"])
         self.assertIsNone(kwargs["price_cap_eur"])
         self.assertIsNone(kwargs["depart_window"])
         self.assertIsNone(kwargs["max_layover_hours"])

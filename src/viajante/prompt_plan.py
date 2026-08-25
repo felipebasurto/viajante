@@ -2972,6 +2972,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             depart_window=depart_window,
             min_layover=min_layover,
             max_duration=max_duration,
+            alliance=alliance,
+            exclude_alliance=exclude_alliance,
             notes=notes,
         )
 

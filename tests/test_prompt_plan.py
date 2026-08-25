@@ -1653,6 +1653,23 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.max_layover)
         self.assertIsNone(plan.min_layover)
         self.assertIsNone(plan.max_duration)
+        self.assertEqual(plan.alliance, ())
+        self.assertEqual(plan.exclude_alliance, ())
+
+    def test_dates_named_alliance_lands_does_not_invent_members(self) -> None:
+        named = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, Star Alliance only"
+        )
+        self.assertEqual(named.intent, "dates")
+        self.assertEqual(list(named.alliance), ["star"])
+        self.assertEqual(list(named.include_airlines), [])
+        flagged = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 "
+            "--alliance oneworld --exclude-alliance star"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertEqual(list(flagged.alliance), ["oneworld"])
+        self.assertEqual(list(flagged.exclude_alliance), ["star"])
 
     def test_dates_named_depart_window_lands_morning_vibe_does_not(self) -> None:
         named = plan_prompt(
@@ -1741,6 +1758,20 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.max_layover)
         self.assertIsNone(plan.min_layover)
         self.assertIsNone(plan.max_duration)
+        self.assertEqual(plan.alliance, ())
+        self.assertEqual(plan.exclude_alliance, ())
+
+    def test_flex_named_alliance_lands_does_not_invent_members(self) -> None:
+        named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights, Star Alliance only")
+        self.assertEqual(named.intent, "flex")
+        self.assertEqual(list(named.alliance), ["star"])
+        self.assertEqual(list(named.include_airlines), [])
+        flagged = plan_prompt(
+            "BOS-LHR around 12 Sep 2026, flex 3 days --alliance oneworld --exclude-alliance star"
+        )
+        self.assertEqual(flagged.intent, "flex")
+        self.assertEqual(list(flagged.alliance), ["oneworld"])
+        self.assertEqual(list(flagged.exclude_alliance), ["star"])
 
     def test_flex_named_depart_window_lands_morning_vibe_does_not(self) -> None:
         named = plan_prompt(
@@ -1818,6 +1849,23 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.max_layover)
         self.assertIsNone(plan.min_layover)
         self.assertIsNone(plan.max_duration)
+        self.assertEqual(plan.alliance, ())
+        self.assertEqual(plan.exclude_alliance, ())
+
+    def test_explore_named_alliance_lands_does_not_invent_members(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, Star Alliance only"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertEqual(list(named.alliance), ["star"])
+        self.assertEqual(list(named.include_airlines), [])
+        flagged = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days "
+            "--alliance oneworld --exclude-alliance star"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertEqual(list(flagged.alliance), ["oneworld"])
+        self.assertEqual(list(flagged.exclude_alliance), ["star"])
 
     def test_explore_named_depart_window_lands_morning_vibe_does_not(self) -> None:
         named = plan_prompt(

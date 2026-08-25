@@ -1680,6 +1680,8 @@ class TripCliTests(unittest.TestCase):
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--airlines", help_text)
+        self.assertIn("--alliance", help_text)
+        self.assertIn("--exclude-alliance", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--max-layover", help_text)

@@ -73,6 +73,8 @@ def _named_shop_filters(
     price_cap_eur: Optional[int],
     airlines: Optional[Sequence[str]],
     exclude_airlines: Optional[Sequence[str]],
+    alliances: Optional[Sequence[str]],
+    exclude_alliances: Optional[Sequence[str]],
     via: Optional[Sequence[str]],
     exclude_via: Optional[Sequence[str]],
     depart_window: Optional[Tuple[int, int]],
@@ -86,6 +88,8 @@ def _named_shop_filters(
         or price_cap_eur is not None
         or bool(airlines)
         or bool(exclude_airlines)
+        or bool(alliances)
+        or bool(exclude_alliances)
         or bool(via)
         or bool(exclude_via)
         or depart_window is not None
@@ -116,6 +120,8 @@ def _explore_for_origin(
     price_cap_eur: Optional[int],
     airlines: Optional[Sequence[str]],
     exclude_airlines: Optional[Sequence[str]],
+    alliances: Optional[Sequence[str]],
+    exclude_alliances: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
@@ -154,6 +160,8 @@ def _explore_for_origin(
             price_cap_eur=price_cap_eur,
             airlines=airlines,
             exclude_airlines=exclude_airlines,
+            alliances=alliances,
+            exclude_alliances=exclude_alliances,
             via=parsed_via,
             exclude_via=parsed_exclude_via,
             depart_window=depart_window,
@@ -201,6 +209,8 @@ def search_explore(
     price_cap_eur: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
@@ -234,6 +244,8 @@ def search_explore(
         price_cap_eur=price_cap_eur,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
+        alliances=alliances,
+        exclude_alliances=exclude_alliances,
         via=parsed_via,
         exclude_via=parsed_exclude_via,
         depart_window=depart_window,
@@ -261,6 +273,8 @@ def search_explore(
                     price_cap_eur=price_cap_eur,
                     airlines=airlines,
                     exclude_airlines=exclude_airlines,
+                    alliances=alliances,
+                    exclude_alliances=exclude_alliances,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     depart_window=depart_window,
@@ -303,6 +317,8 @@ def _cheapest_price(
     price_cap_eur: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
@@ -312,6 +328,8 @@ def _cheapest_price(
 ) -> Optional[float]:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
+    alliance_names = tuple(alliances) if alliances is not None else None
+    exclude_alliance_names = tuple(exclude_alliances) if exclude_alliances is not None else None
     query = FlightQuery(
         origin=origin,
         destination=destination,
@@ -324,6 +342,8 @@ def _cheapest_price(
         price_cap_eur=price_cap_eur,
         airlines=airline_codes,
         exclude_airlines=exclude_codes,
+        alliances=alliance_names,
+        exclude_alliances=exclude_alliance_names,
     )
     try:
         cards = source.fetch(query)

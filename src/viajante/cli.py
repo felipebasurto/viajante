@@ -893,8 +893,6 @@ def _run_trip(args: argparse.Namespace) -> int:
         progress=lambda line: print(line, file=sys.stderr),
         sort=args.sort,
         fetch=args.fetch,
-        alliances=parse_alliances(args.alliance),
-        exclude_alliances=parse_alliances(args.exclude_alliance),
         currency=args.currency,
         country=args.country,
         hotel_source=getattr(args, "source", "booking"),
@@ -1058,6 +1056,19 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         help="Airline IATA codes to exclude from shopping (comma-separated, e.g. DL)",
     )
     parser.add_argument(
+        "--alliance",
+        default=None,
+        metavar="NAMES",
+        help="Restrict the shopping request to these alliances (oneworld, skyteam, star)",
+    )
+    parser.add_argument(
+        "--exclude-alliance",
+        default=None,
+        dest="exclude_alliance",
+        metavar="NAMES",
+        help="Exclude these alliances from the shopping request (oneworld, skyteam, star)",
+    )
+    parser.add_argument(
         "--via",
         default=None,
         metavar="CODES",
@@ -1137,6 +1148,8 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "price_cap_eur": args.price_cap,
         "airlines": parse_airline_codes(args.airlines),
         "exclude_airlines": parse_airline_codes(args.exclude_airlines),
+        "alliances": parse_alliances(getattr(args, "alliance", None)),
+        "exclude_alliances": parse_alliances(getattr(args, "exclude_alliance", None)),
         "via": via,
         "exclude_via": exclude_via,
         "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
@@ -1167,6 +1180,8 @@ def _run_dates(args: argparse.Namespace) -> int:
             price_cap_eur=shop["price_cap_eur"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
+            alliances=shop["alliances"],
+            exclude_alliances=shop["exclude_alliances"],
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1187,6 +1202,8 @@ def _run_dates(args: argparse.Namespace) -> int:
             price_cap_eur=shop["price_cap_eur"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
+            alliances=shop["alliances"],
+            exclude_alliances=shop["exclude_alliances"],
         )
         for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
             print(note, file=sys.stderr)
@@ -1288,6 +1305,8 @@ def _run_flex(args: argparse.Namespace) -> int:
             price_cap_eur=shop["price_cap_eur"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
+            alliances=shop["alliances"],
+            exclude_alliances=shop["exclude_alliances"],
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1308,6 +1327,8 @@ def _run_flex(args: argparse.Namespace) -> int:
             price_cap_eur=shop["price_cap_eur"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
+            alliances=shop["alliances"],
+            exclude_alliances=shop["exclude_alliances"],
         )
         for note in nearby_notes(expand_nearby_trips((seed,), nearby=True)):
             print(note, file=sys.stderr)
