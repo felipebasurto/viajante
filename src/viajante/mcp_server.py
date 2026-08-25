@@ -190,6 +190,12 @@ def build_server():
         adults: int = 1,
         cabin: str = "economy",
         max_stops: int = 1,
+        airlines: str | None = None,
+        exclude_airlines: str | None = None,
+        via: str | None = None,
+        exclude_via: str | None = None,
+        bags: int | None = None,
+        carry_on: int | None = None,
         price_cap: int | None = None,
     ) -> dict:
         return dict(
@@ -202,6 +208,12 @@ def build_server():
                 adults=adults,
                 cabin=cabin,  # type: ignore[arg-type]
                 max_stops=max_stops,
+                airlines=airlines,
+                exclude_airlines=exclude_airlines,
+                via=via,
+                exclude_via=exclude_via,
+                bags=bags,
+                carry_on=carry_on,
                 price_cap=price_cap,
             )
         )

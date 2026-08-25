@@ -249,6 +249,12 @@ def search_explore_tool(
     adults: int = 1,
     cabin: FlightCabin = "economy",
     max_stops: int = 1,
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    via: Optional[str] = None,
+    exclude_via: Optional[str] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
 ) -> Mapping[str, object]:
     if month and start:
@@ -271,6 +277,12 @@ def search_explore_tool(
             adults=adults,
             cabin=cabin,
             max_stops=max_stops,
+            airlines=parse_airline_codes(airlines),
+            exclude_airlines=parse_airline_codes(exclude_airlines),
+            via=parse_via_airports(via),
+            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+            bags=bags,
+            carry_on=carry_on,
             price_cap_eur=price_cap,
         )
     )

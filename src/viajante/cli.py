@@ -1232,8 +1232,7 @@ def _run_explore(args: argparse.Namespace) -> int:
             raise ValueError("--top must be a positive integer")
         if args.adults < 1:
             raise ValueError("--adults must be at least 1")
-        if args.price_cap is not None and args.price_cap <= 0:
-            raise ValueError("--price-cap must be a positive EUR amount")
+        shop = _owned_shop_filters_from_args(args)
         validate_explore_window(start, days)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1247,8 +1246,8 @@ def _run_explore(args: argparse.Namespace) -> int:
         adults=args.adults,
         cabin=args.cabin,
         max_stops=args.max_stops,
-        price_cap_eur=args.price_cap,
         progress=lambda line: print(line, file=sys.stderr),
+        **shop,
     )
     _print_explore_report(report)
     if args.save:
@@ -1946,14 +1945,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
     )
-    explore.add_argument(
-        "--price-cap",
-        type=int,
-        default=None,
-        metavar="EUR",
-        dest="price_cap",
-        help="Drop destinations whose owned cheapest fare exceeds this EUR amount",
-    )
+    _add_owned_shop_filters(explore)
     explore.add_argument(
         "--save",
         default=None,

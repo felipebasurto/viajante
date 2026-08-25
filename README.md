@@ -304,7 +304,8 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--month` | off | First of `YYYY-MM` plus that month's length. Do not combine with `--from`. |
 | `--top` | `12` | Destinations to price after the explore catalog. |
 | `--max-stops` / `--adults` / `--cabin` | `1` / `1` / `economy` | Applied when pricing each destination. |
-| `--price-cap` | unset | Drop destinations whose owned cheapest fare exceeds this EUR amount. Unknown price cannot prove the cap. |
+| `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--via` / `--exclude-via` | unset | Same owned shop post-filters as `flights` / dates-flex. Unnamed stays unset. Destinations whose cheapest surviving offer contradicts are dropped. Compact catalog places are not post-filtered. Do not invent dests to fill `--top`. |
+| `--price-cap` | unset | Drop destinations whose cheapest surviving owned fare exceeds this EUR amount. Unknown price cannot prove the cap. |
 | `--save FILE` | off | Write the explore JSON atomically. |
 
 | `hotels` flag | Default | Behavior |
