@@ -767,6 +767,9 @@ def validate_layover_hours(
         raise ValueError("min layover must be at or below max layover")
 
 
+OVERNIGHT_ANY = "any"
+
+
 def parse_via_airports(text: Optional[str], *, role: str = "via") -> Optional[Tuple[str, ...]]:
     """Parse comma-separated IATA codes for a via / exclude-via post-filter."""
     if text is None:
@@ -781,6 +784,47 @@ def parse_via_airports(text: Optional[str], *, role: str = "via") -> Optional[Tu
         if code not in parsed:
             parsed.append(code)
     return tuple(parsed)
+
+
+def parse_overnight_airports(
+    text: Optional[str], *, role: str = "no-overnight"
+) -> Optional[Tuple[str, ...]]:
+    """Parse comma-separated IATA (or ``any``) for a named overnight constraint."""
+    if text is None:
+        return None
+    parts = tuple(part.strip() for part in text.split(",") if part.strip())
+    if not parts:
+        raise ValueError(f"{role} list must not be empty")
+    parsed: list[str] = []
+    for raw in parts:
+        token = raw.upper()
+        if token == "ANY":
+            code = OVERNIGHT_ANY
+        elif len(token) == 3 and token.isalpha() and is_known_iata(token):
+            code = token
+        else:
+            raise ValueError(f"unknown {role} IATA code: {raw!r}")
+        if code not in parsed:
+            parsed.append(code)
+    return tuple(parsed)
+
+
+def parse_overnight_lists(
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
+) -> tuple[Optional[Tuple[str, ...]], Optional[Tuple[str, ...]]]:
+    """Parse both lists. Overlap keeps both; do not drop one."""
+    parsed_no = (
+        parse_overnight_airports(",".join(no_overnight), role="no-overnight")
+        if no_overnight
+        else None
+    )
+    parsed_require = (
+        parse_overnight_airports(",".join(require_overnight), role="require-overnight")
+        if require_overnight
+        else None
+    )
+    return parsed_no, parsed_require
 
 
 def parse_exclude_airports(text: Optional[str]) -> Optional[Tuple[str, ...]]:
@@ -969,6 +1013,116 @@ def _passes_via_filters(
     return True
 
 
+def _overnight_from_owned_clocks(
+    arrival: Optional[str],
+    departure: Optional[str],
+    hours: Optional[float],
+) -> Optional[bool]:
+    """True/False when owned clocks prove a night; None if unknown (do not invent)."""
+    arr = _clock_minutes(arrival)
+    dep = _clock_minutes(departure)
+    if arr is None or dep is None:
+        return None
+    if dep < arr:
+        return True
+    if hours is None:
+        return None
+    extra = hours - (dep - arr) / 60.0
+    if extra >= 23.0:
+        return True
+    if extra <= 1.0:
+        return False
+    return None
+
+
+def _layover_nights(raw: RawFlightCard) -> Tuple[tuple[Optional[str], Optional[bool]], ...]:
+    events: list[tuple[Optional[str], Optional[bool]]] = []
+    for leg in raw.legs:
+        segs = leg.segments
+        lays = leg.layovers
+        count = max(len(lays), max(0, len(segs) - 1))
+        for index in range(count):
+            city: Optional[str] = None
+            hours: Optional[float] = None
+            arr: Optional[str] = None
+            dep: Optional[str] = None
+            if index < len(lays):
+                city = lays[index].city
+                hours = lays[index].hours
+            if index + 1 < len(segs):
+                inbound = segs[index]
+                outbound = segs[index + 1]
+                arr = inbound.arrival
+                dep = outbound.departure
+                if not city:
+                    city = inbound.destination or outbound.origin
+            events.append((city, _overnight_from_owned_clocks(arr, dep, hours)))
+    if not events and (raw.layover_city or raw.layover_hours is not None):
+        events.append(
+            (raw.layover_city, _overnight_from_owned_clocks(None, None, raw.layover_hours))
+        )
+    return tuple(events)
+
+
+def _overnight_city_match(city: Optional[str], code: str) -> Optional[bool]:
+    if code == OVERNIGHT_ANY:
+        return True
+    if not city or not city.strip():
+        return None
+    if _token_matches_via(city, code):
+        return True
+    return False
+
+
+def _satisfies_no_overnight(
+    events: Sequence[tuple[Optional[str], Optional[bool]]],
+    codes: Sequence[str],
+) -> bool:
+    for code in codes:
+        for city, overnight in events:
+            match = _overnight_city_match(city, code)
+            if match is False:
+                continue
+            if match is None:
+                return False
+            if overnight is False:
+                continue
+            return False
+    return True
+
+
+def _satisfies_require_overnight(
+    events: Sequence[tuple[Optional[str], Optional[bool]]],
+    codes: Sequence[str],
+) -> bool:
+    for code in codes:
+        for city, overnight in events:
+            if _overnight_city_match(city, code) is True and overnight is True:
+                return True
+    return False
+
+
+def _passes_overnight_filters(
+    raw: RawFlightCard,
+    *,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
+) -> bool:
+    if not no_overnight and not require_overnight:
+        return True
+    events = _layover_nights(raw)
+    if require_overnight and not _satisfies_require_overnight(events, require_overnight):
+        return False
+    if no_overnight:
+        if not events:
+            stops = parse_stops_count(raw.stops)
+            if stops is None or stops > 0:
+                return False
+        elif not _satisfies_no_overnight(events, no_overnight):
+            return False
+    return True
+
+
 def _overlay_carrier_filters(
     trips: Sequence[Trip],
     *,
@@ -1116,6 +1270,8 @@ def _normalize_offer(
     min_layover_hours: Optional[float] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap_eur: Optional[int] = None,
@@ -1135,6 +1291,10 @@ def _normalize_offer(
     if price_cap_eur is not None and price_eur > price_cap_eur:
         return None
     if not _passes_via_filters(raw, via=via, exclude_via=exclude_via):
+        return None
+    if not _passes_overnight_filters(
+        raw, no_overnight=no_overnight, require_overnight=require_overnight
+    ):
         return None
     stops_count = parse_stops_count(raw.stops)
     layover_hours = raw.layover_hours
@@ -1446,6 +1606,8 @@ def _run_search(
     depart_after: Optional[int] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
@@ -1473,6 +1635,8 @@ def _run_search(
                     depart_after=depart_after,
                     via=via,
                     exclude_via=exclude_via,
+                    no_overnight=no_overnight,
+                    require_overnight=require_overnight,
                     bags=trip.bags,
                     carry_on=trip.carry_on,
                     price_cap_eur=trip.price_cap_eur,
@@ -1649,6 +1813,8 @@ def _search_with_source(
     depart_after: Optional[int] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
 ) -> SearchReport:
     try:
@@ -1675,6 +1841,8 @@ def _search_with_source(
             depart_after=depart_after,
             via=via,
             exclude_via=exclude_via,
+            no_overnight=no_overnight,
+            require_overnight=require_overnight,
             retry_backoff=retry_backoff,
         )
     finally:
@@ -1701,6 +1869,8 @@ def search_flights(
     depart_after: Optional[int] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
     include_airports: Optional[Sequence[str]] = None,
     currency: str = "EUR",
@@ -1723,6 +1893,7 @@ def search_flights(
     )
     if via and exclude_via and set(via) & set(exclude_via):
         raise ValueError("via and exclude-via must not share a code")
+    no_overnight, require_overnight = parse_overnight_lists(no_overnight, require_overnight)
     parsed_exclude_airports = _parse_exclude_airport_list(exclude_airports)
     parsed_include_airports = _parse_include_airport_list(include_airports)
     if sort not in FLIGHT_SORTS:
@@ -1780,6 +1951,8 @@ def search_flights(
             depart_after=depart_after,
             via=via,
             exclude_via=exclude_via,
+            no_overnight=no_overnight,
+            require_overnight=require_overnight,
         )
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
@@ -1805,6 +1978,8 @@ def search_flights(
                 depart_after=depart_after,
                 via=via,
                 exclude_via=exclude_via,
+                no_overnight=no_overnight,
+                require_overnight=require_overnight,
             )
             merged = list(report.queries)
             for index, detail_result in zip(retry_indexes, detail_report.queries, strict=True):
@@ -1839,6 +2014,8 @@ def search_flights(
             depart_after=depart_after,
             via=via,
             exclude_via=exclude_via,
+            no_overnight=no_overnight,
+            require_overnight=require_overnight,
         )
         backend = "detail"
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))

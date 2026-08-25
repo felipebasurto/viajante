@@ -18,6 +18,7 @@ from viajante.flights import (
     classify_failure,
     compare_nonstop_vs_one_stop,
     expand_nearby_origins,
+    parse_overnight_lists,
     parse_via_airports,
     validate_layover_hours,
 )
@@ -111,6 +112,8 @@ def _named_shop_filters(
     exclude_alliances: Optional[Sequence[str]],
     via: Optional[Sequence[str]],
     exclude_via: Optional[Sequence[str]],
+    no_overnight: Optional[Sequence[str]],
+    require_overnight: Optional[Sequence[str]],
     depart_window: Optional[Tuple[int, int]],
     arrive_before: Optional[int],
     depart_after: Optional[int],
@@ -128,6 +131,8 @@ def _named_shop_filters(
         or bool(exclude_alliances)
         or bool(via)
         or bool(exclude_via)
+        or bool(no_overnight)
+        or bool(require_overnight)
         or depart_window is not None
         or arrive_before is not None
         or depart_after is not None
@@ -189,6 +194,8 @@ def _explore_for_origin(
     exclude_alliances: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
+    parsed_no_overnight: Optional[tuple[str, ...]],
+    parsed_require_overnight: Optional[tuple[str, ...]],
     parsed_exclude_airports: Optional[tuple[str, ...]],
     parsed_include_airports: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
@@ -256,6 +263,8 @@ def _explore_for_origin(
             exclude_alliances=exclude_alliances,
             via=parsed_via,
             exclude_via=parsed_exclude_via,
+            no_overnight=parsed_no_overnight,
+            require_overnight=parsed_require_overnight,
             depart_window=depart_window,
             arrive_before=arrive_before,
             depart_after=depart_after,
@@ -327,6 +336,8 @@ def search_explore(
     exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
     include_airports: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
@@ -361,6 +372,9 @@ def search_explore(
         max_duration_hours=max_duration_hours,
     )
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
+    parsed_no_overnight, parsed_require_overnight = parse_overnight_lists(
+        no_overnight, require_overnight
+    )
     parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
     parsed_include_airports = _parse_include_airports(include_airports)
     origin = origin.strip().upper()
@@ -377,6 +391,8 @@ def search_explore(
         exclude_alliances=exclude_alliances,
         via=parsed_via,
         exclude_via=parsed_exclude_via,
+        no_overnight=parsed_no_overnight,
+        require_overnight=parsed_require_overnight,
         depart_window=depart_window,
         arrive_before=arrive_before,
         depart_after=depart_after,
@@ -422,6 +438,8 @@ def search_explore(
                     exclude_alliances=exclude_alliances,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
+                    parsed_no_overnight=parsed_no_overnight,
+                    parsed_require_overnight=parsed_require_overnight,
                     parsed_exclude_airports=parsed_exclude_airports,
                     parsed_include_airports=parsed_include_airports,
                     depart_window=depart_window,
@@ -476,6 +494,8 @@ def _cheapest_shop(
     exclude_alliances: Optional[Sequence[str]] = None,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
     arrive_before: Optional[int] = None,
     depart_after: Optional[int] = None,
@@ -527,6 +547,8 @@ def _cheapest_shop(
                 max_duration_hours=max_duration_hours,
                 via=via,
                 exclude_via=exclude_via,
+                no_overnight=no_overnight,
+                require_overnight=require_overnight,
                 bags=query.bags,
                 carry_on=query.carry_on,
                 price_cap_eur=query.price_cap_eur,

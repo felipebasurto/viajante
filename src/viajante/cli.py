@@ -49,6 +49,7 @@ from viajante.flights import (
     parse_depart_window,
     parse_flight_plan,
     parse_named_clock,
+    parse_overnight_airports,
     parse_via_airports,
     search_flights,
     write_report_atomic,
@@ -206,6 +207,8 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     parse_named_clock(getattr(args, "depart_after", None), role="depart-after")
     parse_via_airports(args.via)
     parse_via_airports(args.exclude_via, role="exclude-via")
+    parse_overnight_airports(getattr(args, "no_overnight", None), role="no-overnight")
+    parse_overnight_airports(getattr(args, "require_overnight", None), role="require-overnight")
     parse_via_airports(getattr(args, "exclude_airports", None), role="exclude-airports")
     parse_via_airports(getattr(args, "include_airports", None), role="include-airports")
     if args.via and args.exclude_via:
@@ -773,6 +776,12 @@ def _run_flights(args: argparse.Namespace) -> int:
         depart_after=parse_named_clock(args.depart_after, role="depart-after"),
         via=parse_via_airports(args.via),
         exclude_via=parse_via_airports(args.exclude_via, role="exclude-via"),
+        no_overnight=parse_overnight_airports(
+            getattr(args, "no_overnight", None), role="no-overnight"
+        ),
+        require_overnight=parse_overnight_airports(
+            getattr(args, "require_overnight", None), role="require-overnight"
+        ),
         exclude_airports=parse_via_airports(
             getattr(args, "exclude_airports", None), role="exclude-airports"
         ),
@@ -850,6 +859,8 @@ def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
         "depart_after": None,
         "via": None,
         "exclude_via": None,
+        "no_overnight": None,
+        "require_overnight": None,
         "exclude_airports": None,
         "include_airports": None,
     }
@@ -1190,6 +1201,26 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--no-overnight",
+        default=None,
+        metavar="CODES",
+        dest="no_overnight",
+        help=(
+            "Drop offers whose owned layover city+clock is overnight at these IATA codes "
+            "(or any). Unknown city/clock cannot prove exclude"
+        ),
+    )
+    parser.add_argument(
+        "--require-overnight",
+        default=None,
+        metavar="CODES",
+        dest="require_overnight",
+        help=(
+            "Keep only offers with an owned overnight layover at these IATA codes "
+            "(or any). Unknown city/clock cannot prove include"
+        ),
+    )
+    parser.add_argument(
         "--exclude-airports",
         default=None,
         metavar="CODES",
@@ -1276,6 +1307,12 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
     exclude_via = parse_via_airports(args.exclude_via, role="exclude-via")
     if via and exclude_via and set(via) & set(exclude_via):
         raise ValueError("--via and --exclude-via must not share a code")
+    no_overnight = parse_overnight_airports(
+        getattr(args, "no_overnight", None), role="no-overnight"
+    )
+    require_overnight = parse_overnight_airports(
+        getattr(args, "require_overnight", None), role="require-overnight"
+    )
     max_layover = getattr(args, "max_layover", None)
     min_layover = getattr(args, "min_layover", None)
     max_duration = getattr(args, "max_duration", None)
@@ -1297,6 +1334,8 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "exclude_alliances": parse_alliances(getattr(args, "exclude_alliance", None)),
         "via": via,
         "exclude_via": exclude_via,
+        "no_overnight": no_overnight,
+        "require_overnight": require_overnight,
         "exclude_airports": parse_via_airports(
             getattr(args, "exclude_airports", None), role="exclude-airports"
         ),
@@ -1834,6 +1873,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Drop connecting offers whose parsed layover matches these IATA codes "
             "(comma-separated). Unknown layover stays"
+        ),
+    )
+    flights.add_argument(
+        "--no-overnight",
+        default=None,
+        metavar="CODES",
+        dest="no_overnight",
+        help=(
+            "Drop offers whose owned layover city+clock is overnight at these IATA codes "
+            "(or any). Unknown city/clock cannot prove exclude"
+        ),
+    )
+    flights.add_argument(
+        "--require-overnight",
+        default=None,
+        metavar="CODES",
+        dest="require_overnight",
+        help=(
+            "Keep only offers with an owned overnight layover at these IATA codes "
+            "(or any). Unknown city/clock cannot prove include"
         ),
     )
     flights.add_argument(

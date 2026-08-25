@@ -40,6 +40,9 @@ from viajante.models import (
     DatePriceRow,
     FlexSearchReport,
     FlightQuery,
+    RawJourneyLeg,
+    RawLayover,
+    RawSegment,
     RoundTrip,
     SearchErrorCode,
     owned_calendar_summary,
@@ -104,6 +107,42 @@ def _card(**kwargs: object) -> RawFlightCard:
     }
     fields.update(kwargs)
     return RawFlightCard(**fields)  # type: ignore[arg-type]
+
+
+def _overnight_card(
+    *,
+    city: str = "IST",
+    inbound_arr: str | None = "22:00",
+    outbound_dep: str | None = "08:00",
+    hours: float | None = 10.0,
+    price: str = "€30",
+    origin: str = "MAD",
+    dest: str = "BCN",
+) -> RawFlightCard:
+    return _card(
+        stops="1 stop",
+        layover_city=city,
+        layover_hours=hours,
+        duration="20 hr",
+        price=price,
+        legs=(
+            RawJourneyLeg(
+                departure="10:00",
+                arrival="20:00",
+                duration="20 hr",
+                stops="1 stop",
+                segments=(
+                    RawSegment(
+                        origin=origin, destination=city, departure="10:00", arrival=inbound_arr
+                    ),
+                    RawSegment(
+                        origin=city, destination=dest, departure=outbound_dep, arrival="20:00"
+                    ),
+                ),
+                layovers=(RawLayover(city=city, hours=hours),),
+            ),
+        ),
+    )
 
 
 def _flex_shop_source(*cards: RawFlightCard) -> FakeCalendarSource:
@@ -674,6 +713,8 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--carry-on", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--exclude-via", help_text)
+        self.assertIn("--no-overnight", help_text)
+        self.assertIn("--require-overnight", help_text)
         self.assertIn("--exclude-airports", help_text)
         self.assertIn("--include-airports", help_text)
         self.assertIn("--airlines", help_text)
@@ -714,6 +755,10 @@ class DateCliTests(unittest.TestCase):
                     "LIS",
                     "--exclude-via",
                     "DXB",
+                    "--no-overnight",
+                    "IST",
+                    "--require-overnight",
+                    "IST",
                     "--exclude-airports",
                     "HND",
                     "--include-airports",
@@ -748,6 +793,8 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["carry_on"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
         self.assertEqual(kwargs["exclude_via"], ("DXB",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("IST",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
@@ -784,6 +831,8 @@ class DateCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["carry_on"])
         self.assertIsNone(kwargs["via"])
         self.assertIsNone(kwargs["exclude_via"])
+        self.assertIsNone(kwargs["no_overnight"])
+        self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
@@ -1612,6 +1661,171 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(report.days[1].price_eur, 30.0)
         self.assertEqual(source.fetch_calls, 0)
 
+    def test_dates_sweep_no_overnight_unprices_days_without_a_daytime_shop(self) -> None:
+        daytime = _overnight_card(
+            city="IST", inbound_arr="12:00", outbound_dep="14:00", hours=2.0, price="€45"
+        )
+        overnight = _overnight_card(
+            city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0, price="€30"
+        )
+        unknown = _card(stops="1 stop", layover_city="IST", layover_hours=18.0, price="€20")
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (daytime, overnight),
+                date(2026, 9, 2): (overnight,),
+                date(2026, 9, 3): (unknown,),
+            },
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            source=source,
+            no_overnight=("IST",),
+        )
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertEqual(report.days[0].status, "ok")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].status, "empty")
+        self.assertIsNone(report.days[1].price_eur)
+        self.assertEqual(report.days[2].status, "empty")
+        unnamed_source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (daytime, overnight),
+                date(2026, 9, 2): (overnight,),
+                date(2026, 9, 3): (unknown,),
+            },
+        )
+        unnamed = search_dates(
+            "MAD", "BCN", date(2026, 9, 1), date(2026, 9, 3), source=unnamed_source
+        )
+        self.assertEqual(unnamed.days[0].price_eur, 30.0)
+        self.assertEqual(unnamed.days[1].price_eur, 30.0)
+        self.assertEqual(unnamed.days[2].price_eur, 20.0)
+
+    def test_dates_compact_calendar_named_overnight_stays_unfiltered(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 30.0),
+            )
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            source=source,
+            no_overnight=("any",),
+            require_overnight=("IST",),
+        )
+        self.assertEqual(report.fetch_backend, "calendar")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertEqual(report.days[1].price_eur, 30.0)
+        self.assertEqual(source.fetch_calls, 0)
+
+    def test_flex_shop_no_overnight_drops_owned_overnight(self) -> None:
+        overnight = _overnight_card(
+            city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0, price="€40"
+        )
+        daytime = _overnight_card(
+            city="IST", inbound_arr="12:00", outbound_dep="14:00", hours=2.0, price="€70"
+        )
+        unknown = _card(stops="1 stop", layover_city="IST", layover_hours=18.0, price="€55")
+        nonstop = _card(stops="Nonstop", price="€90")
+        source = _flex_shop_source(overnight, daytime, unknown, nonstop)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            sort="fare",
+            no_overnight=("IST",),
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], [70.0, 90.0])
+        unnamed = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=_flex_shop_source(overnight, daytime, unknown, nonstop),
+            buffer_eur=0,
+            sort="fare",
+        )
+        self.assertEqual(
+            [offer.price_eur for offer in unnamed.offers],
+            [40.0, 55.0, 70.0, 90.0],
+        )
+
+    def test_flex_shop_unknown_clock_does_not_invent_a_night(self) -> None:
+        unknown = _card(stops="1 stop", layover_city="IST", layover_hours=18.0, price="€40")
+        source = _flex_shop_source(unknown)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            require_overnight=("IST",),
+        )
+        self.assertEqual(report.chosen_date, date(2026, 9, 12))
+        self.assertEqual(report.offers, ())
+        unnamed = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=_flex_shop_source(unknown),
+            buffer_eur=0,
+        )
+        self.assertEqual([offer.price_eur for offer in unnamed.offers], [40.0])
+
+    def test_flex_shop_require_overnight_keeps_only_owned_overnight(self) -> None:
+        overnight = _overnight_card(
+            city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0, price="€80"
+        )
+        daytime = _overnight_card(
+            city="IST", inbound_arr="12:00", outbound_dep="14:00", hours=2.0, price="€40"
+        )
+        source = _flex_shop_source(overnight, daytime)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            sort="fare",
+            require_overnight=("IST",),
+        )
+        self.assertEqual([offer.price_eur for offer in report.offers], [80.0])
+
+    def test_flex_shop_overnight_contradiction_does_not_pick_one(self) -> None:
+        overnight = _overnight_card(
+            city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0, price="€40"
+        )
+        daytime = _overnight_card(
+            city="IST", inbound_arr="12:00", outbound_dep="14:00", hours=2.0, price="€70"
+        )
+        source = _flex_shop_source(overnight, daytime)
+        report = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=source,
+            buffer_eur=0,
+            no_overnight=("IST",),
+            require_overnight=("IST",),
+        )
+        self.assertEqual(report.offers, ())
+
     def test_dates_compact_calendar_does_not_invent_alliance_members(self) -> None:
         source = FakeCalendarSource(
             (
@@ -1917,6 +2131,8 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn(str(MAX_FLEX_DAYS), help_text)
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
+        self.assertIn("--no-overnight", help_text)
+        self.assertIn("--require-overnight", help_text)
         self.assertIn("--exclude-airports", help_text)
         self.assertIn("--include-airports", help_text)
         self.assertIn("--airlines", help_text)
@@ -1954,6 +2170,10 @@ class FlexCliTests(unittest.TestCase):
                     "1",
                     "--via",
                     "LIS",
+                    "--no-overnight",
+                    "IST",
+                    "--require-overnight",
+                    "any",
                     "--exclude-airports",
                     "HND",
                     "--include-airports",
@@ -1984,6 +2204,8 @@ class FlexCliTests(unittest.TestCase):
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["bags"], 1)
         self.assertEqual(kwargs["via"], ("LIS",))
+        self.assertEqual(kwargs["no_overnight"], ("IST",))
+        self.assertEqual(kwargs["require_overnight"], ("any",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
@@ -2019,6 +2241,8 @@ class FlexCliTests(unittest.TestCase):
         kwargs = search.call_args.kwargs
         self.assertIsNone(kwargs["bags"])
         self.assertIsNone(kwargs["via"])
+        self.assertIsNone(kwargs["no_overnight"])
+        self.assertIsNone(kwargs["require_overnight"])
         self.assertIsNone(kwargs["exclude_airports"])
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])

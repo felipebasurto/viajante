@@ -10,6 +10,7 @@ from unittest.mock import patch
 from viajante.airports import get_airport
 from viajante.flights import (
     _normalize_offer,
+    _overnight_from_owned_clocks,
     _rank_offers,
     _run_search,
     classify_failure,
@@ -23,6 +24,8 @@ from viajante.flights import (
     parse_depart_window,
     parse_flight_plan,
     parse_named_clock,
+    parse_overnight_airports,
+    parse_overnight_lists,
     parse_route_specs,
     parse_via_airports,
     plan_unit_count,
@@ -94,6 +97,48 @@ def card(
         carry_on=carry_on,
         booking_token=booking_token,
         legs=legs,
+    )
+
+
+def overnight_card(
+    *,
+    city: str = "IST",
+    inbound_arr: str | None = "22:00",
+    outbound_dep: str | None = "08:00",
+    hours: float | None = 10.0,
+    price: str = "40 €",
+    origin: str = "MAD",
+    dest: str = "BKK",
+) -> RawFlightCard:
+    return card(
+        stops="1 stop",
+        layover_city=city,
+        layover_hours=hours,
+        price=price,
+        duration="20 h",
+        legs=(
+            RawJourneyLeg(
+                departure="10:00",
+                arrival="20:00",
+                duration="20 h",
+                stops="1 stop",
+                segments=(
+                    RawSegment(
+                        origin=origin,
+                        destination=city,
+                        departure="10:00",
+                        arrival=inbound_arr,
+                    ),
+                    RawSegment(
+                        origin=city,
+                        destination=dest,
+                        departure=outbound_dep,
+                        arrival="20:00",
+                    ),
+                ),
+                layovers=(RawLayover(city=city, hours=hours),),
+            ),
+        ),
     )
 
 
@@ -1322,6 +1367,91 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNone(_normalize_offer(with_legs, 2, exclude_via=("IST",)))
         self.assertIsNone(_normalize_offer(with_legs, 2, via=("DXB",)))
         self.assertIsNotNone(_normalize_offer(silent, 2, exclude_via=("IST",)))
+
+    def test_parse_overnight_airports_accepts_any_and_known_iata(self) -> None:
+        self.assertEqual(parse_overnight_airports("IST"), ("IST",))
+        self.assertEqual(parse_overnight_airports("any"), ("any",))
+        self.assertEqual(parse_overnight_airports("IST,any"), ("IST", "any"))
+        with self.assertRaises(ValueError):
+            parse_overnight_airports("ZZZ")
+        with self.assertRaises(ValueError):
+            parse_overnight_airports("")
+
+    def test_no_overnight_drops_owned_overnight_and_unknown_clock(self) -> None:
+        overnight = overnight_card(
+            city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0
+        )
+        daytime = overnight_card(city="IST", inbound_arr="12:00", outbound_dep="14:00", hours=2.0)
+        other_night = overnight_card(
+            city="DXB", inbound_arr="22:00", outbound_dep="08:00", hours=10.0, price="50 €"
+        )
+        unknown_clock = card(
+            stops="1 stop",
+            layover_city="IST",
+            layover_hours=18.0,
+            price="30 €",
+        )
+        nonstop = card(stops="Nonstop", price="90 €")
+        self.assertIsNone(_normalize_offer(overnight, 1, no_overnight=("IST",)))
+        self.assertIsNotNone(_normalize_offer(daytime, 1, no_overnight=("IST",)))
+        self.assertIsNotNone(_normalize_offer(other_night, 1, no_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(unknown_clock, 1, no_overnight=("IST",)))
+        self.assertIsNotNone(_normalize_offer(nonstop, 1, no_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(overnight, 1, no_overnight=("any",)))
+        self.assertIsNotNone(_normalize_offer(daytime, 1, no_overnight=("any",)))
+        self.assertIsNotNone(_normalize_offer(unknown_clock, 1))
+        silent_city = overnight_card(
+            city="", inbound_arr="22:00", outbound_dep="08:00", hours=10.0, price="35 €"
+        )
+        connecting_silent = card(stops="1 stop", price="30 €")
+        self.assertIsNone(_normalize_offer(silent_city, 1, no_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(connecting_silent, 1, no_overnight=("IST",)))
+
+    def test_require_overnight_keeps_only_owned_overnight(self) -> None:
+        overnight = overnight_card(
+            city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0
+        )
+        daytime = overnight_card(city="IST", inbound_arr="12:00", outbound_dep="14:00", hours=2.0)
+        other_night = overnight_card(
+            city="DXB", inbound_arr="22:00", outbound_dep="08:00", hours=10.0, price="50 €"
+        )
+        unknown_clock = card(
+            stops="1 stop",
+            layover_city="IST",
+            layover_hours=18.0,
+            price="30 €",
+        )
+        nonstop = card(stops="Nonstop", price="90 €")
+        self.assertIsNotNone(_normalize_offer(overnight, 1, require_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(daytime, 1, require_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(other_night, 1, require_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(unknown_clock, 1, require_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(nonstop, 1, require_overnight=("IST",)))
+        self.assertIsNotNone(_normalize_offer(overnight, 1, require_overnight=("any",)))
+        self.assertIsNone(_normalize_offer(daytime, 1, require_overnight=("any",)))
+
+    def test_overnight_contradiction_keeps_both_and_empties(self) -> None:
+        overnight = overnight_card(
+            city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0
+        )
+        daytime = overnight_card(city="IST", inbound_arr="12:00", outbound_dep="14:00", hours=2.0)
+        both = dict(no_overnight=("IST",), require_overnight=("IST",))
+        self.assertIsNone(_normalize_offer(overnight, 1, **both))
+        self.assertIsNone(_normalize_offer(daytime, 1, **both))
+        parsed_no, parsed_require = parse_overnight_lists(("IST",), ("IST",))
+        self.assertEqual(parsed_no, ("IST",))
+        self.assertEqual(parsed_require, ("IST",))
+
+    def test_unknown_layover_clock_does_not_invent_a_night(self) -> None:
+        silent = card(stops="1 stop", layover_city="IST", layover_hours=18.0, price="30 €")
+        self.assertIsNone(_overnight_from_owned_clocks(None, None, 18.0))
+        self.assertIsNone(_normalize_offer(silent, 1, require_overnight=("IST",)))
+        self.assertIsNone(_normalize_offer(silent, 1, no_overnight=("IST",)))
+        self.assertIsNotNone(_normalize_offer(silent, 1))
+        connecting_silent = card(stops="1 stop", price="30 €")
+        self.assertIsNone(_normalize_offer(connecting_silent, 1, require_overnight=("any",)))
+        self.assertIsNone(_normalize_offer(connecting_silent, 1, no_overnight=("any",)))
+        self.assertIsNotNone(_normalize_offer(connecting_silent, 1))
 
     def test_parse_via_airports_rejects_unknown_and_overlap(self) -> None:
         self.assertEqual(parse_via_airports("IST,DXB"), ("IST", "DXB"))
