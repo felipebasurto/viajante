@@ -911,6 +911,7 @@ def _print_dates_report(report: DateCalendarReport) -> None:
         f"\n=== {report.origin} -> {report.destination}  "
         f"{report.start_date.isoformat()} .. {report.end_date.isoformat()}{stay}{nearby} ==="
     )
+    _print_google_flights_url(report.google_flights_url, indent="  ")
     for line in format_week_calendar(report.days):
         print(line)
     spark = format_sparkline(report.days)
@@ -946,6 +947,7 @@ def _print_explore_report(report: ExploreReport) -> None:
         f"\n=== From {report.origin}  {report.start_date.isoformat()}  "
         f"({report.days}-day window){nearby} ==="
     )
+    _print_google_flights_url(report.google_flights_url, indent="  ")
     if report.error is not None and not report.destinations:
         print(f"  ERROR: {report.error.message}")
         return
@@ -956,6 +958,7 @@ def _print_explore_report(report: ExploreReport) -> None:
         price = f"{row.price_eur:>7.0f} €" if row.price_eur is not None else "      —"
         country = f"  {row.country}" if row.country else ""
         print(f"  {price}  {row.iata}  {row.city}{country}")
+        _print_google_flights_url(row.google_flights_url)
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare))
     print("\nVerify checked baggage on Google Flights before booking.")
@@ -1316,9 +1319,11 @@ def _print_flex_report(report: FlexSearchReport) -> None:
     )
     if report.error is not None and report.chosen_date is None:
         print(f"  ERROR: {report.error.message}")
+        _print_google_flights_url(report.google_flights_url, indent="  ")
         return
     if report.chosen_date is None:
         print("  (no priced day in window)")
+        _print_google_flights_url(report.google_flights_url, indent="  ")
         return
     returning = (
         f"  return {report.return_date.isoformat()}" if report.return_date is not None else ""
@@ -1329,7 +1334,9 @@ def _print_flex_report(report: FlexSearchReport) -> None:
             print(f"  ERROR: {report.error.message}")
         else:
             print("  (no eligible offers)")
+        _print_google_flights_url(report.google_flights_url, indent="  ")
         return
+    print_per_offer = any(offer.booking_token for offer in report.offers)
     for offer in report.offers:
         times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
         print(
@@ -1339,6 +1346,10 @@ def _print_flex_report(report: FlexSearchReport) -> None:
             f"{_format_stops_with_layover(offer):<16} {times:<18} "
             f"{_format_airline(offer.airline)}"
         )
+        if print_per_offer:
+            _print_google_flights_url(offer.google_flights_url)
+    if not print_per_offer:
+        _print_google_flights_url(report.google_flights_url, indent="  ")
     if report.stops_compare is not None:
         print(format_stops_compare(report.stops_compare))
     print("\nVerify checked baggage on Google Flights before booking.")

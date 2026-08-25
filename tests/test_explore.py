@@ -11,7 +11,7 @@ from unittest.mock import patch
 from viajante.cli import main
 from viajante.explore import search_explore
 from viajante.flights import _normalize_offer, parse_depart_window
-from viajante.google_flights import RawFlightCard
+from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import (
     CompactExplorePlace,
     CompactParseMiss,
@@ -880,6 +880,70 @@ class StopsCompareExploreShopTests(unittest.TestCase):
         self.assertIn("Cheapest nonstop:", output)
         self.assertIn("Cheapest 1-stop:", output)
         self.assertIn("49 €", output)
+
+
+class GoogleFlightsUrlShopParityTests(unittest.TestCase):
+    def test_shopped_dest_stamps_owned_query_url(self) -> None:
+        source = FakeExploreSource(
+            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
+            prices={"OPO": (_card(booking_token="tok"),)},
+        )
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
+        shop = FlightQuery("MAD", "OPO", date(2026, 9, 1), max_stops=1)
+        expected = google_flights_url(shop, currency="EUR")
+        dest = report.destinations[0]
+        self.assertEqual(dest.google_flights_url, expected)
+        self.assertEqual(dest.to_dict()["google_flights_url"], expected)
+        self.assertNotIn("booking_token=", dest.google_flights_url or "")
+        self.assertNotIn("booking_token", dest.to_dict())
+        self.assertIsNone(report.google_flights_url)
+        self.assertNotIn("google_flights_url", report.to_dict())
+
+    def test_catalog_place_does_not_invent_a_token_or_url(self) -> None:
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        self.assertIsNone(catalog.google_flights_url)
+        self.assertNotIn("google_flights_url", catalog.to_dict())
+        self.assertNotIn("booking_token", catalog.to_dict())
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={"OPO": (_card(airline="Ryanair", price="€28", stops="Nonstop"),)},
+        )
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        by_iata = {row.iata: row for row in report.destinations}
+        self.assertIsNotNone(by_iata["OPO"].google_flights_url)
+        self.assertNotIn("booking_token=", by_iata["OPO"].google_flights_url or "")
+        self.assertNotIn("booking_token", by_iata["FCO"].to_dict())
+        self.assertNotIn("booking_token=", by_iata["FCO"].google_flights_url or "")
+
+    def test_omits_url_when_encode_cannot_run(self) -> None:
+        source = FakeExploreSource(
+            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
+            prices={"OPO": (_card(),)},
+        )
+        with patch("viajante.explore.google_flights_url", return_value=None):
+            report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
+        self.assertIsNone(report.google_flights_url)
+        self.assertNotIn("google_flights_url", report.to_dict())
+        self.assertIsNone(report.destinations[0].google_flights_url)
+        self.assertNotIn("google_flights_url", report.destinations[0].to_dict())
+
+    def test_explore_cli_prints_dest_url(self) -> None:
+        source = FakeExploreSource(
+            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
+            prices={"OPO": (_card(),)},
+        )
+        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(["explore", "MAD", "--from", "2026-09-01", "--days", "7"])
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("https://www.google.com/travel/flights", output)
+        self.assertIn("tfs=", output)
+        self.assertNotIn("booking_token=", output)
 
 
 if __name__ == "__main__":

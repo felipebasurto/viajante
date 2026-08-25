@@ -831,6 +831,7 @@ class DatePriceRow:
     status: Literal["ok", "empty", "error"] = "ok"
     error: Optional[SearchError] = None
     stops_compare: Optional[StopsCompare] = None
+    google_flights_url: Optional[str] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -846,6 +847,8 @@ class DatePriceRow:
             payload["error"] = self.error.to_dict()
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.google_flights_url:
+            payload["google_flights_url"] = self.google_flights_url
         return payload
 
 
@@ -863,6 +866,7 @@ class DateCalendarReport:
     nights: Optional[int] = None
     fetch_backend: Optional[str] = "calendar"
     fetch_ms: Optional[int] = None
+    google_flights_url: Optional[str] = None
     nearby_label: Optional[str] = None
     summary: Optional[DateCalendarSummary] = field(init=False, default=None)
     schema_version: int = field(init=False, default=1)
@@ -901,6 +905,8 @@ class DateCalendarReport:
             payload["nights"] = self.nights
         if self.summary is not None:
             payload["summary"] = self.summary.to_dict()
+        if self.google_flights_url:
+            payload["google_flights_url"] = self.google_flights_url
         return payload
 
 
@@ -931,6 +937,7 @@ class FlexSearchReport:
     nights: Optional[int] = None
     fetch_backend: Optional[FlexFetchBackend] = "calendar"
     fetch_ms: Optional[int] = None
+    google_flights_url: Optional[str] = None
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
     schema_version: int = field(init=False, default=1)
@@ -980,6 +987,8 @@ class FlexSearchReport:
             payload["return_date"] = self.return_date.isoformat()
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.google_flights_url:
+            payload["google_flights_url"] = self.google_flights_url
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         return payload
@@ -992,6 +1001,7 @@ class ExploreDestination:
     country: Optional[str]
     price_eur: Optional[float] = None
     stops_compare: Optional[StopsCompare] = None
+    google_flights_url: Optional[str] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -1002,6 +1012,8 @@ class ExploreDestination:
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.google_flights_url:
+            payload["google_flights_url"] = self.google_flights_url
         return payload
 
 
@@ -1016,6 +1028,7 @@ class ExploreReport:
     currency: str = "EUR"
     fetch_backend: Optional[str] = "explore"
     fetch_ms: Optional[int] = None
+    google_flights_url: Optional[str] = None
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
     schema_version: int = field(init=False, default=1)
@@ -1043,6 +1056,8 @@ class ExploreReport:
             "fetch_ms": self.fetch_ms,
             "destinations": [row.to_dict() for row in self.destinations],
         }
+        if self.google_flights_url:
+            payload["google_flights_url"] = self.google_flights_url
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         return payload

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
@@ -20,7 +21,7 @@ from viajante.flights import (
     parse_via_airports,
     validate_layover_hours,
 )
-from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
+from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
 from viajante.models import (
     DateCalendarReport,
@@ -214,6 +215,78 @@ def _occupancy_from_trip(trip: FlightQuery | RoundTrip) -> dict[str, int]:
     }
 
 
+def _day_trip(
+    seed: FlightQuery | RoundTrip,
+    day: date,
+    nights: Optional[int],
+) -> FlightQuery | RoundTrip:
+    return calendar_trip(
+        seed.origin,
+        seed.destination,
+        day,
+        max_stops=seed.legs[0].max_stops,
+        cabin=seed.cabin,
+        nights=nights,
+        bags=seed.bags,
+        carry_on=seed.carry_on,
+        price_cap_eur=seed.price_cap_eur,
+        airlines=seed.airlines,
+        exclude_airlines=seed.exclude_airlines,
+        alliances=seed.alliances,
+        exclude_alliances=seed.exclude_alliances,
+        **_occupancy_from_trip(seed),
+    )
+
+
+def _stamp_trip_google_flights_url(
+    trip: Trip,
+    *,
+    currency: str,
+    country: Optional[str],
+    booking_token: Optional[str] = None,
+) -> Optional[str]:
+    return google_flights_url(trip, currency=currency, country=country, booking_token=booking_token)
+
+
+def _stamp_date_row_url(
+    row: DatePriceRow,
+    seed: FlightQuery | RoundTrip,
+    nights: Optional[int],
+    *,
+    currency: str,
+    country: Optional[str],
+) -> DatePriceRow:
+    url = _stamp_trip_google_flights_url(
+        _day_trip(seed, row.departure_date, nights),
+        currency=currency,
+        country=country,
+    )
+    if not url:
+        return row
+    return replace(row, google_flights_url=url)
+
+
+def _stamp_offer_urls(
+    trip: Trip,
+    offers: Tuple[FlightOffer, ...],
+    *,
+    currency: str,
+    country: Optional[str],
+) -> Tuple[FlightOffer, ...]:
+    return tuple(
+        replace(
+            offer,
+            google_flights_url=_stamp_trip_google_flights_url(
+                trip,
+                currency=currency,
+                country=country,
+                booking_token=offer.booking_token,
+            ),
+        )
+        for offer in offers
+    )
+
+
 def calendar_trip(
     origin: str,
     destination: str,
@@ -350,6 +423,7 @@ def _date_calendar_for_seed(
     min_layover_hours: Optional[float],
     max_duration_hours: Optional[float],
     currency: str,
+    country: Optional[str],
     report_progress: Callable[[str], None],
 ) -> DateCalendarReport:
     stay_label = ""
@@ -387,6 +461,9 @@ def _date_calendar_for_seed(
     except Exception as exc:
         error = classify_failure(exc)
         days = _error_rows(start, end, error, nights=stay)
+    days = tuple(
+        _stamp_date_row_url(row, seed, stay, currency=currency, country=country) for row in days
+    )
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return DateCalendarReport(
         searched_at=datetime.now(timezone.utc),
@@ -399,6 +476,7 @@ def _date_calendar_for_seed(
         nights=stay,
         fetch_backend=backend,
         fetch_ms=fetch_ms,
+        google_flights_url=_stamp_trip_google_flights_url(seed, currency=currency, country=country),
         nearby_label=seed.nearby_label,
         currency=currency,
     )
@@ -489,6 +567,7 @@ def search_dates(
                     min_layover_hours=min_layover_hours,
                     max_duration_hours=max_duration_hours,
                     currency=currency,
+                    country=country,
                     report_progress=report_progress,
                 )
             )
@@ -584,6 +663,7 @@ def _flex_report_for_seed(
     buffer_eur: int,
     sort: FlightSort,
     currency: str,
+    country: Optional[str],
     report_progress: Callable[[str], None],
 ) -> FlexSearchReport:
     stay_label = ""
@@ -604,6 +684,7 @@ def _flex_report_for_seed(
     returning: Optional[date] = None
     error: Optional[SearchError] = None
     typical: Optional[float] = None
+    shop: FlightQuery | RoundTrip | None = None
     try:
         compact = client.fetch_calendar(seed, start, end)
         days = _rows_from_calendar(start, end, compact, nights=stay)
@@ -621,22 +702,7 @@ def _flex_report_for_seed(
         else:
             chosen = winner.departure_date
             returning = winner.return_date
-            shop = calendar_trip(
-                seed.origin,
-                seed.destination,
-                chosen,
-                max_stops=max_stops,
-                cabin=cabin,
-                nights=stay,
-                bags=bags,
-                carry_on=carry_on,
-                price_cap_eur=price_cap_eur,
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliances=alliances,
-                exclude_alliances=exclude_alliances,
-                **_occupancy_from_trip(seed),
-            )
+            shop = _day_trip(seed, chosen, stay)
             report_progress(f"chosen {chosen.isoformat()}; pricing that day")
             backend = "calendar_then_sweep"
             try:
@@ -663,6 +729,9 @@ def _flex_report_for_seed(
             compare = compare_nonstop_vs_one_stop(eligible)
     fare = min((offer.price_eur for offer in offers), default=None)
     label = vs_typical(fare, typical) if fare is not None else None
+    url_trip = shop or _day_trip(seed, chosen or around, stay)
+    if offers:
+        offers = _stamp_offer_urls(url_trip, offers, currency=currency, country=country)
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return FlexSearchReport(
         searched_at=datetime.now(timezone.utc),
@@ -683,6 +752,9 @@ def _flex_report_for_seed(
         nights=stay,
         fetch_backend=backend,
         fetch_ms=fetch_ms,
+        google_flights_url=_stamp_trip_google_flights_url(
+            url_trip, currency=currency, country=country
+        ),
         error=error,
         nearby_label=seed.nearby_label,
         currency=currency,
@@ -805,6 +877,7 @@ def search_flex(
                     buffer_eur=buffer_eur,
                     sort=sort,
                     currency=currency,
+                    country=country,
                     report_progress=report_progress,
                 )
             )
@@ -936,27 +1009,7 @@ def _sweep_per_day(
     while cursor <= end:
         index += 1
         progress(f"[{index}/{span}] {seed.origin} -> {seed.destination} {cursor.isoformat()}")
-        day_queries.append(
-            (
-                cursor,
-                calendar_trip(
-                    seed.origin,
-                    seed.destination,
-                    cursor,
-                    max_stops=seed.legs[0].max_stops,
-                    cabin=seed.cabin,
-                    nights=nights,
-                    bags=seed.bags,
-                    carry_on=seed.carry_on,
-                    price_cap_eur=seed.price_cap_eur,
-                    airlines=seed.airlines,
-                    exclude_airlines=seed.exclude_airlines,
-                    alliances=seed.alliances,
-                    exclude_alliances=seed.exclude_alliances,
-                    **_occupancy_from_trip(seed),
-                ),
-            )
-        )
+        day_queries.append((cursor, _day_trip(seed, cursor, nights)))
         cursor = shift_day(cursor, 1)
 
     fetch_many = getattr(source, "fetch_many", None)

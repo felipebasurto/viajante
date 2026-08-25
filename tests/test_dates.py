@@ -26,7 +26,7 @@ from viajante.dates import (
     validate_date_window,
 )
 from viajante.flights import _normalize_offer, parse_depart_window
-from viajante.google_flights import GoogleFlightsRejected, RawFlightCard
+from viajante.google_flights import GoogleFlightsRejected, RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactParseMiss,
@@ -2288,6 +2288,130 @@ class StopsCompareShopParityTests(unittest.TestCase):
         self.assertIn("Cheapest nonstop:", output)
         self.assertIn("Cheapest 1-stop:", output)
         self.assertIn("49 €", output)
+
+
+class GoogleFlightsUrlShopParityTests(unittest.TestCase):
+    def test_flex_shop_stamps_owned_query_and_offer_urls(self) -> None:
+        source = _flex_shop_source(_card(booking_token="tok"))
+        report = search_flex("MAD", "BCN", date(2026, 9, 12), 1, source=source, buffer_eur=0)
+        shop = calendar_trip("MAD", "BCN", date(2026, 9, 12), max_stops=1)
+        expected_query = google_flights_url(shop, currency="EUR")
+        expected_offer = google_flights_url(shop, currency="EUR", booking_token="tok")
+        self.assertEqual(report.google_flights_url, expected_query)
+        self.assertEqual(report.offers[0].google_flights_url, expected_offer)
+        self.assertIn("booking_token=tok", report.offers[0].google_flights_url or "")
+        self.assertNotIn("booking_token=", report.google_flights_url or "")
+        payload = report.to_dict()
+        self.assertEqual(payload["google_flights_url"], expected_query)
+        self.assertEqual(payload["offers"][0]["google_flights_url"], expected_offer)
+        self.assertNotIn("booking_token", report.days[0].to_dict())
+
+    def test_flex_calendar_only_stamps_query_url_from_around_date(self) -> None:
+        miss = search_flex(
+            "BOS",
+            "LHR",
+            date(2026, 9, 12),
+            3,
+            source=FakeCalendarSource(CompactParseMiss("no wrb.fr calendar payload")),
+        )
+        expected = google_flights_url(
+            calendar_trip("BOS", "LHR", date(2026, 9, 12), max_stops=1), currency="EUR"
+        )
+        self.assertEqual(miss.offers, ())
+        self.assertEqual(miss.google_flights_url, expected)
+        self.assertEqual(miss.to_dict()["google_flights_url"], expected)
+        self.assertNotIn("booking_token=", expected)
+
+    def test_flex_omits_url_when_encode_cannot_run(self) -> None:
+        source = _flex_shop_source(_card(booking_token="tok"))
+        with patch("viajante.dates.google_flights_url", return_value=None):
+            report = search_flex("MAD", "BCN", date(2026, 9, 12), 1, source=source, buffer_eur=0)
+        self.assertIsNone(report.google_flights_url)
+        self.assertNotIn("google_flights_url", report.to_dict())
+        self.assertIsNone(report.offers[0].google_flights_url)
+        self.assertNotIn("google_flights_url", report.offers[0].to_dict())
+        self.assertEqual(report.offers[0].booking_token, "tok")
+
+    def test_dates_compact_stamps_query_url_without_inventing_a_token(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 38.0),
+            )
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        seed = calendar_trip("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        day = calendar_trip("MAD", "BCN", date(2026, 9, 2), max_stops=1)
+        self.assertEqual(report.fetch_backend, "calendar")
+        self.assertEqual(report.google_flights_url, google_flights_url(seed, currency="EUR"))
+        self.assertEqual(
+            report.days[0].google_flights_url, google_flights_url(seed, currency="EUR")
+        )
+        self.assertEqual(report.days[1].google_flights_url, google_flights_url(day, currency="EUR"))
+        self.assertNotIn("booking_token", report.days[0].to_dict())
+        self.assertNotIn("booking_token=", report.days[0].google_flights_url or "")
+        self.assertNotIn("booking_token=", report.google_flights_url or "")
+        cell = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=45.0)
+        self.assertIsNone(cell.google_flights_url)
+        self.assertNotIn("google_flights_url", cell.to_dict())
+        self.assertNotIn("booking_token", cell.to_dict())
+
+    def test_dates_sweep_stamps_shop_query_url_without_inventing_a_token(self) -> None:
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={date(2026, 9, 1): (_card(booking_token="live-tok"),)},
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), source=source)
+        shop = calendar_trip("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        expected = google_flights_url(shop, currency="EUR")
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertEqual(report.google_flights_url, expected)
+        self.assertEqual(report.days[0].google_flights_url, expected)
+        self.assertNotIn("booking_token", report.days[0].to_dict())
+        self.assertNotIn("booking_token=", report.days[0].google_flights_url or "")
+
+    def test_dates_omits_url_when_encode_cannot_run(self) -> None:
+        source = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 45.0),))
+        with patch("viajante.dates.google_flights_url", return_value=None):
+            report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), source=source)
+        self.assertIsNone(report.google_flights_url)
+        self.assertNotIn("google_flights_url", report.to_dict())
+        self.assertIsNone(report.days[0].google_flights_url)
+        self.assertNotIn("google_flights_url", report.days[0].to_dict())
+
+    def test_flex_cli_prints_owned_url(self) -> None:
+        source = _flex_shop_source(_card(booking_token="tok"))
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(
+                    [
+                        "flex",
+                        "MAD-BCN",
+                        "--around",
+                        "2026-09-12",
+                        "--flex",
+                        "1",
+                        "--baggage-buffer",
+                        "0",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("https://www.google.com/travel/flights", output)
+        self.assertIn("booking_token=tok", output)
+
+    def test_dates_cli_prints_owned_url(self) -> None:
+        source = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 45.0),))
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(["dates", "MAD-BCN", "--from", "2026-09-01", "--to", "2026-09-01"])
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("https://www.google.com/travel/flights", output)
+        self.assertIn("tfs=", output)
+        self.assertNotIn("booking_token=", output)
 
 
 if __name__ == "__main__":

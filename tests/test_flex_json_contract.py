@@ -225,6 +225,37 @@ class FlexJsonContractTests(unittest.TestCase):
         self.assertEqual(set(data["stops_compare"]), {"nonstop"})
         self.assertNotIn("one_stop", data["stops_compare"])
 
+    def test_google_flights_url_is_an_extra_key_when_present(self) -> None:
+        data = FlexSearchReport(
+            searched_at=datetime(2026, 8, 20, 16, 0, 0),
+            origin="BOS",
+            destination="LHR",
+            around=date(2026, 9, 12),
+            flex_days=3,
+            start_date=date(2026, 9, 9),
+            end_date=date(2026, 9, 15),
+            days=(),
+            offers=(_offer(),),
+            google_flights_url="https://www.google.com/travel/flights?tfs=flex",
+        ).to_dict()
+        self.assertEqual(set(data), REPORT_KEYS | {"google_flights_url"})
+        self.assertEqual(
+            data["google_flights_url"], "https://www.google.com/travel/flights?tfs=flex"
+        )
+        self.assertNotIn("booking_token=", data["google_flights_url"])
+        miss = FlexSearchReport(
+            searched_at=datetime(2026, 8, 20, 16, 0, 0),
+            origin="BOS",
+            destination="LHR",
+            around=date(2026, 9, 12),
+            flex_days=3,
+            start_date=date(2026, 9, 9),
+            end_date=date(2026, 9, 15),
+            days=(),
+        ).to_dict()
+        self.assertEqual(set(miss), REPORT_KEYS)
+        self.assertNotIn("google_flights_url", miss)
+
 
 if __name__ == "__main__":
     unittest.main()

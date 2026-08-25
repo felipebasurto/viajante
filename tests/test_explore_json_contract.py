@@ -125,6 +125,30 @@ class ExploreJsonContractTests(unittest.TestCase):
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
         self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
 
+    def test_google_flights_url_is_an_extra_key_when_present(self) -> None:
+        dest = ExploreDestination(
+            iata="OPO",
+            city="Porto",
+            country="Portugal",
+            price_eur=42.0,
+            google_flights_url="https://www.google.com/travel/flights?tfs=opo",
+        )
+        data = dest.to_dict()
+        self.assertEqual(set(data), DESTINATION_KEYS | {"google_flights_url"})
+        self.assertNotIn("booking_token", data)
+        report = ExploreReport(
+            searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
+            origin="MAD",
+            start_date=date(2026, 9, 1),
+            days=7,
+            destinations=(dest,),
+            google_flights_url="https://www.google.com/travel/flights?tfs=report",
+        ).to_dict()
+        self.assertEqual(set(report), REPORT_KEYS | {"google_flights_url"})
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
+        self.assertNotIn("booking_token", catalog.to_dict())
+
 
 if __name__ == "__main__":
     unittest.main()

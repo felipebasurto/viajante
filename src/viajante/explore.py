@@ -16,7 +16,7 @@ from viajante.flights import (
     parse_via_airports,
     validate_layover_hours,
 )
-from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
+from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.models import (
     ExploreDestination,
@@ -141,6 +141,7 @@ def _explore_for_origin(
     drop_unpriced: bool,
     nearby_label: Optional[str],
     currency: str,
+    country: Optional[str],
     report_progress: Callable[[str], None],
 ) -> ExploreReport:
     nearby = f" ({nearby_label})" if nearby_label else ""
@@ -168,7 +169,7 @@ def _explore_for_origin(
     priced: list[ExploreDestination] = []
     for index, place in enumerate(places[:top]):
         report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
-        price, compare = _cheapest_shop(
+        price, compare, shop = _cheapest_shop(
             client,
             origin=origin,
             destination=place.iata,
@@ -202,6 +203,7 @@ def _explore_for_origin(
                 country=place.country,
                 price_eur=price,
                 stops_compare=compare,
+                google_flights_url=google_flights_url(shop, currency=currency, country=country),
             )
         )
     priced.sort(key=lambda row: (row.price_eur is None, row.price_eur or 0.0, row.iata))
@@ -320,6 +322,7 @@ def search_explore(
                     drop_unpriced=drop_unpriced,
                     nearby_label=label,
                     currency=currency,
+                    country=country,
                     report_progress=report_progress,
                 )
             )
@@ -365,7 +368,7 @@ def _cheapest_shop(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
-) -> tuple[Optional[float], Optional[StopsCompare]]:
+) -> tuple[Optional[float], Optional[StopsCompare], FlightQuery]:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     alliance_names = tuple(alliances) if alliances is not None else None
@@ -391,7 +394,7 @@ def _cheapest_shop(
     try:
         cards = source.fetch(query)
     except Exception:
-        return None, None
+        return None, None, query
     eligible = [
         offer
         for raw in cards
@@ -416,5 +419,9 @@ def _cheapest_shop(
         is not None
     ]
     if not eligible:
-        return None, None
-    return min(offer.price_eur for offer in eligible), compare_nonstop_vs_one_stop(eligible)
+        return None, None, query
+    return (
+        min(offer.price_eur for offer in eligible),
+        compare_nonstop_vs_one_stop(eligible),
+        query,
+    )
