@@ -125,6 +125,8 @@ def build_server():
         max_duration: float | None = None,
         min_layover: float | None = None,
         max_layover: float | None = None,
+        currency: str = "EUR",
+        country: str | None = None,
     ) -> dict:
         return dict(
             search_dates_tool(
@@ -153,6 +155,8 @@ def build_server():
                 max_duration=max_duration,
                 min_layover=min_layover,
                 max_layover=max_layover,
+                currency=currency,
+                country=country,
             )
         )
 
@@ -186,6 +190,8 @@ def build_server():
         max_duration: float | None = None,
         min_layover: float | None = None,
         max_layover: float | None = None,
+        currency: str = "EUR",
+        country: str | None = None,
     ) -> dict:
         return dict(
             search_flex_tool(
@@ -217,6 +223,8 @@ def build_server():
                 max_duration=max_duration,
                 min_layover=min_layover,
                 max_layover=max_layover,
+                currency=currency,
+                country=country,
             )
         )
 
@@ -247,6 +255,8 @@ def build_server():
         max_duration: float | None = None,
         min_layover: float | None = None,
         max_layover: float | None = None,
+        currency: str = "EUR",
+        country: str | None = None,
     ) -> dict:
         return dict(
             search_explore_tool(
@@ -275,6 +285,8 @@ def build_server():
                 max_duration=max_duration,
                 min_layover=min_layover,
                 max_layover=max_layover,
+                currency=currency,
+                country=country,
             )
         )
 

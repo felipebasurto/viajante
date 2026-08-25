@@ -29,7 +29,13 @@ from viajante.flights import (
     parse_flight_plan,
     parse_via_airports,
 )
-from viajante.models import FETCH_LANGUAGE, FlightCabin, HotelQuery
+from viajante.models import (
+    FETCH_LANGUAGE,
+    FlightCabin,
+    HotelQuery,
+    normalize_country,
+    normalize_currency,
+)
 
 Intent = str
 _PLAN_CABINS = frozenset({"economy", "premium-economy", "business", "first"})
@@ -894,6 +900,8 @@ class PromptPlan:
     notes: str = ""
     locale: str = FETCH_LANGUAGE
     flex_days: Optional[int] = None
+    currency: Optional[str] = None
+    country: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         def iso(value: Optional[date]) -> Optional[str]:
@@ -960,6 +968,8 @@ class PromptPlan:
             "notes": self.notes,
             "locale": self.locale,
             "flex_days": self.flex_days,
+            "currency": self.currency,
+            "country": self.country,
         }
 
     def matches(self, expect: Mapping[str, Any]) -> tuple[bool, str]:
@@ -1018,6 +1028,26 @@ def _flag_map(text: str) -> dict[str, str]:
             continue
         found[match.group(1).casefold()] = match.group(2).strip(" ,.")
     return found
+
+
+def _named_currency(flags: Mapping[str, str]) -> Optional[str]:
+    raw = flags.get("currency")
+    if not raw:
+        return None
+    try:
+        return normalize_currency(raw)
+    except ValueError:
+        return None
+
+
+def _named_country(flags: Mapping[str, str]) -> Optional[str]:
+    raw = flags.get("country")
+    if not raw:
+        return None
+    try:
+        return normalize_country(raw)
+    except ValueError:
+        return None
 
 
 def _nearby_city_name(folded: str) -> Optional[str]:
@@ -2441,6 +2471,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         weekday = "friday"
 
     price_cap = _named_price_cap_eur(folded, flags)
+    currency = _named_currency(flags)
+    country = _named_country(flags)
 
     origin: Optional[str] = None
     destination: Optional[str] = None
@@ -2975,6 +3007,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             alliance=alliance,
             exclude_alliance=exclude_alliance,
             notes=notes,
+            currency=currency,
+            country=country,
         )
 
     if intent == "flex":
@@ -3013,6 +3047,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             max_layover=max_layover,
             min_layover=min_layover,
             max_duration=max_duration,
+            currency=currency,
+            country=country,
         )
 
     if intent == "dates":
@@ -3048,6 +3084,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             max_layover=max_layover,
             min_layover=min_layover,
             max_duration=max_duration,
+            currency=currency,
+            country=country,
         )
 
     if intent == "refuse":
@@ -3122,4 +3160,6 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         nearby=nearby,
         search_trip=search_trip,
         notes=notes,
+        currency=currency,
+        country=country,
     )

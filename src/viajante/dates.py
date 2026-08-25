@@ -35,6 +35,8 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     Trip,
+    normalize_country,
+    normalize_currency,
 )
 from viajante.storage import write_json_atomic
 from viajante.typical import typical_eur_from_daily_prices, vs_typical, with_typical
@@ -345,6 +347,7 @@ def _date_calendar_for_seed(
     max_layover_hours: Optional[float],
     min_layover_hours: Optional[float],
     max_duration_hours: Optional[float],
+    currency: str,
     report_progress: Callable[[str], None],
 ) -> DateCalendarReport:
     stay_label = ""
@@ -395,6 +398,7 @@ def _date_calendar_for_seed(
         fetch_backend=backend,
         fetch_ms=fetch_ms,
         nearby_label=seed.nearby_label,
+        currency=currency,
     )
 
 
@@ -426,10 +430,14 @@ def search_dates(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
+    currency: str = "EUR",
+    country: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
+    currency = normalize_currency(currency)
+    country = normalize_country(country)
     validate_layover_hours(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
@@ -458,7 +466,7 @@ def search_dates(
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
     report_progress = progress or (lambda _: None)
-    client = source or GoogleFlightsHttpSource()
+    client = source or GoogleFlightsHttpSource(currency=currency, country=country)
     reports: list[DateCalendarReport] = []
     try:
         for item in trips:
@@ -478,6 +486,7 @@ def search_dates(
                     max_layover_hours=max_layover_hours,
                     min_layover_hours=min_layover_hours,
                     max_duration_hours=max_duration_hours,
+                    currency=currency,
                     report_progress=report_progress,
                 )
             )
@@ -572,6 +581,7 @@ def _flex_report_for_seed(
     top: int,
     buffer_eur: int,
     sort: FlightSort,
+    currency: str,
     report_progress: Callable[[str], None],
 ) -> FlexSearchReport:
     stay_label = ""
@@ -670,6 +680,7 @@ def _flex_report_for_seed(
         fetch_ms=fetch_ms,
         error=error,
         nearby_label=seed.nearby_label,
+        currency=currency,
     )
 
 
@@ -704,6 +715,8 @@ def search_flex(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
+    currency: str = "EUR",
+    country: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> FlexSearchReport | tuple[FlexSearchReport, ...]:
@@ -712,6 +725,8 @@ def search_flex(
     A compact calendar miss or a window with no priced day is empty: no
     per-day shopping sweep, no invented fare.
     """
+    currency = normalize_currency(currency)
+    country = normalize_country(country)
     if top <= 0:
         raise ValueError("top must be a positive integer")
     if buffer_eur < 0:
@@ -749,7 +764,7 @@ def search_flex(
     )
     trips = expand_nearby_trips((seed,), nearby=nearby)
     report_progress = progress or (lambda _: None)
-    client = source or GoogleFlightsHttpSource()
+    client = source or GoogleFlightsHttpSource(currency=currency, country=country)
     reports: list[FlexSearchReport] = []
     try:
         for item in trips:
@@ -784,6 +799,7 @@ def search_flex(
                     top=top,
                     buffer_eur=buffer_eur,
                     sort=sort,
+                    currency=currency,
                     report_progress=report_progress,
                 )
             )

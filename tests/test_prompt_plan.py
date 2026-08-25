@@ -32,6 +32,14 @@ class PromptPlanSmokeTests(unittest.TestCase):
         )
         self.assertEqual(parsed[0].origin, "BOS")
         self.assertEqual(parsed[0].destination, "LHR")
+        self.assertIsNone(plan.currency)
+        self.assertIsNone(plan.country)
+
+    def test_named_currency_country_flags_land_on_flights(self) -> None:
+        plan = plan_prompt("Flights JFK-LHR on 2026-09-15 --currency usd --country us")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.currency, "USD")
+        self.assertEqual(plan.country, "US")
 
     def test_boston_london_city_names(self) -> None:
         plan = plan_prompt("I want to fly from Boston to London on 2026-09-04")
@@ -1658,6 +1666,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.children)
         self.assertIsNone(plan.infants_in_seat)
         self.assertIsNone(plan.infants_on_lap)
+        self.assertIsNone(plan.currency)
+        self.assertIsNone(plan.country)
 
     def test_dates_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -1682,6 +1692,23 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(family.children)
         self.assertIsNone(family.infants_in_seat)
         self.assertIsNone(family.infants_on_lap)
+
+    def test_dates_named_currency_country_land_usd_word_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 --currency USD --country US"
+        )
+        self.assertEqual(named.intent, "dates")
+        self.assertEqual(named.currency, "USD")
+        self.assertEqual(named.country, "US")
+        vibe = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 in USD")
+        self.assertEqual(vibe.intent, "dates")
+        self.assertIsNone(vibe.currency)
+        self.assertIsNone(vibe.country)
+        invalid = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 --currency euro"
+        )
+        self.assertEqual(invalid.intent, "dates")
+        self.assertIsNone(invalid.currency)
 
     def test_dates_named_alliance_lands_does_not_invent_members(self) -> None:
         named = plan_prompt(
@@ -1790,6 +1817,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.children)
         self.assertIsNone(plan.infants_in_seat)
         self.assertIsNone(plan.infants_on_lap)
+        self.assertIsNone(plan.currency)
+        self.assertIsNone(plan.country)
 
     def test_flex_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 2 adults 1 child")
@@ -1808,6 +1837,16 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         family = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days for a family")
         self.assertEqual(family.intent, "flex")
         self.assertIsNone(family.children)
+
+    def test_flex_named_currency_country_land_usd_word_does_not_invent(self) -> None:
+        named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days --currency USD --country US")
+        self.assertEqual(named.intent, "flex")
+        self.assertEqual(named.currency, "USD")
+        self.assertEqual(named.country, "US")
+        vibe = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days in USD")
+        self.assertEqual(vibe.intent, "flex")
+        self.assertIsNone(vibe.currency)
+        self.assertIsNone(vibe.country)
 
     def test_flex_named_alliance_lands_does_not_invent_members(self) -> None:
         named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights, Star Alliance only")
@@ -1902,6 +1941,8 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.children)
         self.assertIsNone(plan.infants_in_seat)
         self.assertIsNone(plan.infants_on_lap)
+        self.assertIsNone(plan.currency)
+        self.assertIsNone(plan.country)
 
     def test_explore_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -1924,6 +1965,19 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         )
         self.assertEqual(family.intent, "explore")
         self.assertIsNone(family.children)
+
+    def test_explore_named_currency_country_land_usd_word_does_not_invent(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from JFK starting 2026-09-15, 7 days "
+            "--currency USD --country US"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertEqual(named.currency, "USD")
+        self.assertEqual(named.country, "US")
+        vibe = plan_prompt("Explore cheap destinations from JFK starting 2026-09-15, 7 days in USD")
+        self.assertEqual(vibe.intent, "explore")
+        self.assertIsNone(vibe.currency)
+        self.assertIsNone(vibe.country)
 
     def test_explore_named_alliance_lands_does_not_invent_members(self) -> None:
         named = plan_prompt(

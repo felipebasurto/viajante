@@ -490,6 +490,27 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
         self.assertEqual({row.iata for row in unnamed.destinations}, {"OPO", "LIS"})
 
+    def test_named_currency_country_reach_http_source(self) -> None:
+        source = FakeExploreSource((CompactExplorePlace("OPO", "Porto", "Portugal"),))
+        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source) as ctor:
+            report = search_explore(
+                "JFK",
+                date(2026, 9, 1),
+                days=7,
+                top=1,
+                currency="usd",
+                country="us",
+            )
+        ctor.assert_called_once_with(currency="USD", country="US")
+        self.assertEqual(report.currency, "USD")
+
+    def test_unnamed_currency_stays_eur_country_omitted(self) -> None:
+        source = FakeExploreSource((CompactExplorePlace("OPO", "Porto", "Portugal"),))
+        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source) as ctor:
+            report = search_explore("JFK", date(2026, 9, 1), days=7, top=1)
+        ctor.assert_called_once_with(currency="EUR", country=None)
+        self.assertEqual(report.currency, "EUR")
+
     def test_unknown_origin_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             search_explore("XXX", date(2026, 9, 1))
@@ -543,6 +564,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--children", help_text)
         self.assertIn("--infants-in-seat", help_text)
         self.assertIn("--infants-on-lap", help_text)
+        self.assertIn("--currency", help_text)
+        self.assertIn("--country", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
@@ -631,6 +654,8 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
+        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertIsNone(kwargs["country"])
 
     def test_explore_forwards_named_occupancy(self) -> None:
         with (
@@ -660,6 +685,29 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 1)
         self.assertEqual(kwargs["infants_in_seat"], 1)
         self.assertEqual(kwargs["infants_on_lap"], 1)
+
+    def test_explore_forwards_named_currency_country(self) -> None:
+        with (
+            patch("viajante.cli.search_explore") as search,
+            patch("viajante.cli._print_explore_report"),
+        ):
+            search.return_value = SimpleNamespace(error=None, destinations=())
+            code = main(
+                [
+                    "explore",
+                    "JFK",
+                    "--from",
+                    "2026-09-01",
+                    "--currency",
+                    "usd",
+                    "--country",
+                    "us",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["currency"], "USD")
+        self.assertEqual(kwargs["country"], "US")
 
 
 class NearbyExploreTests(unittest.TestCase):

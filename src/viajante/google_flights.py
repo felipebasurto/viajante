@@ -804,7 +804,9 @@ class GoogleFlightsHttpSource:
             return fn()
 
     def _shopping_post(self, trip: Trip) -> SweepPost:
-        url, body = build_shopping_request(trip, html_lang=self._html_lang, currency=self._currency)
+        url, body = build_shopping_request(
+            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
+        )
         return SweepPost(url, body, SHOPPING_POST_HEADERS)
 
     def _calendar_post(self, trip: Trip, start: date, end: date) -> SweepPost:
@@ -814,6 +816,7 @@ class GoogleFlightsHttpSource:
             end,
             html_lang=self._html_lang,
             currency=self._currency,
+            country=self._country,
         )
         return SweepPost(url, body, SHOPPING_POST_HEADERS)
 
@@ -874,7 +877,7 @@ class GoogleFlightsHttpSource:
         response: SweepHttpResponse,
     ) -> tuple[RawFlightCard, ...]:
         url, _body = build_shopping_request(
-            trip, html_lang=self._html_lang, currency=self._currency
+            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
         )
         if (
             response.status in {403, 429}
@@ -894,7 +897,9 @@ class GoogleFlightsHttpSource:
             return self._html_cards(client, trip)
 
     def _html_cards(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
-        url = build_search_url(trip, html_lang=self._html_lang, currency=self._currency)
+        url = build_search_url(
+            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
+        )
         html, _final_url = fetch_search_html(url, client=client, timeout=self._timeout)
         return parse_http_flight_cards(html)
 

@@ -605,6 +605,8 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--children", help_text)
         self.assertIn("--infants-in-seat", help_text)
         self.assertIn("--infants-on-lap", help_text)
+        self.assertIn("--currency", help_text)
+        self.assertIn("--country", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
@@ -704,6 +706,8 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
+        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertIsNone(kwargs["country"])
 
     def test_dates_forwards_named_occupancy(self) -> None:
         with (
@@ -735,6 +739,48 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 1)
         self.assertEqual(kwargs["infants_in_seat"], 1)
         self.assertEqual(kwargs["infants_on_lap"], 1)
+
+    def test_dates_forwards_named_currency_country(self) -> None:
+        with (
+            patch("viajante.cli.search_dates") as search,
+            patch("viajante.cli._print_dates_report"),
+            patch("viajante.cli._dates_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "dates",
+                    "JFK-LHR",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                    "--currency",
+                    "usd",
+                    "--country",
+                    "us",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["currency"], "USD")
+        self.assertEqual(kwargs["country"], "US")
+
+    def test_dates_invalid_currency_is_rejected_before_search(self) -> None:
+        with patch("viajante.cli.search_dates") as search:
+            code = main(
+                [
+                    "dates",
+                    "JFK-LHR",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                    "--currency",
+                    "euro",
+                ]
+            )
+        self.assertEqual(code, 1)
+        search.assert_not_called()
 
     def test_dates_lap_infants_over_adults_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_dates") as search:
@@ -1448,6 +1494,59 @@ class ShopFilterTests(unittest.TestCase):
             [1, 0, 0, 0],
         )
 
+    def test_dates_named_currency_country_reach_http_source(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 30.0),
+            )
+        )
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
+            report = search_dates(
+                "JFK",
+                "LHR",
+                date(2026, 9, 1),
+                date(2026, 9, 2),
+                currency="usd",
+                country="us",
+            )
+        ctor.assert_called_once_with(currency="USD", country="US")
+        self.assertEqual(report.currency, "USD")
+
+    def test_dates_unnamed_currency_stays_eur_country_omitted(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 30.0),
+            )
+        )
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
+            report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 2))
+        ctor.assert_called_once_with(currency="EUR", country=None)
+        self.assertEqual(report.currency, "EUR")
+
+    def test_dates_invalid_currency_or_country_is_rejected_before_fetch(self) -> None:
+        with patch("viajante.dates.GoogleFlightsHttpSource") as ctor:
+            with self.assertRaises(ValueError):
+                search_dates(
+                    "JFK",
+                    "LHR",
+                    date(2026, 9, 1),
+                    date(2026, 9, 2),
+                    currency="euro",
+                )
+        ctor.assert_not_called()
+        with patch("viajante.dates.GoogleFlightsHttpSource") as ctor:
+            with self.assertRaises(ValueError):
+                search_dates(
+                    "JFK",
+                    "LHR",
+                    date(2026, 9, 1),
+                    date(2026, 9, 2),
+                    country="USA",
+                )
+        ctor.assert_not_called()
+
     def test_dates_sweep_alliance_rides_the_shopping_request(self) -> None:
         iberia = _card(airline="Iberia", airline_codes=("IB",), price="€45")
         ryanair = _card(airline="Ryanair", airline_codes=("FR",), price="€30")
@@ -1590,6 +1689,30 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(unnamed_shop.infants_on_lap, 0)
         self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
 
+    def test_flex_named_currency_country_reach_http_source(self) -> None:
+        iberia = _card(airline="Iberia", airline_codes=("IB",), price="€90")
+        source = _flex_shop_source(iberia)
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
+            report = search_flex(
+                "JFK",
+                "LHR",
+                date(2026, 9, 12),
+                1,
+                currency="usd",
+                country="gb",
+                buffer_eur=0,
+            )
+        ctor.assert_called_once_with(currency="USD", country="GB")
+        self.assertEqual(report.currency, "USD")
+
+    def test_flex_unnamed_currency_stays_eur_country_omitted(self) -> None:
+        iberia = _card(airline="Iberia", airline_codes=("IB",), price="€90")
+        source = _flex_shop_source(iberia)
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
+            report = search_flex("JFK", "LHR", date(2026, 9, 12), 1, buffer_eur=0)
+        ctor.assert_called_once_with(currency="EUR", country=None)
+        self.assertEqual(report.currency, "EUR")
+
 
 class FlexCliTests(unittest.TestCase):
     def test_flex_help_mentions_the_window(self) -> None:
@@ -1611,6 +1734,8 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("--children", help_text)
         self.assertIn("--infants-in-seat", help_text)
         self.assertIn("--infants-on-lap", help_text)
+        self.assertIn("--currency", help_text)
+        self.assertIn("--country", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
@@ -1701,6 +1826,8 @@ class FlexCliTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
+        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertIsNone(kwargs["country"])
 
     def test_flex_forwards_named_occupancy(self) -> None:
         with (
@@ -1732,6 +1859,31 @@ class FlexCliTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 1)
         self.assertEqual(kwargs["infants_in_seat"], 1)
         self.assertEqual(kwargs["infants_on_lap"], 1)
+
+    def test_flex_forwards_named_currency_country(self) -> None:
+        with (
+            patch("viajante.cli.search_flex") as search,
+            patch("viajante.cli._print_flex_report"),
+            patch("viajante.cli._flex_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "flex",
+                    "JFK-LHR",
+                    "--around",
+                    "2026-09-12",
+                    "--flex",
+                    "1",
+                    "--currency",
+                    "usd",
+                    "--country",
+                    "us",
+                ]
+            )
+        self.assertEqual(code, 0)
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["currency"], "USD")
+        self.assertEqual(kwargs["country"], "US")
 
     def test_past_around_is_rejected_before_search(self) -> None:
         with patch("viajante.cli.search_flex") as search:

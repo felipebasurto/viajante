@@ -1056,6 +1056,28 @@ def _add_occupancy_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--currency",
+        default="EUR",
+        metavar="CODE",
+        help="ISO 4217 currency for Google params (default EUR)",
+    )
+    parser.add_argument(
+        "--country",
+        default=None,
+        metavar="CC",
+        help="ISO country for Google gl (omit to leave unset; not a home-hub default)",
+    )
+
+
+def _market_from_args(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "currency": normalize_currency(getattr(args, "currency", "EUR") or "EUR"),
+        "country": normalize_country(getattr(args, "country", None)),
+    }
+
+
 def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--bags",
@@ -1204,6 +1226,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         validate_date_window(start, end)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
+        market = _market_from_args(args)
         FlightQuery(
             origin,
             destination,
@@ -1256,6 +1279,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
+        **market,
     )
     reports = _as_report_tuple(result)
     for report in reports:
@@ -1328,6 +1352,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         start, _end = flex_window(around, args.flex_days)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
+        market = _market_from_args(args)
         FlightQuery(
             origin,
             destination,
@@ -1383,6 +1408,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
+        **market,
     )
     reports = _as_report_tuple(result)
     for report in reports:
@@ -1422,6 +1448,7 @@ def _run_explore(args: argparse.Namespace) -> int:
             raise ValueError("--top must be a positive integer")
         occupancy = _occupancy_from_args(args)
         shop = _owned_shop_filters_from_args(args)
+        market = _market_from_args(args)
         validate_explore_window(start, days)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1443,6 +1470,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
+        **market,
     )
     reports = _as_report_tuple(result)
     for report in reports:
@@ -1909,7 +1937,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     dates = sub.add_parser(
         "dates",
-        help="Cheapest fare per day for one route (compact calendar, quoted in EUR)",
+        help="Cheapest fare per day for one route (compact calendar; --currency, default EUR)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=DATES_EXAMPLES,
     )
@@ -1964,6 +1992,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
     )
+    _add_currency_country_flags(dates)
     _add_owned_shop_filters(dates)
     _add_nearby_flag(dates)
     dates.add_argument(
@@ -1981,7 +2010,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     flex = sub.add_parser(
         "flex",
-        help="Cheapest day in a ±N window, then one shopping search (quoted in EUR)",
+        help="Cheapest day in a ±N window, then one shopping search (--currency, default EUR)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=FLEX_EXAMPLES,
     )
@@ -2036,6 +2065,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
     )
+    _add_currency_country_flags(flex)
     flex.add_argument(
         "--top",
         type=int,
@@ -2072,7 +2102,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     explore = sub.add_parser(
         "explore",
-        help="Cheap destinations from one origin (quoted in EUR)",
+        help="Cheap destinations from one origin (--currency, default EUR)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=EXPLORE_EXAMPLES,
     )
@@ -2120,6 +2150,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
     )
+    _add_currency_country_flags(explore)
     _add_owned_shop_filters(explore)
     _add_nearby_flag(explore)
     explore.add_argument(

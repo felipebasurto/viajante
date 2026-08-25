@@ -23,6 +23,8 @@ from viajante.models import (
     FlightCabin,
     FlightQuery,
     SearchError,
+    normalize_country,
+    normalize_currency,
 )
 from viajante.storage import write_json_atomic
 
@@ -136,6 +138,7 @@ def _explore_for_origin(
     max_duration_hours: Optional[float],
     drop_unpriced: bool,
     nearby_label: Optional[str],
+    currency: str,
     report_progress: Callable[[str], None],
 ) -> ExploreReport:
     nearby = f" ({nearby_label})" if nearby_label else ""
@@ -211,6 +214,7 @@ def _explore_for_origin(
         fetch_ms=fetch_ms,
         error=error,
         nearby_label=nearby_label,
+        currency=currency,
     )
 
 
@@ -240,9 +244,13 @@ def search_explore(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
+    currency: str = "EUR",
+    country: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
 ) -> ExploreReport | tuple[ExploreReport, ...]:
+    currency = normalize_currency(currency)
+    country = normalize_country(country)
     validate_explore_window(start, days)
     if top <= 0:
         raise ValueError("top must be positive")
@@ -276,7 +284,7 @@ def search_explore(
         max_duration_hours=max_duration_hours,
     )
     origins = expand_nearby_origins(origin, nearby=nearby)
-    client = source or GoogleFlightsHttpSource()
+    client = source or GoogleFlightsHttpSource(currency=currency, country=country)
     reports: list[ExploreReport] = []
     try:
         for code, label in origins:
@@ -308,6 +316,7 @@ def search_explore(
                     max_duration_hours=max_duration_hours,
                     drop_unpriced=drop_unpriced,
                     nearby_label=label,
+                    currency=currency,
                     report_progress=report_progress,
                 )
             )

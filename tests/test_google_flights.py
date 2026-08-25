@@ -2248,6 +2248,37 @@ class SweepClientShapeTests(unittest.TestCase):
         self.assertEqual(len(client.posts), 6)
         self.assertLess(elapsed_ms, 70)
 
+    def test_http_source_currency_country_reach_calendar_and_fanout_urls(self) -> None:
+        calendar = _calendar_rpc_body([["2026-09-01", None, [[None, 80], "tok"], 1]])
+        client = _FakeSweepClient(post_text=calendar)
+        source = GoogleFlightsHttpSource(client=client, currency="USD", country="US")
+        source.fetch_calendar(
+            FlightQuery("JFK", "LHR", date(2026, 9, 1)),
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+        )
+        params = parse_qs(urlparse(client.posts[0]).query)
+        self.assertEqual(params["hl"], ["en"])
+        self.assertEqual(params["curr"], ["USD"])
+        self.assertEqual(params["gl"], ["US"])
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+        mux = _MuxFakeSweepClient(shop_text=shop, rtt=0)
+        GoogleFlightsHttpSource(client=mux, currency="GBP", country="GB").fetch_many(
+            (FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),)
+        )
+        fanout = parse_qs(urlparse(mux.posts[0]).query)
+        self.assertEqual(fanout["curr"], ["GBP"])
+        self.assertEqual(fanout["gl"], ["GB"])
+        unnamed_client = _FakeSweepClient(post_text=calendar)
+        GoogleFlightsHttpSource(client=unnamed_client).fetch_calendar(
+            FlightQuery("JFK", "LHR", date(2026, 9, 1)),
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+        )
+        unnamed = parse_qs(urlparse(unnamed_client.posts[0]).query)
+        self.assertEqual(unnamed["curr"], ["EUR"])
+        self.assertNotIn("gl", unnamed)
+
     def test_http_sources_reuse_the_process_tls_session(self) -> None:
         created: list[object] = []
 

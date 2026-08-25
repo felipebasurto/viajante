@@ -207,6 +207,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
+        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertIsNone(kwargs["country"])
         self.assertEqual(payload["schema_version"], 1)
 
     def test_search_dates_forwards_named_occupancy(self) -> None:
@@ -226,6 +228,14 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 1)
         self.assertEqual(kwargs["infants_in_seat"], 1)
         self.assertEqual(kwargs["infants_on_lap"], 1)
+
+    def test_search_dates_forwards_named_currency_country(self) -> None:
+        fake = _report(days=[])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool("JFK-LHR", FUTURE, FUTURE_OUT, currency="usd", country="us")
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["currency"], "usd")
+        self.assertEqual(kwargs["country"], "us")
 
     def test_search_dates_forwards_owned_shop_filters(self) -> None:
         fake = _report(days=[])
@@ -335,6 +345,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
+        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertIsNone(kwargs["country"])
 
     def test_search_flex_forwards_named_occupancy(self) -> None:
         fake = _report(chosen_date=FUTURE, offers=[])
@@ -353,6 +365,14 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 1)
         self.assertEqual(kwargs["infants_in_seat"], 1)
         self.assertEqual(kwargs["infants_on_lap"], 1)
+
+    def test_search_flex_forwards_named_currency_country(self) -> None:
+        fake = _report(chosen_date=FUTURE, offers=[])
+        with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
+            search_flex_tool("JFK-LHR", FUTURE, 3, currency="usd", country="us")
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["currency"], "usd")
+        self.assertEqual(kwargs["country"], "us")
 
     def test_search_flex_forwards_owned_shop_filters(self) -> None:
         fake = _report(chosen_date=FUTURE, offers=[])
@@ -427,6 +447,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["children"], 0)
         self.assertEqual(search.call_args.kwargs["infants_in_seat"], 0)
         self.assertEqual(search.call_args.kwargs["infants_on_lap"], 0)
+        self.assertEqual(search.call_args.kwargs["currency"], "EUR")
+        self.assertIsNone(search.call_args.kwargs["country"])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("SIN", FUTURE, price_cap=200)
         self.assertEqual(search.call_args.kwargs["price_cap_eur"], 200)
@@ -447,6 +469,14 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 1)
         self.assertEqual(kwargs["infants_in_seat"], 1)
         self.assertEqual(kwargs["infants_on_lap"], 1)
+
+    def test_search_explore_forwards_named_currency_country(self) -> None:
+        fake = _report(destinations=[])
+        with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
+            search_explore_tool("JFK", FUTURE, currency="usd", country="us")
+        kwargs = search.call_args.kwargs
+        self.assertEqual(kwargs["currency"], "usd")
+        self.assertEqual(kwargs["country"], "us")
 
     def test_search_explore_forwards_owned_shop_filters(self) -> None:
         fake = _report(destinations=[])
