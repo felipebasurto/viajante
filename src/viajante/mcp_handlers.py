@@ -166,6 +166,9 @@ def search_dates_tool(
     price_cap: Optional[int] = None,
     nearby: bool = False,
     depart_window: Optional[str] = None,
+    max_duration: Optional[float] = None,
+    min_layover: Optional[float] = None,
+    max_layover: Optional[float] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -193,6 +196,9 @@ def search_dates_tool(
             price_cap_eur=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
+            max_duration_hours=max_duration,
+            min_layover_hours=min_layover,
+            max_layover_hours=max_layover,
         )
     )
     return _payload_from_reports(report)
@@ -220,6 +226,9 @@ def search_flex_tool(
     price_cap: Optional[int] = None,
     nearby: bool = False,
     depart_window: Optional[str] = None,
+    max_duration: Optional[float] = None,
+    min_layover: Optional[float] = None,
+    max_layover: Optional[float] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
@@ -249,6 +258,9 @@ def search_flex_tool(
             price_cap_eur=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
+            max_duration_hours=max_duration,
+            min_layover_hours=min_layover,
+            max_layover_hours=max_layover,
         )
     )
     return _payload_from_reports(report)
@@ -273,6 +285,9 @@ def search_explore_tool(
     price_cap: Optional[int] = None,
     nearby: bool = False,
     depart_window: Optional[str] = None,
+    max_duration: Optional[float] = None,
+    min_layover: Optional[float] = None,
+    max_layover: Optional[float] = None,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -303,6 +318,9 @@ def search_explore_tool(
             price_cap_eur=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
+            max_duration_hours=max_duration,
+            min_layover_hours=min_layover,
+            max_layover_hours=max_layover,
         )
     )
     return _payload_from_reports(report)

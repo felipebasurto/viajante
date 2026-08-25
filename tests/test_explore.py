@@ -340,6 +340,53 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(by_iata["LIS"], 28.0)
         self.assertEqual(by_iata["FCO"], 40.0)
 
+    def test_named_layover_and_duration_drop_dests_without_an_eligible_shop(self) -> None:
+        nonstop = _card(stops="Nonstop", duration="1 hr 20 min", price="€90")
+        short_hop = _card(
+            stops="1 stop",
+            layover_city="LIS",
+            layover_hours=2.0,
+            duration="4 hr",
+            price="€70",
+        )
+        overnight = _card(
+            stops="1 stop",
+            layover_city="LIS",
+            layover_hours=18.0,
+            duration="20 hr",
+            price="€28",
+        )
+        silent = _card(stops="1 stop", layover_hours=None, duration="4 hr", price="€40")
+        long_elapsed = _card(stops="Nonstop", duration="12 hr", price="€35")
+        filters = dict(max_layover_hours=3.0, min_layover_hours=1.0, max_duration_hours=5.0)
+        self.assertIsNotNone(_normalize_offer(nonstop, 1, buffer_eur=0, **filters))
+        self.assertIsNotNone(_normalize_offer(short_hop, 1, buffer_eur=0, **filters))
+        self.assertIsNone(_normalize_offer(overnight, 1, buffer_eur=0, **filters))
+        self.assertIsNotNone(_normalize_offer(silent, 1, buffer_eur=0, **filters))
+        self.assertIsNone(_normalize_offer(long_elapsed, 1, buffer_eur=0, **filters))
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (nonstop, overnight),
+                "LIS": (overnight, silent),
+                "FCO": (overnight, long_elapsed),
+            },
+        )
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source, **filters)
+        self.assertEqual([row.iata for row in report.destinations], ["LIS", "OPO"])
+        self.assertEqual(report.destinations[0].price_eur, 40.0)
+        self.assertEqual(report.destinations[1].price_eur, 90.0)
+        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
+        self.assertEqual(by_iata["OPO"], 28.0)
+        self.assertEqual(by_iata["LIS"], 28.0)
+        self.assertEqual(by_iata["FCO"], 28.0)
+
     def test_unknown_origin_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             search_explore("XXX", date(2026, 9, 1))
@@ -391,6 +438,9 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
         self.assertIn("--depart-window", help_text)
+        self.assertIn("--max-layover", help_text)
+        self.assertIn("--min-layover", help_text)
+        self.assertIn("--max-duration", help_text)
 
     def test_explore_forwards_owned_shop_filters(self) -> None:
         with (
@@ -419,6 +469,12 @@ class ExploreCliTests(unittest.TestCase):
                     "200",
                     "--depart-window",
                     "7-12",
+                    "--max-layover",
+                    "3",
+                    "--min-layover",
+                    "1",
+                    "--max-duration",
+                    "8",
                 ]
             )
         self.assertEqual(code, 0)
@@ -431,6 +487,9 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["price_cap_eur"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
+        self.assertEqual(kwargs["max_layover_hours"], 3)
+        self.assertEqual(kwargs["min_layover_hours"], 1)
+        self.assertEqual(kwargs["max_duration_hours"], 8)
 
     def test_explore_unnamed_shop_filters_stay_unset(self) -> None:
         with (
@@ -449,6 +508,9 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["price_cap_eur"])
         self.assertIsNone(kwargs["depart_window"])
+        self.assertIsNone(kwargs["max_layover_hours"])
+        self.assertIsNone(kwargs["min_layover_hours"])
+        self.assertIsNone(kwargs["max_duration_hours"])
         self.assertFalse(kwargs["nearby"])
 
 

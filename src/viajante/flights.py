@@ -714,6 +714,26 @@ def parse_depart_window(text: Optional[str]) -> Optional[Tuple[int, int]]:
     return start_hour * 60, end_hour * 60 + 59
 
 
+def validate_layover_hours(
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
+) -> None:
+    """Reject negative layover/duration caps and a min above the max."""
+    if max_layover_hours is not None and max_layover_hours < 0:
+        raise ValueError("max_layover_hours must not be negative")
+    if min_layover_hours is not None and min_layover_hours < 0:
+        raise ValueError("min_layover_hours must not be negative")
+    if max_duration_hours is not None and max_duration_hours < 0:
+        raise ValueError("max_duration_hours must not be negative")
+    if (
+        min_layover_hours is not None
+        and max_layover_hours is not None
+        and min_layover_hours > max_layover_hours
+    ):
+        raise ValueError("min layover must be at or below max layover")
+
+
 def parse_via_airports(text: Optional[str], *, role: str = "via") -> Optional[Tuple[str, ...]]:
     """Parse comma-separated IATA codes for a via / exclude-via post-filter."""
     if text is None:
@@ -1506,18 +1526,11 @@ def search_flights(
         raise ValueError("top must be positive")
     if buffer_eur < 0:
         raise ValueError("buffer_eur must not be negative")
-    if max_layover_hours is not None and max_layover_hours < 0:
-        raise ValueError("max_layover_hours must not be negative")
-    if min_layover_hours is not None and min_layover_hours < 0:
-        raise ValueError("min_layover_hours must not be negative")
-    if max_duration_hours is not None and max_duration_hours < 0:
-        raise ValueError("max_duration_hours must not be negative")
-    if (
-        min_layover_hours is not None
-        and max_layover_hours is not None
-        and min_layover_hours > max_layover_hours
-    ):
-        raise ValueError("min layover must be at or below max layover")
+    validate_layover_hours(
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
+    )
     via = parse_via_airports(",".join(via), role="via") if via else None
     exclude_via = (
         parse_via_airports(",".join(exclude_via), role="exclude-via") if exclude_via else None

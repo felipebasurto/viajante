@@ -1682,6 +1682,9 @@ class TripCliTests(unittest.TestCase):
         self.assertIn("--airlines", help_text)
         self.assertIn("--price-cap", help_text)
         self.assertIn("--nearby", help_text)
+        self.assertIn("--max-layover", help_text)
+        self.assertIn("--min-layover", help_text)
+        self.assertIn("--max-duration", help_text)
 
     def test_trip_forwards_owned_shop_filters(self) -> None:
         with (

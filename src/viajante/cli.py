@@ -113,6 +113,7 @@ Examples:
   viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
   viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14 --nearby
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --depart-window 7-12
+  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --max-layover 3
 """
 
 FLEX_EXAMPLES = """\
@@ -121,6 +122,7 @@ Examples:
   viajante flex JFK-LHR --around 2026-09-15 --flex 3
   viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nearby
   viajante flex JFK-LHR --around 2026-09-15 --flex 3 --depart-window 06:00-20:00
+  viajante flex JFK-LHR --around 2026-09-15 --flex 3 --max-layover 3
 """
 
 EXPLORE_EXAMPLES = """\
@@ -130,6 +132,7 @@ Examples:
   viajante explore SIN --from 2026-09-01 --price-cap 200
   viajante explore LHR --from 2026-09-15 --nearby
   viajante explore JFK --from 2026-09-15 --depart-window 7-12
+  viajante explore JFK --from 2026-09-15 --max-layover 3
 """
 
 AIRPORTS_EXAMPLES = """\
@@ -890,9 +893,6 @@ def _run_trip(args: argparse.Namespace) -> int:
         progress=lambda line: print(line, file=sys.stderr),
         sort=args.sort,
         fetch=args.fetch,
-        max_layover_hours=args.max_layover,
-        min_layover_hours=args.min_layover,
-        max_duration_hours=args.max_duration,
         alliances=parse_alliances(args.alliance),
         exclude_alliances=parse_alliances(args.exclude_alliance),
         currency=args.currency,
@@ -1084,6 +1084,30 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         metavar="START-END",
         help="Keep local departures in START-END inclusive (hours 6-20 or clocks 06:00-20:00)",
     )
+    parser.add_argument(
+        "--max-layover",
+        type=float,
+        default=None,
+        metavar="HOURS",
+        dest="max_layover",
+        help="Drop 1-stop offers whose layover exceeds HOURS (shop cards only)",
+    )
+    parser.add_argument(
+        "--min-layover",
+        type=float,
+        default=None,
+        metavar="HOURS",
+        dest="min_layover",
+        help="Drop 1-stop offers whose layover is shorter than HOURS (shop cards only)",
+    )
+    parser.add_argument(
+        "--max-duration",
+        type=float,
+        default=None,
+        metavar="HOURS",
+        dest="max_duration",
+        help="Drop offers whose elapsed time exceeds HOURS (shop cards only)",
+    )
 
 
 def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
@@ -1096,6 +1120,17 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
     exclude_via = parse_via_airports(args.exclude_via, role="exclude-via")
     if via and exclude_via and set(via) & set(exclude_via):
         raise ValueError("--via and --exclude-via must not share a code")
+    max_layover = getattr(args, "max_layover", None)
+    min_layover = getattr(args, "min_layover", None)
+    max_duration = getattr(args, "max_duration", None)
+    if max_layover is not None and max_layover < 0:
+        raise ValueError("--max-layover must not be negative")
+    if min_layover is not None and min_layover < 0:
+        raise ValueError("--min-layover must not be negative")
+    if max_duration is not None and max_duration < 0:
+        raise ValueError("--max-duration must not be negative")
+    if min_layover is not None and max_layover is not None and min_layover > max_layover:
+        raise ValueError("--min-layover must be at or below --max-layover")
     return {
         "bags": args.bags,
         "carry_on": carry_on,
@@ -1105,6 +1140,9 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "via": via,
         "exclude_via": exclude_via,
         "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
+        "max_layover_hours": max_layover,
+        "min_layover_hours": min_layover,
+        "max_duration_hours": max_duration,
     }
 
 

@@ -17,6 +17,7 @@ from viajante.flights import (
     expand_nearby_trips,
     normalize_trip_kind,
     parse_via_airports,
+    validate_layover_hours,
 )
 from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
 from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
@@ -268,6 +269,9 @@ def _offers_from_cards(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
 ) -> list[FlightOffer]:
     """Apply the same owned shop post-filters search_flights uses."""
     return [
@@ -281,6 +285,9 @@ def _offers_from_cards(
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
                 depart_window=depart_window,
+                max_layover_hours=max_layover_hours,
+                min_layover_hours=min_layover_hours,
+                max_duration_hours=max_duration_hours,
                 via=via,
                 exclude_via=exclude_via,
                 bags=query.bags,
@@ -309,6 +316,9 @@ def _date_calendar_for_seed(
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
+    max_layover_hours: Optional[float],
+    min_layover_hours: Optional[float],
+    max_duration_hours: Optional[float],
     report_progress: Callable[[str], None],
 ) -> DateCalendarReport:
     stay_label = ""
@@ -338,6 +348,9 @@ def _date_calendar_for_seed(
             via=parsed_via,
             exclude_via=parsed_exclude_via,
             depart_window=depart_window,
+            max_layover_hours=max_layover_hours,
+            min_layover_hours=min_layover_hours,
+            max_duration_hours=max_duration_hours,
         )
         backend = "sweep"
     except Exception as exc:
@@ -378,11 +391,19 @@ def search_dates(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
     nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
+    validate_layover_hours(
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
+    )
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
     seed = calendar_trip(
@@ -418,6 +439,9 @@ def search_dates(
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     depart_window=depart_window,
+                    max_layover_hours=max_layover_hours,
+                    min_layover_hours=min_layover_hours,
+                    max_duration_hours=max_duration_hours,
                     report_progress=report_progress,
                 )
             )
@@ -504,6 +528,9 @@ def _flex_report_for_seed(
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
+    max_layover_hours: Optional[float],
+    min_layover_hours: Optional[float],
+    max_duration_hours: Optional[float],
     top: int,
     buffer_eur: int,
     sort: FlightSort,
@@ -571,6 +598,9 @@ def _flex_report_for_seed(
                 via=parsed_via,
                 exclude_via=parsed_exclude_via,
                 depart_window=depart_window,
+                max_layover_hours=max_layover_hours,
+                min_layover_hours=min_layover_hours,
+                max_duration_hours=max_duration_hours,
             )
             ranked = _rank_offers(eligible, top=top, sort=sort)
             if typical is not None:
@@ -625,6 +655,9 @@ def search_flex(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
     nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
@@ -642,6 +675,11 @@ def search_flex(
         raise ValueError(
             "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
         )
+    validate_layover_hours(
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
+    )
     start, end = flex_window(around, flex_days)
     kind, stay = resolve_date_trip(trip, nights)
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
@@ -688,6 +726,9 @@ def search_flex(
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     depart_window=depart_window,
+                    max_layover_hours=max_layover_hours,
+                    min_layover_hours=min_layover_hours,
+                    max_duration_hours=max_duration_hours,
                     top=top,
                     buffer_eur=buffer_eur,
                     sort=sort,
@@ -756,9 +797,19 @@ def _row_from_day_cards(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
 ) -> DatePriceRow:
     offers = _offers_from_cards(
-        cards, query, via=via, exclude_via=exclude_via, depart_window=depart_window
+        cards,
+        query,
+        via=via,
+        exclude_via=exclude_via,
+        depart_window=depart_window,
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
     )
     if not offers:
         return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
@@ -800,6 +851,9 @@ def _sweep_per_day(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
@@ -847,6 +901,9 @@ def _sweep_per_day(
                         via=via,
                         exclude_via=exclude_via,
                         depart_window=depart_window,
+                        max_layover_hours=max_layover_hours,
+                        min_layover_hours=min_layover_hours,
+                        max_duration_hours=max_duration_hours,
                     )
                 )
         return tuple(rows)
@@ -868,6 +925,9 @@ def _sweep_per_day(
                 via=via,
                 exclude_via=exclude_via,
                 depart_window=depart_window,
+                max_layover_hours=max_layover_hours,
+                min_layover_hours=min_layover_hours,
+                max_duration_hours=max_duration_hours,
             )
         )
     return tuple(rows)

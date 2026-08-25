@@ -13,6 +13,7 @@ from viajante.flights import (
     classify_failure,
     expand_nearby_origins,
     parse_via_airports,
+    validate_layover_hours,
 )
 from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard
 from viajante.google_flights_rpc import CompactExplorePlace
@@ -75,6 +76,9 @@ def _named_shop_filters(
     via: Optional[Sequence[str]],
     exclude_via: Optional[Sequence[str]],
     depart_window: Optional[Tuple[int, int]],
+    max_layover_hours: Optional[float],
+    min_layover_hours: Optional[float],
+    max_duration_hours: Optional[float],
 ) -> bool:
     return (
         bags is not None
@@ -85,6 +89,9 @@ def _named_shop_filters(
         or bool(via)
         or bool(exclude_via)
         or depart_window is not None
+        or max_layover_hours is not None
+        or min_layover_hours is not None
+        or max_duration_hours is not None
     )
 
 
@@ -112,6 +119,9 @@ def _explore_for_origin(
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     depart_window: Optional[Tuple[int, int]],
+    max_layover_hours: Optional[float],
+    min_layover_hours: Optional[float],
+    max_duration_hours: Optional[float],
     drop_unpriced: bool,
     nearby_label: Optional[str],
     report_progress: Callable[[str], None],
@@ -147,6 +157,9 @@ def _explore_for_origin(
             via=parsed_via,
             exclude_via=parsed_exclude_via,
             depart_window=depart_window,
+            max_layover_hours=max_layover_hours,
+            min_layover_hours=min_layover_hours,
+            max_duration_hours=max_duration_hours,
         )
         if drop_unpriced and price is None:
             continue
@@ -191,6 +204,9 @@ def search_explore(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
     nearby: bool = False,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
@@ -202,6 +218,11 @@ def search_explore(
         raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
     if price_cap_eur is not None and price_cap_eur <= 0:
         raise ValueError("price_cap_eur must be positive")
+    validate_layover_hours(
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
+    )
     parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
     origin = origin.strip().upper()
     if not is_known_iata(origin):
@@ -216,6 +237,9 @@ def search_explore(
         via=parsed_via,
         exclude_via=parsed_exclude_via,
         depart_window=depart_window,
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
     )
     origins = expand_nearby_origins(origin, nearby=nearby)
     client = source or GoogleFlightsHttpSource()
@@ -240,6 +264,9 @@ def search_explore(
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     depart_window=depart_window,
+                    max_layover_hours=max_layover_hours,
+                    min_layover_hours=min_layover_hours,
+                    max_duration_hours=max_duration_hours,
                     drop_unpriced=drop_unpriced,
                     nearby_label=label,
                     report_progress=report_progress,
@@ -279,6 +306,9 @@ def _cheapest_price(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     depart_window: Optional[Tuple[int, int]] = None,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
 ) -> Optional[float]:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
@@ -310,6 +340,9 @@ def _cheapest_price(
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
                 depart_window=depart_window,
+                max_layover_hours=max_layover_hours,
+                min_layover_hours=min_layover_hours,
+                max_duration_hours=max_duration_hours,
                 via=via,
                 exclude_via=exclude_via,
                 bags=query.bags,

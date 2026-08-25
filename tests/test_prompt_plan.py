@@ -1650,6 +1650,9 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
+        self.assertIsNone(plan.max_layover)
+        self.assertIsNone(plan.min_layover)
+        self.assertIsNone(plan.max_duration)
 
     def test_dates_named_depart_window_lands_morning_vibe_does_not(self) -> None:
         named = plan_prompt(
@@ -1667,6 +1670,31 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         )
         self.assertEqual(vibe.intent, "dates")
         self.assertIsNone(vibe.depart_window)
+
+    def test_dates_named_layover_and_duration_land_short_vibe_does_not(self) -> None:
+        named = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, max 3h layover")
+        self.assertEqual(named.intent, "dates")
+        self.assertEqual(named.max_layover, 3.0)
+        flagged = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 "
+            "--max-layover 3 --min-layover 1 --max-duration 8"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertEqual(flagged.max_layover, 3.0)
+        self.assertEqual(flagged.min_layover, 1.0)
+        self.assertEqual(flagged.max_duration, 8.0)
+        duration = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, maximum duration 8"
+        )
+        self.assertEqual(duration.intent, "dates")
+        self.assertEqual(duration.max_duration, 8.0)
+        vibe = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, short connections"
+        )
+        self.assertEqual(vibe.intent, "dates")
+        self.assertIsNone(vibe.max_layover)
+        self.assertIsNone(vibe.min_layover)
+        self.assertIsNone(vibe.max_duration)
 
     def test_dates_contradiction_does_not_pick_one(self) -> None:
         plan = plan_prompt(
@@ -1710,6 +1738,9 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
+        self.assertIsNone(plan.max_layover)
+        self.assertIsNone(plan.min_layover)
+        self.assertIsNone(plan.max_duration)
 
     def test_flex_named_depart_window_lands_morning_vibe_does_not(self) -> None:
         named = plan_prompt(
@@ -1723,6 +1754,24 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         vibe = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, leave in the morning")
         self.assertEqual(vibe.intent, "flex")
         self.assertIsNone(vibe.depart_window)
+
+    def test_flex_named_layover_and_duration_land_short_vibe_does_not(self) -> None:
+        named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights, max 3h layover")
+        self.assertEqual(named.intent, "flex")
+        self.assertEqual(named.max_layover, 3.0)
+        flagged = plan_prompt(
+            "BOS-LHR around 12 Sep 2026, flex 3 days "
+            "--max-layover 3 --min-layover 1 --max-duration 8"
+        )
+        self.assertEqual(flagged.intent, "flex")
+        self.assertEqual(flagged.max_layover, 3.0)
+        self.assertEqual(flagged.min_layover, 1.0)
+        self.assertEqual(flagged.max_duration, 8.0)
+        vibe = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, short connections")
+        self.assertEqual(vibe.intent, "flex")
+        self.assertIsNone(vibe.max_layover)
+        self.assertIsNone(vibe.min_layover)
+        self.assertIsNone(vibe.max_duration)
 
     def test_flex_contradiction_does_not_pick_one(self) -> None:
         plan = plan_prompt(
@@ -1766,6 +1815,9 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
+        self.assertIsNone(plan.max_layover)
+        self.assertIsNone(plan.min_layover)
+        self.assertIsNone(plan.max_duration)
 
     def test_explore_named_depart_window_lands_morning_vibe_does_not(self) -> None:
         named = plan_prompt(
@@ -1784,6 +1836,28 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         )
         self.assertEqual(vibe.intent, "explore")
         self.assertIsNone(vibe.depart_window)
+
+    def test_explore_named_layover_and_duration_land_short_vibe_does_not(self) -> None:
+        named = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, max 3h layover"
+        )
+        self.assertEqual(named.intent, "explore")
+        self.assertEqual(named.max_layover, 3.0)
+        flagged = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days "
+            "--max-layover 3 --min-layover 1 --max-duration 8"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertEqual(flagged.max_layover, 3.0)
+        self.assertEqual(flagged.min_layover, 1.0)
+        self.assertEqual(flagged.max_duration, 8.0)
+        vibe = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, short connections"
+        )
+        self.assertEqual(vibe.intent, "explore")
+        self.assertIsNone(vibe.max_layover)
+        self.assertIsNone(vibe.min_layover)
+        self.assertIsNone(vibe.max_duration)
 
     def test_explore_contradiction_does_not_pick_one(self) -> None:
         plan = plan_prompt(

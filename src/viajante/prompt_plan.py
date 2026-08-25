@@ -2970,6 +2970,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             carry_on=carry_on,
             nearby=nearby,
             depart_window=depart_window,
+            min_layover=min_layover,
+            max_duration=max_duration,
             notes=notes,
         )
 
@@ -3006,6 +3008,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             route_specs=(),
             locale=FETCH_LANGUAGE,
             notes=notes,
+            max_layover=max_layover,
+            min_layover=min_layover,
+            max_duration=max_duration,
         )
 
     if intent == "dates":
@@ -3038,6 +3043,9 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             depart_window=depart_window,
             nearby=nearby,
             route_specs=(),
+            max_layover=max_layover,
+            min_layover=min_layover,
+            max_duration=max_duration,
         )
 
     if intent == "refuse":
