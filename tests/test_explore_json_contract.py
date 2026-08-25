@@ -4,7 +4,14 @@ import json
 import unittest
 from datetime import date, datetime, timezone
 
-from viajante.models import ExploreDestination, ExploreReport, SearchError, SearchErrorCode
+from viajante.models import (
+    ExploreDestination,
+    ExploreReport,
+    SearchError,
+    SearchErrorCode,
+    StopsCompare,
+    StopsCompareSide,
+)
 
 REPORT_KEYS = {
     "schema_version",
@@ -90,6 +97,33 @@ class ExploreJsonContractTests(unittest.TestCase):
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
         json.loads(json.dumps(self.data, ensure_ascii=False))
+
+    def test_stops_compare_is_an_extra_dest_key_from_shop(self) -> None:
+        dest = ExploreDestination(
+            iata="OPO",
+            city="Porto",
+            country="Portugal",
+            price_eur=42.0,
+            stops_compare=StopsCompare(
+                nonstop=StopsCompareSide(
+                    airline="Ryanair",
+                    price="€42",
+                    price_eur=42.0,
+                    duration="1 hr",
+                    duration_hours=1.0,
+                    stops="Nonstop",
+                    stops_count=0,
+                    departure="07:00",
+                    arrival="07:50",
+                )
+            ),
+        )
+        data = dest.to_dict()
+        self.assertEqual(set(data), DESTINATION_KEYS | {"stops_compare"})
+        self.assertEqual(set(data["stops_compare"]), {"nonstop"})
+        self.assertNotIn("one_stop", data["stops_compare"])
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
 
 
 if __name__ == "__main__":

@@ -830,6 +830,7 @@ class DatePriceRow:
     return_date: Optional[date] = None
     status: Literal["ok", "empty", "error"] = "ok"
     error: Optional[SearchError] = None
+    stops_compare: Optional[StopsCompare] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -843,6 +844,8 @@ class DatePriceRow:
             payload["return_date"] = self.return_date.isoformat()
         if self.error is not None:
             payload["error"] = self.error.to_dict()
+        if self.stops_compare is not None:
+            payload["stops_compare"] = self.stops_compare.to_dict()
         return payload
 
 
@@ -919,6 +922,7 @@ class FlexSearchReport:
     chosen_date: Optional[date] = None
     return_date: Optional[date] = None
     offers: Tuple[FlightOffer, ...] = ()
+    stops_compare: Optional[StopsCompare] = None
     typical_eur: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     locale: str = "en"
@@ -974,6 +978,8 @@ class FlexSearchReport:
             payload["nights"] = self.nights
         if self.return_date is not None:
             payload["return_date"] = self.return_date.isoformat()
+        if self.stops_compare is not None:
+            payload["stops_compare"] = self.stops_compare.to_dict()
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         return payload
@@ -985,14 +991,18 @@ class ExploreDestination:
     city: str
     country: Optional[str]
     price_eur: Optional[float] = None
+    stops_compare: Optional[StopsCompare] = None
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "iata": self.iata,
             "city": self.city,
             "country": self.country,
             "price_eur": self.price_eur,
         }
+        if self.stops_compare is not None:
+            payload["stops_compare"] = self.stops_compare.to_dict()
+        return payload
 
 
 @dataclass(frozen=True)

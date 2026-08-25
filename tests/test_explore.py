@@ -19,7 +19,7 @@ from viajante.google_flights_rpc import (
     build_shopping_inner,
     parse_explore_body,
 )
-from viajante.models import FlightQuery
+from viajante.models import ExploreDestination, FlightQuery
 
 
 def _explore_row(iata: str, city: str, country: str) -> list[object]:
@@ -763,6 +763,123 @@ class NearbyExploreTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(search.call_args.kwargs["nearby"])
         self.assertIn("nearby London", err.getvalue())
+
+
+class StopsCompareExploreShopTests(unittest.TestCase):
+    def test_shopped_dest_stamps_compare_from_owned_offers(self) -> None:
+        source = FakeExploreSource(
+            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
+            prices={
+                "OPO": (
+                    _card(airline="Iberia", price="€88", stops="Nonstop"),
+                    _card(
+                        airline="Ryanair",
+                        price="€49",
+                        duration="5 hr",
+                        stops="1 stop",
+                        layover_city="OPO",
+                    ),
+                    _card(airline="Vueling", price="€120", stops="Nonstop"),
+                ),
+            },
+        )
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
+        dest = report.destinations[0]
+        self.assertEqual(dest.price_eur, 49.0)
+        compare = dest.stops_compare
+        assert compare is not None
+        assert compare.nonstop is not None
+        assert compare.one_stop is not None
+        self.assertEqual(compare.nonstop.price_eur, 88.0)
+        self.assertEqual(compare.one_stop.price_eur, 49.0)
+        self.assertEqual(compare.one_stop.layover_city, "OPO")
+        payload = dest.to_dict()["stops_compare"]
+        self.assertEqual(payload["nonstop"]["price_eur"], 88.0)
+        self.assertEqual(payload["one_stop"]["price_eur"], 49.0)
+
+    def test_catalog_place_without_shop_offers_omits_compare(self) -> None:
+        source = FakeExploreSource(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("FCO", "Rome", "Italy"),
+            ),
+            prices={
+                "OPO": (_card(airline="Ryanair", price="€28", stops="Nonstop"),),
+            },
+        )
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        by_iata = {row.iata: row for row in report.destinations}
+        self.assertEqual(by_iata["OPO"].price_eur, 28.0)
+        assert by_iata["OPO"].stops_compare is not None
+        self.assertEqual(by_iata["OPO"].stops_compare.nonstop.price_eur, 28.0)
+        self.assertIsNone(by_iata["OPO"].stops_compare.one_stop)
+        self.assertIsNone(by_iata["FCO"].price_eur)
+        self.assertIsNone(by_iata["FCO"].stops_compare)
+        self.assertNotIn("stops_compare", by_iata["FCO"].to_dict())
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        self.assertIsNone(catalog.stops_compare)
+        self.assertNotIn("stops_compare", catalog.to_dict())
+
+    def test_omits_empty_side_and_block(self) -> None:
+        only_one = FakeExploreSource(
+            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
+            prices={
+                "OPO": (
+                    _card(
+                        airline="Ryanair",
+                        price="€49",
+                        duration="5 hr",
+                        stops="1 stop",
+                    ),
+                ),
+            },
+        )
+        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=only_one)
+        compare = report.destinations[0].stops_compare
+        assert compare is not None
+        self.assertIsNone(compare.nonstop)
+        self.assertEqual(compare.one_stop.price_eur, 49.0)
+        self.assertEqual(set(report.destinations[0].to_dict()["stops_compare"]), {"one_stop"})
+        two_stop = FakeExploreSource(
+            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
+            prices={
+                "OPO": (
+                    _card(
+                        airline="China Southern",
+                        price="€314",
+                        duration="21 hr",
+                        stops="2 stops",
+                    ),
+                ),
+            },
+        )
+        report = search_explore(
+            "MAD", date(2026, 9, 1), days=7, top=1, max_stops=2, source=two_stop
+        )
+        dest = report.destinations[0]
+        self.assertEqual(dest.price_eur, 314.0)
+        self.assertIsNone(dest.stops_compare)
+        self.assertNotIn("stops_compare", dest.to_dict())
+
+    def test_explore_cli_prints_compare_for_shopped_dest(self) -> None:
+        source = FakeExploreSource(
+            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
+            prices={
+                "OPO": (
+                    _card(airline="Iberia", price="€88", stops="Nonstop"),
+                    _card(airline="Ryanair", price="€49", duration="5 hr", stops="1 stop"),
+                ),
+            },
+        )
+        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(["explore", "MAD", "--from", "2026-09-01", "--days", "7"])
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("Cheapest nonstop:", output)
+        self.assertIn("Cheapest 1-stop:", output)
+        self.assertIn("49 €", output)
 
 
 if __name__ == "__main__":

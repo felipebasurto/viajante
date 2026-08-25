@@ -14,6 +14,7 @@ from viajante.flights import (
     _normalize_offer,
     _rank_offers,
     classify_failure,
+    compare_nonstop_vs_one_stop,
     expand_nearby_trips,
     normalize_trip_kind,
     parse_via_airports,
@@ -34,6 +35,7 @@ from viajante.models import (
     RoundTrip,
     SearchError,
     SearchErrorCode,
+    StopsCompare,
     Trip,
     normalize_country,
     normalize_currency,
@@ -597,6 +599,7 @@ def _flex_report_for_seed(
     backend: FlexFetchBackend = "calendar"
     days: tuple[DatePriceRow, ...] = ()
     offers: tuple[FlightOffer, ...] = ()
+    compare: Optional[StopsCompare] = None
     chosen: Optional[date] = None
     returning: Optional[date] = None
     error: Optional[SearchError] = None
@@ -657,6 +660,7 @@ def _flex_report_for_seed(
                 offers = tuple(with_typical(offer, typical) for offer in ranked)
             else:
                 offers = ranked
+            compare = compare_nonstop_vs_one_stop(eligible)
     fare = min((offer.price_eur for offer in offers), default=None)
     label = vs_typical(fare, typical) if fare is not None else None
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
@@ -672,6 +676,7 @@ def _flex_report_for_seed(
         chosen_date=chosen,
         return_date=returning,
         offers=offers,
+        stops_compare=compare,
         typical_eur=typical,
         vs_typical=label,
         trip=kind,
@@ -889,6 +894,7 @@ def _row_from_day_cards(
         stops_count=best.stops_count,
         return_date=returning,
         status="ok",
+        stops_compare=compare_nonstop_vs_one_stop(offers),
     )
 
 

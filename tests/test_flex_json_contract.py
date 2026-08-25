@@ -10,6 +10,8 @@ from viajante.models import (
     FlightOffer,
     SearchError,
     SearchErrorCode,
+    StopsCompare,
+    StopsCompareSide,
 )
 
 REPORT_KEYS = {
@@ -169,6 +171,59 @@ class FlexJsonContractTests(unittest.TestCase):
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
         json.loads(json.dumps(self.data, ensure_ascii=False))
+
+    def test_stops_compare_is_an_extra_key_from_the_shop(self) -> None:
+        compare = StopsCompare(
+            nonstop=StopsCompareSide.from_offer(_offer()),
+            one_stop=StopsCompareSide.from_offer(
+                FlightOffer(
+                    airline="Ryanair",
+                    departure="06:00",
+                    arrival="10:00",
+                    price="€49",
+                    price_eur=49.0,
+                    duration="4 hr",
+                    duration_hours=4.0,
+                    stops="1 stop",
+                    stops_count=1,
+                    baggage_buffer_eur=0,
+                    needs_bag_verify=False,
+                )
+            ),
+        )
+        data = FlexSearchReport(
+            searched_at=datetime(2026, 8, 20, 16, 0, 0),
+            origin="BOS",
+            destination="LHR",
+            around=date(2026, 9, 12),
+            flex_days=3,
+            start_date=date(2026, 9, 9),
+            end_date=date(2026, 9, 15),
+            days=(),
+            offers=(_offer(),),
+            stops_compare=compare,
+            fetch_backend="calendar_then_sweep",
+        ).to_dict()
+        self.assertEqual(set(data), REPORT_KEYS | {"stops_compare"})
+        self.assertEqual(set(data["stops_compare"]), {"nonstop", "one_stop"})
+        self.assertEqual(data["stops_compare"]["nonstop"]["price_eur"], 350.0)
+        self.assertEqual(data["stops_compare"]["one_stop"]["price_eur"], 49.0)
+
+    def test_stops_compare_omits_an_empty_side(self) -> None:
+        report = FlexSearchReport(
+            searched_at=datetime(2026, 8, 20, 16, 0, 0),
+            origin="BOS",
+            destination="LHR",
+            around=date(2026, 9, 12),
+            flex_days=3,
+            start_date=date(2026, 9, 9),
+            end_date=date(2026, 9, 15),
+            days=(),
+            stops_compare=StopsCompare(nonstop=StopsCompareSide.from_offer(_offer())),
+        )
+        data = report.to_dict()
+        self.assertEqual(set(data["stops_compare"]), {"nonstop"})
+        self.assertNotIn("one_stop", data["stops_compare"])
 
 
 if __name__ == "__main__":

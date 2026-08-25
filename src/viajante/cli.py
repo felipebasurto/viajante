@@ -934,6 +934,8 @@ def _print_dates_report(report: DateCalendarReport) -> None:
         if row.stops_count is not None:
             extra += f"  {_format_stops(row.stops_count)}"
         print(f"  {row.departure_date.isoformat()}  {row.price_eur:>7.0f} €{extra}")
+        if row.stops_compare is not None:
+            print(format_stops_compare(row.stops_compare))
     if any_price:
         print("\nVerify checked baggage on Google Flights before booking.")
 
@@ -954,6 +956,8 @@ def _print_explore_report(report: ExploreReport) -> None:
         price = f"{row.price_eur:>7.0f} €" if row.price_eur is not None else "      —"
         country = f"  {row.country}" if row.country else ""
         print(f"  {price}  {row.iata}  {row.city}{country}")
+        if row.stops_compare is not None:
+            print(format_stops_compare(row.stops_compare))
     print("\nVerify checked baggage on Google Flights before booking.")
 
 
@@ -1335,6 +1339,8 @@ def _print_flex_report(report: FlexSearchReport) -> None:
             f"{_format_stops_with_layover(offer):<16} {times:<18} "
             f"{_format_airline(offer.airline)}"
         )
+    if report.stops_compare is not None:
+        print(format_stops_compare(report.stops_compare))
     print("\nVerify checked baggage on Google Flights before booking.")
 
 

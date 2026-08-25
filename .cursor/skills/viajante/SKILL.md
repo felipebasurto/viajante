@@ -122,7 +122,7 @@ Use bands to **exclude or deprioritize**, not to invent prices in the reply. Aft
 
 Use `--save results/<name>.viajante.json` for date matrices, round trips, or downstream parsing. Skip it for a single price answer in chat. Paths under `results/` and `*.viajante.json` are gitignored.
 
-Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Successful flights may carry `google_flights_url`, `typical_eur` / `vs_typical` / `vs_typical_pct`, and `stops_compare`. Trip reports add `trip_total` only when both sides hit. Hotel reports also carry `provider`, `price_basis`, `applied`, `eligible_count`, and evidence enums. Do not invent keys.
+Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Successful flights may carry `google_flights_url`, `typical_eur` / `vs_typical` / `vs_typical_pct`, and `stops_compare`. Flex winning-day shop, dates sweep-fallback days, and explore dest shops reuse that same `stops_compare`. Compact calendar cells and Explore catalog places omit it. Trip reports add `trip_total` only when both sides hit. Hotel reports also carry `provider`, `price_basis`, `applied`, `eligible_count`, and evidence enums. Do not invent keys.
 
 ## Agent rules
 
@@ -140,7 +140,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. Succ
 - Remind the user to verify checked baggage on Google Flights before booking.
 - Successful flight JSON includes `google_flights_url` on the query and each offer when viajante can build it from owned route/date/cabin/occupancy/currency (or an owned `booking_token`). Multi-city uses the owned tfs encoder. Omit the field only when that encode cannot run and there is no token. Do not invent a token or a fare.
 - When an offer has `typical_eur` / `vs_typical` / `vs_typical_pct`, print the English `typical_deal` line (e.g. `below typical 340 € (−15%)`). Packaged round-trip uses the same-stay calendar median (same origin/destination and nights). `cheapest_date` / `cheapest_eur` (when present) are the cheapest owned day in that same window. If those fields are null or omitted, skip the comparison. Do not invent a market average.
-- Successful searches also print cheapest nonstop vs cheapest 1-stop from that same parsed set (cabin fare). `--save` / MCP `stops_compare` is the same pair. A missing bucket is omitted (`no nonstop` on the CLI when only connections remain). This is not a second Google request.
+- Successful searches also print cheapest nonstop vs cheapest 1-stop from that same parsed set (cabin fare). `--save` / MCP `stops_compare` is the same pair. Flex winning-day shop, dates sweep-fallback days, and explore dest shops reuse it. Compact calendar cells and Explore catalog places omit it. A missing bucket is omitted (`no nonstop` on the CLI when only connections remain). This is not a second Google request.
 
 ### Hotels
 

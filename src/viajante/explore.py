@@ -11,6 +11,7 @@ from viajante.airports import is_known_iata
 from viajante.flights import (
     _normalize_offer,
     classify_failure,
+    compare_nonstop_vs_one_stop,
     expand_nearby_origins,
     parse_via_airports,
     validate_layover_hours,
@@ -23,6 +24,7 @@ from viajante.models import (
     FlightCabin,
     FlightQuery,
     SearchError,
+    StopsCompare,
     normalize_country,
     normalize_currency,
 )
@@ -166,7 +168,7 @@ def _explore_for_origin(
     priced: list[ExploreDestination] = []
     for index, place in enumerate(places[:top]):
         report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
-        price = _cheapest_price(
+        price, compare = _cheapest_shop(
             client,
             origin=origin,
             destination=place.iata,
@@ -199,6 +201,7 @@ def _explore_for_origin(
                 city=place.city,
                 country=place.country,
                 price_eur=price,
+                stops_compare=compare,
             )
         )
     priced.sort(key=lambda row: (row.price_eur is None, row.price_eur or 0.0, row.iata))
@@ -337,7 +340,7 @@ def write_explore_reports_atomic(reports: Sequence[ExploreReport], destination: 
     write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
 
 
-def _cheapest_price(
+def _cheapest_shop(
     source: ExploreSource,
     *,
     origin: str,
@@ -362,7 +365,7 @@ def _cheapest_price(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
-) -> Optional[float]:
+) -> tuple[Optional[float], Optional[StopsCompare]]:
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     alliance_names = tuple(alliances) if alliances is not None else None
@@ -388,9 +391,9 @@ def _cheapest_price(
     try:
         cards = source.fetch(query)
     except Exception:
-        return None
-    prices = [
-        offer.price_eur
+        return None, None
+    eligible = [
+        offer
         for raw in cards
         if (
             offer := _normalize_offer(
@@ -412,4 +415,6 @@ def _cheapest_price(
         )
         is not None
     ]
-    return min(prices) if prices else None
+    if not eligible:
+        return None, None
+    return min(offer.price_eur for offer in eligible), compare_nonstop_vs_one_stop(eligible)

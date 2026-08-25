@@ -4,7 +4,14 @@ import json
 import unittest
 from datetime import date, datetime, timezone
 
-from viajante.models import DateCalendarReport, DatePriceRow, SearchError, SearchErrorCode
+from viajante.models import (
+    DateCalendarReport,
+    DatePriceRow,
+    SearchError,
+    SearchErrorCode,
+    StopsCompare,
+    StopsCompareSide,
+)
 
 REPORT_KEYS = {
     "schema_version",
@@ -175,6 +182,44 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(data["summary"]["cheapest_date"], "2026-09-03")
         self.assertEqual(data["summary"]["n_priced"], 3)
         self.assertIsNone(data["days"][1]["price_eur"])
+        self.assertNotIn("stops_compare", data["days"][0])
+        self.assertNotIn("stops_compare", data)
+
+    def test_stops_compare_is_an_extra_day_key_from_sweep_shop(self) -> None:
+        side = StopsCompareSide(
+            airline="Iberia",
+            price="€88",
+            price_eur=88.0,
+            duration="1 hr 20 min",
+            duration_hours=1.33,
+            stops="Nonstop",
+            stops_count=0,
+            departure="08:00",
+            arrival="09:20",
+        )
+        report = DateCalendarReport(
+            searched_at=datetime(2026, 8, 11, 10, 32, 0),
+            origin="MAD",
+            destination="BCN",
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 1),
+            fetch_backend="sweep",
+            days=(
+                DatePriceRow(
+                    departure_date=date(2026, 9, 1),
+                    price_eur=88.0,
+                    airline="Iberia",
+                    stops_count=0,
+                    stops_compare=StopsCompare(nonstop=side),
+                ),
+            ),
+        )
+        data = report.to_dict()
+        self.assertEqual(set(data), REPORT_KEYS)
+        self.assertEqual(set(data["days"][0]), DAY_KEYS | {"stops_compare"})
+        self.assertEqual(set(data["days"][0]["stops_compare"]), {"nonstop"})
+        self.assertEqual(data["days"][0]["stops_compare"]["nonstop"]["price_eur"], 88.0)
+        self.assertNotIn("one_stop", data["days"][0]["stops_compare"])
 
 
 if __name__ == "__main__":

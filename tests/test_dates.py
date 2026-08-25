@@ -552,6 +552,7 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("Mon", output)
         self.assertNotIn("min ", output)
         self.assertNotIn("median ", output)
+        self.assertNotIn("Cheapest nonstop:", output)
 
     def test_prints_week_calendar_summary_and_marks_empty(self) -> None:
         source = FakeCalendarSource(
@@ -2023,6 +2024,270 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertEqual((report.origin, report.destination), ("MAD", "BCN"))
         self.assertIsNone(report.nearby_label)
         self.assertEqual(source.calls, 1)
+
+
+class StopsCompareShopParityTests(unittest.TestCase):
+    def test_flex_shop_stamps_compare_from_eligible_offers(self) -> None:
+        source = _flex_shop_source(
+            _card(airline="Iberia", price="€88", stops="Nonstop"),
+            _card(
+                airline="Ryanair",
+                price="€49",
+                duration="5 hr",
+                stops="1 stop",
+                layover_city="OPO",
+                layover_hours=2.0,
+            ),
+            _card(airline="Vueling", price="€120", stops="Nonstop"),
+        )
+        report = search_flex("MAD", "BCN", date(2026, 9, 12), 1, source=source, buffer_eur=0)
+        compare = report.stops_compare
+        assert compare is not None
+        assert compare.nonstop is not None
+        assert compare.one_stop is not None
+        self.assertEqual(compare.nonstop.price_eur, 88.0)
+        self.assertEqual(compare.nonstop.airline, "Iberia")
+        self.assertEqual(compare.one_stop.price_eur, 49.0)
+        self.assertEqual(compare.one_stop.airline, "Ryanair")
+        self.assertEqual(compare.one_stop.layover_city, "OPO")
+        payload = report.to_dict()["stops_compare"]
+        self.assertEqual(payload["nonstop"]["price_eur"], 88.0)
+        self.assertEqual(payload["one_stop"]["price_eur"], 49.0)
+        self.assertNotIn("stops_compare", report.days[0].to_dict())
+
+    def test_flex_calendar_miss_and_empty_window_omit_compare(self) -> None:
+        miss = search_flex(
+            "BOS",
+            "LHR",
+            date(2026, 9, 12),
+            3,
+            source=FakeCalendarSource(CompactParseMiss("no wrb.fr calendar payload")),
+        )
+        self.assertEqual(miss.offers, ())
+        self.assertIsNone(miss.stops_compare)
+        self.assertNotIn("stops_compare", miss.to_dict())
+        empty = search_flex(
+            "JFK",
+            "LHR",
+            date(2026, 9, 12),
+            3,
+            source=FakeCalendarSource(
+                (
+                    CompactCalendarDay(date(2026, 9, 9), None),
+                    CompactCalendarDay(date(2026, 9, 12), None),
+                    CompactCalendarDay(date(2026, 9, 15), None),
+                )
+            ),
+        )
+        self.assertEqual(empty.offers, ())
+        self.assertIsNone(empty.stops_compare)
+        self.assertNotIn("stops_compare", empty.to_dict())
+
+    def test_flex_omits_empty_side_and_block(self) -> None:
+        only_nonstop = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=_flex_shop_source(_card(airline="Iberia", price="€88", stops="Nonstop")),
+            buffer_eur=0,
+        )
+        assert only_nonstop.stops_compare is not None
+        self.assertEqual(only_nonstop.stops_compare.nonstop.price_eur, 88.0)
+        self.assertIsNone(only_nonstop.stops_compare.one_stop)
+        self.assertEqual(set(only_nonstop.to_dict()["stops_compare"]), {"nonstop"})
+        only_one = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            source=_flex_shop_source(
+                _card(
+                    airline="Ryanair",
+                    price="€49",
+                    duration="5 hr",
+                    stops="1 stop",
+                    layover_city="OPO",
+                )
+            ),
+            buffer_eur=0,
+        )
+        assert only_one.stops_compare is not None
+        self.assertIsNone(only_one.stops_compare.nonstop)
+        self.assertEqual(only_one.stops_compare.one_stop.price_eur, 49.0)
+        self.assertEqual(set(only_one.to_dict()["stops_compare"]), {"one_stop"})
+        two_stop_only = search_flex(
+            "MAD",
+            "BCN",
+            date(2026, 9, 12),
+            1,
+            max_stops=2,
+            source=_flex_shop_source(
+                _card(airline="China Southern", price="€314", duration="21 hr", stops="2 stops")
+            ),
+            buffer_eur=0,
+        )
+        self.assertEqual(two_stop_only.offers[0].price_eur, 314.0)
+        self.assertIsNone(two_stop_only.stops_compare)
+        self.assertNotIn("stops_compare", two_stop_only.to_dict())
+
+    def test_flex_ranked_top_hides_slow_one_stop_that_compare_keeps(self) -> None:
+        source = _flex_shop_source(
+            _card(
+                airline="Iberia",
+                price="€88",
+                duration="1 hr 20 min",
+                stops="Nonstop",
+                departure="09:30",
+                arrival="10:50",
+            ),
+            _card(
+                airline="Air Europa",
+                price="€69",
+                duration="21 hr",
+                stops="1 stop",
+                layover_city="Palma",
+                layover_hours=18.0,
+                departure="21:00",
+                arrival="18:00",
+            ),
+        )
+        report = search_flex("MAD", "BCN", date(2026, 9, 12), 1, source=source, buffer_eur=0, top=8)
+        self.assertEqual([offer.airline for offer in report.offers], ["Iberia"])
+        compare = report.stops_compare
+        assert compare is not None
+        assert compare.nonstop is not None
+        assert compare.one_stop is not None
+        self.assertEqual(compare.one_stop.airline, "Air Europa")
+        self.assertEqual(compare.one_stop.price_eur, 69.0)
+
+    def test_dates_compact_calendar_omits_compare(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 45.0),
+                CompactCalendarDay(date(2026, 9, 2), 38.0),
+            )
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        self.assertEqual(report.fetch_backend, "calendar")
+        self.assertEqual(report.days[0].price_eur, 45.0)
+        self.assertIsNone(report.days[0].stops_compare)
+        self.assertIsNone(report.days[1].stops_compare)
+        self.assertNotIn("stops_compare", report.days[0].to_dict())
+        self.assertNotIn("stops_compare", report.to_dict())
+        cell = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=45.0, stops_count=0)
+        self.assertIsNone(cell.stops_compare)
+        self.assertNotIn("stops_compare", cell.to_dict())
+
+    def test_dates_sweep_stamps_compare_from_that_day_shop(self) -> None:
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (
+                    _card(airline="Iberia", price="€88", stops="Nonstop"),
+                    _card(
+                        airline="Ryanair",
+                        price="€49",
+                        duration="5 hr",
+                        stops="1 stop",
+                        layover_city="OPO",
+                    ),
+                    _card(airline="Vueling", price="€120", stops="Nonstop"),
+                ),
+                date(2026, 9, 2): (_card(airline="Iberia", price="€38", stops="Nonstop"),),
+            },
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        self.assertEqual(report.fetch_backend, "sweep")
+        first = report.days[0].stops_compare
+        assert first is not None
+        assert first.nonstop is not None
+        assert first.one_stop is not None
+        self.assertEqual(first.nonstop.price_eur, 88.0)
+        self.assertEqual(first.one_stop.price_eur, 49.0)
+        self.assertEqual(report.days[0].price_eur, 49.0)
+        second = report.days[1].stops_compare
+        assert second is not None
+        self.assertEqual(second.nonstop.price_eur, 38.0)
+        self.assertIsNone(second.one_stop)
+        self.assertEqual(set(report.days[1].to_dict()["stops_compare"]), {"nonstop"})
+        self.assertNotIn("stops_compare", report.to_dict())
+
+    def test_dates_sweep_omits_block_when_both_buckets_empty(self) -> None:
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (
+                    _card(
+                        airline="China Southern",
+                        price="€314",
+                        duration="21 hr",
+                        stops="2 stops",
+                    ),
+                ),
+            },
+        )
+        report = search_dates(
+            "MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), max_stops=2, source=source
+        )
+        self.assertEqual(report.days[0].price_eur, 314.0)
+        self.assertEqual(report.days[0].stops_count, 2)
+        self.assertIsNone(report.days[0].stops_compare)
+        self.assertNotIn("stops_compare", report.days[0].to_dict())
+
+    def test_flex_cli_prints_compare(self) -> None:
+        source = _flex_shop_source(
+            _card(airline="Iberia", price="€88", stops="Nonstop"),
+            _card(airline="Ryanair", price="€49", duration="5 hr", stops="1 stop"),
+        )
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(
+                    [
+                        "flex",
+                        "MAD-BCN",
+                        "--around",
+                        "2026-09-12",
+                        "--flex",
+                        "1",
+                        "--baggage-buffer",
+                        "0",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("Cheapest nonstop:", output)
+        self.assertIn("88 €", output)
+        self.assertIn("Cheapest 1-stop:", output)
+        self.assertIn("49 €", output)
+
+    def test_dates_cli_omits_compare_on_compact_and_prints_it_on_sweep(self) -> None:
+        compact = FakeCalendarSource((CompactCalendarDay(date(2026, 9, 1), 45.0),))
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=compact):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(["dates", "MAD-BCN", "--from", "2026-09-01", "--to", "2026-09-01"])
+        self.assertEqual(code, 0)
+        self.assertNotIn("Cheapest nonstop:", buffer.getvalue())
+        sweep = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (
+                    _card(airline="Iberia", price="€88", stops="Nonstop"),
+                    _card(airline="Ryanair", price="€49", duration="5 hr", stops="1 stop"),
+                ),
+            },
+        )
+        with patch("viajante.dates.GoogleFlightsHttpSource", return_value=sweep):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(["dates", "MAD-BCN", "--from", "2026-09-01", "--to", "2026-09-01"])
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("Cheapest nonstop:", output)
+        self.assertIn("Cheapest 1-stop:", output)
+        self.assertIn("49 €", output)
 
 
 if __name__ == "__main__":
