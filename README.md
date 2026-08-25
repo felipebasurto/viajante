@@ -292,7 +292,7 @@ Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IA
 | `--depart-after` | off | Keep local departures at or after `HH:MM`. Post-filter on owned offer clocks. Unknown departure cannot prove the bound (drop). Unnamed stays unset. |
 | `--fetch` | `auto` | `sweep` is HTTP/2 on one Chrome TLS session. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
 | `--max-layover` | off | Drop connecting offers whose layover exceeds this many hours. Nonstops stay. |
-| `--min-layover` | off | Drop connecting offers whose layover is shorter than this many hours. Nonstops stay. |
+| `--min-layover` | off | Drop connecting offers whose layover is shorter than this many hours. Nonstops stay. Named nonstop (`max_stops` 0) plus a named positive min_layover keeps both and stamps one English note that the pair cannot both be satisfied (nonstop has no layover). Do not drop one. Do not invent a one-stop or a fare. |
 | `--via` | off | Keep connecting offers whose parsed layover matches these IATA codes (`IST`). Post-filter on owned `layover_city` / `legs[].layovers`. Unknown layover cannot prove include (drop). Nonstops drop. |
 | `--exclude-via` | off | Drop connecting offers whose parsed layover matches these IATA codes (`DXB`). Unknown layover stays. Nonstops stay. |
 | `--no-overnight` | unset | Drop offers whose owned layover city+clock is overnight at these IATA codes (`IST`, or `any`). Unknown city/clock cannot prove exclude (drop). Nonstops stay. Unnamed stays unset. Contradiction with `--require-overnight` keeps both. |

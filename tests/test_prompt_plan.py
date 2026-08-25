@@ -1174,6 +1174,69 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIn("nonstop", plan.notes.casefold())
         self.assertNotIn("€", plan.notes)
 
+    def test_nonstop_and_min_layover_keeps_both_and_notes_unsatisfiable(self) -> None:
+        plan = plan_prompt(
+            "SEA-KIX on 2026-11-03 nonstop, max 0 stops, at least 2h connection, "
+            "at most 8h layover, 1 checked bag, business class. Quote the fare in EUR."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "SEA")
+        self.assertEqual(plan.destination, "KIX")
+        self.assertEqual(plan.max_stops, 0)
+        self.assertEqual(plan.min_layover, 2.0)
+        self.assertEqual(plan.max_layover, 8.0)
+        self.assertEqual(plan.cabin, "business")
+        self.assertNotIn("contradictory_routing", plan.refuse)
+        folded = plan.notes.casefold()
+        self.assertIn("unsatisfiable", folded)
+        self.assertIn("nonstop", folded)
+        self.assertIn("layover", folded)
+        self.assertIn("keep both", folded)
+        self.assertNotIn("€", plan.notes)
+        self.assertNotRegex(plan.notes, r"\bEUR\b")
+        flagged = plan_prompt(
+            "SEA-KIX on 2026-11-03 nonstop --min-layover 2. Do not invent a fare."
+        )
+        self.assertEqual(flagged.intent, "flights")
+        self.assertEqual(flagged.max_stops, 0)
+        self.assertEqual(flagged.min_layover, 2.0)
+        self.assertIn("keep both", flagged.notes.casefold())
+        self.assertNotIn("€", flagged.notes)
+
+    def test_lone_nonstop_has_no_layover_contradiction_note(self) -> None:
+        plan = plan_prompt("SEA-KIX on 2026-11-03 nonstop, max 0 stops. Do not invent a fare.")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.max_stops, 0)
+        self.assertIsNone(plan.min_layover)
+        folded = plan.notes.casefold()
+        self.assertNotIn("unsatisfiable", folded)
+        self.assertNotIn("keep both", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_unnamed_nonstop_with_min_layover_has_no_contradiction_note(self) -> None:
+        plan = plan_prompt("YVR-NRT on 2026-11-03 --min-layover 1. Do not invent a fare.")
+        self.assertEqual(plan.intent, "flights")
+        self.assertIsNone(plan.max_stops)
+        self.assertEqual(plan.min_layover, 1.0)
+        folded = plan.notes.casefold()
+        self.assertNotIn("unsatisfiable", folded)
+        self.assertNotIn("nonstop has no layover", folded)
+        self.assertNotIn("€", plan.notes)
+
+    def test_via_and_min_layover_without_nonstop_skips_nonstop_layover_note(self) -> None:
+        plan = plan_prompt(
+            "TBS-SIN on 2026-11-03 via IST, at least 12h connection, max 1 stop. "
+            "Do not invent a fare."
+        )
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.max_stops, 1)
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertEqual(plan.min_layover, 12.0)
+        folded = plan.notes.casefold()
+        self.assertNotIn("nonstop has no layover", folded)
+        self.assertNotIn("max 0 stops", folded)
+        self.assertNotIn("€", plan.notes)
+
     def test_flight_hotel_occupancy_mismatch_keeps_both(self) -> None:
         plan = plan_prompt(
             "Fly CPT-JNB on 2026-09-18 returning 2026-09-22, 2 adults. "

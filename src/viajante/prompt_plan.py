@@ -1574,6 +1574,16 @@ def _via_regions_notes() -> str:
     )
 
 
+def _nonstop_min_layover_notes(min_layover: float) -> str:
+    """Honesty line for named nonstop plus a named positive min_layover. Keep both."""
+    return (
+        f"Unsatisfiable layover: nonstop (max 0 stops) has no layover and "
+        f"cannot also require a {min_layover:g}h connection. "
+        "Keep both constraints; do not drop max_stops or min_layover. "
+        "Do not invent a one-stop or a fare."
+    )
+
+
 def _origin_in_excluded_regions(
     origin: Optional[str],
     exclude_regions: Sequence[str],
@@ -2709,6 +2719,8 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             "Keep both constraints; do not drop via or the nonstop. "
             "Do not invent a fare.",
         )
+    if max_stops == 0 and min_layover is not None and min_layover > 0:
+        notes = _append_note(notes, _nonstop_min_layover_notes(min_layover))
     overlap_overnight = [code for code in via_airports if code in no_overnight and code != "any"]
     if overlap_overnight:
         joined = "/".join(overlap_overnight)
