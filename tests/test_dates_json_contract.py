@@ -231,6 +231,27 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertNotIn("baggage_buffer_eur", compact)
         self.assertNotIn("needs_bag_verify", compact)
 
+    def test_shop_duration_clock_are_extra_day_keys(self) -> None:
+        stamped = DatePriceRow(
+            departure_date=date(2026, 9, 1),
+            price_eur=50.0,
+            airline="Iberia",
+            stops_count=0,
+            duration_hours=2.0,
+            departure="07:00",
+            arrival="09:00",
+        )
+        data = stamped.to_dict()
+        self.assertEqual(set(data), DAY_KEYS | {"duration_hours", "departure", "arrival"})
+        self.assertEqual(data["duration_hours"], 2.0)
+        self.assertEqual(data["departure"], "07:00")
+        self.assertEqual(data["arrival"], "09:00")
+        compact = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=50.0).to_dict()
+        self.assertEqual(set(compact), DAY_KEYS)
+        self.assertNotIn("duration_hours", compact)
+        self.assertNotIn("departure", compact)
+        self.assertNotIn("arrival", compact)
+
     def test_stops_compare_is_an_extra_day_key_from_sweep_shop(self) -> None:
         side = StopsCompareSide(
             airline="Iberia",

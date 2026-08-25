@@ -197,6 +197,7 @@ def search_dates_tool(
     currency: str = "EUR",
     country: Optional[str] = None,
     baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    sort: Optional[FlightSort] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -241,6 +242,7 @@ def search_dates_tool(
             currency=currency,
             country=country,
             buffer_eur=baggage_buffer,
+            sort=sort,
         )
     )
     return _payload_from_reports(report)

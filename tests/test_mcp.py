@@ -228,6 +228,13 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["currency"], "EUR")
         self.assertIsNone(kwargs["country"])
         self.assertEqual(payload["schema_version"], 1)
+        self.assertIsNone(kwargs.get("sort"))
+
+    def test_search_dates_forwards_named_sort(self) -> None:
+        fake = _report(days=[])
+        with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
+            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT, sort="duration")
+        self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
     def test_search_dates_unnamed_buffer_uses_the_default(self) -> None:
         fake = _report(days=[])

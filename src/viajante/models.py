@@ -906,6 +906,9 @@ class DatePriceRow:
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
     baggage_buffer_eur: Optional[int] = None
+    duration_hours: Optional[float] = None
+    departure: Optional[str] = None
+    arrival: Optional[str] = None
 
     def __post_init__(self) -> None:
         _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
@@ -915,6 +918,10 @@ class DatePriceRow:
             raise ValueError("baggage_buffer_eur must not be negative")
         if (self.status != "ok" or self.price_eur is None) and self.baggage_buffer_eur is not None:
             raise ValueError("empty/error rows omit baggage buffer")
+        if (self.status != "ok" or self.price_eur is None) and (
+            self.duration_hours is not None or self.departure or self.arrival
+        ):
+            raise ValueError("shop duration/clocks require an owned day fare")
 
     def typical_deal(self) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
@@ -937,6 +944,12 @@ class DatePriceRow:
             payload["google_flights_url"] = self.google_flights_url
         if self.baggage_buffer_eur is not None:
             payload["baggage_buffer_eur"] = self.baggage_buffer_eur
+        if self.duration_hours is not None:
+            payload["duration_hours"] = self.duration_hours
+        if self.departure:
+            payload["departure"] = self.departure
+        if self.arrival:
+            payload["arrival"] = self.arrival
         payload.update(_typical_json(self.typical_eur, self.vs_typical, self.vs_typical_pct))
         return payload
 

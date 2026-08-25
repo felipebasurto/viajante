@@ -146,6 +146,7 @@ def build_server():
         currency: str = "EUR",
         country: str | None = None,
         baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        sort: str | None = None,
     ) -> dict:
         return dict(
             search_dates_tool(
@@ -183,6 +184,7 @@ def build_server():
                 currency=currency,
                 country=country,
                 baggage_buffer=baggage_buffer,
+                sort=sort,  # type: ignore[arg-type]
             )
         )
 

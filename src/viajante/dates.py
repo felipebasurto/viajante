@@ -11,8 +11,10 @@ from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
 from viajante.flights import (
     DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
+    FLIGHT_SORTS,
     FlightSort,
     _cheapest_by_ranked,
+    _clock_minutes,
     _normalize_offer,
     _rank_offers,
     classify_failure,
@@ -129,7 +131,7 @@ def format_sparkline(days: Sequence[DatePriceRow]) -> str:
     span = hi - lo
     n_levels = len(_SPARK_BLOCKS)
     chars: list[str] = []
-    for row in days:
+    for row in sorted(days, key=lambda item: item.departure_date):
         price = row.price_eur
         if price is None or price <= 0:
             chars.append(EMPTY_DAY_MARK)
@@ -140,6 +142,40 @@ def format_sparkline(days: Sequence[DatePriceRow]) -> str:
         index = int(round((price - lo) / span * (n_levels - 1)))
         chars.append(_SPARK_BLOCKS[max(0, min(n_levels - 1, index))])
     return "".join(chars)
+
+
+def _rank_date_rows(
+    days: Sequence[DatePriceRow],
+    sort: Optional[FlightSort],
+) -> tuple[DatePriceRow, ...]:
+    """Re-order day rows by an owned field. Missing key stays last; never invent."""
+    if sort is None:
+        return tuple(days)
+    if sort not in FLIGHT_SORTS:
+        raise ValueError(
+            "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
+        )
+
+    def sort_key(row: DatePriceRow) -> tuple:
+        if sort == "duration":
+            missing = row.duration_hours is None
+            hours = row.duration_hours if row.duration_hours is not None else 0.0
+            return (missing, hours, row.departure_date)
+        if sort == "departure":
+            minutes = _clock_minutes(row.departure)
+            missing = minutes is None
+            return (missing, minutes or 0, row.departure_date)
+        if sort == "arrival":
+            minutes = _clock_minutes(row.arrival)
+            missing = minutes is None
+            return (missing, minutes or 0, row.departure_date)
+        fare = row.price_eur if row.price_eur is not None else 0.0
+        if sort == "ranked":
+            buffer = row.baggage_buffer_eur or 0
+            return (row.price_eur is None, fare + buffer, row.departure_date)
+        return (row.price_eur is None, fare, row.departure_date)
+
+    return tuple(sorted(days, key=sort_key))
 
 
 def format_summary_line(summary: DateCalendarSummary) -> str:
@@ -515,6 +551,7 @@ def _date_calendar_for_seed(
     currency: str,
     country: Optional[str],
     buffer_eur: int,
+    sort: Optional[FlightSort],
     report_progress: Callable[[str], None],
 ) -> DateCalendarReport:
     stay_label = ""
@@ -560,6 +597,7 @@ def _date_calendar_for_seed(
     days = tuple(
         _stamp_date_row_url(row, seed, stay, currency=currency, country=country) for row in days
     )
+    days = _rank_date_rows(days, sort)
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return DateCalendarReport(
         searched_at=datetime.now(timezone.utc),
@@ -615,6 +653,7 @@ def search_dates(
     currency: str = "EUR",
     country: Optional[str] = None,
     buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    sort: Optional[FlightSort] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
@@ -623,6 +662,10 @@ def search_dates(
     country = normalize_country(country)
     if buffer_eur < 0:
         raise ValueError("baggage buffer must not be negative")
+    if sort is not None and sort not in FLIGHT_SORTS:
+        raise ValueError(
+            "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
+        )
     validate_layover_hours(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
@@ -695,6 +738,7 @@ def search_dates(
                     currency=currency,
                     country=country,
                     buffer_eur=buffer_eur,
+                    sort=sort,
                     report_progress=report_progress,
                 )
             )
@@ -1145,6 +1189,15 @@ def _row_from_day_cards(
         status="ok",
         stops_compare=compare_nonstop_vs_one_stop(offers),
         baggage_buffer_eur=best.baggage_buffer_eur,
+        duration_hours=best.duration_hours,
+        departure=(
+            best.departure
+            if best.departure and _clock_minutes(best.departure) is not None
+            else None
+        ),
+        arrival=(
+            best.arrival if best.arrival and _clock_minutes(best.arrival) is not None else None
+        ),
     )
 
 

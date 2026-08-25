@@ -1775,6 +1775,30 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.baggage_buffer_eur)
         self.assertEqual(plan.no_overnight, ())
         self.assertEqual(plan.require_overnight, ())
+        self.assertIsNone(plan.sort)
+
+    def test_dates_named_sort_lands_vibe_does_not_invent(self) -> None:
+        flagged = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 --sort duration"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertEqual(flagged.sort, "duration")
+        named = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, sort by duration"
+        )
+        self.assertEqual(named.intent, "dates")
+        self.assertEqual(named.sort, "duration")
+        fastest = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, fastest")
+        self.assertEqual(fastest.intent, "dates")
+        self.assertEqual(fastest.sort, "duration")
+        earliest = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, earliest")
+        self.assertEqual(earliest.intent, "dates")
+        self.assertEqual(earliest.sort, "departure")
+        vibe = plan_prompt(
+            "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14, cheap week in Europe"
+        )
+        self.assertEqual(vibe.intent, "dates")
+        self.assertIsNone(vibe.sort)
 
     def test_dates_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
         named = plan_prompt("Price calendar BOS-NRT from 2026-09-01 to 2026-09-14, not HND")

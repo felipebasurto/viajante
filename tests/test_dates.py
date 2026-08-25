@@ -13,6 +13,7 @@ from viajante.dates import (
     EMPTY_DAY_MARK,
     MAX_DATE_WINDOW_DAYS,
     MAX_FLEX_DAYS,
+    _rank_date_rows,
     calendar_trip,
     cheapest_priced_day,
     flex_window,
@@ -362,6 +363,152 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(report.days[0].price_eur, 45.0)
         self.assertEqual(report.days[1].price_eur, 38.0)
 
+    def test_unnamed_sort_stays_date_order(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 90.0),
+                CompactCalendarDay(date(2026, 9, 2), 40.0),
+            )
+        )
+        report = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        self.assertEqual(
+            [row.departure_date for row in report.days],
+            [date(2026, 9, 1), date(2026, 9, 2)],
+        )
+        self.assertEqual([row.price_eur for row in report.days], [90.0, 40.0])
+        self.assertIsNone(report.days[0].duration_hours)
+        self.assertNotIn("duration_hours", report.days[0].to_dict())
+
+    def test_duration_sort_keeps_compact_cells_after_shopped_hours(self) -> None:
+        rows = (
+            DatePriceRow(departure_date=date(2026, 9, 1), price_eur=40.0),
+            DatePriceRow(
+                departure_date=date(2026, 9, 2),
+                price_eur=90.0,
+                duration_hours=8.0,
+            ),
+            DatePriceRow(
+                departure_date=date(2026, 9, 3),
+                price_eur=50.0,
+                duration_hours=2.0,
+            ),
+        )
+        ranked = _rank_date_rows(rows, "duration")
+        self.assertEqual(
+            [row.departure_date for row in ranked],
+            [date(2026, 9, 3), date(2026, 9, 2), date(2026, 9, 1)],
+        )
+        self.assertIsNone(ranked[2].duration_hours)
+        self.assertNotIn("duration_hours", ranked[2].to_dict())
+
+    def test_named_duration_sort_reorders_two_shopped_days(self) -> None:
+        source = FakeCalendarSource(
+            CompactParseMiss("no wrb.fr calendar payload"),
+            cards={
+                date(2026, 9, 1): (_card(price="€40", duration="8 hr"),),
+                date(2026, 9, 2): (_card(price="€120", duration="2 hr"),),
+            },
+        )
+        unnamed = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 2), source=source)
+        self.assertEqual(
+            [row.departure_date for row in unnamed.days],
+            [date(2026, 9, 1), date(2026, 9, 2)],
+        )
+        self.assertEqual(unnamed.days[0].price_eur, 40.0)
+        self.assertEqual(unnamed.days[0].duration_hours, 8.0)
+        self.assertEqual(unnamed.days[1].duration_hours, 2.0)
+        ranked = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            sort="duration",
+            source=source,
+        )
+        self.assertEqual(
+            [row.departure_date for row in ranked.days],
+            [date(2026, 9, 2), date(2026, 9, 1)],
+        )
+        self.assertEqual([row.duration_hours for row in ranked.days], [2.0, 8.0])
+        self.assertEqual(ranked.days[0].price_eur, 120.0)
+
+    def test_compact_cell_missing_duration_is_not_given_made_up_hours(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 40.0),
+                CompactCalendarDay(date(2026, 9, 2), 90.0),
+            )
+        )
+        report = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            sort="duration",
+            source=source,
+        )
+        self.assertEqual(
+            [row.departure_date for row in report.days],
+            [date(2026, 9, 1), date(2026, 9, 2)],
+        )
+        self.assertIsNone(report.days[0].duration_hours)
+        self.assertIsNone(report.days[1].duration_hours)
+        self.assertNotIn("duration_hours", report.days[0].to_dict())
+        self.assertNotIn("duration_hours", report.days[1].to_dict())
+        self.assertNotEqual(report.days[0].duration_hours, 0.0)
+        self.assertNotEqual(report.days[1].duration_hours, 0.0)
+
+    def test_fare_sort_uses_owned_price(self) -> None:
+        source = FakeCalendarSource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 90.0),
+                CompactCalendarDay(date(2026, 9, 2), None),
+                CompactCalendarDay(date(2026, 9, 3), 40.0),
+            )
+        )
+        unnamed = search_dates("MAD", "BCN", date(2026, 9, 1), date(2026, 9, 3), source=source)
+        self.assertEqual(
+            [row.departure_date for row in unnamed.days],
+            [date(2026, 9, 1), date(2026, 9, 2), date(2026, 9, 3)],
+        )
+        ranked = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            sort="fare",
+            source=source,
+        )
+        self.assertEqual(
+            [row.departure_date for row in ranked.days],
+            [date(2026, 9, 3), date(2026, 9, 1), date(2026, 9, 2)],
+        )
+        self.assertEqual(ranked.days[0].price_eur, 40.0)
+        self.assertEqual(ranked.days[1].price_eur, 90.0)
+        self.assertIsNone(ranked.days[2].price_eur)
+        priced = search_dates(
+            "MAD",
+            "BCN",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            sort="price",
+            source=source,
+        )
+        self.assertEqual(
+            [row.departure_date for row in priced.days],
+            [date(2026, 9, 3), date(2026, 9, 1), date(2026, 9, 2)],
+        )
+
+    def test_unknown_sort_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            search_dates(
+                "MAD",
+                "BCN",
+                date(2026, 9, 1),
+                date(2026, 9, 2),
+                sort="fastest",  # type: ignore[arg-type]
+            )
+
     def test_round_trip_calendar_fills_return_dates_and_does_not_invent_fares(self) -> None:
         source = FakeCalendarSource(
             (
@@ -597,6 +744,21 @@ class CalendarPresentationTests(unittest.TestCase):
             "",
         )
 
+    def test_sparkline_stays_date_order_when_rows_are_fare_sorted(self) -> None:
+        chronological = (
+            DatePriceRow(departure_date=date(2026, 9, 1), price_eur=90.0),
+            DatePriceRow(departure_date=date(2026, 9, 2), status="empty"),
+            DatePriceRow(departure_date=date(2026, 9, 3), price_eur=40.0),
+        )
+        ranked = _rank_date_rows(chronological, "fare")
+        self.assertEqual(
+            [row.departure_date for row in ranked],
+            [date(2026, 9, 3), date(2026, 9, 1), date(2026, 9, 2)],
+        )
+        self.assertEqual(format_sparkline(ranked), format_sparkline(chronological))
+        weeks = format_week_calendar(ranked)
+        self.assertEqual(weeks, format_week_calendar(chronological))
+
     def test_summary_line_is_english(self) -> None:
         summary = owned_calendar_summary(
             (
@@ -734,6 +896,8 @@ class DateCliTests(unittest.TestCase):
         self.assertIn("--min-layover", help_text)
         self.assertIn("--max-duration", help_text)
         self.assertIn("--baggage-buffer", help_text)
+        self.assertIn("--sort", help_text)
+        self.assertIn("--sort duration", help_text)
 
     def test_dates_forwards_owned_shop_filters(self) -> None:
         with (
@@ -854,6 +1018,28 @@ class DateCliTests(unittest.TestCase):
         self.assertEqual(kwargs["currency"], "EUR")
         self.assertIsNone(kwargs["country"])
         self.assertEqual(kwargs["buffer_eur"], 70)
+        self.assertIsNone(kwargs.get("sort"))
+
+    def test_dates_forwards_named_sort(self) -> None:
+        with (
+            patch("viajante.cli.search_dates") as search,
+            patch("viajante.cli._print_dates_report"),
+            patch("viajante.cli._dates_exit_code", return_value=0),
+        ):
+            code = main(
+                [
+                    "dates",
+                    "MAD-BCN",
+                    "--from",
+                    "2026-09-01",
+                    "--to",
+                    "2026-09-02",
+                    "--sort",
+                    "duration",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
     def test_dates_forwards_named_occupancy(self) -> None:
         with (

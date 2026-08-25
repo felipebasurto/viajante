@@ -3192,6 +3192,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             exclude_airports=tuple(exclude_airports),
             include_airports=tuple(include_airports),
             baggage_buffer_eur=baggage_buffer,
+            sort=sort,
         )
 
     if intent == "refuse":

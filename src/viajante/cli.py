@@ -116,6 +116,7 @@ Examples:
   viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14 --nearby
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --depart-window 7-12
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --max-layover 3
+  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --sort duration
 """
 
 FLEX_EXAMPLES = """\
@@ -1419,6 +1420,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         nights=nights,
         nearby=nearby,
         buffer_eur=args.baggage_buffer,
+        sort=args.sort,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
         **occupancy,
@@ -2224,6 +2226,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_BAGGAGE_BUFFER_EUR,
         metavar="EUR",
         help=(f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR})"),
+    )
+    dates.add_argument(
+        "--sort",
+        default=None,
+        choices=list(FLIGHT_SORTS),
+        help=(
+            "Order day rows. Unnamed stays date order. Named duration/departure/arrival "
+            "re-order shopped sweep-fallback rows that already own that key. "
+            "fare/price/ranked may re-order priced rows by owned fare (ranked is fare+buffer). "
+            "A compact cell missing the key is not given a made-up duration or clock. "
+            "Sort is order, not a cut"
+        ),
     )
     dates.add_argument(
         "--fetch",
