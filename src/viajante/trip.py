@@ -202,6 +202,7 @@ def search_trip(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap_eur: Optional[int] = None,
@@ -235,6 +236,7 @@ def search_trip(
         via=via,
         exclude_via=exclude_via,
         exclude_airports=exclude_airports,
+        include_airports=include_airports,
         currency=currency,
         country=country,
     )

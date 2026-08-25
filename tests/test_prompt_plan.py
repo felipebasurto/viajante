@@ -418,6 +418,7 @@ class PromptPlanHardTests(unittest.TestCase):
         self.assertEqual(plan.date_from, date(2026, 9, 1))
         self.assertEqual(plan.date_to, date(2026, 9, 30))
         self.assertEqual(list(plan.destinations), ["SCL", "EZE", "LIM", "BOG"])
+        self.assertEqual(list(plan.include_airports), ["SCL", "EZE", "LIM", "BOG"])
         self.assertIsNone(plan.cabin)
         self.assertEqual(plan.date_strategy, "fixed_then_plus_minus_1")
         ok, reason = plan.matches(
@@ -1665,6 +1666,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
+        self.assertEqual(plan.include_airports, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
@@ -1693,6 +1695,27 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         vibe = plan_prompt("Price calendar BOS-NRT from 2026-09-01 to 2026-09-14, avoid Tokyo")
         self.assertEqual(vibe.intent, "dates")
         self.assertEqual(vibe.exclude_airports, ())
+
+    def test_dates_named_include_airports_lands_vibe_does_not_invent(self) -> None:
+        flagged = plan_prompt(
+            "Price calendar BOS-NRT from 2026-09-01 to 2026-09-14 --include-airports NRT,HND"
+        )
+        self.assertEqual(flagged.intent, "dates")
+        self.assertEqual(list(flagged.include_airports), ["NRT", "HND"])
+        vibe = plan_prompt("Price calendar BOS-NRT from 2026-09-01 to 2026-09-14, Europe")
+        self.assertEqual(vibe.intent, "dates")
+        self.assertEqual(vibe.include_airports, ())
+        self.assertNotIn("NRT", vibe.include_airports)
+
+    def test_flights_named_include_airports_flag_does_not_invent_dest(self) -> None:
+        plan = plan_prompt("Flights BOS-NRT on 2026-11-12 --include-airports NRT,HND")
+        self.assertEqual(plan.intent, "flights")
+        self.assertEqual(plan.origin, "BOS")
+        self.assertEqual(plan.destination, "NRT")
+        self.assertEqual(list(plan.include_airports), ["NRT", "HND"])
+        vibe = plan_prompt("Flights BOS-NRT on 2026-11-12, Europe")
+        self.assertEqual(vibe.intent, "flights")
+        self.assertEqual(vibe.include_airports, ())
 
     def test_dates_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -1853,6 +1876,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
+        self.assertEqual(plan.include_airports, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
@@ -1879,6 +1903,16 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         vibe = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days, avoid Tokyo")
         self.assertEqual(vibe.intent, "flex")
         self.assertEqual(vibe.exclude_airports, ())
+
+    def test_flex_named_include_airports_lands_vibe_does_not_invent(self) -> None:
+        flagged = plan_prompt(
+            "BOS-NRT around 12 Sep 2026, flex 3 days --include-airports NRT,HND"
+        )
+        self.assertEqual(flagged.intent, "flex")
+        self.assertEqual(list(flagged.include_airports), ["NRT", "HND"])
+        vibe = plan_prompt("BOS-NRT around 12 Sep 2026, flex 3 days, Europe")
+        self.assertEqual(vibe.intent, "flex")
+        self.assertEqual(vibe.include_airports, ())
 
     def test_flex_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 2 adults 1 child")
@@ -2007,6 +2041,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
+        self.assertEqual(plan.include_airports, ())
         self.assertIsNone(plan.price_cap_eur)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
@@ -2038,6 +2073,39 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         )
         self.assertEqual(vibe.intent, "explore")
         self.assertEqual(vibe.exclude_airports, ())
+
+    def test_explore_named_include_airports_and_dest_list_lands_vibe_does_not_invent(self) -> None:
+        flagged = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days "
+            "--include-airports NRT,HND"
+        )
+        self.assertEqual(flagged.intent, "explore")
+        self.assertEqual(list(flagged.include_airports), ["NRT", "HND"])
+        dest_list = plan_prompt(
+            "Explore destinations from GRU in September 2026: NRT, HND. "
+            "Do not brute-force the full date matrix; fixed dates first, then ±1 only on finalists."
+        )
+        self.assertEqual(dest_list.intent, "explore")
+        self.assertEqual(list(dest_list.include_airports), ["NRT", "HND"])
+        self.assertEqual(list(dest_list.destinations), ["NRT", "HND"])
+        vibe = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, Europe"
+        )
+        self.assertEqual(vibe.intent, "explore")
+        self.assertEqual(vibe.include_airports, ())
+        via_overnight = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, via IST, "
+            "overnight in IST, max 1 stop."
+        )
+        self.assertEqual(via_overnight.intent, "explore")
+        self.assertNotIn("SIN", via_overnight.include_airports)
+        self.assertNotIn("IST", via_overnight.include_airports)
+        use_nrt = plan_prompt(
+            "Explore cheap destinations from SIN starting 2026-09-15, 7 days, use NRT"
+        )
+        self.assertEqual(use_nrt.intent, "explore")
+        self.assertIn("NRT", use_nrt.include_airports)
+        self.assertNotIn("SIN", use_nrt.include_airports)
 
     def test_explore_named_occupancy_lands_family_does_not_invent(self) -> None:
         named = plan_prompt(
@@ -2196,6 +2264,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.via_airports, ())
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
+        self.assertEqual(plan.include_airports, ())
         self.assertIsNone(plan.price_cap_eur)
 
     def test_trip_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
@@ -2226,6 +2295,26 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(vibe.intent, "flights")
         self.assertTrue(vibe.search_trip)
         self.assertEqual(vibe.exclude_airports, ())
+
+    def test_trip_named_include_airports_lands_vibe_does_not_invent(self) -> None:
+        flagged = plan_prompt(
+            "Packaged round-trip NRT-SIN on 2026-10-20 returning 2026-10-24, --trip rt, "
+            "hotel in Singapore those nights, 2 adults, 1 room --include-airports SIN,HND. "
+            "Print the owned trip total when both searches succeed. "
+            "Omit the sum if either side misses. Do not invent a fare or a stay."
+        )
+        self.assertEqual(flagged.intent, "flights")
+        self.assertTrue(flagged.search_trip)
+        self.assertEqual(list(flagged.include_airports), ["SIN", "HND"])
+        vibe = plan_prompt(
+            "Packaged round-trip NRT-SIN on 2026-10-20 returning 2026-10-24, --trip rt, "
+            "hotel in Singapore those nights, 2 adults, 1 room, Europe. "
+            "Print the owned trip total when both searches succeed. "
+            "Omit the sum if either side misses. Do not invent a fare or a stay."
+        )
+        self.assertEqual(vibe.intent, "flights")
+        self.assertTrue(vibe.search_trip)
+        self.assertEqual(vibe.include_airports, ())
 
     def test_trip_contradiction_does_not_pick_one(self) -> None:
         plan = plan_prompt(

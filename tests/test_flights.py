@@ -17,6 +17,7 @@ from viajante.flights import (
     drop_excluded_airport_trips,
     expand_nearby_trips,
     is_low_cost,
+    keep_included_dest_trips,
     nearby_notes,
     normalize_trip_kind,
     parse_depart_window,
@@ -752,6 +753,77 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(source.fetch_calls, 1)
         seed_only = drop_excluded_airport_trips((nrt,), ("HND",))
         self.assertEqual(seed_only, (nrt,))
+
+    def test_named_include_airports_keeps_dest_in_list(self) -> None:
+        query = FlightQuery("BOS", "NRT", date(2026, 10, 9), max_stops=1)
+        source = FakeSource({("BOS", "NRT", "2026-10-09", 1): (card(airline="JAL"),)})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights(
+                (query,), top=1, fetch="sweep", include_airports=("NRT", "HND")
+            )
+        self.assertEqual(report.queries[0].query.destination, "NRT")
+        self.assertEqual(report.queries[0].offers[0].airline, "JAL")
+        self.assertEqual(source.fetch_calls, 1)
+
+    def test_named_include_airports_empties_when_dest_not_in_list(self) -> None:
+        query = FlightQuery("BOS", "KIX", date(2026, 10, 9), max_stops=1)
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            report = search_flights((query,), top=1, fetch="sweep", include_airports=("NRT", "HND"))
+        ctor.assert_not_called()
+        self.assertEqual(len(report.queries), 1)
+        result = report.queries[0]
+        self.assertIsInstance(result, QuerySuccess)
+        self.assertEqual(result.query.destination, "KIX")
+        self.assertEqual(result.offers, ())
+        unnamed = FlightQuery("BOS", "KIX", date(2026, 10, 9), max_stops=1)
+        source = FakeSource({("BOS", "KIX", "2026-10-09", 1): (card(airline="JAL"),)})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            kept = search_flights((unnamed,), top=1, fetch="sweep")
+        self.assertEqual(kept.queries[0].offers[0].airline, "JAL")
+        self.assertEqual(source.fetch_calls, 1)
+
+    def test_nearby_include_keeps_owned_same_city_already_in_list(self) -> None:
+        nrt = FlightQuery(
+            "BOS", "NRT", date(2026, 10, 9), max_stops=1, nearby_label="nearby Tokyo NRT"
+        )
+        hnd = FlightQuery(
+            "BOS", "HND", date(2026, 10, 9), max_stops=1, nearby_label="nearby Tokyo HND"
+        )
+        source = FakeSource({("BOS", "HND", "2026-10-09", 1): (card(airline="ANA"),)})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights((nrt, hnd), top=1, fetch="sweep", include_airports=("HND",))
+        self.assertEqual(len(report.queries), 1)
+        self.assertEqual(report.queries[0].query.destination, "HND")
+        self.assertEqual(report.queries[0].offers[0].airline, "ANA")
+        self.assertEqual(source.fetch_calls, 1)
+        seed_only = keep_included_dest_trips(
+            (FlightQuery("BOS", "NRT", date(2026, 10, 9), max_stops=1),),
+            ("HND",),
+        )
+        self.assertEqual(seed_only, ())
+
+    def test_include_then_exclude_drops_overlap(self) -> None:
+        query = FlightQuery("BOS", "HND", date(2026, 10, 9), max_stops=1)
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            report = search_flights(
+                (query,),
+                top=1,
+                fetch="sweep",
+                include_airports=("NRT", "HND"),
+                exclude_airports=("HND",),
+            )
+        ctor.assert_not_called()
+        self.assertEqual(report.queries[0].offers, ())
+        self.assertEqual(report.queries[0].query.destination, "HND")
+
+    def test_include_is_dests_only_origin_in_list_does_not_keep(self) -> None:
+        query = FlightQuery("BOS", "NRT", date(2026, 10, 9), max_stops=1)
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            report = search_flights((query,), top=1, fetch="sweep", include_airports=("BOS",))
+        ctor.assert_not_called()
+        self.assertEqual(report.queries[0].offers, ())
+        self.assertEqual(report.queries[0].query.destination, "NRT")
+        self.assertEqual(report.queries[0].query.origin, "BOS")
 
     def test_parse_flight_plan_occupancy(self) -> None:
         plan = parse_flight_plan(

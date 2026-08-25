@@ -788,10 +788,19 @@ def parse_exclude_airports(text: Optional[str]) -> Optional[Tuple[str, ...]]:
     return parse_via_airports(text, role="exclude-airports")
 
 
-def _blocked_iata(exclude_airports: Optional[Sequence[str]]) -> frozenset[str]:
-    if not exclude_airports:
+def parse_include_airports(text: Optional[str]) -> Optional[Tuple[str, ...]]:
+    """Parse comma-separated IATA codes for ``--include-airports``."""
+    return parse_via_airports(text, role="include-airports")
+
+
+def _named_iata(codes: Optional[Sequence[str]]) -> frozenset[str]:
+    if not codes:
         return frozenset()
-    return frozenset(code.strip().upper() for code in exclude_airports if str(code).strip())
+    return frozenset(code.strip().upper() for code in codes if str(code).strip())
+
+
+def _blocked_iata(exclude_airports: Optional[Sequence[str]]) -> frozenset[str]:
+    return _named_iata(exclude_airports)
 
 
 def trip_uses_excluded_airport(trip: Trip, exclude_airports: Optional[Sequence[str]]) -> bool:
@@ -820,12 +829,55 @@ def drop_excluded_airport_trips(
     return tuple(trip for trip in trips if not trip_uses_excluded_airport(trip, blocked))
 
 
+def trip_dest_in_include_list(trip: Trip, include_airports: Optional[Sequence[str]]) -> bool:
+    """True when the trip dest is in the owned include list.
+
+    Include is dests only: origin is not required to be in the list.
+    Unnamed include keeps every trip. Multi-city return-to-home dests
+    are not required to be in the dest shortlist.
+    """
+    allowed = _named_iata(include_airports)
+    if not allowed:
+        return True
+    if isinstance(trip, MultiCity):
+        home = trip.legs[0].origin if trip.legs else ""
+        return all(
+            leg.destination in allowed or leg.destination == home for leg in trip.legs
+        )
+    return trip.destination in allowed
+
+
+def keep_included_dest_trips(
+    trips: Sequence[Trip],
+    include_airports: Optional[Sequence[str]] = None,
+) -> Tuple[Trip, ...]:
+    """Keep trips whose dest is in the named include list.
+
+    Unnamed stays the full set. Does not rewrite a missing dest to a
+    substitute. Nearby expansions already in the list stay; others drop.
+    """
+    allowed = _named_iata(include_airports)
+    if not allowed:
+        return tuple(trips)
+    return tuple(trip for trip in trips if trip_dest_in_include_list(trip, allowed))
+
+
 def _parse_exclude_airport_list(
     exclude_airports: Optional[Sequence[str]],
 ) -> Optional[Tuple[str, ...]]:
     return (
         parse_via_airports(",".join(exclude_airports), role="exclude-airports")
         if exclude_airports
+        else None
+    )
+
+
+def _parse_include_airport_list(
+    include_airports: Optional[Sequence[str]],
+) -> Optional[Tuple[str, ...]]:
+    return (
+        parse_via_airports(",".join(include_airports), role="include-airports")
+        if include_airports
         else None
     )
 
@@ -1652,6 +1704,7 @@ def search_flights(
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
     currency: str = "EUR",
     country: Optional[str] = None,
 ) -> SearchReport:
@@ -1673,6 +1726,7 @@ def search_flights(
     if via and exclude_via and set(via) & set(exclude_via):
         raise ValueError("via and exclude-via must not share a code")
     parsed_exclude_airports = _parse_exclude_airport_list(exclude_airports)
+    parsed_include_airports = _parse_include_airport_list(include_airports)
     if sort not in FLIGHT_SORTS:
         raise ValueError(
             "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
@@ -1682,7 +1736,8 @@ def search_flights(
     currency = normalize_currency(currency)
     country = normalize_country(country)
     original = tuple(queries)
-    kept = drop_excluded_airport_trips(original, parsed_exclude_airports)
+    kept = keep_included_dest_trips(original, parsed_include_airports)
+    kept = drop_excluded_airport_trips(kept, parsed_exclude_airports)
     if not kept:
         return _empty_excluded_flight_report(original, currency=currency)
     trips = _overlay_carrier_filters(

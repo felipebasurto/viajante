@@ -206,6 +206,7 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     parse_via_airports(args.via)
     parse_via_airports(args.exclude_via, role="exclude-via")
     parse_via_airports(getattr(args, "exclude_airports", None), role="exclude-airports")
+    parse_via_airports(getattr(args, "include_airports", None), role="include-airports")
     if args.via and args.exclude_via:
         include = parse_via_airports(args.via) or ()
         exclude = parse_via_airports(args.exclude_via, role="exclude-via") or ()
@@ -768,6 +769,9 @@ def _run_flights(args: argparse.Namespace) -> int:
         exclude_airports=parse_via_airports(
             getattr(args, "exclude_airports", None), role="exclude-airports"
         ),
+        include_airports=parse_via_airports(
+            getattr(args, "include_airports", None), role="include-airports"
+        ),
         currency=args.currency,
         country=args.country,
     )
@@ -840,6 +844,7 @@ def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
         "via": None,
         "exclude_via": None,
         "exclude_airports": None,
+        "include_airports": None,
     }
     for key, value in defaults.items():
         if not hasattr(args, key):
@@ -1185,6 +1190,19 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--include-airports",
+        default=None,
+        metavar="CODES",
+        dest="include_airports",
+        help=(
+            "Keep only dests whose IATA is in this list (comma-separated). "
+            "Explore catalog dests not in the list are dropped before shop. "
+            "Dates/flex/flights keep only when dest is in the list (or nearby "
+            "already produced an owned same-city code in the list). Exclude "
+            "wins on overlap. Unnamed stays unset (full catalog)"
+        ),
+    )
+    parser.add_argument(
         "--depart-window",
         default=None,
         dest="depart_window",
@@ -1270,6 +1288,9 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "exclude_via": exclude_via,
         "exclude_airports": parse_via_airports(
             getattr(args, "exclude_airports", None), role="exclude-airports"
+        ),
+        "include_airports": parse_via_airports(
+            getattr(args, "include_airports", None), role="include-airports"
         ),
         "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
         "arrive_before": parse_named_clock(
@@ -1811,6 +1832,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Drop named origin/dest IATA in this list (comma-separated). "
             "Nearby cannot sneak an excluded same-city code back. Unnamed stays unset"
+        ),
+    )
+    flights.add_argument(
+        "--include-airports",
+        default=None,
+        metavar="CODES",
+        dest="include_airports",
+        help=(
+            "Keep the search only when dest is in this IATA list (comma-separated). "
+            "Nearby same-city dests already in the list stay. Do not rewrite to a "
+            "substitute. Unnamed stays unset"
         ),
     )
     flights.add_argument(
