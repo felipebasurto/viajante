@@ -1213,7 +1213,8 @@ class DateCliTests(unittest.TestCase):
         output = buffer.getvalue()
         self.assertIn("BOS -> LHR", output)
         self.assertIn("rt, 5 nights", output)
-        self.assertIn("410 €", output)
+        self.assertIn("410 USD", output)
+        self.assertNotIn("€", output)
 
 
 class FlexWindowTests(unittest.TestCase):
@@ -2564,8 +2565,9 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("BOS -> LHR", output)
         self.assertIn("around 2026-09-12", output)
         self.assertIn("chosen 2026-09-10", output)
-        self.assertIn("350 €", output)
+        self.assertIn("350 USD", output)
         self.assertIn("rt, 7 nights", output)
+        self.assertNotIn("€", output)
 
 
 class NearbyDateFlexTests(unittest.TestCase):
