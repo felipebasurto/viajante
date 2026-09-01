@@ -424,6 +424,10 @@ uv run ruff check src tests
 
 Fully offline. They never launch Chromium and never touch the network. `tests/test_google_flights.py` pins query encoding and drives synthetic compact shopping bodies plus HTML markup through the owned parsers. CI runs the suite on Python 3.10 through 3.14.
 
+## Scripts
+
+`python scripts/clean-repo.py` dry-runs known-safe junk (OS metadata, editor temps, logs, `__pycache__`, pytest/mypy/ruff caches); `--write` deletes. `--include-build` and `--include-deps` stay off unless named.
+
 ## Bench
 
 ```bash
