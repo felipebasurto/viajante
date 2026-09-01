@@ -1115,7 +1115,6 @@ def _iso_dates(text: str) -> list[date]:
         if month is None:
             continue
         dates.append(date(int(match.group(3)), month, int(match.group(2))))
-    # de-dupe, preserve order
     seen: set[date] = set()
     unique: list[date] = []
     for item in dates:
@@ -1163,7 +1162,7 @@ def _iter_city_iata(folded: str) -> list[tuple[str, str]]:
 
 
 def _first_city_iata(folded: str) -> Optional[str]:
-    # Same rule as the old per-alias loop: longest matching name, not leftmost.
+    # Longest matching name, not leftmost.
     best: Optional[str] = None
     best_rank: Optional[int] = None
     for name, iata in _iter_city_iata(folded):
@@ -2590,12 +2589,6 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             if dest and dest != origin:
                 destination = dest
 
-    # "to Fiji from Halifax" already handled; city aliases for dest-only fantasy
-    if origin is None and "halifax" in folded:
-        origin = "YHZ"
-    if destination is None and ("fiji" in folded or "fiyi" in folded or "nadi" in folded):
-        destination = "NAN"
-
     named_airports = _named_iata_codes(raw, folded)
     use_airports = _use_airports(raw)
     if len(pairs) <= 1:
@@ -2658,11 +2651,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     ):
         refuse.append("contradictory_dates")
 
-    if (
-        "nonstop" in folded
-        and via_regions
-        and ("fiji" in folded or "fiyi" in folded or destination == "NAN")
-    ):
+    if "nonstop" in folded and via_regions:
         refuse.append("contradictory_routing")
     elif _impossible_packaged_via(
         via_regions=via_regions,
@@ -2918,7 +2907,6 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         )
     )
 
-    # Intent
     intent: Intent = "flights"
     extra_refuse: list[str] = []
     booking_match = _BOOKING_PRIMARY.search(raw)

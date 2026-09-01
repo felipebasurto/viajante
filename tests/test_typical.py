@@ -21,7 +21,6 @@ from viajante.models import (
 )
 from viajante.typical import (
     MIN_DAILY_PRICES,
-    NEAR_RATIO,
     TYPICAL_WINDOW_DAYS,
     typical_eur_from_daily_prices,
     vs_typical,
@@ -131,8 +130,7 @@ class TypicalFromDailyPricesTests(unittest.TestCase):
     def test_window_cap_matches_the_dates_calendar(self) -> None:
         self.assertEqual(TYPICAL_WINDOW_DAYS, MAX_DATE_WINDOW_DAYS)
         self.assertEqual(MIN_DAILY_PRICES, 3)
-        self.assertEqual(NEAR_RATIO, 0.10)
-        self.assertEqual(NEAR_RATIO, NEAR_TYPICAL_RATIO)
+        self.assertEqual(NEAR_TYPICAL_RATIO, 0.10)
 
     def test_median_of_owned_daily_prices(self) -> None:
         self.assertEqual(

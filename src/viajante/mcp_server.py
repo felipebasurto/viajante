@@ -18,7 +18,7 @@ from viajante.mcp_handlers import (
 )
 
 _HELP = """\
-viajante-mcp — stdio MCP server for local flight and hotel search.
+viajante-mcp is the stdio MCP server for local flight and hotel search.
 
 Install:  uv sync --extra mcp
 Run:      viajante-mcp
@@ -41,7 +41,7 @@ def build_server():
         max_stops: int = 1,
         adults: int = 1,
         cabin: str = "economy",
-        top: int = 8,
+        top: int = DEFAULT_TOP,
         fetch: str = "auto",
         airlines: str | None = None,
         exclude_airlines: str | None = None,
@@ -355,7 +355,7 @@ def build_server():
         check_out: str,
         adults: int = 2,
         rooms: int = 1,
-        top: int = 8,
+        top: int = DEFAULT_TOP,
         min_rating: float | None = None,
         entire_home: bool = False,
         free_cancellation: bool = True,
@@ -387,7 +387,7 @@ def build_server():
         adults: int = 1,
         rooms: int = 1,
         cabin: str = "economy",
-        top: int = 8,
+        top: int = DEFAULT_TOP,
         fetch: str = "auto",
         baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
         sort: str = "ranked",
