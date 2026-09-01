@@ -25,6 +25,7 @@
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
+- Repo junk cleaner: `scripts/clean-repo.py`
 
 `google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
 
