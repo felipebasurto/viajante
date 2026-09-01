@@ -1,10 +1,3 @@
-<p align="center">
-  <img src="docs/assets/viajante-hero.svg" alt="viajante: local flight and hotel search from any IATA pair, no API keys" width="100%">
-</p>
-<p align="center">
-  <img src="docs/assets/viajante-flip.gif" alt="VIAJANTE split-flap wordmark flipping into place" width="80%">
-</p>
-
 viajante searches Google Flights and hotels from your machine. Any IATA pair or city. No API keys, no account. Quotes are requested in EUR so a New York–Tokyo fare and a Sydney–Auckland fare compare.
 
 The name is Portuguese/Spanish for traveller. Shortlist a route. Do not brute-force every date and city.
@@ -176,10 +169,6 @@ uv run viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt -
 When a search names flights and a hotel on overlapping dates, viajante prints the owned cabin fare, the owned hotel stay, and their sum. Hotel `price_basis` stays `total_stay`. If either side misses (empty offers, fetch error, dates that do not overlap), the sum is omitted — never invented. `--adults` applies to both searches. Hotel check-in/out default to the earliest and latest flight dates when the route has two dates; override with `--check-in` / `--check-out`. Flight shop uses the same owned `--bags` / `--via` / `--no-overnight` / `--require-overnight` / `--exclude-airports` / `--include-airports` / `--airlines` / `--price-cap` / `--arrive-before` / `--depart-after` post-filters as `viajante flights`; unnamed stays unset. `--nearby` expands origin or dest to owned same-city IATA (default off; named open-jaw stays; no invented codes). Nearby cannot sneak an excluded same-city code back. Nearby alternatives contribute the cheapest owned fare in that city group, not a sum of every airport. MCP `search_trip` is the same join (Google hotels by default). `--save` writes both nested reports plus `trip_total` only when both sides hit.
 
 ## HTTP or Chromium
-
-<p align="center">
-  <img src="docs/assets/how-viajante-works.svg" alt="viajante search path: validate, then sweep HTTP or detail Chromium, then typed offers with raw card text" width="100%">
-</p>
 
 The CLI validates the route before anything starts. HTTP sweep reuses one Chrome TLS session with HTTP/2 multiplex. Empty/drift/5xx retries once after 50 ms; HTTP 429 resets TLS, waits 50 ms, and continues remaining jobs on a fresh session. Happy path does not sleep. Chromium paths sleep 4.5 to 6 seconds between queries on purpose. Consent cookies stay in your state directory, not in this checkout.
 
