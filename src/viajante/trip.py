@@ -13,7 +13,6 @@ from typing import Callable, Optional, Sequence, Tuple
 
 from viajante.airports import get_airport
 from viajante.flights import (
-    DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
     FlightSort,
     search_flights,
@@ -31,7 +30,9 @@ from viajante.models import (
     Trip,
     TripSearchReport,
     TripTotal,
+    format_money,
 )
+from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import write_json_atomic
 
 
@@ -86,7 +87,7 @@ def _fare_group_key(query: Trip) -> tuple[str, str, str]:
 def _cheapest_fare(result: QuerySuccess) -> Optional[float]:
     if not result.offers:
         return None
-    return min(offer.price_eur for offer in result.offers)
+    return min(offer.price for offer in result.offers)
 
 
 def _owned_flight_fare(
@@ -132,7 +133,7 @@ def _owned_hotel_stay(
             continue
         if not isinstance(result, HotelQuerySuccess) or not result.offers:
             continue
-        stay = min(offer.total_price_eur for offer in result.offers)
+        stay = min(offer.total_price for offer in result.offers)
         nights = result.query.nights
         if best is None or stay < best[0]:
             best = (stay, nights)
@@ -154,9 +155,9 @@ def owned_trip_total(
         return None
     stay_eur, nights = stay
     return TripTotal(
-        flight_fare_eur=fare,
-        hotel_stay_eur=stay_eur,
-        total_eur=fare + stay_eur,
+        flight_fare=fare,
+        hotel_stay=stay_eur,
+        total=fare + stay_eur,
         nights=nights,
     )
 
@@ -166,15 +167,15 @@ def _overlay_trip_shop_filters(
     *,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
 ) -> tuple[Trip, ...]:
     overlay: dict[str, object] = {}
     if bags is not None:
         overlay["bags"] = bags
     if carry_on is not None:
         overlay["carry_on"] = carry_on
-    if price_cap_eur is not None:
-        overlay["price_cap_eur"] = price_cap_eur
+    if price_cap is not None:
+        overlay["price_cap"] = price_cap
     if not overlay:
         return tuple(trips)
     return tuple(replace(trip, **overlay) for trip in trips)
@@ -185,7 +186,7 @@ def search_trip(
     hotel_query: HotelQuery,
     *,
     top: int = DEFAULT_TOP,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
     fetch: str = "auto",
@@ -207,18 +208,22 @@ def search_trip(
     include_airports: Optional[Sequence[str]] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
-    currency: str = "EUR",
+    price_cap: Optional[int] = None,
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     hotel_source: HotelSourceName = "google",
 ) -> TripSearchReport:
     """Run flights then hotels sequentially. Omit trip_total when either misses."""
+    if not trips:
+        raise ValueError("at least one query is required")
+    currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     flights = search_flights(
         _overlay_trip_shop_filters(
             trips,
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap_eur,
+            price_cap=price_cap,
         ),
         top=top,
         buffer_eur=buffer_eur,
@@ -249,6 +254,7 @@ def search_trip(
         top=top,
         progress=progress,
         source=hotel_source,
+        currency=currency,
     )
     fetch_ms: Optional[int] = None
     if flights.fetch_ms is not None or hotels.fetch_ms is not None:
@@ -269,10 +275,11 @@ def write_trip_report_atomic(report: TripSearchReport, destination: Path) -> Non
     write_json_atomic(report.to_dict(), destination)
 
 
-def format_trip_total(total: TripTotal) -> str:
+def format_trip_total(total: TripTotal, currency: str = "EUR") -> str:
     nights_label = "night" if total.nights == 1 else "nights"
     return (
-        f"Trip total: {total.flight_fare_eur:.0f} € fare + "
-        f"{total.hotel_stay_eur:.0f} € stay (total stay, {total.nights} {nights_label}) = "
-        f"{total.total_eur:.0f} €"
+        f"Trip total: {format_money(total.flight_fare, currency)} fare + "
+        f"{format_money(total.hotel_stay, currency)} stay "
+        f"(total stay, {total.nights} {nights_label}) = "
+        f"{format_money(total.total, currency)}"
     )

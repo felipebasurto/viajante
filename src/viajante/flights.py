@@ -42,7 +42,6 @@ from viajante.models import (
     StopsCompareSide,
     Trip,
     normalize_country,
-    normalize_currency,
     owned_calendar_summary,
 )
 from viajante.orchestration import (
@@ -58,9 +57,10 @@ from viajante.orchestration import (
 from viajante.parsers import (
     normalize_clock,
     parse_duration_hours,
-    parse_price_eur,
+    parse_price,
     parse_stops_count,
 )
+from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import default_state_dir, write_json_atomic
 from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
@@ -384,7 +384,7 @@ def parse_route_specs(
     cabin: FlightCabin = "economy",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -399,7 +399,7 @@ def parse_route_specs(
         "cabin": cabin,
         "bags": bags,
         "carry_on": carry_on,
-        "price_cap_eur": price_cap_eur,
+        "price_cap": price_cap,
     }
     queries: list[FlightQuery] = []
     for spec in specs:
@@ -481,7 +481,7 @@ def parse_flight_plan(
     cabin: FlightCabin = "economy",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -495,7 +495,7 @@ def parse_flight_plan(
         "cabin": cabin,
         "bags": bags,
         "carry_on": carry_on,
-        "price_cap_eur": price_cap_eur,
+        "price_cap": price_cap,
     }
     if kind == "one-way":
         return parse_route_specs(
@@ -535,7 +535,7 @@ def _parse_round_trip_plan(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -548,7 +548,7 @@ def _parse_round_trip_plan(
             cabin=cabin,
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap_eur,
+            price_cap=price_cap,
             children=children,
             infants_in_seat=infants_in_seat,
             infants_on_lap=infants_on_lap,
@@ -577,7 +577,7 @@ def _parse_round_trip_plan(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
     )
 
 
@@ -589,7 +589,7 @@ def _parse_open_jaw_rt_package(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -607,7 +607,7 @@ def _parse_open_jaw_rt_package(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
         children=children,
         infants_in_seat=infants_in_seat,
         infants_on_lap=infants_on_lap,
@@ -622,7 +622,7 @@ def _parse_multi_city_plan(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -655,7 +655,7 @@ def _parse_multi_city_plan(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
     )
 
 
@@ -1211,7 +1211,7 @@ def _passes_depart_after(clock_text: Optional[str], bound: Optional[int]) -> boo
     return minutes >= bound
 
 
-def baggage_buffer_eur(
+def baggage_buffer(
     airline_text: str,
     *,
     buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
@@ -1274,11 +1274,11 @@ def _normalize_offer(
     require_overnight: Optional[Sequence[str]] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
 ) -> Optional[FlightOffer]:
     price_text = raw.price or ""
-    price_eur = parse_price_eur(price_text)
-    if price_eur is None or price_eur <= 0:
+    price = parse_price(price_text)
+    if price is None or price <= 0:
         return None
     if not _eligible_stops(raw.stops, max_stops):
         return None
@@ -1288,7 +1288,7 @@ def _normalize_offer(
         return None
     if not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
         return None
-    if price_cap_eur is not None and price_eur > price_cap_eur:
+    if price_cap is not None and price > price_cap:
         return None
     if not _passes_via_filters(raw, via=via, exclude_via=exclude_via):
         return None
@@ -1339,8 +1339,8 @@ def _normalize_offer(
         airline=raw.airline,
         departure=normalize_clock(raw.departure) or raw.departure,
         arrival=normalize_clock(raw.arrival) or raw.arrival,
-        price=price_text,
-        price_eur=price_eur,
+        price_text=price_text,
+        price=price,
         duration=raw.duration,
         duration_hours=duration_hours,
         stops=raw.stops,
@@ -1349,7 +1349,7 @@ def _normalize_offer(
         layover_hours=layover_hours,
         flight_numbers=raw.flight_numbers,
         booking_token=raw.booking_token,
-        baggage_buffer_eur=buffer,
+        baggage_buffer=buffer,
         needs_bag_verify=needs_verify,
         legs=legs,
         checked_bags=raw.checked_bags,
@@ -1363,7 +1363,7 @@ def _normalize_offer(
 
 
 def _effective_cost(offer: FlightOffer) -> float:
-    return offer.price_eur + offer.baggage_buffer_eur
+    return offer.price + offer.baggage_buffer
 
 
 def _fastest_duration(offers: Sequence[FlightOffer]) -> Optional[float]:
@@ -1398,7 +1398,7 @@ def _cheapest_by_fare(offers: Sequence[FlightOffer]) -> Optional[FlightOffer]:
         duration = offer.duration_hours
         if duration is None:
             duration = UNKNOWN_DURATION_SORTS_LAST
-        return (offer.price_eur, duration)
+        return (offer.price, duration)
 
     return min(offers, key=sort_key)
 
@@ -1442,16 +1442,16 @@ def _rank_offers(
         if duration is None:
             duration = UNKNOWN_DURATION_SORTS_LAST
         if sort == "duration":
-            return (duration, offer.price_eur)
+            return (duration, offer.price)
         if sort == "departure":
             minutes = _clock_minutes(offer.departure)
             primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
-            return (primary, offer.price_eur)
+            return (primary, offer.price)
         if sort == "arrival":
             minutes = _clock_minutes(offer.arrival)
             primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
-            return (primary, offer.price_eur)
-        primary = offer.price_eur if sort in ("fare", "price") else _effective_cost(offer)
+            return (primary, offer.price)
+        primary = offer.price if sort in ("fare", "price") else _effective_cost(offer)
         return (primary, duration)
 
     rows = sorted(rows, key=sort_key)
@@ -1462,7 +1462,7 @@ def _rank_offers(
             offer.airline,
             normalize_clock(offer.departure) or offer.departure,
             normalize_clock(offer.arrival) or offer.arrival,
-            offer.price_eur,
+            offer.price,
             offer.stops_count,
             offer.duration_hours,
         )
@@ -1516,7 +1516,7 @@ def _summary_from_calendar_days(
     if not days:
         return None
     in_window = [
-        (row.departure_date, row.price_eur) for row in days if start <= row.departure_date <= end
+        (row.departure_date, row.price) for row in days if start <= row.departure_date <= end
     ]
     return owned_calendar_summary(in_window)
 
@@ -1586,9 +1586,9 @@ def _stamp_typical(
     return tuple(
         with_typical(
             offer,
-            summary.median_eur,
+            summary.median_price,
             cheapest_date=summary.cheapest_date,
-            cheapest_eur=summary.min_eur,
+            cheapest=summary.min_price,
         )
         for offer in offers
     )
@@ -1653,7 +1653,7 @@ def _run_search(
                     require_overnight=require_overnight,
                     bags=trip.bags,
                     carry_on=trip.carry_on,
-                    price_cap_eur=trip.price_cap_eur,
+                    price_cap=trip.price_cap,
                 )
             )
             is not None
@@ -1867,7 +1867,7 @@ def search_flights(
     queries: Sequence[Trip],
     *,
     top: int = DEFAULT_TOP,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
     fetch: FetchMode = "auto",
@@ -1887,15 +1887,15 @@ def search_flights(
     require_overnight: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
     include_airports: Optional[Sequence[str]] = None,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
 ) -> SearchReport:
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
         raise ValueError("top must be positive")
-    if buffer_eur < 0:
-        raise ValueError("buffer_eur must not be negative")
+    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     validate_layover_hours(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
@@ -1916,7 +1916,6 @@ def search_flights(
         )
     if fetch not in ("auto", "sweep", "detail"):
         raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
-    currency = normalize_currency(currency)
     country = normalize_country(country)
     original = tuple(queries)
     kept = keep_included_dest_trips(original, parsed_include_airports)

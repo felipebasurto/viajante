@@ -35,8 +35,8 @@ from viajante.models import (
     SearchError,
     StopsCompare,
     normalize_country,
-    normalize_currency,
 )
+from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import write_json_atomic
 from viajante.typical import with_typical_dest
 
@@ -113,7 +113,7 @@ def _named_shop_filters(
     *,
     bags: Optional[int],
     carry_on: Optional[int],
-    price_cap_eur: Optional[int],
+    price_cap: Optional[int],
     airlines: Optional[Sequence[str]],
     exclude_airlines: Optional[Sequence[str]],
     alliances: Optional[Sequence[str]],
@@ -132,7 +132,7 @@ def _named_shop_filters(
     return (
         bags is not None
         or carry_on is not None
-        or price_cap_eur is not None
+        or price_cap is not None
         or bool(airlines)
         or bool(exclude_airlines)
         or bool(alliances)
@@ -166,20 +166,20 @@ def _rank_explore_destinations(
         if sort == "duration":
             missing = row.duration_hours is None
             hours = row.duration_hours if row.duration_hours is not None else 0.0
-            return (missing, hours, row.price_eur is None, row.price_eur or 0.0, row.iata)
+            return (missing, hours, row.price is None, row.price or 0.0, row.iata)
         if sort == "departure":
             minutes = _clock_minutes(row.departure)
             missing = minutes is None
-            return (missing, minutes or 0, row.price_eur is None, row.price_eur or 0.0, row.iata)
+            return (missing, minutes or 0, row.price is None, row.price or 0.0, row.iata)
         if sort == "arrival":
             minutes = _clock_minutes(row.arrival)
             missing = minutes is None
-            return (missing, minutes or 0, row.price_eur is None, row.price_eur or 0.0, row.iata)
-        fare = row.price_eur if row.price_eur is not None else 0.0
+            return (missing, minutes or 0, row.price is None, row.price or 0.0, row.iata)
+        fare = row.price if row.price is not None else 0.0
         if sort == "ranked":
-            buffer = row.baggage_buffer_eur or 0
-            return (row.price_eur is None, fare + buffer, row.iata)
-        return (row.price_eur is None, fare, row.iata)
+            buffer = row.baggage_buffer or 0
+            return (row.price is None, fare + buffer, row.iata)
+        return (row.price is None, fare, row.iata)
 
     return tuple(sorted(dests, key=sort_key))
 
@@ -199,7 +199,7 @@ def _explore_for_origin(
     max_stops: int,
     bags: Optional[int],
     carry_on: Optional[int],
-    price_cap_eur: Optional[int],
+    price_cap: Optional[int],
     airlines: Optional[Sequence[str]],
     exclude_airlines: Optional[Sequence[str]],
     alliances: Optional[Sequence[str]],
@@ -276,7 +276,7 @@ def _explore_for_origin(
             cabin=cabin,
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap_eur,
+            price_cap=price_cap,
             airlines=airlines,
             exclude_airlines=exclude_airlines,
             alliances=alliances,
@@ -294,14 +294,14 @@ def _explore_for_origin(
             buffer_eur=buffer_eur,
             sort=sort,
         )
-        price = cheapest.price_eur if cheapest is not None else None
+        price = cheapest.price if cheapest is not None else None
         if drop_unpriced and price is None:
             continue
         dest = ExploreDestination(
             iata=place.iata,
             city=place.city,
             country=place.country,
-            price_eur=price,
+            price=price,
             duration_hours=cheapest.duration_hours if cheapest is not None else None,
             departure=(
                 cheapest.departure
@@ -315,12 +315,12 @@ def _explore_for_origin(
             ),
             stops_compare=compare,
             google_flights_url=google_flights_url(shop, currency=currency, country=country),
-            baggage_buffer_eur=(cheapest.baggage_buffer_eur if cheapest is not None else None),
+            baggage_buffer=(cheapest.baggage_buffer if cheapest is not None else None),
         )
         if price is not None:
             summary = _calendar_summary_from_source(client, shop, typical_cache)
             if summary is not None:
-                dest = with_typical_dest(dest, summary.median_eur)
+                dest = with_typical_dest(dest, summary.median_price)
         priced.append(dest)
     destinations = _rank_explore_destinations(priced, sort)
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
@@ -352,7 +352,7 @@ def search_explore(
     max_stops: int = 1,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     alliances: Optional[Sequence[str]] = None,
@@ -371,28 +371,25 @@ def search_explore(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     sort: FlightSort = "price",
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
 ) -> ExploreReport | tuple[ExploreReport, ...]:
-    currency = normalize_currency(currency)
     country = normalize_country(country)
     validate_explore_window(start, days)
     if top <= 0:
         raise ValueError("top must be positive")
     if top > MAX_EXPLORE_TOP:
         raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
-    if buffer_eur < 0:
-        raise ValueError("baggage buffer must not be negative")
     if sort not in FLIGHT_SORTS:
         raise ValueError(
             "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
         )
-    if price_cap_eur is not None and price_cap_eur <= 0:
-        raise ValueError("price_cap_eur must be positive")
+    if price_cap is not None and price_cap <= 0:
+        raise ValueError("price_cap must be positive")
     validate_layover_hours(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
@@ -408,11 +405,15 @@ def search_explore(
     origin = origin.strip().upper()
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
+    currency = resolve_quote_currency(currency, origin)
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
+    if buffer_eur < 0:
+        raise ValueError("baggage buffer must not be negative")
     report_progress = progress or (lambda _: None)
     drop_unpriced = _named_shop_filters(
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
         alliances=alliances,
@@ -459,7 +460,7 @@ def search_explore(
                     max_stops=max_stops,
                     bags=bags,
                     carry_on=carry_on,
-                    price_cap_eur=price_cap_eur,
+                    price_cap=price_cap,
                     airlines=airlines,
                     exclude_airlines=exclude_airlines,
                     alliances=alliances,
@@ -517,7 +518,7 @@ def _cheapest_shop(
     cabin: FlightCabin,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     alliances: Optional[Sequence[str]] = None,
@@ -551,7 +552,7 @@ def _cheapest_shop(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
         airlines=airline_codes,
         exclude_airlines=exclude_codes,
         alliances=alliance_names,
@@ -583,7 +584,7 @@ def _cheapest_shop(
                 require_overnight=require_overnight,
                 bags=query.bags,
                 carry_on=query.carry_on,
-                price_cap_eur=query.price_cap_eur,
+                price_cap=query.price_cap,
             )
         )
         is not None

@@ -583,8 +583,8 @@ def invention_reason(prompt: str, plan: PromptPlan) -> Optional[str]:
     """
     prompt_amounts = _eur_amounts(prompt)
     plan_amounts = _eur_amounts(plan.notes)
-    if plan.price_cap_eur is not None:
-        plan_amounts.add(int(plan.price_cap_eur))
+    if plan.price_cap is not None:
+        plan_amounts.add(int(plan.price_cap))
     extra_amounts = plan_amounts - prompt_amounts
     if extra_amounts:
         amount = sorted(extra_amounts)[0]

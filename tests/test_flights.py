@@ -443,14 +443,14 @@ class FlightsOrchestrationTests(unittest.TestCase):
         raw = card(airline="Ryanair", price="50 €", checked_bags=1, carry_on=0)
         offer = _normalize_offer(raw, max_stops=1)
         assert offer is not None
-        self.assertEqual(offer.baggage_buffer_eur, 0)
+        self.assertEqual(offer.baggage_buffer, 0)
         self.assertFalse(offer.needs_bag_verify)
 
     def test_requested_bags_without_parsed_counts_do_not_invent_a_fee(self) -> None:
         raw = card(airline="Ryanair", price="50 €")
         offer = _normalize_offer(raw, max_stops=1, bags=1)
         assert offer is not None
-        self.assertEqual(offer.baggage_buffer_eur, 0)
+        self.assertEqual(offer.baggage_buffer, 0)
         self.assertTrue(offer.needs_bag_verify)
         self.assertNotIn("checked_bags", offer.to_dict())
 
@@ -461,27 +461,27 @@ class FlightsOrchestrationTests(unittest.TestCase):
         default = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1)
         self.assertIsNone(default[0].bags)
         self.assertIsNone(default[0].carry_on)
-        self.assertIsNone(default[0].price_cap_eur)
+        self.assertIsNone(default[0].price_cap)
 
     def test_named_price_cap_drops_owned_fares_above_the_cap(self) -> None:
         under = card(price="199 €")
         at_cap = card(price="200 €")
         over = card(price="201 €")
-        self.assertIsNotNone(_normalize_offer(under, 1, price_cap_eur=200))
-        self.assertIsNotNone(_normalize_offer(at_cap, 1, price_cap_eur=200))
-        self.assertIsNone(_normalize_offer(over, 1, price_cap_eur=200))
+        self.assertIsNotNone(_normalize_offer(under, 1, price_cap=200))
+        self.assertIsNotNone(_normalize_offer(at_cap, 1, price_cap=200))
+        self.assertIsNone(_normalize_offer(over, 1, price_cap=200))
         self.assertIsNotNone(_normalize_offer(over, 1))
         four_hundred = card(price="400 €")
         over_four = card(price="401 €")
-        self.assertIsNotNone(_normalize_offer(four_hundred, 1, price_cap_eur=400))
-        self.assertIsNone(_normalize_offer(over_four, 1, price_cap_eur=400))
+        self.assertIsNotNone(_normalize_offer(four_hundred, 1, price_cap=400))
+        self.assertIsNone(_normalize_offer(over_four, 1, price_cap=400))
 
     def test_parse_flight_plan_named_price_cap_stays_off_index_7(self) -> None:
-        plan = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1, price_cap_eur=200)
-        self.assertEqual(plan[0].price_cap_eur, 200)
+        plan = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1, price_cap=200)
+        self.assertEqual(plan[0].price_cap, 200)
         self.assertIsNone(build_shopping_inner(plan[0])[1][7])
         unnamed = parse_flight_plan(["MAD-BCN:2026-09-01"], max_stops=1)
-        self.assertIsNone(unnamed[0].price_cap_eur)
+        self.assertIsNone(unnamed[0].price_cap)
         self.assertIsNone(build_shopping_inner(unnamed[0])[1][7])
 
     def test_unlabelled_stops_are_rejected_when_only_direct_flights_are_wanted(self) -> None:
@@ -521,39 +521,39 @@ class FlightsOrchestrationTests(unittest.TestCase):
                 airline="Ryanair",
                 departure="07:00",
                 arrival="09:00",
-                price="50 €",
-                price_eur=50.0,
+                price_text="50 €",
+                price=50.0,
                 duration="2 h",
                 duration_hours=2.0,
                 stops="Directo",
                 stops_count=0,
-                baggage_buffer_eur=70,
+                baggage_buffer=70,
                 needs_bag_verify=True,
             ),
             FlightOffer(
                 airline="Legacy",
                 departure="08:00",
                 arrival="10:00",
-                price="100 €",
-                price_eur=100.0,
+                price_text="100 €",
+                price=100.0,
                 duration="2 h",
                 duration_hours=2.0,
                 stops="Directo",
                 stops_count=0,
-                baggage_buffer_eur=0,
+                baggage_buffer=0,
                 needs_bag_verify=False,
             ),
             FlightOffer(
                 airline="Ryanair",
                 departure="07:00",
                 arrival="09:00",
-                price="50 €",
-                price_eur=50.0,
+                price_text="50 €",
+                price=50.0,
                 duration="2 h",
                 duration_hours=2.0,
                 stops="Directo",
                 stops_count=0,
-                baggage_buffer_eur=70,
+                baggage_buffer=70,
                 needs_bag_verify=True,
             ),
         )
@@ -576,8 +576,8 @@ class FlightsOrchestrationTests(unittest.TestCase):
         )
         offer = _normalize_offer(raw, max_stops=1)
         assert offer is not None
-        self.assertEqual(offer.price, "129 €")
-        self.assertEqual(offer.price_eur, 129.0)
+        self.assertEqual(offer.price_text, "129 €")
+        self.assertEqual(offer.price, 129.0)
         self.assertEqual(offer.duration, "2 h 50 min")
         self.assertAlmostEqual(offer.duration_hours or 0, 2 + 50 / 60)
         self.assertEqual(offer.stops, "Nonstop")
@@ -589,13 +589,13 @@ class FlightsOrchestrationTests(unittest.TestCase):
                 airline="Iberia",
                 departure="08:00",
                 arrival="09:00",
-                price="100 €",
-                price_eur=100.0,
+                price_text="100 €",
+                price=100.0,
                 duration=f"{hours} h",
                 duration_hours=hours,
                 stops="Nonstop" if stops_count == 0 else "1 stop",
                 stops_count=stops_count,
-                baggage_buffer_eur=0,
+                baggage_buffer=0,
                 needs_bag_verify=False,
             )
 
@@ -926,7 +926,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(query.to_dict()["trip"], "rt")
         self.assertEqual(query.to_dict()["return_date"], "2026-10-12")
         assert isinstance(report.queries[0], QuerySuccess)
-        self.assertEqual(report.queries[0].offers[0].price_eur, 120.0)
+        self.assertEqual(report.queries[0].offers[0].price, 120.0)
 
     def test_search_stamps_google_flights_urls(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
@@ -1468,26 +1468,26 @@ class OfferFilterTests(unittest.TestCase):
             airline="Slow",
             departure="08:00",
             arrival="14:00",
-            price="80 €",
-            price_eur=80.0,
+            price_text="80 €",
+            price=80.0,
             duration="6 h",
             duration_hours=6.0,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         fast = FlightOffer(
             airline="Fast",
             departure="09:00",
             arrival="10:20",
-            price="120 €",
-            price_eur=120.0,
+            price_text="120 €",
+            price=120.0,
             duration="1 h 20 min",
             duration_hours=1 + 20 / 60,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         ranked = _rank_offers((slow, fast), top=5, sort="duration")
@@ -1499,26 +1499,26 @@ class OfferFilterTests(unittest.TestCase):
             airline="Cheap",
             departure="21:00",
             arrival="22:20",
-            price="40 €",
-            price_eur=40.0,
+            price_text="40 €",
+            price=40.0,
             duration="1 h 20 min",
             duration_hours=1 + 20 / 60,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=70,
+            baggage_buffer=70,
             needs_bag_verify=True,
         )
         dear = FlightOffer(
             airline="Dear",
             departure="09:00",
             arrival="10:20",
-            price="90 €",
-            price_eur=90.0,
+            price_text="90 €",
+            price=90.0,
             duration="1 h 20 min",
             duration_hours=1 + 20 / 60,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         by_price = _rank_offers((dear, cheap), top=5, sort="price")
@@ -1533,26 +1533,26 @@ class OfferFilterTests(unittest.TestCase):
             airline="Late",
             departure="19:40",
             arrival="21:00",
-            price="80 €",
-            price_eur=80.0,
+            price_text="80 €",
+            price=80.0,
             duration="1 h 20 min",
             duration_hours=1 + 20 / 60,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         early = FlightOffer(
             airline="Early",
             departure="06:15",
             arrival="22:10",
-            price="120 €",
-            price_eur=120.0,
+            price_text="120 €",
+            price=120.0,
             duration="15 h 55 min",
             duration_hours=15 + 55 / 60,
             stops="1 stop",
             stops_count=1,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         by_depart = _rank_offers((late, early), top=5, sort="departure")
@@ -1565,28 +1565,28 @@ class OfferFilterTests(unittest.TestCase):
             airline="Iberia",
             departure="09:30",
             arrival="10:50",
-            price="€88",
-            price_eur=88.0,
+            price_text="€88",
+            price=88.0,
             duration="1 hr 20 min",
             duration_hours=1 + 20 / 60,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         overnight = FlightOffer(
             airline="Air Europa",
             departure="21:00",
             arrival="18:00",
-            price="€69",
-            price_eur=69.0,
+            price_text="€69",
+            price=69.0,
             duration="21 hr",
             duration_hours=21.0,
             stops="1 stop",
             stops_count=1,
             layover_city="Palma",
             layover_hours=18.0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         ranked = _rank_offers((overnight, nonstop), top=5, sort="ranked")
@@ -1599,26 +1599,26 @@ class OfferFilterTests(unittest.TestCase):
             airline="Korean Air",
             departure="10:00",
             arrival="16:00",
-            price="€400",
-            price_eur=400.0,
+            price_text="€400",
+            price=400.0,
             duration="17 hr",
             duration_hours=17.0,
             stops="1 stop",
             stops_count=1,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         two_stop = FlightOffer(
             airline="China Southern",
             departure="21:00",
             arrival="21:50",
-            price="€314",
-            price_eur=314.0,
+            price_text="€314",
+            price=314.0,
             duration="17 hr 50 min",
             duration_hours=17 + 50 / 60,
             stops="2 stops",
             stops_count=2,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         ranked = _rank_offers((one_stop, two_stop), top=5, sort="ranked")
@@ -1629,13 +1629,13 @@ class OfferFilterTests(unittest.TestCase):
 def _fare_offer(
     *,
     airline: str,
-    price_eur: float,
+    price: float,
     stops_count: int,
     duration_hours: float = 2.0,
     duration: str = "2 h",
     layover_city: str | None = None,
     layover_hours: float | None = None,
-    baggage_buffer_eur: int = 0,
+    baggage_buffer: int = 0,
     needs_bag_verify: bool = False,
     stops: str | None = None,
 ) -> FlightOffer:
@@ -1650,15 +1650,15 @@ def _fare_offer(
         airline=airline,
         departure="08:00",
         arrival="10:00",
-        price=f"{price_eur:.0f} €",
-        price_eur=price_eur,
+        price_text=f"{price:.0f} €",
+        price=price,
         duration=duration,
         duration_hours=duration_hours,
         stops=stops,
         stops_count=stops_count,
         layover_city=layover_city,
         layover_hours=layover_hours,
-        baggage_buffer_eur=baggage_buffer_eur,
+        baggage_buffer=baggage_buffer,
         needs_bag_verify=needs_bag_verify,
     )
 
@@ -1667,42 +1667,42 @@ class StopsCompareTests(unittest.TestCase):
     def test_picks_cheapest_cabin_fare_in_each_bucket(self) -> None:
         compare = compare_nonstop_vs_one_stop(
             (
-                _fare_offer(airline="Iberia", price_eur=120.0, stops_count=0),
-                _fare_offer(airline="Vueling", price_eur=90.0, stops_count=0),
-                _fare_offer(airline="Ryanair", price_eur=55.0, stops_count=1),
-                _fare_offer(airline="Air Europa", price_eur=80.0, stops_count=1),
+                _fare_offer(airline="Iberia", price=120.0, stops_count=0),
+                _fare_offer(airline="Vueling", price=90.0, stops_count=0),
+                _fare_offer(airline="Ryanair", price=55.0, stops_count=1),
+                _fare_offer(airline="Air Europa", price=80.0, stops_count=1),
             )
         )
         assert compare is not None
         assert compare.nonstop is not None
         assert compare.one_stop is not None
         self.assertEqual(compare.nonstop.airline, "Vueling")
-        self.assertEqual(compare.nonstop.price_eur, 90.0)
+        self.assertEqual(compare.nonstop.price, 90.0)
         self.assertEqual(compare.one_stop.airline, "Ryanair")
-        self.assertEqual(compare.one_stop.price_eur, 55.0)
+        self.assertEqual(compare.one_stop.price, 55.0)
 
     def test_uses_fare_not_ranked_buffer(self) -> None:
         compare = compare_nonstop_vs_one_stop(
             (
                 _fare_offer(
                     airline="Ryanair",
-                    price_eur=40.0,
+                    price=40.0,
                     stops_count=0,
-                    baggage_buffer_eur=70,
+                    baggage_buffer=70,
                     needs_bag_verify=True,
                 ),
-                _fare_offer(airline="Iberia", price_eur=100.0, stops_count=0),
+                _fare_offer(airline="Iberia", price=100.0, stops_count=0),
             )
         )
         assert compare is not None
         assert compare.nonstop is not None
         self.assertEqual(compare.nonstop.airline, "Ryanair")
-        self.assertEqual(compare.nonstop.price_eur, 40.0)
+        self.assertEqual(compare.nonstop.price, 40.0)
         self.assertIsNone(compare.one_stop)
 
     def test_omits_empty_one_stop_side(self) -> None:
         compare = compare_nonstop_vs_one_stop(
-            (_fare_offer(airline="Iberia", price_eur=88.0, stops_count=0),)
+            (_fare_offer(airline="Iberia", price=88.0, stops_count=0),)
         )
         assert compare is not None
         assert compare.nonstop is not None
@@ -1712,7 +1712,7 @@ class StopsCompareTests(unittest.TestCase):
 
     def test_omits_empty_nonstop_side(self) -> None:
         compare = compare_nonstop_vs_one_stop(
-            (_fare_offer(airline="Ryanair", price_eur=49.0, stops_count=1),)
+            (_fare_offer(airline="Ryanair", price=49.0, stops_count=1),)
         )
         assert compare is not None
         assert compare.one_stop is not None
@@ -1721,18 +1721,18 @@ class StopsCompareTests(unittest.TestCase):
         self.assertEqual(set(compare.to_dict()), {"one_stop"})
 
     def test_omits_block_when_no_zero_or_one_stop(self) -> None:
-        two_stop = _fare_offer(airline="China Southern", price_eur=314.0, stops_count=2)
+        two_stop = _fare_offer(airline="China Southern", price=314.0, stops_count=2)
         unknown = FlightOffer(
             airline="Mystery",
             departure="08:00",
             arrival="10:00",
-            price="40 €",
-            price_eur=40.0,
+            price_text="40 €",
+            price=40.0,
             duration="2 h",
             duration_hours=2.0,
             stops="Unknown",
             stops_count=None,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         self.assertIsNone(compare_nonstop_vs_one_stop((two_stop, unknown)))
@@ -1742,14 +1742,14 @@ class StopsCompareTests(unittest.TestCase):
             (
                 _fare_offer(
                     airline="Slow",
-                    price_eur=100.0,
+                    price=100.0,
                     stops_count=0,
                     duration_hours=3.0,
                     duration="3 h",
                 ),
                 _fare_offer(
                     airline="Fast",
-                    price_eur=100.0,
+                    price=100.0,
                     stops_count=0,
                     duration_hours=1.5,
                     duration="1 h 30 min",
@@ -1803,12 +1803,12 @@ class StopsCompareTests(unittest.TestCase):
         assert compare.nonstop is not None
         assert compare.one_stop is not None
         self.assertEqual(compare.nonstop.airline, "Iberia")
-        self.assertEqual(compare.nonstop.price_eur, 88.0)
+        self.assertEqual(compare.nonstop.price, 88.0)
         self.assertEqual(compare.one_stop.airline, "Air Europa")
-        self.assertEqual(compare.one_stop.price_eur, 69.0)
+        self.assertEqual(compare.one_stop.price, 69.0)
         payload = outcome.to_dict()["stops_compare"]
-        self.assertEqual(payload["nonstop"]["price_eur"], 88.0)
-        self.assertEqual(payload["one_stop"]["price_eur"], 69.0)
+        self.assertEqual(payload["nonstop"]["price"], 88.0)
+        self.assertEqual(payload["one_stop"]["price"], 69.0)
         self.assertEqual(payload["one_stop"]["layover_city"], "Palma")
 
     def test_search_with_max_stops_zero_omits_one_stop_side(self) -> None:
@@ -1834,7 +1834,7 @@ class StopsCompareTests(unittest.TestCase):
         self.assertIsInstance(outcome, QuerySuccess)
         assert outcome.stops_compare is not None
         assert outcome.stops_compare.nonstop is not None
-        self.assertEqual(outcome.stops_compare.nonstop.price_eur, 88.0)
+        self.assertEqual(outcome.stops_compare.nonstop.price, 88.0)
         self.assertIsNone(outcome.stops_compare.one_stop)
         self.assertNotIn("one_stop", outcome.to_dict()["stops_compare"])
 

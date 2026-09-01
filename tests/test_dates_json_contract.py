@@ -28,13 +28,26 @@ REPORT_KEYS = {
     "days",
 }
 RT_REPORT_KEYS = REPORT_KEYS | {"nights"}
-DAY_KEYS = {"date", "price_eur", "airline", "stops_count", "status"}
+DAY_KEYS = {"date", "price", "airline", "stops_count", "status"}
 DAY_RETURN_KEYS = DAY_KEYS | {"return_date"}
 DAY_ERROR_KEYS = DAY_KEYS | {"error"}
-DAY_TYPICAL_KEYS = {"typical_eur", "vs_typical", "vs_typical_pct", "typical_deal"}
+DAY_TYPICAL_KEYS = {"typical", "vs_typical", "vs_typical_pct", "typical_deal"}
 ERROR_KEYS = {"code", "message"}
 DATE_FETCH_BACKENDS = {"calendar", "sweep"}
-FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
+FORBIDDEN_KEYS = {
+    "co2",
+    "co2_kg",
+    "emissions",
+    "carbon",
+    "price_eur",
+    "typical_eur",
+    "min_eur",
+    "median_eur",
+    "max_eur",
+    "cheapest_eur",
+    "baggage_buffer_eur",
+    "price_usd",
+}
 
 
 def _report() -> DateCalendarReport:
@@ -47,7 +60,7 @@ def _report() -> DateCalendarReport:
         days=(
             DatePriceRow(
                 departure_date=date(2026, 9, 1),
-                price_eur=39.0,
+                price=39.0,
                 airline="Vueling",
                 stops_count=0,
             ),
@@ -133,7 +146,7 @@ class DatesJsonContractTests(unittest.TestCase):
                 DatePriceRow(
                     departure_date=date(2026, 11, 1),
                     return_date=date(2026, 11, 6),
-                    price_eur=410.0,
+                    price=410.0,
                 ),
                 DatePriceRow(
                     departure_date=date(2026, 11, 2),
@@ -149,7 +162,7 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(set(data["days"][0]), DAY_RETURN_KEYS)
         self.assertEqual(data["days"][0]["return_date"], "2026-11-06")
         self.assertEqual(data["days"][1]["status"], "empty")
-        self.assertIsNone(data["days"][1]["price_eur"])
+        self.assertIsNone(data["days"][1]["price"])
 
     def test_summary_is_omitted_when_fewer_than_three_priced_days(self) -> None:
         self.assertNotIn("summary", self.data)
@@ -162,10 +175,10 @@ class DatesJsonContractTests(unittest.TestCase):
             start_date=date(2026, 9, 1),
             end_date=date(2026, 9, 4),
             days=(
-                DatePriceRow(departure_date=date(2026, 9, 1), price_eur=81.0),
+                DatePriceRow(departure_date=date(2026, 9, 1), price=81.0),
                 DatePriceRow(departure_date=date(2026, 9, 2), status="empty"),
-                DatePriceRow(departure_date=date(2026, 9, 3), price_eur=67.0),
-                DatePriceRow(departure_date=date(2026, 9, 4), price_eur=120.0),
+                DatePriceRow(departure_date=date(2026, 9, 3), price=67.0),
+                DatePriceRow(departure_date=date(2026, 9, 4), price=120.0),
             ),
         )
         data = report.to_dict()
@@ -175,42 +188,42 @@ class DatesJsonContractTests(unittest.TestCase):
         )
         self.assertEqual(
             set(data["summary"]),
-            {"min_eur", "median_eur", "max_eur", "cheapest_date", "n_priced"},
+            {"min_price", "median_price", "max_price", "cheapest_date", "n_priced"},
         )
-        self.assertEqual(data["summary"]["min_eur"], 67.0)
-        self.assertEqual(data["summary"]["median_eur"], 81.0)
-        self.assertEqual(data["summary"]["max_eur"], 120.0)
+        self.assertEqual(data["summary"]["min_price"], 67.0)
+        self.assertEqual(data["summary"]["median_price"], 81.0)
+        self.assertEqual(data["summary"]["max_price"], 120.0)
         self.assertEqual(data["summary"]["cheapest_date"], "2026-09-03")
         self.assertEqual(data["summary"]["n_priced"], 3)
-        self.assertIsNone(data["days"][1]["price_eur"])
+        self.assertIsNone(data["days"][1]["price"])
         self.assertNotIn("stops_compare", data["days"][0])
         self.assertNotIn("stops_compare", data)
         self.assertEqual(set(data["days"][0]), DAY_KEYS | DAY_TYPICAL_KEYS)
-        self.assertEqual(data["days"][0]["typical_eur"], 81.0)
+        self.assertEqual(data["days"][0]["typical"], 81.0)
         self.assertEqual(data["days"][0]["vs_typical"], "near")
         self.assertEqual(data["days"][0]["vs_typical_pct"], 0)
         self.assertEqual(data["days"][0]["typical_deal"], "near typical 81 € (0%)")
         self.assertEqual(set(data["days"][1]), DAY_KEYS)
-        self.assertNotIn("typical_eur", data["days"][1])
+        self.assertNotIn("typical", data["days"][1])
         self.assertEqual(data["days"][2]["vs_typical"], "below")
         self.assertEqual(data["days"][2]["vs_typical_pct"], -17)
         self.assertEqual(data["days"][3]["vs_typical"], "above")
-        self.assertEqual(data["days"][3]["typical_eur"], 81.0)
+        self.assertEqual(data["days"][3]["typical"], 81.0)
 
     def test_typical_is_an_extra_day_key_when_stamped(self) -> None:
         row = DatePriceRow(
             departure_date=date(2026, 9, 1),
-            price_eur=67.0,
-            typical_eur=81.0,
+            price=67.0,
+            typical=81.0,
             vs_typical="below",
             vs_typical_pct=-17,
         )
         data = row.to_dict()
         self.assertEqual(set(data), DAY_KEYS | DAY_TYPICAL_KEYS)
         self.assertEqual(data["typical_deal"], "below typical 81 € (−17%)")
-        omitted = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=67.0).to_dict()
+        omitted = DatePriceRow(departure_date=date(2026, 9, 1), price=67.0).to_dict()
         self.assertEqual(set(omitted), DAY_KEYS)
-        self.assertNotIn("typical_eur", omitted)
+        self.assertNotIn("typical", omitted)
         self.assertNotIn("vs_typical", omitted)
         self.assertNotIn("vs_typical_pct", omitted)
         self.assertNotIn("typical_deal", omitted)
@@ -218,23 +231,23 @@ class DatesJsonContractTests(unittest.TestCase):
     def test_baggage_buffer_is_an_extra_day_key_from_sweep_shop(self) -> None:
         stamped = DatePriceRow(
             departure_date=date(2026, 9, 1),
-            price_eur=50.0,
+            price=50.0,
             airline="Ryanair",
             stops_count=0,
-            baggage_buffer_eur=70,
+            baggage_buffer=70,
         )
         data = stamped.to_dict()
-        self.assertEqual(set(data), DAY_KEYS | {"baggage_buffer_eur"})
-        self.assertEqual(data["baggage_buffer_eur"], 70)
-        compact = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=50.0).to_dict()
+        self.assertEqual(set(data), DAY_KEYS | {"baggage_buffer"})
+        self.assertEqual(data["baggage_buffer"], 70)
+        compact = DatePriceRow(departure_date=date(2026, 9, 1), price=50.0).to_dict()
         self.assertEqual(set(compact), DAY_KEYS)
-        self.assertNotIn("baggage_buffer_eur", compact)
+        self.assertNotIn("baggage_buffer", compact)
         self.assertNotIn("needs_bag_verify", compact)
 
     def test_shop_duration_clock_are_extra_day_keys(self) -> None:
         stamped = DatePriceRow(
             departure_date=date(2026, 9, 1),
-            price_eur=50.0,
+            price=50.0,
             airline="Iberia",
             stops_count=0,
             duration_hours=2.0,
@@ -246,7 +259,7 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(data["duration_hours"], 2.0)
         self.assertEqual(data["departure"], "07:00")
         self.assertEqual(data["arrival"], "09:00")
-        compact = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=50.0).to_dict()
+        compact = DatePriceRow(departure_date=date(2026, 9, 1), price=50.0).to_dict()
         self.assertEqual(set(compact), DAY_KEYS)
         self.assertNotIn("duration_hours", compact)
         self.assertNotIn("departure", compact)
@@ -255,8 +268,8 @@ class DatesJsonContractTests(unittest.TestCase):
     def test_stops_compare_is_an_extra_day_key_from_sweep_shop(self) -> None:
         side = StopsCompareSide(
             airline="Iberia",
-            price="€88",
-            price_eur=88.0,
+            price_text="€88",
+            price=88.0,
             duration="1 hr 20 min",
             duration_hours=1.33,
             stops="Nonstop",
@@ -274,7 +287,7 @@ class DatesJsonContractTests(unittest.TestCase):
             days=(
                 DatePriceRow(
                     departure_date=date(2026, 9, 1),
-                    price_eur=88.0,
+                    price=88.0,
                     airline="Iberia",
                     stops_count=0,
                     stops_compare=StopsCompare(nonstop=side),
@@ -285,7 +298,7 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(set(data), REPORT_KEYS)
         self.assertEqual(set(data["days"][0]), DAY_KEYS | {"stops_compare"})
         self.assertEqual(set(data["days"][0]["stops_compare"]), {"nonstop"})
-        self.assertEqual(data["days"][0]["stops_compare"]["nonstop"]["price_eur"], 88.0)
+        self.assertEqual(data["days"][0]["stops_compare"]["nonstop"]["price"], 88.0)
         self.assertNotIn("one_stop", data["days"][0]["stops_compare"])
 
     def test_google_flights_url_is_an_extra_key_when_present(self) -> None:
@@ -299,7 +312,7 @@ class DatesJsonContractTests(unittest.TestCase):
             days=(
                 DatePriceRow(
                     departure_date=date(2026, 9, 1),
-                    price_eur=45.0,
+                    price=45.0,
                     google_flights_url="https://www.google.com/travel/flights?tfs=day",
                 ),
             ),
@@ -311,7 +324,7 @@ class DatesJsonContractTests(unittest.TestCase):
         )
         self.assertEqual(set(data["days"][0]), DAY_KEYS | {"google_flights_url"})
         self.assertNotIn("booking_token", data["days"][0])
-        omitted = DatePriceRow(departure_date=date(2026, 9, 1), price_eur=45.0).to_dict()
+        omitted = DatePriceRow(departure_date=date(2026, 9, 1), price=45.0).to_dict()
         self.assertEqual(set(omitted), DAY_KEYS)
         self.assertNotIn("google_flights_url", omitted)
         self.assertNotIn("booking_token", omitted)

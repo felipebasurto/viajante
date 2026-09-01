@@ -16,7 +16,11 @@ Origin (`fil/viajante`) is the source of truth.
 Raise weekday `judge_mean` without breaking the public contract. **KEEP
 METRIC** is `judge_mean` (arithmetic mean of `score_1_100` on `judge=llm`
 scored rows). Higher is better. `score_ms` is **not** the keep. Do not
-optimize `score_ms`.
+optimize `score_ms`. Currency is `--currency` or inferred from a named
+origin’s owned country; if unknown, ask. Viajante does not convert and
+does not ship a rates table. The MCP caller does FX. Product voice is
+English. Ambiguity (city with several airports, “Europe”, unnamed origin,
+two possible currencies) must ask or error.
 
 Gate = unittest + ruff (`viajante bench`) and prompt battery `fail: 0`.
 A looping agent may not delete `tests/prompts/` (or drop cases below the
@@ -157,7 +161,7 @@ Existing smoke→insane rows are frozen except to fix a real planner bug
 Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
 coverage, drop a fixture from `manifest.json`, add empty fixtures, lower
 `--top` or the baggage buffer, or stub parsers. Do not count `sweep_ms`,
-prompt `plan_ms`, live Google, replay p50, 2×MAD, or LLM-judge latency as
+prompt `plan_ms`, live Google, replay p50, 2×same-origin scrape, or LLM-judge latency as
 the keep. Do not edit `src/viajante/bench.py`, `src/viajante/prompt_bench.py`,
 `tests/bench/`, or `tests/prompts/`.
 
@@ -182,6 +186,9 @@ must not open `tests/prompts/holdout.jsonl` when choosing a hypothesis.
 These are product bugs. Do **not** “fix” them by deleting features or
 tests.
 
+- Compact `_price_text` / CLI tables / `typical_deal` may still print a leftover
+  `€` glyph. The unit is `report.currency`. Do not treat that glyph as
+  EUR-as-audience. Do not add an FX table to “fix” it.
 - Packaged `--trip rt` still cannot invent a return leg when the compact
   body only contains the outbound flight. Query `return_date` is not a
   second leg. Wrapped or sibling return flights in that body should parse.

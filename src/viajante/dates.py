@@ -44,11 +44,12 @@ from viajante.models import (
     SearchErrorCode,
     StopsCompare,
     Trip,
+    format_money,
     normalize_country,
-    normalize_currency,
 )
+from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import write_json_atomic
-from viajante.typical import typical_eur_from_daily_prices, vs_typical, with_typical
+from viajante.typical import typical_from_daily_prices, vs_typical, with_typical
 
 MAX_DATE_WINDOW_DAYS = 31
 MAX_FLEX_DAYS = 15
@@ -108,7 +109,7 @@ def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
                 continue
             in_window = True
             row = by_day.get(day)
-            price = None if row is None else row.price_eur
+            price = None if row is None else row.price
             if price is None or price <= 0:
                 cells.append(f"{EMPTY_DAY_MARK:>{_CELL_WIDTH}}")
             else:
@@ -123,7 +124,7 @@ def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
 
 def format_sparkline(days: Sequence[DatePriceRow]) -> str:
     """One glyph per owned row. Empty days are ·; never a guessed height."""
-    owned = [row.price_eur for row in days if row.price_eur is not None and row.price_eur > 0]
+    owned = [row.price for row in days if row.price is not None and row.price > 0]
     if not owned:
         return ""
     lo = min(owned)
@@ -132,7 +133,7 @@ def format_sparkline(days: Sequence[DatePriceRow]) -> str:
     n_levels = len(_SPARK_BLOCKS)
     chars: list[str] = []
     for row in sorted(days, key=lambda item: item.departure_date):
-        price = row.price_eur
+        price = row.price
         if price is None or price <= 0:
             chars.append(EMPTY_DAY_MARK)
             continue
@@ -169,20 +170,20 @@ def _rank_date_rows(
             minutes = _clock_minutes(row.arrival)
             missing = minutes is None
             return (missing, minutes or 0, row.departure_date)
-        fare = row.price_eur if row.price_eur is not None else 0.0
+        fare = row.price if row.price is not None else 0.0
         if sort == "ranked":
-            buffer = row.baggage_buffer_eur or 0
-            return (row.price_eur is None, fare + buffer, row.departure_date)
-        return (row.price_eur is None, fare, row.departure_date)
+            buffer = row.baggage_buffer or 0
+            return (row.price is None, fare + buffer, row.departure_date)
+        return (row.price is None, fare, row.departure_date)
 
     return tuple(sorted(days, key=sort_key))
 
 
-def format_summary_line(summary: DateCalendarSummary) -> str:
+def format_summary_line(summary: DateCalendarSummary, currency: str = "EUR") -> str:
     return (
-        f"  min {summary.min_eur:.0f} €  "
-        f"median {summary.median_eur:.0f} €  "
-        f"max {summary.max_eur:.0f} €  "
+        f"  min {format_money(summary.min_price, currency)}  "
+        f"median {format_money(summary.median_price, currency)}  "
+        f"max {format_money(summary.max_price, currency)}  "
         f"cheapest {summary.cheapest_date.isoformat()}  "
         f"({summary.n_priced} priced)"
     )
@@ -269,7 +270,7 @@ def _day_trip(
         nights=nights,
         bags=seed.bags,
         carry_on=seed.carry_on,
-        price_cap_eur=seed.price_cap_eur,
+        price_cap=seed.price_cap,
         airlines=seed.airlines,
         exclude_airlines=seed.exclude_airlines,
         alliances=seed.alliances,
@@ -341,7 +342,7 @@ def calendar_trip(
     nights: Optional[int] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     alliances: Optional[Sequence[str]] = None,
@@ -366,7 +367,7 @@ def calendar_trip(
             cabin=cabin,
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap_eur,
+            price_cap=price_cap,
             airlines=airline_codes,
             exclude_airlines=exclude_codes,
             alliances=alliance_names,
@@ -382,7 +383,7 @@ def calendar_trip(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
         airlines=airline_codes,
         exclude_airlines=exclude_codes,
         alliances=alliance_names,
@@ -517,7 +518,7 @@ def _offers_from_cards(
                 require_overnight=require_overnight,
                 bags=query.bags,
                 carry_on=query.carry_on,
-                price_cap_eur=query.price_cap_eur,
+                price_cap=query.price_cap,
             )
         )
         is not None
@@ -632,7 +633,7 @@ def search_dates(
     nights: Optional[int] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     alliances: Optional[Sequence[str]] = None,
@@ -650,15 +651,16 @@ def search_dates(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     sort: Optional[FlightSort] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
-    currency = normalize_currency(currency)
+    currency = resolve_quote_currency(currency, origin)
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     country = normalize_country(country)
     if buffer_eur < 0:
         raise ValueError("baggage buffer must not be negative")
@@ -691,7 +693,7 @@ def search_dates(
         nights=stay,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
         alliances=alliances,
@@ -788,16 +790,12 @@ def cheapest_priced_day(
     around: date,
 ) -> Optional[DatePriceRow]:
     """Cheapest owned calendar day. Ties: closer to around, then earlier date."""
-    priced = [
-        row
-        for row in rows
-        if row.status == "ok" and row.price_eur is not None and row.price_eur > 0
-    ]
+    priced = [row for row in rows if row.status == "ok" and row.price is not None and row.price > 0]
     if not priced:
         return None
 
     def sort_key(row: DatePriceRow) -> tuple[float, int, date]:
-        price = row.price_eur if row.price_eur is not None else 0.0
+        price = row.price if row.price is not None else 0.0
         delta = abs((row.departure_date - around).days)
         return (price, delta, row.departure_date)
 
@@ -819,7 +817,7 @@ def _flex_report_for_seed(
     cabin: FlightCabin,
     bags: Optional[int],
     carry_on: Optional[int],
-    price_cap_eur: Optional[int],
+    price_cap: Optional[int],
     airlines: Optional[Sequence[str]],
     exclude_airlines: Optional[Sequence[str]],
     alliances: Optional[Sequence[str]],
@@ -870,7 +868,7 @@ def _flex_report_for_seed(
         error = classify_failure(exc)
         days = _error_rows(start, end, error, nights=stay)
     else:
-        typical = typical_eur_from_daily_prices([row.price_eur for row in days])
+        typical = typical_from_daily_prices([row.price for row in days])
         winner = cheapest_priced_day(days, around)
         if winner is None:
             report_progress("no priced day in flex window; no fare")
@@ -906,7 +904,7 @@ def _flex_report_for_seed(
             else:
                 offers = ranked
             compare = compare_nonstop_vs_one_stop(eligible)
-    fare = min((offer.price_eur for offer in offers), default=None)
+    fare = min((offer.price for offer in offers), default=None)
     label = vs_typical(fare, typical) if fare is not None else None
     url_trip = shop or _day_trip(seed, chosen or around, stay)
     if offers:
@@ -925,7 +923,7 @@ def _flex_report_for_seed(
         return_date=returning,
         offers=offers,
         stops_compare=compare,
-        typical_eur=typical,
+        typical=typical,
         vs_typical=label,
         trip=kind,
         nights=stay,
@@ -955,11 +953,11 @@ def search_flex(
     trip: str = "one-way",
     nights: Optional[int] = None,
     top: int = DEFAULT_TOP,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
-    price_cap_eur: Optional[int] = None,
+    price_cap: Optional[int] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     alliances: Optional[Sequence[str]] = None,
@@ -977,7 +975,7 @@ def search_flex(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
@@ -987,7 +985,8 @@ def search_flex(
     A compact calendar miss or a window with no priced day is empty: no
     per-day shopping sweep, no invented fare.
     """
-    currency = normalize_currency(currency)
+    currency = resolve_quote_currency(currency, origin)
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     country = normalize_country(country)
     if top <= 0:
         raise ValueError("top must be a positive integer")
@@ -1023,7 +1022,7 @@ def search_flex(
         nights=stay,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap_eur,
+        price_cap=price_cap,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
         alliances=alliances,
@@ -1066,7 +1065,7 @@ def search_flex(
                     cabin=cabin,
                     bags=bags,
                     carry_on=carry_on,
-                    price_cap_eur=price_cap_eur,
+                    price_cap=price_cap,
                     airlines=airlines,
                     exclude_airlines=exclude_airlines,
                     alliances=alliances,
@@ -1127,13 +1126,13 @@ def _rows_from_calendar(
     while cursor <= end:
         found = by_day.get(cursor)
         returning = _return_for(cursor, nights, None if found is None else found.return_date)
-        if found is None or found.price_eur is None:
+        if found is None or found.price is None:
             rows.append(DatePriceRow(departure_date=cursor, return_date=returning, status="empty"))
         else:
             rows.append(
                 DatePriceRow(
                     departure_date=cursor,
-                    price_eur=found.price_eur,
+                    price=found.price,
                     return_date=returning,
                     status="ok",
                 )
@@ -1182,13 +1181,13 @@ def _row_from_day_cards(
         return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
     return DatePriceRow(
         departure_date=cursor,
-        price_eur=best.price_eur,
+        price=best.price,
         airline=best.airline,
         stops_count=best.stops_count,
         return_date=returning,
         status="ok",
         stops_compare=compare_nonstop_vs_one_stop(offers),
-        baggage_buffer_eur=best.baggage_buffer_eur,
+        baggage_buffer=best.baggage_buffer,
         duration_hours=best.duration_hours,
         departure=(
             best.departure

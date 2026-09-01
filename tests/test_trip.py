@@ -45,28 +45,28 @@ from viajante.trip import (
 )
 
 
-def _flight_offer(*, price_eur: float = 412.0) -> FlightOffer:
+def _flight_offer(*, price: float = 412.0) -> FlightOffer:
     return FlightOffer(
         airline="Example Air",
         departure="08:40",
         arrival="11:30",
-        price=f"€{price_eur:.0f}",
-        price_eur=price_eur,
+        price_text=f"€{price:.0f}",
+        price=price,
         duration="2 h 50 min",
         duration_hours=2.8,
         stops="Nonstop",
         stops_count=0,
-        baggage_buffer_eur=0,
+        baggage_buffer=0,
         needs_bag_verify=False,
     )
 
 
-def _hotel_offer(*, total_price_eur: float = 246.0) -> HotelOffer:
+def _hotel_offer(*, total_price: float = 246.0) -> HotelOffer:
     return HotelOffer(
         title="Old Town Apartment",
         address="Melbourne",
-        total_price=f"{total_price_eur:.0f} €",
-        total_price_eur=total_price_eur,
+        total_price_text=f"{total_price:.0f} €",
+        total_price=total_price,
         rating="8.9",
         rating_score=8.9,
         details="Free cancellation",
@@ -149,7 +149,7 @@ def _melbourne_stay() -> HotelSearchReport:
             applied=_applied(),
             raw_count=1,
             eligible_count=1,
-            offers=(_hotel_offer(total_price_eur=50),),
+            offers=(_hotel_offer(total_price=50),),
         )
     )
 
@@ -191,7 +191,7 @@ class TripJoinTests(unittest.TestCase):
                 ),
                 raw_count=4,
                 eligible_count=1,
-                offers=(_flight_offer(price_eur=412),),
+                offers=(_flight_offer(price=412),),
             )
         )
         hotels = _hotel_report(
@@ -205,15 +205,15 @@ class TripJoinTests(unittest.TestCase):
                 applied=_applied(),
                 raw_count=8,
                 eligible_count=1,
-                offers=(_hotel_offer(total_price_eur=246),),
+                offers=(_hotel_offer(total_price=246),),
             )
         )
         total = owned_trip_total(flights, hotels)
         self.assertIsNotNone(total)
         assert total is not None
-        self.assertEqual(total.flight_fare_eur, 412)
-        self.assertEqual(total.hotel_stay_eur, 246)
-        self.assertEqual(total.total_eur, 658)
+        self.assertEqual(total.flight_fare, 412)
+        self.assertEqual(total.hotel_stay, 246)
+        self.assertEqual(total.total, 658)
         self.assertEqual(total.nights, 4)
         self.assertEqual(total.hotel_price_basis, "total_stay")
         self.assertEqual(hotels.price_basis, "total_stay")
@@ -227,13 +227,13 @@ class TripJoinTests(unittest.TestCase):
                 query=out,
                 raw_count=2,
                 eligible_count=2,
-                offers=(_flight_offer(price_eur=400), _flight_offer(price_eur=350)),
+                offers=(_flight_offer(price=400), _flight_offer(price=350)),
             ),
             QuerySuccess(
                 query=back,
                 raw_count=2,
                 eligible_count=1,
-                offers=(_flight_offer(price_eur=380),),
+                offers=(_flight_offer(price=380),),
             ),
         )
         hotels = _hotel_report(
@@ -242,25 +242,25 @@ class TripJoinTests(unittest.TestCase):
                 applied=_applied(),
                 raw_count=3,
                 eligible_count=1,
-                offers=(_hotel_offer(total_price_eur=500),),
+                offers=(_hotel_offer(total_price=500),),
             )
         )
         total = owned_trip_total(flights, hotels)
         self.assertIsNotNone(total)
         assert total is not None
-        self.assertEqual(total.flight_fare_eur, 730)
-        self.assertEqual(total.hotel_stay_eur, 500)
-        self.assertEqual(total.total_eur, 1230)
+        self.assertEqual(total.flight_fare, 730)
+        self.assertEqual(total.hotel_stay, 500)
+        self.assertEqual(total.total, 1230)
 
     def test_same_route_two_dates_uses_cheaper_day_not_sum(self) -> None:
         first = FlightQuery("SIN", "MEL", date(2026, 11, 6))
         second = FlightQuery("SIN", "MEL", date(2026, 11, 7))
         flights = _flight_report(
             QuerySuccess(
-                query=first, raw_count=1, eligible_count=1, offers=(_flight_offer(price_eur=400),)
+                query=first, raw_count=1, eligible_count=1, offers=(_flight_offer(price=400),)
             ),
             QuerySuccess(
-                query=second, raw_count=1, eligible_count=1, offers=(_flight_offer(price_eur=300),)
+                query=second, raw_count=1, eligible_count=1, offers=(_flight_offer(price=300),)
             ),
         )
         hotels = _hotel_report(
@@ -269,13 +269,13 @@ class TripJoinTests(unittest.TestCase):
                 applied=_applied(),
                 raw_count=1,
                 eligible_count=1,
-                offers=(_hotel_offer(total_price_eur=200),),
+                offers=(_hotel_offer(total_price=200),),
             )
         )
         total = owned_trip_total(flights, hotels)
         self.assertIsNotNone(total)
         assert total is not None
-        self.assertEqual(total.flight_fare_eur, 300)
+        self.assertEqual(total.flight_fare, 300)
 
     def test_omits_when_hotel_offers_empty(self) -> None:
         flights = _flight_report(
@@ -376,7 +376,7 @@ class TripJoinTests(unittest.TestCase):
                 query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10)),
                 raw_count=1,
                 eligible_count=1,
-                offers=(_flight_offer(price_eur=100),),
+                offers=(_flight_offer(price=100),),
             )
         )
         hotels = _hotel_report(
@@ -385,7 +385,7 @@ class TripJoinTests(unittest.TestCase):
                 applied=_applied(),
                 raw_count=1,
                 eligible_count=1,
-                offers=(_hotel_offer(total_price_eur=50),),
+                offers=(_hotel_offer(total_price=50),),
             )
         )
 
@@ -410,15 +410,15 @@ class TripJoinTests(unittest.TestCase):
         self.assertEqual(order, ["flights", "hotels"])
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
-        self.assertEqual(report.trip_total.total_eur, 150)
+        self.assertEqual(report.trip_total.total, 150)
         self.assertEqual(report.hotels.price_basis, "total_stay")
         self.assertEqual(report.fetch_ms, 180)
 
     def test_trip_total_rejects_invented_zero(self) -> None:
         with self.assertRaises(ValueError):
-            TripTotal(flight_fare_eur=0, hotel_stay_eur=10, total_eur=10, nights=1)
+            TripTotal(flight_fare=0, hotel_stay=10, total=10, nights=1)
         with self.assertRaises(ValueError):
-            TripTotal(flight_fare_eur=10, hotel_stay_eur=10, total_eur=21, nights=1)
+            TripTotal(flight_fare=10, hotel_stay=10, total=21, nights=1)
 
 
 class TripShopFilterTests(unittest.TestCase):
@@ -465,23 +465,23 @@ class TripShopFilterTests(unittest.TestCase):
             price="€250",
         )
         cards = (silent, too_few, enough, via_dxb, ryanair, over_cap)
-        filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap_eur=200)
+        filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap=200)
         expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
-        kept = [offer.price_eur for offer in expected if offer is not None]
+        kept = [offer.price for offer in expected if offer is not None]
         report, source = _search_trip_cards(*cards, **filters)
         result = report.flights.queries[0]
         self.assertEqual(type(result).__name__, "QuerySuccess")
-        self.assertEqual([offer.price_eur for offer in result.offers], kept)
+        self.assertEqual([offer.price for offer in result.offers], kept)
         self.assertEqual(kept, [40.0, 55.0])
         self.assertEqual(source.fetched_queries[0].bags, 1)
         self.assertEqual(source.fetched_queries[0].carry_on, 1)
         self.assertEqual(source.fetched_queries[0].airlines, ("IB",))
-        self.assertEqual(source.fetched_queries[0].price_cap_eur, 200)
+        self.assertEqual(source.fetched_queries[0].price_cap, 200)
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
-        self.assertEqual(report.trip_total.flight_fare_eur, 40.0)
-        self.assertEqual(report.trip_total.hotel_stay_eur, 50.0)
-        self.assertEqual(report.trip_total.total_eur, 90.0)
+        self.assertEqual(report.trip_total.flight_fare, 40.0)
+        self.assertEqual(report.trip_total.hotel_stay, 50.0)
+        self.assertEqual(report.trip_total.total, 90.0)
 
     def test_unnamed_shop_filters_keep_contradicting_cards(self) -> None:
         cheap = _card(
@@ -494,14 +494,14 @@ class TripShopFilterTests(unittest.TestCase):
         )
         report, source = _search_trip_cards(cheap)
         result = report.flights.queries[0]
-        self.assertEqual([offer.price_eur for offer in result.offers], [28.0])
+        self.assertEqual([offer.price for offer in result.offers], [28.0])
         self.assertIsNone(source.fetched_queries[0].bags)
         self.assertIsNone(source.fetched_queries[0].carry_on)
         self.assertIsNone(source.fetched_queries[0].airlines)
-        self.assertIsNone(source.fetched_queries[0].price_cap_eur)
+        self.assertIsNone(source.fetched_queries[0].price_cap)
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
-        self.assertEqual(report.trip_total.flight_fare_eur, 28.0)
+        self.assertEqual(report.trip_total.flight_fare, 28.0)
 
     def test_named_clock_filters_drop_late_arrivals_and_early_departs(self) -> None:
         on_time = _card(arrival="09:00", departure="19:00", price="€90")
@@ -516,15 +516,15 @@ class TripShopFilterTests(unittest.TestCase):
             _normalize_offer(card, 1, buffer_eur=0, **filters)
             for card in (on_time, late_arrive, early_depart, silent)
         ]
-        kept = [offer.price_eur for offer in expected if offer is not None]
+        kept = [offer.price for offer in expected if offer is not None]
         report, _source = _search_trip_cards(on_time, late_arrive, early_depart, silent, **filters)
         result = report.flights.queries[0]
-        self.assertEqual([offer.price_eur for offer in result.offers], kept)
+        self.assertEqual([offer.price for offer in result.offers], kept)
         self.assertEqual(kept, [90.0])
         unnamed, _ = _search_trip_cards(on_time, late_arrive, early_depart, silent)
         unnamed_result = unnamed.flights.queries[0]
         self.assertEqual(
-            [offer.price_eur for offer in unnamed_result.offers],
+            [offer.price for offer in unnamed_result.offers],
             [28.0, 35.0, 40.0, 90.0],
         )
 
@@ -548,7 +548,7 @@ class TripShopFilterTests(unittest.TestCase):
             bags=1,
             via=("LIS",),
             airlines=("IB",),
-            price_cap_eur=200,
+            price_cap=200,
         )
         result = report.flights.queries[0]
         self.assertEqual(result.offers, ())
@@ -567,14 +567,14 @@ class TripShopFilterTests(unittest.TestCase):
         cards = (keep, drop_via, drop_airline)
         filters = dict(exclude_via=("LIS",), exclude_airlines=("FR",))
         expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
-        kept = [offer.price_eur for offer in expected if offer is not None]
+        kept = [offer.price for offer in expected if offer is not None]
         report, _source = _search_trip_cards(*cards, **filters)
         result = report.flights.queries[0]
-        self.assertEqual([offer.price_eur for offer in result.offers], kept)
+        self.assertEqual([offer.price for offer in result.offers], kept)
         self.assertEqual(kept, [100.0])
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
-        self.assertEqual(report.trip_total.flight_fare_eur, 100.0)
+        self.assertEqual(report.trip_total.flight_fare, 100.0)
 
 
 class PlanToHotelQueryTests(unittest.TestCase):
@@ -639,7 +639,7 @@ class NearbyTripTests(unittest.TestCase):
                 applied=_applied(),
                 raw_count=1,
                 eligible_count=1,
-                offers=(_hotel_offer(total_price_eur=50),),
+                offers=(_hotel_offer(total_price=50),),
             )
         )
         with (
@@ -656,9 +656,9 @@ class NearbyTripTests(unittest.TestCase):
         self.assertEqual(fetched, dests)
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
-        self.assertEqual(report.trip_total.flight_fare_eur, 90)
-        self.assertEqual(report.trip_total.hotel_stay_eur, 50)
-        self.assertEqual(report.trip_total.total_eur, 140)
+        self.assertEqual(report.trip_total.flight_fare, 90)
+        self.assertEqual(report.trip_total.hotel_stay, 50)
+        self.assertEqual(report.trip_total.total, 140)
 
     def test_nearby_unknown_city_does_not_invent_codes(self) -> None:
         queries = parse_route_specs(["MAD-BCN:2026-09-18"], max_stops=1)

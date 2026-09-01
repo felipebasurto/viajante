@@ -46,8 +46,8 @@ FAILURE_KEYS = {"status", "query", "applied", "error"}
 OFFER_KEYS = {
     "title",
     "address",
+    "total_price_text",
     "total_price",
-    "total_price_eur",
     "rating",
     "rating_score",
     "details",
@@ -60,15 +60,23 @@ OFFER_KEYS = {
     "link",
 }
 ERROR_KEYS = {"code", "message"}
-FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
+FORBIDDEN_KEYS = {
+    "co2",
+    "co2_kg",
+    "emissions",
+    "carbon",
+    "total_price_eur",
+    "price_eur",
+    "price_usd",
+}
 
 
 def _offer() -> HotelOffer:
     return HotelOffer(
         title="Old Town Apartment",
         address="Prague 1",
-        total_price="246 €",
-        total_price_eur=246.0,
+        total_price_text="246 €",
+        total_price=246.0,
         rating="8,9",
         rating_score=8.9,
         details="Free cancellation. Entire home.",
@@ -126,6 +134,8 @@ class HotelJsonContractTests(unittest.TestCase):
         self.assertEqual(set(success["query"]), QUERY_KEYS)
         self.assertEqual(set(success["applied"]), APPLIED_KEYS)
         self.assertEqual(set(success["offers"][0]), OFFER_KEYS)
+        self.assertEqual(success["offers"][0]["total_price"], 246.0)
+        self.assertEqual(success["offers"][0]["total_price_text"], "246 €")
         self.assertEqual(set(failure["error"]), ERROR_KEYS)
 
     def test_declared_constants_are_stable(self) -> None:

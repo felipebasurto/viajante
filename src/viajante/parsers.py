@@ -13,7 +13,7 @@ _DURATION_MINUTES = re.compile(r"(\d+)\s*(?:min|mins|minutes?|m)\b")
 _DIGITS = re.compile(r"(\d+)")
 
 
-def parse_price_eur(price_text: str | None) -> float | None:
+def parse_price(price_text: str | None) -> float | None:
     if not price_text:
         return None
     cleaned = price_text.replace("\xa0", "").replace(" ", "").replace("€", "").strip()

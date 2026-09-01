@@ -26,6 +26,7 @@ from viajante.models import (
     SearchReport,
     StopsCompare,
     StopsCompareSide,
+    format_money,
     normalize_country,
     normalize_currency,
 )
@@ -80,6 +81,12 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_country("USA")
 
+    def test_format_money_uses_euro_glyph_only_for_eur(self) -> None:
+        self.assertEqual(format_money(289.0, "EUR"), "289 €")
+        self.assertEqual(format_money(289.0, "USD"), "289 USD")
+        self.assertEqual(format_money(50.0, "EUR", width=7), "     50 €")
+        self.assertEqual(format_money(50.0, "JPY", width=7), "     50 JPY")
+
     def test_flight_query_legs_are_a_single_owned_leg(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=0)
         self.assertEqual(len(query.legs), 1)
@@ -112,7 +119,7 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn("legs", data)
         self.assertNotIn("bags", data)
         self.assertNotIn("carry_on", data)
-        self.assertNotIn("price_cap_eur", data)
+        self.assertNotIn("price_cap", data)
 
     def test_flight_query_bags_are_omitted_until_requested(self) -> None:
         data = FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=1, carry_on=0).to_dict()
@@ -122,14 +129,14 @@ class ModelTests(unittest.TestCase):
             FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=-1)
 
     def test_flight_query_price_cap_is_omitted_until_named(self) -> None:
-        data = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=200).to_dict()
-        self.assertEqual(data["price_cap_eur"], 200)
+        data = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=200).to_dict()
+        self.assertEqual(data["price_cap"], 200)
         unnamed = FlightQuery("MAD", "BCN", date(2026, 9, 1)).to_dict()
-        self.assertNotIn("price_cap_eur", unnamed)
+        self.assertNotIn("price_cap", unnamed)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=0)
+            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=0)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=-1)
+            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=-1)
 
     def test_flight_leg_accepts_two_stops(self) -> None:
         leg = FlightLeg("MAD", "NRT", date(2026, 10, 1), max_stops=2)
@@ -180,13 +187,13 @@ class ModelTests(unittest.TestCase):
                 airline="Air",
                 departure="08:00",
                 arrival="09:00",
-                price="0 €",
-                price_eur=0.0,
+                price_text="0 €",
+                price=0.0,
                 duration="1 h",
                 duration_hours=1.0,
                 stops="Directo",
                 stops_count=0,
-                baggage_buffer_eur=0,
+                baggage_buffer=0,
                 needs_bag_verify=False,
             )
 
@@ -196,13 +203,13 @@ class ModelTests(unittest.TestCase):
             airline="Air",
             departure="08:00",
             arrival="09:00",
-            price="100 €",
-            price_eur=100.0,
+            price_text="100 €",
+            price=100.0,
             duration="1 h",
             duration_hours=1.0,
             stops="Directo",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
         )
         success = QuerySuccess(query=query, raw_count=1, eligible_count=1, offers=(offer,))
@@ -224,13 +231,13 @@ class ModelTests(unittest.TestCase):
                 airline="Iberia",
                 departure="08:00",
                 arrival="09:00",
-                price="100 €",
-                price_eur=100.0,
+                price_text="100 €",
+                price=100.0,
                 duration="1 h",
                 duration_hours=1.0,
                 stops="Nonstop",
                 stops_count=0,
-                baggage_buffer_eur=0,
+                baggage_buffer=0,
                 needs_bag_verify=False,
             )
         )
@@ -240,8 +247,8 @@ class ModelTests(unittest.TestCase):
             StopsCompare(
                 nonstop=StopsCompareSide(
                     airline="Air",
-                    price="80 €",
-                    price_eur=80.0,
+                    price_text="80 €",
+                    price=80.0,
                     duration="3 h",
                     duration_hours=3.0,
                     stops="1 stop",
@@ -249,7 +256,7 @@ class ModelTests(unittest.TestCase):
                 )
             )
         compare = StopsCompare(nonstop=nonstop)
-        self.assertEqual(compare.to_dict()["nonstop"]["price_eur"], 100.0)
+        self.assertEqual(compare.to_dict()["nonstop"]["price"], 100.0)
         self.assertNotIn("one_stop", compare.to_dict())
 
     def test_search_report_json(self) -> None:
@@ -292,13 +299,13 @@ class BaggageInvariantTests(unittest.TestCase):
             airline="Ryanair",
             departure="08:00",
             arrival="09:00",
-            price="€50",
-            price_eur=50.0,
+            price_text="€50",
+            price=50.0,
             duration="1 hr",
             duration_hours=1.0,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=buffer_eur,
+            baggage_buffer=buffer_eur,
             needs_bag_verify=needs_verify,
         )
 
@@ -307,20 +314,20 @@ class BaggageInvariantTests(unittest.TestCase):
             self._offer(buffer_eur=70, needs_verify=False)
 
     def test_a_flagged_carrier_may_carry_no_buffer(self) -> None:
-        self.assertEqual(self._offer(buffer_eur=0, needs_verify=True).baggage_buffer_eur, 0)
+        self.assertEqual(self._offer(buffer_eur=0, needs_verify=True).baggage_buffer, 0)
 
     def test_parsed_bag_counts_serialise_only_when_present(self) -> None:
         known = FlightOffer(
             airline="Ryanair",
             departure="08:00",
             arrival="09:00",
-            price="€50",
-            price_eur=50.0,
+            price_text="€50",
+            price=50.0,
             duration="1 hr",
             duration_hours=1.0,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
             checked_bags=1,
             carry_on=1,
@@ -386,8 +393,8 @@ class HotelModelTests(unittest.TestCase):
             HotelOffer(
                 title="   ",
                 address=None,
-                total_price="100 €",
-                total_price_eur=100.0,
+                total_price_text="100 €",
+                total_price=100.0,
                 rating=None,
                 rating_score=None,
                 details="",
@@ -403,8 +410,8 @@ class HotelModelTests(unittest.TestCase):
             HotelOffer(
                 title="Hotel",
                 address=None,
-                total_price="0 €",
-                total_price_eur=0.0,
+                total_price_text="0 €",
+                total_price=0.0,
                 rating=None,
                 rating_score=None,
                 details="",
@@ -420,8 +427,8 @@ class HotelModelTests(unittest.TestCase):
             HotelOffer(
                 title="Hotel",
                 address=None,
-                total_price="100 €",
-                total_price_eur=100.0,
+                total_price_text="100 €",
+                total_price=100.0,
                 rating="11",
                 rating_score=11.0,
                 details="",
@@ -440,8 +447,8 @@ class HotelModelTests(unittest.TestCase):
         offer = HotelOffer(
             title="Hotel Test",
             address="Praga 1",
-            total_price="200 €",
-            total_price_eur=200.0,
+            total_price_text="200 €",
+            total_price=200.0,
             rating="Rating: 8.4",
             rating_score=8.4,
             details="2 bedrooms",
@@ -472,8 +479,8 @@ class HotelModelTests(unittest.TestCase):
         offer_two = HotelOffer(
             title="Hotel Two",
             address="Praga 2",
-            total_price="150 €",
-            total_price_eur=150.0,
+            total_price_text="150 €",
+            total_price=150.0,
             rating=None,
             rating_score=None,
             details="",
@@ -500,8 +507,8 @@ class HotelModelTests(unittest.TestCase):
         offer = HotelOffer(
             title="Hotel Test",
             address="Praga 1",
-            total_price="200 €",
-            total_price_eur=200.0,
+            total_price_text="200 €",
+            total_price=200.0,
             rating="8,4",
             rating_score=8.4,
             details="",

@@ -46,9 +46,9 @@ OFFER_KEYS = {
     "airline",
     "departure",
     "arrival",
+    "price_text",
     "price",
-    "price_eur",
-    "typical_eur",
+    "typical",
     "vs_typical",
     "vs_typical_pct",
     "typical_deal",
@@ -60,7 +60,7 @@ OFFER_KEYS = {
     "layover_hours",
     "flight_numbers",
     "booking_token",
-    "baggage_buffer_eur",
+    "baggage_buffer",
     "needs_bag_verify",
     "legs",
 }
@@ -69,8 +69,8 @@ STOPS_COMPARE_SIDE_KEYS = {
     "airline",
     "departure",
     "arrival",
+    "price_text",
     "price",
-    "price_eur",
     "duration",
     "duration_hours",
     "stops",
@@ -79,7 +79,18 @@ STOPS_COMPARE_SIDE_KEYS = {
     "layover_hours",
 }
 FLIGHT_FETCH_BACKENDS = {"sweep", "detail", "sweep_then_detail"}
-FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
+FORBIDDEN_KEYS = {
+    "co2",
+    "co2_kg",
+    "emissions",
+    "carbon",
+    "price_eur",
+    "typical_eur",
+    "cheapest_eur",
+    "baggage_buffer_eur",
+    "price_cap_eur",
+    "price_usd",
+}
 
 
 def _report() -> SearchReport:
@@ -89,15 +100,15 @@ def _report() -> SearchReport:
         airline="Vueling",
         departure="07:15",
         arrival="08:40",
-        price="€39",
-        price_eur=39.0,
+        price_text="€39",
+        price=39.0,
         duration="1 hr 25 min",
         duration_hours=1.4166666666666667,
         stops="Nonstop",
         stops_count=0,
         layover_city=None,
         layover_hours=None,
-        baggage_buffer_eur=70,
+        baggage_buffer=70,
         needs_bag_verify=True,
         google_flights_url=url,
     )
@@ -168,10 +179,14 @@ class JsonContractTests(unittest.TestCase):
         self.assertIsNotNone(offer["stops"])
         self.assertEqual(len(offer["legs"]), 1)
         self.assertEqual(offer["legs"][0]["departure"], offer["departure"])
+        self.assertEqual(offer["price"], 39.0)
+        self.assertEqual(offer["price_text"], "€39")
+        self.assertIsInstance(offer["price"], float)
+        self.assertIsInstance(offer["price_text"], str)
 
     def test_missing_typical_baseline_is_null_not_invented(self) -> None:
         offer = self.data["queries"][0]["offers"][0]
-        self.assertIsNone(offer["typical_eur"])
+        self.assertIsNone(offer["typical"])
         self.assertIsNone(offer["vs_typical"])
         self.assertIsNone(offer["vs_typical_pct"])
         self.assertIsNone(offer["typical_deal"])
@@ -231,13 +246,13 @@ class JsonContractTests(unittest.TestCase):
             airline="Ryanair",
             departure="07:15",
             arrival="08:40",
-            price="€64",
-            price_eur=64.0,
+            price_text="€64",
+            price=64.0,
             duration="1 hr 25 min",
             duration_hours=1.42,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
             checked_bags=1,
             carry_on=1,
@@ -252,65 +267,67 @@ class JsonContractTests(unittest.TestCase):
             airline="Norse Atlantic",
             departure="21:15",
             arrival="09:40",
-            price="€289",
-            price_eur=289.0,
+            price_text="€289",
+            price=289.0,
             duration="7 hr 25 min",
             duration_hours=7.42,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=70,
+            baggage_buffer=70,
             needs_bag_verify=True,
-            typical_eur=340.0,
+            typical=340.0,
             vs_typical="below",
             vs_typical_pct=-15,
         )
         data = offer.to_dict()
-        self.assertEqual(data["typical_eur"], 340.0)
+        self.assertEqual(data["typical"], 340.0)
         self.assertEqual(data["vs_typical"], "below")
         self.assertEqual(data["vs_typical_pct"], -15)
         self.assertEqual(data["typical_deal"], "below typical 340 € (−15%)")
         self.assertEqual(set(data), OFFER_KEYS)
         self.assertNotIn("cheapest_date", data)
-        self.assertNotIn("cheapest_eur", data)
+        self.assertNotIn("cheapest", data)
+        self.assertEqual(offer.to_dict("USD")["typical_deal"], "below typical 340 USD (−15%)")
+        self.assertNotIn("€", offer.to_dict("USD")["typical_deal"])
 
     def test_cheapest_owned_day_is_an_extra_offer_key(self) -> None:
         offer = FlightOffer(
             airline="Norse Atlantic",
             departure="21:15",
             arrival="09:40",
-            price="€289",
-            price_eur=289.0,
+            price_text="€289",
+            price=289.0,
             duration="7 hr 25 min",
             duration_hours=7.42,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=70,
+            baggage_buffer=70,
             needs_bag_verify=True,
-            typical_eur=340.0,
+            typical=340.0,
             vs_typical="below",
             vs_typical_pct=-15,
             cheapest_date=date(2026, 9, 16),
-            cheapest_eur=300.0,
+            cheapest=300.0,
         )
         data = offer.to_dict()
         self.assertEqual(data["cheapest_date"], "2026-09-16")
-        self.assertEqual(data["cheapest_eur"], 300.0)
-        self.assertEqual(set(data), OFFER_KEYS | {"cheapest_date", "cheapest_eur"})
+        self.assertEqual(data["cheapest"], 300.0)
+        self.assertEqual(set(data), OFFER_KEYS | {"cheapest_date", "cheapest"})
 
     def test_two_stop_offer_hides_string_layover_city(self) -> None:
         offer = FlightOffer(
             airline="Iberia",
             departure="07:00",
             arrival="22:00",
-            price="€199",
-            price_eur=199.0,
+            price_text="€199",
+            price=199.0,
             duration="15 hr",
             duration_hours=15.0,
             stops="2 stops",
             stops_count=2,
             layover_city=None,
             layover_hours=None,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
             legs=(
                 RawJourneyLeg(
@@ -352,13 +369,13 @@ class JsonContractTests(unittest.TestCase):
             airline="Iberia",
             departure="07:00",
             arrival="09:30",
-            price="€209",
-            price_eur=209.0,
+            price_text="€209",
+            price=209.0,
             duration="2 hr 30 min",
             duration_hours=2.5,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
             legs=(
                 RawJourneyLeg(departure="07:00", arrival="09:30", duration="2 hr 30 min"),
@@ -381,13 +398,13 @@ class JsonContractTests(unittest.TestCase):
                 airline="Vueling",
                 departure="07:15",
                 arrival="08:40",
-                price="€39",
-                price_eur=39.0,
+                price_text="€39",
+                price=39.0,
                 duration="1 hr 25 min",
                 duration_hours=1.42,
                 stops="Nonstop",
                 stops_count=0,
-                baggage_buffer_eur=70,
+                baggage_buffer=70,
                 needs_bag_verify=True,
             )
         )
@@ -396,15 +413,15 @@ class JsonContractTests(unittest.TestCase):
                 airline="Ryanair",
                 departure="06:00",
                 arrival="10:00",
-                price="€29",
-                price_eur=29.0,
+                price_text="€29",
+                price=29.0,
                 duration="4 hr",
                 duration_hours=4.0,
                 stops="1 stop",
                 stops_count=1,
                 layover_city="OPO",
                 layover_hours=1.5,
-                baggage_buffer_eur=70,
+                baggage_buffer=70,
                 needs_bag_verify=True,
             )
         )
@@ -419,16 +436,16 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(set(data["stops_compare"]), {"nonstop", "one_stop"})
         self.assertEqual(set(data["stops_compare"]["nonstop"]), STOPS_COMPARE_SIDE_KEYS)
         self.assertEqual(set(data["stops_compare"]["one_stop"]), STOPS_COMPARE_SIDE_KEYS)
-        self.assertEqual(data["stops_compare"]["nonstop"]["price_eur"], 39.0)
-        self.assertEqual(data["stops_compare"]["one_stop"]["price_eur"], 29.0)
+        self.assertEqual(data["stops_compare"]["nonstop"]["price"], 39.0)
+        self.assertEqual(data["stops_compare"]["one_stop"]["price"], 29.0)
         self.assertEqual(data["stops_compare"]["one_stop"]["layover_city"], "OPO")
 
     def test_stops_compare_omits_an_empty_side(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
         one_stop = StopsCompareSide(
             airline="Ryanair",
-            price="€29",
-            price_eur=29.0,
+            price_text="€29",
+            price=29.0,
             duration="4 hr",
             duration_hours=4.0,
             stops="1 stop",
@@ -453,13 +470,13 @@ class JsonContractTests(unittest.TestCase):
             airline="Vueling",
             departure="07:15",
             arrival="08:40",
-            price="€39",
-            price_eur=39.0,
+            price_text="€39",
+            price=39.0,
             duration="1 hr 25 min",
             duration_hours=1.42,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
             booking_token="tok",
             google_flights_url=google_flights_url(query, currency="EUR", booking_token="tok"),
@@ -491,13 +508,13 @@ class JsonContractTests(unittest.TestCase):
             airline="Iberia",
             departure="07:00",
             arrival="08:20",
-            price="€90",
-            price_eur=90.0,
+            price_text="€90",
+            price=90.0,
             duration="1 hr 20 min",
             duration_hours=1.33,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer_eur=0,
+            baggage_buffer=0,
             needs_bag_verify=False,
             google_flights_url=url,
         )

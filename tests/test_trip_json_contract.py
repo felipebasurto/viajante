@@ -33,13 +33,24 @@ REPORT_KEYS = {
 }
 REPORT_KEYS_WITHOUT_TOTAL = REPORT_KEYS - {"trip_total"}
 TOTAL_KEYS = {
-    "flight_fare_eur",
-    "hotel_stay_eur",
-    "total_eur",
+    "flight_fare",
+    "hotel_stay",
+    "total",
     "hotel_price_basis",
     "nights",
 }
-FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
+FORBIDDEN_KEYS = {
+    "co2",
+    "co2_kg",
+    "emissions",
+    "carbon",
+    "flight_fare_eur",
+    "hotel_stay_eur",
+    "total_eur",
+    "price_eur",
+    "total_price_eur",
+    "price_usd",
+}
 
 
 def _offer() -> FlightOffer:
@@ -47,13 +58,13 @@ def _offer() -> FlightOffer:
         airline="Example Air",
         departure="08:40",
         arrival="11:30",
-        price="€412",
-        price_eur=412.0,
+        price_text="€412",
+        price=412.0,
         duration="2 h 50 min",
         duration_hours=2.8,
         stops="Nonstop",
         stops_count=0,
-        baggage_buffer_eur=0,
+        baggage_buffer=0,
         needs_bag_verify=False,
     )
 
@@ -62,8 +73,8 @@ def _stay() -> HotelOffer:
     return HotelOffer(
         title="Old Town Apartment",
         address="Melbourne",
-        total_price="246 €",
-        total_price_eur=246.0,
+        total_price_text="246 €",
+        total_price=246.0,
         rating="8.9",
         rating_score=8.9,
         details="Free cancellation",
@@ -110,7 +121,7 @@ def _report(*, with_total: bool = True) -> TripSearchReport:
         ),
     )
     total = (
-        TripTotal(flight_fare_eur=412.0, hotel_stay_eur=246.0, total_eur=658.0, nights=4)
+        TripTotal(flight_fare=412.0, hotel_stay=246.0, total=658.0, nights=4)
         if with_total
         else None
     )
@@ -134,9 +145,9 @@ class TripJsonContractTests(unittest.TestCase):
         total = self.data["trip_total"]
         self.assertEqual(set(total), TOTAL_KEYS)
         self.assertEqual(total["hotel_price_basis"], "total_stay")
-        self.assertEqual(total["flight_fare_eur"], 412.0)
-        self.assertEqual(total["hotel_stay_eur"], 246.0)
-        self.assertEqual(total["total_eur"], 658.0)
+        self.assertEqual(total["flight_fare"], 412.0)
+        self.assertEqual(total["hotel_stay"], 246.0)
+        self.assertEqual(total["total"], 658.0)
         self.assertEqual(total["nights"], 4)
 
     def test_nested_hotel_price_basis_stays_total_stay(self) -> None:

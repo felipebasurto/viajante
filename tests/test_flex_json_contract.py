@@ -27,7 +27,7 @@ REPORT_KEYS = {
     "to",
     "trip",
     "chosen_date",
-    "typical_eur",
+    "typical",
     "vs_typical",
     "fetch_backend",
     "fetch_ms",
@@ -36,7 +36,16 @@ REPORT_KEYS = {
 }
 RT_REPORT_KEYS = REPORT_KEYS | {"nights", "return_date"}
 FLEX_FETCH_BACKENDS = {"calendar", "calendar_then_sweep"}
-FORBIDDEN_KEYS = {"co2", "co2_kg", "emissions", "carbon"}
+FORBIDDEN_KEYS = {
+    "co2",
+    "co2_kg",
+    "emissions",
+    "carbon",
+    "price_eur",
+    "typical_eur",
+    "baggage_buffer_eur",
+    "price_usd",
+}
 
 
 def _offer() -> FlightOffer:
@@ -44,15 +53,15 @@ def _offer() -> FlightOffer:
         airline="British Airways",
         departure="18:00",
         arrival="06:00",
-        price="€350",
-        price_eur=350.0,
+        price_text="€350",
+        price=350.0,
         duration="7 hr",
         duration_hours=7.0,
         stops="Nonstop",
         stops_count=0,
-        baggage_buffer_eur=0,
+        baggage_buffer=0,
         needs_bag_verify=False,
-        typical_eur=440.0,
+        typical=440.0,
         vs_typical="below",
         vs_typical_pct=-20,
     )
@@ -71,13 +80,13 @@ def _report() -> FlexSearchReport:
         nights=7,
         chosen_date=date(2026, 9, 10),
         return_date=date(2026, 9, 17),
-        typical_eur=440.0,
+        typical=440.0,
         vs_typical="below",
         days=(
             DatePriceRow(
                 departure_date=date(2026, 9, 10),
                 return_date=date(2026, 9, 17),
-                price_eur=388.0,
+                price=388.0,
             ),
         ),
         offers=(_offer(),),
@@ -108,7 +117,7 @@ class FlexJsonContractTests(unittest.TestCase):
         self.assertEqual(set(data), REPORT_KEYS)
         self.assertIsNone(data["chosen_date"])
         self.assertEqual(data["offers"], [])
-        self.assertIsNone(data["typical_eur"])
+        self.assertIsNone(data["typical"])
         self.assertIsNone(data["vs_typical"])
 
     def test_declared_constants_are_stable(self) -> None:
@@ -125,7 +134,7 @@ class FlexJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["return_date"], "2026-09-17")
         self.assertEqual(self.data["nights"], 7)
         self.assertEqual(self.data["trip"], "rt")
-        self.assertEqual(self.data["typical_eur"], 440.0)
+        self.assertEqual(self.data["typical"], 440.0)
         self.assertEqual(self.data["vs_typical"], "below")
         self.assertEqual(self.data["fetch_backend"], "calendar_then_sweep")
         self.assertIn(self.data["fetch_backend"], FLEX_FETCH_BACKENDS)
@@ -145,7 +154,7 @@ class FlexJsonContractTests(unittest.TestCase):
         data = report.to_dict()
         self.assertIsNone(data["chosen_date"])
         self.assertEqual(data["offers"], [])
-        self.assertIsNone(data["typical_eur"])
+        self.assertIsNone(data["typical"])
         self.assertIsNone(data["vs_typical"])
         self.assertEqual(data["fetch_backend"], "calendar")
 
@@ -180,13 +189,13 @@ class FlexJsonContractTests(unittest.TestCase):
                     airline="Ryanair",
                     departure="06:00",
                     arrival="10:00",
-                    price="€49",
-                    price_eur=49.0,
+                    price_text="€49",
+                    price=49.0,
                     duration="4 hr",
                     duration_hours=4.0,
                     stops="1 stop",
                     stops_count=1,
-                    baggage_buffer_eur=0,
+                    baggage_buffer=0,
                     needs_bag_verify=False,
                 )
             ),
@@ -206,8 +215,8 @@ class FlexJsonContractTests(unittest.TestCase):
         ).to_dict()
         self.assertEqual(set(data), REPORT_KEYS | {"stops_compare"})
         self.assertEqual(set(data["stops_compare"]), {"nonstop", "one_stop"})
-        self.assertEqual(data["stops_compare"]["nonstop"]["price_eur"], 350.0)
-        self.assertEqual(data["stops_compare"]["one_stop"]["price_eur"], 49.0)
+        self.assertEqual(data["stops_compare"]["nonstop"]["price"], 350.0)
+        self.assertEqual(data["stops_compare"]["one_stop"]["price"], 49.0)
 
     def test_stops_compare_omits_an_empty_side(self) -> None:
         report = FlexSearchReport(

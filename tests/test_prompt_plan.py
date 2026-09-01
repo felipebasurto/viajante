@@ -86,8 +86,8 @@ class PromptPlanMediumTests(unittest.TestCase):
     def test_packaged_round_trip_typical_prompt_stays_rt(self) -> None:
         plan = plan_prompt(
             "Packaged round-trip YYZ-LIS on 2026-10-09 returning 2026-10-16, --trip rt. "
-            "Is the fare cheap, typical, or expensive versus typical_eur? Stamp "
-            "typical_eur / vs_typical when the same-stay grid has at least 3 priced days; "
+            "Is the fare cheap, typical, or expensive versus typical? Stamp "
+            "typical / vs_typical when the same-stay grid has at least 3 priced days; "
             "omit both on a miss. Do not invent a fare or a typical."
         )
         self.assertEqual(plan.intent, "flights")
@@ -720,26 +720,26 @@ class PromptPlanBrutalTests(unittest.TestCase):
 
     def test_named_price_cap_fills_owned_path_and_leaves_index_7_none(self) -> None:
         under = plan_prompt("JFK-LHR on 2026-09-15 under 200€")
-        self.assertEqual(under.price_cap_eur, 200)
+        self.assertEqual(under.price_cap, 200)
         parsed = plan_to_trips(under)
-        self.assertEqual(parsed[0].price_cap_eur, 200)
+        self.assertEqual(parsed[0].price_cap, 200)
         self.assertIsNone(build_shopping_inner(parsed[0])[1][7])
         four = plan_prompt("NRT-ICN on 2026-10-09 --price-cap 400 EUR")
-        self.assertEqual(four.price_cap_eur, 400)
-        self.assertEqual(plan_to_trips(four)[0].price_cap_eur, 400)
+        self.assertEqual(four.price_cap, 400)
+        self.assertEqual(plan_to_trips(four)[0].price_cap, 400)
         self.assertIsNone(build_shopping_inner(plan_to_trips(four)[0])[1][7])
 
     def test_unnamed_price_cap_leaves_index_7_none(self) -> None:
         plan = plan_prompt("JNB-SIN on 2026-11-03, max 1 stop.")
-        self.assertIsNone(plan.price_cap_eur)
+        self.assertIsNone(plan.price_cap)
         parsed = plan_to_trips(plan)
-        self.assertIsNone(parsed[0].price_cap_eur)
+        self.assertIsNone(parsed[0].price_cap)
         self.assertIsNone(build_shopping_inner(parsed[0])[1][7])
 
     def test_spanish_named_price_cap_is_owned(self) -> None:
         plan = plan_prompt("JFK-LHR el 2026-09-15, menos de 200 €")
-        self.assertEqual(plan.price_cap_eur, 200)
-        self.assertEqual(plan_to_trips(plan)[0].price_cap_eur, 200)
+        self.assertEqual(plan.price_cap, 200)
+        self.assertEqual(plan_to_trips(plan)[0].price_cap, 200)
 
     def test_arrive_before(self) -> None:
         plan = plan_prompt("SFO-LHR on 2026-11-03, arrive before 09:00, max 1 stop.")
@@ -1055,7 +1055,7 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(plan.trip, "rt")
         self.assertEqual(plan.location, "Nairobi")
         self.assertIn("search_trip", plan.notes)
-        self.assertIn("typical_eur", plan.notes)
+        self.assertIn("typical", plan.notes)
         self.assertNotIn("€", plan.notes)
 
     def test_french_aller_retour_hotel_is_packaged_rt(self) -> None:
@@ -1707,7 +1707,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.carry_on, 1)
         self.assertEqual(plan.via_airports, ("IST",))
         self.assertEqual(plan.exclude_via, ("DXB",))
-        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan.price_cap, 200)
         self.assertEqual(plan.route_specs, ())
 
     def test_dates_checked_bags_and_flag_cap_land(self) -> None:
@@ -1718,15 +1718,15 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.intent, "dates")
         self.assertEqual(plan.bags, 1)
         self.assertIsNone(plan.carry_on)
-        self.assertEqual(plan.price_cap_eur, 400)
-        self.assertIsNone(plan.baggage_buffer_eur)
+        self.assertEqual(plan.price_cap, 400)
+        self.assertIsNone(plan.baggage_buffer)
 
     def test_dates_named_baggage_buffer_copies_without_inventing_bags(self) -> None:
         plan = plan_prompt(
             "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 --baggage-buffer 40"
         )
         self.assertEqual(plan.intent, "dates")
-        self.assertEqual(plan.baggage_buffer_eur, 40)
+        self.assertEqual(plan.baggage_buffer, 40)
         self.assertIsNone(plan.bags)
         self.assertIsNone(plan.carry_on)
         self.assertIsNone(plan.baggage)
@@ -1737,14 +1737,14 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
             "Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 rank with a 40€ bag buffer"
         )
         self.assertEqual(plan.intent, "dates")
-        self.assertEqual(plan.baggage_buffer_eur, 40)
+        self.assertEqual(plan.baggage_buffer, 40)
         self.assertIsNone(plan.bags)
         self.assertIsNone(plan.carry_on)
 
     def test_dates_bags_vibe_does_not_invent_buffer(self) -> None:
         plan = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 cheap with bags")
         self.assertEqual(plan.intent, "dates")
-        self.assertIsNone(plan.baggage_buffer_eur)
+        self.assertIsNone(plan.baggage_buffer)
         self.assertIsNone(plan.bags)
         self.assertIsNone(plan.carry_on)
 
@@ -1758,7 +1758,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
         self.assertEqual(plan.include_airports, ())
-        self.assertIsNone(plan.price_cap_eur)
+        self.assertIsNone(plan.price_cap)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
         self.assertIsNone(plan.depart_after)
@@ -1772,7 +1772,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.infants_on_lap)
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
-        self.assertIsNone(plan.baggage_buffer_eur)
+        self.assertIsNone(plan.baggage_buffer)
         self.assertEqual(plan.no_overnight, ())
         self.assertEqual(plan.require_overnight, ())
         self.assertIsNone(plan.sort)
@@ -2043,7 +2043,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.carry_on, 1)
         self.assertEqual(plan.via_airports, ("IST",))
         self.assertEqual(plan.exclude_via, ("DXB",))
-        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan.price_cap, 200)
         self.assertEqual(plan.route_specs, ())
 
     def test_flex_checked_bags_land(self) -> None:
@@ -2062,7 +2062,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
         self.assertEqual(plan.include_airports, ())
-        self.assertIsNone(plan.price_cap_eur)
+        self.assertIsNone(plan.price_cap)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
         self.assertIsNone(plan.depart_after)
@@ -2207,7 +2207,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.carry_on, 1)
         self.assertEqual(plan.via_airports, ("IST",))
         self.assertEqual(plan.exclude_via, ("DXB",))
-        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan.price_cap, 200)
 
     def test_explore_checked_bags_land(self) -> None:
         plan = plan_prompt(
@@ -2216,14 +2216,14 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.intent, "explore")
         self.assertEqual(plan.bags, 2)
         self.assertIsNone(plan.carry_on)
-        self.assertIsNone(plan.baggage_buffer_eur)
+        self.assertIsNone(plan.baggage_buffer)
 
     def test_explore_named_baggage_buffer_copies_without_inventing_bags(self) -> None:
         plan = plan_prompt(
             "Explore cheap destinations from SIN starting 2026-09-15, 7 days --baggage-buffer 40"
         )
         self.assertEqual(plan.intent, "explore")
-        self.assertEqual(plan.baggage_buffer_eur, 40)
+        self.assertEqual(plan.baggage_buffer, 40)
         self.assertIsNone(plan.bags)
         self.assertIsNone(plan.carry_on)
         self.assertIsNone(plan.baggage)
@@ -2234,7 +2234,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
             "rank with a 40€ bag buffer"
         )
         self.assertEqual(plan.intent, "explore")
-        self.assertEqual(plan.baggage_buffer_eur, 40)
+        self.assertEqual(plan.baggage_buffer, 40)
         self.assertIsNone(plan.bags)
         self.assertIsNone(plan.carry_on)
 
@@ -2243,7 +2243,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
             "Explore cheap destinations from SIN starting 2026-09-15, 7 days cheap with bags"
         )
         self.assertEqual(plan.intent, "explore")
-        self.assertIsNone(plan.baggage_buffer_eur)
+        self.assertIsNone(plan.baggage_buffer)
         self.assertIsNone(plan.bags)
         self.assertIsNone(plan.carry_on)
 
@@ -2258,7 +2258,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_airports, ())
         self.assertEqual(plan.include_airports, ())
         self.assertEqual(plan.exclude_regions, ())
-        self.assertIsNone(plan.price_cap_eur)
+        self.assertIsNone(plan.price_cap)
         self.assertIsNone(plan.depart_window)
         self.assertIsNone(plan.arrive_before)
         self.assertIsNone(plan.depart_after)
@@ -2273,7 +2273,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertIsNone(plan.currency)
         self.assertIsNone(plan.country)
         self.assertIsNone(plan.sort)
-        self.assertIsNone(plan.baggage_buffer_eur)
+        self.assertIsNone(plan.baggage_buffer)
         self.assertEqual(plan.no_overnight, ())
         self.assertEqual(plan.require_overnight, ())
 
@@ -2505,11 +2505,11 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.carry_on, 1)
         self.assertEqual(plan.via_airports, ("IST",))
         self.assertEqual(plan.exclude_via, ("DXB",))
-        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan.price_cap, 200)
         parsed = plan_to_trips(plan)
         self.assertIsNone(parsed.bags)
         self.assertEqual(parsed.carry_on, 1)
-        self.assertEqual(parsed.price_cap_eur, 200)
+        self.assertEqual(parsed.price_cap, 200)
 
     def test_trip_unnamed_shop_filters_stay_unset(self) -> None:
         plan = plan_prompt(
@@ -2527,7 +2527,7 @@ class PromptPlanFamilyShopFilterTests(unittest.TestCase):
         self.assertEqual(plan.exclude_via, ())
         self.assertEqual(plan.exclude_airports, ())
         self.assertEqual(plan.include_airports, ())
-        self.assertIsNone(plan.price_cap_eur)
+        self.assertIsNone(plan.price_cap)
 
     def test_trip_named_exclude_airports_lands_vibe_does_not_invent(self) -> None:
         named = plan_prompt(

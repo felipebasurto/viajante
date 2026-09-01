@@ -19,7 +19,6 @@ from viajante.dates import (
 )
 from viajante.explore import DEFAULT_EXPLORE_TOP, search_explore, validate_explore_window
 from viajante.flights import (
-    DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
     FlightSort,
     expand_nearby_trips,
@@ -32,6 +31,12 @@ from viajante.flights import (
 )
 from viajante.hotels import HotelSourceName, search_hotels
 from viajante.models import FlightCabin, HotelQuery, MultiCity, RoundTrip, Trip
+from viajante.quote import (
+    HOTEL_CURRENCY_REQUIRED,
+    first_origin_iata,
+    resolve_quote_and_buffer,
+    resolve_quote_currency,
+)
 from viajante.trip import search_trip, stay_window_from_trips
 
 _SEARCH_LOCK = threading.Lock()
@@ -104,7 +109,7 @@ def search_flights_tool(
     require_overnight: Optional[str] = None,
     exclude_airports: Optional[str] = None,
     include_airports: Optional[str] = None,
-    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: Optional[int] = None,
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
@@ -112,7 +117,7 @@ def search_flights_tool(
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     nearby: bool = False,
 ) -> Mapping[str, object]:
@@ -127,10 +132,13 @@ def search_flights_tool(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap,
+        price_cap=price_cap,
     )
     trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
+    currency, buffer_eur = resolve_quote_and_buffer(
+        currency, first_origin_iata(trips[0]), baggage_buffer
+    )
     report = _with_search_lock(
         lambda: search_flights(
             trips,
@@ -152,7 +160,7 @@ def search_flights_tool(
             require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
             exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
             include_airports=parse_via_airports(include_airports, role="include-airports"),
-            buffer_eur=baggage_buffer,
+            buffer_eur=buffer_eur,
             sort=sort,
             currency=currency,
             country=country,
@@ -194,9 +202,9 @@ def search_dates_tool(
     max_duration: Optional[float] = None,
     min_layover: Optional[float] = None,
     max_layover: Optional[float] = None,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
-    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: Optional[int] = None,
     sort: Optional[FlightSort] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
@@ -205,6 +213,7 @@ def search_dates_tool(
     validate_date_window(start_date, end_date)
     _reject_past((start_date,))
     kind, stay = resolve_date_trip(trip, nights)
+    currency, buffer_eur = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_dates(
             origin,
@@ -231,7 +240,7 @@ def search_dates_tool(
             include_airports=parse_via_airports(include_airports, role="include-airports"),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
             arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
@@ -241,7 +250,7 @@ def search_dates_tool(
             max_layover_hours=max_layover,
             currency=currency,
             country=country,
-            buffer_eur=baggage_buffer,
+            buffer_eur=buffer_eur,
             sort=sort,
         )
     )
@@ -262,7 +271,7 @@ def search_flex_tool(
     trip: str = "one-way",
     nights: Optional[int] = None,
     top: int = DEFAULT_TOP,
-    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: Optional[int] = None,
     sort: FlightSort = "ranked",
     airlines: Optional[str] = None,
     exclude_airlines: Optional[str] = None,
@@ -284,7 +293,7 @@ def search_flex_tool(
     max_duration: Optional[float] = None,
     min_layover: Optional[float] = None,
     max_layover: Optional[float] = None,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
@@ -292,6 +301,7 @@ def search_flex_tool(
     start, _end = flex_window(around_date, flex)
     _reject_past((around_date, start), label="around")
     kind, stay = resolve_date_trip(trip, nights)
+    currency, buffer_eur = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_flex(
             origin,
@@ -307,7 +317,7 @@ def search_flex_tool(
             trip=kind,
             nights=stay,
             top=top,
-            buffer_eur=baggage_buffer,
+            buffer_eur=buffer_eur,
             sort=sort,
             airlines=parse_airline_codes(airlines),
             exclude_airlines=parse_airline_codes(exclude_airlines),
@@ -321,7 +331,7 @@ def search_flex_tool(
             include_airports=parse_via_airports(include_airports, role="include-airports"),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
             arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
@@ -370,10 +380,10 @@ def search_explore_tool(
     max_duration: Optional[float] = None,
     min_layover: Optional[float] = None,
     max_layover: Optional[float] = None,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     sort: FlightSort = "price",
-    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: Optional[int] = None,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -386,6 +396,7 @@ def search_explore_tool(
         start_date = date.fromisoformat(start)
     validate_explore_window(start_date, days)
     _reject_past((start_date,))
+    currency, buffer_eur = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_explore(
             origin,
@@ -411,7 +422,7 @@ def search_explore_tool(
             exclude_regions=parse_exclude_regions(exclude_regions),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
             arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
@@ -422,7 +433,7 @@ def search_explore_tool(
             currency=currency,
             country=country,
             sort=sort,
-            buffer_eur=baggage_buffer,
+            buffer_eur=buffer_eur,
         )
     )
     return _payload_from_reports(report)
@@ -440,9 +451,11 @@ def search_hotels_tool(
     entire_home: bool = False,
     free_cancellation: bool = True,
     source: HotelSourceName = "google",
+    currency: Optional[str] = None,
 ) -> Mapping[str, object]:
     if source == "google" and min_rating is not None and min_rating > 5:
         raise ValueError("min_rating must be at most 5 with source google")
+    currency = resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
     check_in_date = date.fromisoformat(check_in)
     check_out_date = date.fromisoformat(check_out)
     _reject_past((check_in_date,), label="check-in")
@@ -456,7 +469,9 @@ def search_hotels_tool(
         entire_home=entire_home,
         free_cancellation=free_cancellation,
     )
-    report = _with_search_lock(lambda: search_hotels((query,), top=top, source=source))
+    report = _with_search_lock(
+        lambda: search_hotels((query,), top=top, source=source, currency=currency)
+    )
     return dict(report.to_dict())
 
 
@@ -473,7 +488,7 @@ def search_trip_tool(
     cabin: FlightCabin = "economy",
     top: int = DEFAULT_TOP,
     fetch: str = "auto",
-    baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: Optional[int] = None,
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
@@ -493,7 +508,7 @@ def search_trip_tool(
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     min_rating: Optional[float] = None,
     entire_home: bool = False,
@@ -515,10 +530,13 @@ def search_trip_tool(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap,
+        price_cap=price_cap,
     )
     trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
+    currency, buffer_eur = resolve_quote_and_buffer(
+        currency, first_origin_iata(trips[0]), baggage_buffer
+    )
     window = stay_window_from_trips(trips)
     if check_in:
         check_in_date = date.fromisoformat(check_in)
@@ -548,7 +566,7 @@ def search_trip_tool(
             trips,
             query,
             top=top,
-            buffer_eur=baggage_buffer,
+            buffer_eur=buffer_eur,
             sort=sort,
             fetch=fetch,
             airlines=parse_airline_codes(airlines),
@@ -565,7 +583,7 @@ def search_trip_tool(
             depart_after=parse_named_clock(depart_after, role="depart-after"),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             currency=currency,
             country=country,
             hotel_source=source,

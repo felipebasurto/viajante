@@ -26,7 +26,7 @@ TYPICAL_WINDOW_DAYS = 31
 MIN_DAILY_PRICES = 3
 
 
-def typical_eur_from_daily_prices(
+def typical_from_daily_prices(
     prices: Sequence[Optional[float]],
 ) -> Optional[float]:
     """Median of positive owned daily prices, or None if the list is too thin."""
@@ -38,46 +38,46 @@ def typical_eur_from_daily_prices(
 
 def with_typical(
     offer: FlightOffer,
-    typical_eur: Optional[float],
+    typical: Optional[float],
     *,
     cheapest_date: Optional[date] = None,
-    cheapest_eur: Optional[float] = None,
+    cheapest: Optional[float] = None,
 ) -> FlightOffer:
-    label = vs_typical(offer.price_eur, typical_eur)
-    pct = vs_typical_pct(offer.price_eur, typical_eur)
-    if typical_eur is None or label is None or pct is None:
+    label = vs_typical(offer.price, typical)
+    pct = vs_typical_pct(offer.price, typical)
+    if typical is None or label is None or pct is None:
         return offer
-    if cheapest_date is None or cheapest_eur is None or cheapest_eur <= 0:
+    if cheapest_date is None or cheapest is None or cheapest <= 0:
         return replace(
             offer,
-            typical_eur=typical_eur,
+            typical=typical,
             vs_typical=label,
             vs_typical_pct=pct,
         )
     return replace(
         offer,
-        typical_eur=typical_eur,
+        typical=typical,
         vs_typical=label,
         vs_typical_pct=pct,
         cheapest_date=cheapest_date,
-        cheapest_eur=cheapest_eur,
+        cheapest=cheapest,
     )
 
 
 def with_typical_dest(
     dest: ExploreDestination,
-    typical_eur: Optional[float],
+    typical: Optional[float],
 ) -> ExploreDestination:
     """Stamp a shopped dest from the same-route calendar median flights uses."""
-    if dest.price_eur is None:
+    if dest.price is None:
         return dest
-    label = vs_typical(dest.price_eur, typical_eur)
-    pct = vs_typical_pct(dest.price_eur, typical_eur)
-    if typical_eur is None or label is None or pct is None:
+    label = vs_typical(dest.price, typical)
+    pct = vs_typical_pct(dest.price, typical)
+    if typical is None or label is None or pct is None:
         return dest
     return replace(
         dest,
-        typical_eur=typical_eur,
+        typical=typical,
         vs_typical=label,
         vs_typical_pct=pct,
     )

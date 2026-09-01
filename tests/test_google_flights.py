@@ -395,8 +395,8 @@ class OwnedCardParserTests(unittest.TestCase):
         self.assertEqual(card.price, "€1,234.56")
         offer = _normalize_offer(card, max_stops=1)
         assert offer is not None
-        self.assertEqual(offer.price, "€1,234.56")
-        self.assertEqual(offer.price_eur, 1234.56)
+        self.assertEqual(offer.price_text, "€1,234.56")
+        self.assertEqual(offer.price, 1234.56)
         self.assertAlmostEqual(offer.duration_hours or 0, 2 + 50 / 60)
 
     def test_spanish_stop_labels_are_raw_only(self) -> None:
@@ -411,7 +411,7 @@ class OwnedCardParserTests(unittest.TestCase):
         assert offer is not None
         self.assertEqual(offer.stops, "Sin escalas")
         self.assertIsNone(offer.stops_count)
-        self.assertEqual(offer.price_eur, 1234.56)
+        self.assertEqual(offer.price, 1234.56)
 
     def test_cards_beat_stale_empty_state_markup(self) -> None:
         html = build_empty_page() + build_results_page(build_card(price="€88"))
@@ -450,8 +450,8 @@ class HttpSweepParseTests(unittest.TestCase):
         self.assertEqual(cards[0].stops, "Nonstop")
         offer = _normalize_offer(cards[0], max_stops=1)
         assert offer is not None
-        self.assertEqual(offer.price, "€39")
-        self.assertEqual(offer.price_eur, 39.0)
+        self.assertEqual(offer.price_text, "€39")
+        self.assertEqual(offer.price, 39.0)
 
     def test_extract_main_drops_chrome_outside_main(self) -> None:
         inner = build_results_page(build_card(price="€88"))
@@ -664,15 +664,15 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertIsNone(default[1][10])
 
     def test_named_price_cap_does_not_guess_constraints_index_7(self) -> None:
-        named = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap_eur=200)
+        named = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=200)
         inner = build_shopping_inner(named)
-        self.assertEqual(named.price_cap_eur, 200)
+        self.assertEqual(named.price_cap, 200)
         self.assertIsNone(inner[1][7])
-        four = FlightQuery("NRT", "ICN", date(2026, 10, 9), price_cap_eur=400)
-        self.assertEqual(four.price_cap_eur, 400)
+        four = FlightQuery("NRT", "ICN", date(2026, 10, 9), price_cap=400)
+        self.assertEqual(four.price_cap, 400)
         self.assertIsNone(build_shopping_inner(four)[1][7])
         unnamed = FlightQuery("MAD", "BCN", date(2026, 9, 1))
-        self.assertIsNone(unnamed.price_cap_eur)
+        self.assertIsNone(unnamed.price_cap)
         self.assertIsNone(build_shopping_inner(unnamed)[1][7])
 
     def test_airline_include_fills_segment_index_7(self) -> None:
@@ -939,7 +939,7 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(cards[0].price, "€83")
         offer = _normalize_offer(cards[0], max_stops=1)
         assert offer is not None
-        self.assertEqual(offer.price_eur, 83.0)
+        self.assertEqual(offer.price, 83.0)
         self.assertEqual(offer.stops_count, 1)
         self.assertEqual(offer.duration_hours, 4 + 5 / 60)
         self.assertIsNone(cards[0].checked_bags)
@@ -957,7 +957,7 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(offer.carry_on, 1)
         self.assertEqual(offer.to_dict()["checked_bags"], 1)
         self.assertFalse(offer.needs_bag_verify)
-        self.assertEqual(offer.baggage_buffer_eur, 0)
+        self.assertEqual(offer.baggage_buffer, 0)
         missing = parse_shopping_body(_compact_body(_itinerary(price=91)))[0]
         self.assertIsNone(missing.checked_bags)
         self.assertIsNone(missing.carry_on)
