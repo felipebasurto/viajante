@@ -45,8 +45,8 @@ from viajante.models import (
     StopsCompare,
     Trip,
     normalize_country,
-    normalize_currency,
 )
+from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import write_json_atomic
 from viajante.typical import typical_eur_from_daily_prices, vs_typical, with_typical
 
@@ -650,15 +650,16 @@ def search_dates(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     sort: Optional[FlightSort] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
-    currency = normalize_currency(currency)
+    currency = resolve_quote_currency(currency, origin)
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     country = normalize_country(country)
     if buffer_eur < 0:
         raise ValueError("baggage buffer must not be negative")
@@ -955,7 +956,7 @@ def search_flex(
     trip: str = "one-way",
     nights: Optional[int] = None,
     top: int = DEFAULT_TOP,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
@@ -977,7 +978,7 @@ def search_flex(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
@@ -987,7 +988,8 @@ def search_flex(
     A compact calendar miss or a window with no priced day is empty: no
     per-day shopping sweep, no invented fare.
     """
-    currency = normalize_currency(currency)
+    currency = resolve_quote_currency(currency, origin)
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     country = normalize_country(country)
     if top <= 0:
         raise ValueError("top must be a positive integer")

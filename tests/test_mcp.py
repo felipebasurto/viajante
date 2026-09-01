@@ -186,7 +186,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(trip.children, 1)
         self.assertEqual(trip.infants_in_seat, 1)
         self.assertEqual(trip.infants_on_lap, 1)
-        self.assertEqual(search.call_args.kwargs["currency"], "usd")
+        self.assertEqual(search.call_args.kwargs["currency"], "USD")
         self.assertEqual(search.call_args.kwargs["country"], "us")
 
     def test_past_flight_date_fails_before_search(self) -> None:
@@ -271,7 +271,7 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
             search_dates_tool("JFK-LHR", FUTURE, FUTURE_OUT, currency="usd", country="us")
         kwargs = search.call_args.kwargs
-        self.assertEqual(kwargs["currency"], "usd")
+        self.assertEqual(kwargs["currency"], "USD")
         self.assertEqual(kwargs["country"], "us")
 
     def test_search_dates_forwards_owned_shop_filters(self) -> None:
@@ -400,7 +400,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
-        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertEqual(kwargs["currency"], "USD")
+        self.assertEqual(kwargs["buffer_eur"], 0)
         self.assertIsNone(kwargs["country"])
 
     def test_search_flex_forwards_named_occupancy(self) -> None:
@@ -426,7 +427,7 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool("JFK-LHR", FUTURE, 3, currency="usd", country="us")
         kwargs = search.call_args.kwargs
-        self.assertEqual(kwargs["currency"], "usd")
+        self.assertEqual(kwargs["currency"], "USD")
         self.assertEqual(kwargs["country"], "us")
 
     def test_search_flex_forwards_owned_shop_filters(self) -> None:
@@ -563,7 +564,7 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("JFK", FUTURE, currency="usd", country="us")
         kwargs = search.call_args.kwargs
-        self.assertEqual(kwargs["currency"], "usd")
+        self.assertEqual(kwargs["currency"], "USD")
         self.assertEqual(kwargs["country"], "us")
 
     def test_search_explore_forwards_owned_shop_filters(self) -> None:
@@ -633,10 +634,19 @@ class McpHandlerTests(unittest.TestCase):
     def test_search_hotels_defaults_to_google(self) -> None:
         fake = _report(provider="google-hotels", queries=[])
         with patch("viajante.mcp_handlers.search_hotels", return_value=fake) as search:
-            payload = search_hotels_tool("Prague", FUTURE, FUTURE_OUT)
+            payload = search_hotels_tool("Prague", FUTURE, FUTURE_OUT, currency="CZK")
         self.assertEqual(search.call_args.kwargs["source"], "google")
+        self.assertEqual(search.call_args.kwargs["currency"], "CZK")
         self.assertEqual(payload["provider"], "google-hotels")
         self.assertNotIn("success", payload)
+
+    def test_search_hotels_requires_currency(self) -> None:
+        with patch("viajante.mcp_handlers.search_hotels") as search:
+            with self.assertRaises(ValueError) as ctx:
+                search_hotels_tool("Prague", FUTURE, FUTURE_OUT)
+        search.assert_not_called()
+        self.assertIn("--currency", str(ctx.exception))
+        self.assertIn("does not convert", str(ctx.exception).lower())
 
     def test_search_trip_returns_nested_reports_and_omits_invented_total(self) -> None:
         fake = _report(
@@ -659,7 +669,8 @@ class McpHandlerTests(unittest.TestCase):
         self.assertNotIn("trip_total", payload)
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["hotel_source"], "google")
-        self.assertEqual(kwargs["buffer_eur"], 70)
+        self.assertEqual(kwargs["currency"], "SGD")
+        self.assertEqual(kwargs["buffer_eur"], 0)
         trip = search.call_args.args[0][0]
         self.assertEqual(type(trip).__name__, "RoundTrip")
         self.assertEqual(trip.adults, 2)

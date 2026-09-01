@@ -660,7 +660,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             patch("viajante.hotels.BookingHotelsSource") as booking,
             patch("viajante.hotels.time.sleep"),
         ):
-            report = search_hotels((query(),), source="google")
+            report = search_hotels((query(),), source="google", currency="EUR")
         booking.assert_not_called()
         self.assertTrue(source.closed)
         self.assertEqual(report.provider, "google-hotels")
@@ -673,7 +673,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             patch("viajante.hotels.BookingHotelsSource", return_value=source),
             patch("viajante.hotels.time.sleep"),
         ):
-            report = search_hotels((query(),))
+            report = search_hotels((query(),), currency="EUR")
 
         self.assertTrue(source.closed)
         self.assertIsInstance(report.queries[0], HotelQueryFailure)

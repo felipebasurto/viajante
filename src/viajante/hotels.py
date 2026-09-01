@@ -62,6 +62,7 @@ from viajante.parsers import (
     parse_rating,
     parse_unit_hints,
 )
+from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
 from viajante.storage import default_state_dir, write_json_atomic
 
 
@@ -286,25 +287,27 @@ def search_hotels(
     top: int = DEFAULT_TOP,
     progress: Optional[Callable[[str], None]] = None,
     source: HotelSourceName = "booking",
+    currency: Optional[str] = None,
 ) -> HotelSearchReport:
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
         raise ValueError("top must be positive")
+    if source not in ("booking", "google"):
+        raise ValueError("source must be booking or google")
+    currency = resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
     if source == "google":
-        hotel_source: _HotelSource = GoogleHotelsSource()
+        hotel_source: _HotelSource = GoogleHotelsSource(currency=currency)
         provider: HotelProvider = "google-hotels"
         applied_filters = build_google_filters
         delay_seconds = sweep_inter_query_delay_seconds
         fetch_backend: Literal["booking", "google"] = "google"
-    elif source == "booking":
-        hotel_source = BookingHotelsSource(default_state_dir())
+    else:
+        hotel_source = BookingHotelsSource(default_state_dir(), currency=currency)
         provider = "booking.com"
         applied_filters = build_booking_filters
         delay_seconds = inter_query_delay_seconds
         fetch_backend = "booking"
-    else:
-        raise ValueError("source must be booking or google")
     started = time.perf_counter()
     try:
         report = _run_search(

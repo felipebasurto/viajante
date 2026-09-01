@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "viajante"
 version = "0.1.0"
-description = "Local Google Flights and hotel search from any IATA pair (no API keys; quotes in EUR)"
+description = "Local Google Flights and hotel search from any IATA pair (no API keys; currency is origin country or --currency; does not convert; asks when unproven)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

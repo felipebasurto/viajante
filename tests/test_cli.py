@@ -1054,6 +1054,8 @@ class HotelCliTests(unittest.TestCase):
                         "Prague",
                         "2026-12-04",
                         "2026-12-07",
+                        "--currency",
+                        "CZK",
                         "--adults",
                         "2",
                         "--rooms",
@@ -1069,6 +1071,7 @@ class HotelCliTests(unittest.TestCase):
                 search.assert_called_once()
                 queries, kwargs = search.call_args
                 self.assertEqual(kwargs["top"], 5)
+                self.assertEqual(kwargs["currency"], "CZK")
                 self.assertTrue(callable(kwargs["progress"]))
                 self.assertEqual(len(queries[0]), 1)
                 query = queries[0][0]
@@ -1095,6 +1098,8 @@ class HotelCliTests(unittest.TestCase):
                         "Prague",
                         "2026-12-04",
                         "2026-12-07",
+                        "--currency",
+                        "CZK",
                         "--compare-cancellation",
                     ]
                 )
@@ -1207,6 +1212,8 @@ class HotelCliTests(unittest.TestCase):
                         "Prague",
                         "2026-12-04",
                         "2026-12-07",
+                        "--currency",
+                        "CZK",
                         "--compare-cancellation",
                     ]
                 )
@@ -1256,6 +1263,8 @@ class HotelCliTests(unittest.TestCase):
                         "Prague",
                         "2026-12-04",
                         "2026-12-07",
+                        "--currency",
+                        "CZK",
                         "--compare-cancellation",
                     ]
                 )
@@ -1272,6 +1281,8 @@ class HotelCliTests(unittest.TestCase):
                     "Prague",
                     "2026-12-04",
                     "2026-12-07",
+                    "--currency",
+                    "CZK",
                     "--compare-cancellation",
                     "--allow-non-refundable",
                 ]
@@ -1288,6 +1299,8 @@ class HotelCliTests(unittest.TestCase):
                         "Prague",
                         "2026-12-04",
                         "2026-12-07",
+                        "--currency",
+                        "CZK",
                         "--allow-non-refundable",
                     ]
                 )
@@ -1299,7 +1312,7 @@ class HotelCliTests(unittest.TestCase):
     def test_google_source_reaches_search(self) -> None:
         with patch("viajante.cli.search_hotels", return_value=_sample_hotel_report()) as search:
             with patch("viajante.cli._print_hotel_report"):
-                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--source", "google"])
+                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK", "--source", "google"])
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["source"], "google")
 
@@ -1311,6 +1324,8 @@ class HotelCliTests(unittest.TestCase):
                     "Prague",
                     "2026-12-04",
                     "2026-12-07",
+                    "--currency",
+                    "CZK",
                     "--source",
                     "google",
                     "--compare-cancellation",
@@ -1327,6 +1342,8 @@ class HotelCliTests(unittest.TestCase):
                     "Prague",
                     "2026-12-04",
                     "2026-12-07",
+                    "--currency",
+                    "CZK",
                     "--source",
                     "google",
                     "--min-rating",
@@ -1370,7 +1387,7 @@ class HotelCliTests(unittest.TestCase):
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                main(["hotels", "Prague", "2026-12-04", "2026-12-07"])
+                main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
             output = buffer.getvalue()
             lowered = output.casefold()
             self.assertIn("free cancellation required", lowered)
@@ -1405,6 +1422,8 @@ class HotelCliTests(unittest.TestCase):
                         "Prague",
                         "2026-12-04",
                         "2026-12-07",
+                        "--currency",
+                        "CZK",
                         "--allow-non-refundable",
                     ]
                 )
@@ -1419,7 +1438,7 @@ class HotelCliTests(unittest.TestCase):
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07"])
+                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
             self.assertEqual(code, 0)
             output = buffer.getvalue()
             self.assertIn("Prague", output)
@@ -1473,6 +1492,8 @@ class HotelCliTests(unittest.TestCase):
                         "Prague",
                         "2026-12-04",
                         "2026-12-07",
+                        "--currency",
+                        "CZK",
                         "--entire-home",
                     ]
                 )
@@ -1502,7 +1523,7 @@ class HotelCliTests(unittest.TestCase):
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                main(["hotels", "Prague", "2026-12-04", "2026-12-07"])
+                main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
             output = buffer.getvalue().casefold()
             self.assertIn("rating 8.7", output)
             self.assertNotIn("fabuloso", output)
@@ -1514,7 +1535,7 @@ class HotelCliTests(unittest.TestCase):
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07"])
+                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
             self.assertEqual(code, 0)
             output = buffer.getvalue()
             self.assertIn("(no eligible stays)", output)
@@ -1539,7 +1560,7 @@ class HotelCliTests(unittest.TestCase):
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07"])
+                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
             self.assertEqual(code, 2)
             output = buffer.getvalue()
             self.assertIn("ERROR:", output)
@@ -1550,7 +1571,7 @@ class HotelCliTests(unittest.TestCase):
     def test_save_only_when_requested(self) -> None:
         with patch("viajante.cli.search_hotels", return_value=_sample_hotel_report()):
             with patch("viajante.cli.write_hotel_report_atomic") as writer:
-                main(["hotels", "Prague", "2026-12-04", "2026-12-07"])
+                main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
                 writer.assert_not_called()
 
     def test_atomic_save(self) -> None:
@@ -1567,6 +1588,8 @@ class HotelCliTests(unittest.TestCase):
                             "Prague",
                             "2026-12-04",
                             "2026-12-07",
+                            "--currency",
+                            "CZK",
                             "--save",
                             str(out),
                         ]

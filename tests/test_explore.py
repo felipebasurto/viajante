@@ -764,12 +764,12 @@ class ExploreSearchTests(unittest.TestCase):
         ctor.assert_called_once_with(currency="USD", country="US")
         self.assertEqual(report.currency, "USD")
 
-    def test_unnamed_currency_stays_eur_country_omitted(self) -> None:
+    def test_unnamed_currency_follows_origin_country_usd(self) -> None:
         source = FakeExploreSource((CompactExplorePlace("OPO", "Porto", "Portugal"),))
         with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source) as ctor:
             report = search_explore("JFK", date(2026, 9, 1), days=7, top=1)
-        ctor.assert_called_once_with(currency="EUR", country=None)
-        self.assertEqual(report.currency, "EUR")
+        ctor.assert_called_once_with(currency="USD", country=None)
+        self.assertEqual(report.currency, "USD")
 
     def test_unknown_origin_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

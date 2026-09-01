@@ -2104,7 +2104,7 @@ class ShopFilterTests(unittest.TestCase):
         ctor.assert_called_once_with(currency="USD", country="US")
         self.assertEqual(report.currency, "USD")
 
-    def test_dates_unnamed_currency_stays_eur_country_omitted(self) -> None:
+    def test_dates_unnamed_currency_follows_origin_country_usd(self) -> None:
         source = FakeCalendarSource(
             (
                 CompactCalendarDay(date(2026, 9, 1), 45.0),
@@ -2113,8 +2113,8 @@ class ShopFilterTests(unittest.TestCase):
         )
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
             report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 2))
-        ctor.assert_called_once_with(currency="EUR", country=None)
-        self.assertEqual(report.currency, "EUR")
+        ctor.assert_called_once_with(currency="USD", country=None)
+        self.assertEqual(report.currency, "USD")
 
     def test_dates_invalid_currency_or_country_is_rejected_before_fetch(self) -> None:
         with patch("viajante.dates.GoogleFlightsHttpSource") as ctor:
@@ -2297,13 +2297,13 @@ class ShopFilterTests(unittest.TestCase):
         ctor.assert_called_once_with(currency="USD", country="GB")
         self.assertEqual(report.currency, "USD")
 
-    def test_flex_unnamed_currency_stays_eur_country_omitted(self) -> None:
+    def test_flex_unnamed_currency_follows_origin_country_usd(self) -> None:
         iberia = _card(airline="Iberia", airline_codes=("IB",), price="€90")
         source = _flex_shop_source(iberia)
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
             report = search_flex("JFK", "LHR", date(2026, 9, 12), 1, buffer_eur=0)
-        ctor.assert_called_once_with(currency="EUR", country=None)
-        self.assertEqual(report.currency, "EUR")
+        ctor.assert_called_once_with(currency="USD", country=None)
+        self.assertEqual(report.currency, "USD")
 
 
 class FlexCliTests(unittest.TestCase):

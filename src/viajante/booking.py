@@ -90,13 +90,15 @@ class BookingHotelsSource:
         state_dir: Path,
         session: Optional[ChromiumSession] = None,
         config: Optional[BrowserSessionConfig] = None,
+        *,
+        currency: str = "EUR",
     ) -> None:
         self._state_dir = state_dir
         self._config = config or BrowserSessionConfig(
             state_filename=BOOKING_STATE_FILENAME,
             locale=FETCH_LOCALE,
             html_lang=FETCH_LANGUAGE,
-            currency="EUR",
+            currency=currency,
             viewport={"width": 1280, "height": 900},
             blocked_resource_types=BOOKING_BLOCKED_RESOURCE_TYPES,
         )

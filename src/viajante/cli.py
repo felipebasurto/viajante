@@ -37,7 +37,6 @@ from viajante.explore import (
     write_explore_reports_atomic,
 )
 from viajante.flights import (
-    DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
     FLIGHT_SORTS,
     FlightSort,
@@ -78,9 +77,14 @@ from viajante.models import (
     Trip,
     TripSearchReport,
     normalize_country,
-    normalize_currency,
 )
 from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
+from viajante.quote import (
+    HOTEL_CURRENCY_REQUIRED,
+    first_origin_iata,
+    resolve_baggage_buffer,
+    resolve_quote_currency,
+)
 from viajante.trip import (
     format_trip_total,
     search_trip,
@@ -145,6 +149,7 @@ Examples:
   viajante airports tokyo
   viajante airports london
   viajante airports JFK
+  (city queries list codes; they do not pick one)
 """
 
 BENCH_EXAMPLES = """\
@@ -157,12 +162,12 @@ Examples:
 
 HOTELS_EXAMPLES = """\
 Examples:
-  viajante hotels Tokyo 2026-10-12 2026-10-16
-  viajante hotels "Mexico City" 2026-12-04 2026-12-10 --top 5
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --entire-home --min-rating 8.5
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --compare-cancellation
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --save results/hotels.json
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --source google --top 3
+  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY
+  viajante hotels "Mexico City" 2026-12-04 2026-12-10 --currency MXN --top 5
+  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --entire-home --min-rating 8.5
+  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --compare-cancellation
+  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --save results/hotels.json
+  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --source google --top 3
 """
 
 TRIP_EXAMPLES = """\
@@ -178,16 +183,15 @@ Examples:
 def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
-    if args.baggage_buffer < 0:
+    if args.baggage_buffer is not None and args.baggage_buffer < 0:
         raise ValueError("--baggage-buffer must not be negative")
     occupancy = _occupancy_from_args(args)
-    args.currency = normalize_currency(args.currency)
     args.country = normalize_country(args.country)
     if args.bags is not None and args.bags < 0:
         raise ValueError("--bags must not be negative")
     carry_on = 1 if args.carry_on else None
     if args.price_cap is not None and args.price_cap <= 0:
-        raise ValueError("--price-cap must be a positive EUR amount")
+        raise ValueError("--price-cap must be a positive amount in the quote currency")
     if args.max_layover is not None and args.max_layover < 0:
         raise ValueError("--max-layover must not be negative")
     if args.min_layover is not None and args.min_layover < 0:
@@ -236,7 +240,9 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         if departure < today:
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
     trips = _as_trips(plan)
-    return expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
+    trips = expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
+    _resolve_quote_from_args(args, first_origin_iata(trips[0]))
+    return trips
 
 
 def _as_trips(plan: object) -> Tuple[Trip, ...]:
@@ -400,7 +406,11 @@ def _build_hotel_queries(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
 def _validate_hotel_args(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
-    return _build_hotel_queries(args)
+    queries = _build_hotel_queries(args)
+    args.currency = resolve_quote_currency(
+        getattr(args, "currency", None), None, missing=HOTEL_CURRENCY_REQUIRED
+    )
+    return queries
 
 
 def _print_best_pairs(report, sort: FlightSort) -> None:
@@ -815,6 +825,7 @@ def _run_hotels(args: argparse.Namespace) -> int:
         top=args.top,
         progress=lambda line: print(line, file=sys.stderr),
         source=getattr(args, "source", "booking"),
+        currency=args.currency,
     )
     _print_hotel_report(report)
 
@@ -1115,22 +1126,58 @@ def _add_occupancy_flags(parser: argparse.ArgumentParser) -> None:
 def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--currency",
-        default="EUR",
+        default=None,
         metavar="CODE",
-        help="ISO 4217 currency for Google params (default EUR)",
+        help=(
+            "ISO 4217 for Google curr. Unnamed infers from the named origin airport's "
+            "country (JFK USD, LHR GBP, NRT JPY, GRU BRL). Required when that mapping "
+            "is unproven. A city with several airports, Europe, unnamed origin, or two "
+            "possible currencies does not pick: ask or error. Do not invent IATA, gl, "
+            "or ISO 4217 from vibe. Viajante does not convert; the caller may convert "
+            "for the user."
+        ),
     )
     parser.add_argument(
         "--country",
         default=None,
         metavar="CC",
-        help="ISO country for Google gl. Omitted when unset.",
+        help="ISO country for Google gl. Omitted when unset. Do not invent gl from vibe.",
     )
 
 
-def _market_from_args(args: argparse.Namespace) -> dict[str, object]:
+def _add_baggage_buffer_flag(
+    parser: argparse.ArgumentParser, extra: str = ""
+) -> None:
+    help_text = (
+        "Ranking add-on in the quote currency. Unnamed is 70 only when the quote is "
+        "EUR; otherwise 0. Named value is used as-is. Viajante does not convert the 70."
+    )
+    if extra:
+        help_text = f"{help_text} {extra}"
+    parser.add_argument(
+        "--baggage-buffer",
+        type=int,
+        default=None,
+        metavar="N",
+        help=help_text,
+    )
+
+
+def _resolve_quote_from_args(args: argparse.Namespace, origin: Optional[str]) -> None:
+    args.country = normalize_country(getattr(args, "country", None))
+    args.currency = resolve_quote_currency(getattr(args, "currency", None), origin)
+    if getattr(args, "baggage_buffer", None) is not None and args.baggage_buffer < 0:
+        raise ValueError("--baggage-buffer must not be negative")
+    args.baggage_buffer = resolve_baggage_buffer(
+        getattr(args, "baggage_buffer", None), args.currency
+    )
+
+
+def _market_from_args(args: argparse.Namespace, origin: Optional[str] = None) -> dict[str, object]:
+    _resolve_quote_from_args(args, origin)
     return {
-        "currency": normalize_currency(getattr(args, "currency", "EUR") or "EUR"),
-        "country": normalize_country(getattr(args, "country", None)),
+        "currency": args.currency,
+        "country": args.country,
     }
 
 
@@ -1152,9 +1199,9 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         "--price-cap",
         type=int,
         default=None,
-        metavar="EUR",
+        metavar="AMOUNT",
         dest="price_cap",
-        help="Drop owned fares above this EUR amount (omit to leave unset; unnamed stays None)",
+        help="Drop owned fares above this amount in the quote currency (omit to leave unset)",
     )
     parser.add_argument(
         "--airlines",
@@ -1304,7 +1351,7 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
     if args.bags is not None and args.bags < 0:
         raise ValueError("--bags must not be negative")
     if args.price_cap is not None and args.price_cap <= 0:
-        raise ValueError("--price-cap must be a positive EUR amount")
+        raise ValueError("--price-cap must be a positive amount in the quote currency")
     via = parse_via_airports(args.via)
     exclude_via = parse_via_airports(args.exclude_via, role="exclude-via")
     if via and exclude_via and set(via) & set(exclude_via):
@@ -1361,12 +1408,12 @@ def _run_dates(args: argparse.Namespace) -> int:
         start = _parse_iso_date(args.start, "--from")
         end = _parse_iso_date(args.end, "--to")
         occupancy = _occupancy_from_args(args)
-        if args.baggage_buffer < 0:
+        if args.baggage_buffer is not None and args.baggage_buffer < 0:
             raise ValueError("--baggage-buffer must not be negative")
         validate_date_window(start, end)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
-        market = _market_from_args(args)
+        market = _market_from_args(args, origin)
         FlightQuery(
             origin,
             destination,
@@ -1502,12 +1549,12 @@ def _run_flex(args: argparse.Namespace) -> int:
         occupancy = _occupancy_from_args(args)
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
-        if args.baggage_buffer < 0:
+        if args.baggage_buffer is not None and args.baggage_buffer < 0:
             raise ValueError("--baggage-buffer must not be negative")
         start, _end = flex_window(around, args.flex_days)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
-        market = _market_from_args(args)
+        market = _market_from_args(args, origin)
         FlightQuery(
             origin,
             destination,
@@ -1605,10 +1652,10 @@ def _run_explore(args: argparse.Namespace) -> int:
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
         occupancy = _occupancy_from_args(args)
-        if args.baggage_buffer < 0:
+        if args.baggage_buffer is not None and args.baggage_buffer < 0:
             raise ValueError("--baggage-buffer must not be negative")
         shop = _owned_shop_filters_from_args(args)
-        market = _market_from_args(args)
+        market = _market_from_args(args, origin)
         validate_explore_window(start, days)
         exclude_regions = parse_exclude_regions(getattr(args, "exclude_regions", None))
     except ValueError as exc:
@@ -1658,7 +1705,10 @@ _PARSER: Optional[argparse.ArgumentParser] = None
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Local Google Flights and hotel search. Any IATA pair; quotes in EUR. "
+            "Local Google Flights and hotel search. Any IATA pair. Currency is "
+            "--currency or inferred from a named origin's country; if unknown, ask. "
+            "Viajante does not convert. A city with several airports, Europe, unnamed "
+            "origin, or two possible currencies does not pick: ask or error. "
             "One-way, packaged round-trip, or multi-city; Booking or Google Hotels."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1668,7 +1718,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     flights = sub.add_parser(
         "flights",
-        help="Google Flights search (one-way, packaged RT, or multi-city; quotes in EUR)",
+        help="Google Flights search (one-way, packaged RT, or multi-city)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=FLIGHTS_EXAMPLES,
     )
@@ -1727,9 +1777,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--price-cap",
         type=int,
         default=None,
-        metavar="EUR",
+        metavar="AMOUNT",
         dest="price_cap",
-        help="Drop owned fares above this EUR amount (omit to leave unset; unnamed stays None)",
+        help="Drop owned fares above this amount in the quote currency (omit to leave unset)",
     )
     _add_nearby_flag(flights)
     flights.add_argument(
@@ -1738,16 +1788,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TOP,
         help=f"Offers per query (default {DEFAULT_TOP})",
     )
-    flights.add_argument(
-        "--baggage-buffer",
-        type=int,
-        default=DEFAULT_BAGGAGE_BUFFER_EUR,
-        metavar="EUR",
-        help=(
-            f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR}, "
-            "0 to rank on fare alone)"
-        ),
-    )
+    _add_baggage_buffer_flag(flights)
     flights.add_argument(
         "--sort",
         default="ranked",
@@ -1914,13 +1955,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
     hotels = sub.add_parser(
         "hotels",
-        help="Hotel search (total-stay, quoted in EUR). Default Booking; --source google is HTTP.",
+        help="Hotel search (total-stay). Currency required (no origin airport). Default Booking; --source google is HTTP.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=HOTELS_EXAMPLES,
     )
     hotels.add_argument("location", help="City or area name")
     hotels.add_argument("check_in", help="Check-in date (YYYY-MM-DD)")
     hotels.add_argument("check_out", help="Check-out date (YYYY-MM-DD)")
+    hotels.add_argument(
+        "--currency",
+        default=None,
+        metavar="CODE",
+        help=(
+            "ISO 4217 for hotel quotes. Required (hotels have no origin airport). "
+            "Do not invent ISO 4217 from vibe. Viajante does not convert; the caller "
+            "may convert for the user."
+        ),
+    )
     hotels.add_argument(
         "--adults",
         type=int,
@@ -2058,15 +2109,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TOP,
         help=f"Offers per query (default {DEFAULT_TOP})",
     )
-    trip.add_argument(
-        "--baggage-buffer",
-        type=int,
-        default=DEFAULT_BAGGAGE_BUFFER_EUR,
-        metavar="EUR",
-        help=(
-            f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR}). "
-            "Trip total uses the owned cabin fare, not this buffer."
-        ),
+    _add_baggage_buffer_flag(
+        trip, extra="Trip total uses the owned cabin fare, not this buffer."
     )
     trip.add_argument(
         "--sort",
@@ -2121,7 +2165,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     dates = sub.add_parser(
         "dates",
-        help="Cheapest fare per day for one route (compact calendar; --currency, default EUR)",
+        help="Cheapest fare per day for one route (compact calendar)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=DATES_EXAMPLES,
     )
@@ -2179,13 +2223,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_currency_country_flags(dates)
     _add_owned_shop_filters(dates)
     _add_nearby_flag(dates)
-    dates.add_argument(
-        "--baggage-buffer",
-        type=int,
-        default=DEFAULT_BAGGAGE_BUFFER_EUR,
-        metavar="EUR",
-        help=(f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR})"),
-    )
+    _add_baggage_buffer_flag(dates)
     dates.add_argument(
         "--sort",
         default=None,
@@ -2213,7 +2251,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     flex = sub.add_parser(
         "flex",
-        help="Cheapest day in a ±N window, then one shopping search (--currency, default EUR)",
+        help="Cheapest day in a ±N window, then one shopping search",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=FLEX_EXAMPLES,
     )
@@ -2275,13 +2313,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TOP,
         help=f"Offers to show from the chosen day (default {DEFAULT_TOP})",
     )
-    flex.add_argument(
-        "--baggage-buffer",
-        type=int,
-        default=DEFAULT_BAGGAGE_BUFFER_EUR,
-        metavar="EUR",
-        help=(f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR})"),
-    )
+    _add_baggage_buffer_flag(flex)
     flex.add_argument(
         "--sort",
         default="ranked",
@@ -2305,7 +2337,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     explore = sub.add_parser(
         "explore",
-        help="Cheap destinations from one origin (--currency, default EUR)",
+        help="Cheap destinations from one origin",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=EXPLORE_EXAMPLES,
     )
@@ -2378,13 +2410,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "A dest missing the sort key is not given a made-up duration, clock, or buffer"
         ),
     )
-    explore.add_argument(
-        "--baggage-buffer",
-        type=int,
-        default=DEFAULT_BAGGAGE_BUFFER_EUR,
-        metavar="EUR",
-        help=(f"EUR added to low-cost fares when ranking (default {DEFAULT_BAGGAGE_BUFFER_EUR})"),
-    )
+    _add_baggage_buffer_flag(explore)
     explore.add_argument(
         "--save",
         default=None,

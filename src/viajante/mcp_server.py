@@ -6,7 +6,7 @@ import sys
 from typing import Optional, Sequence
 
 from viajante.explore import DEFAULT_EXPLORE_TOP
-from viajante.flights import DEFAULT_BAGGAGE_BUFFER_EUR, DEFAULT_TOP
+from viajante.flights import DEFAULT_TOP
 from viajante.mcp_handlers import (
     lookup_airports_tool,
     search_dates_tool,
@@ -26,6 +26,15 @@ Run:      viajante-mcp
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_trip, lookup_airports.
 No auth. One search at a time in this process.
+
+Currency is currency or inferred from a named origin's owned country.
+If unknown, ask. Hotels require currency (no origin airport). Viajante
+does not convert. The calling agent may convert for the user. If country,
+destination, or currency is not proven (a city with several airports,
+Europe, unnamed origin, two possible currencies), do not pick: ask or
+error. Unknown cannot prove include. Do not invent IATA, gl, or ISO 4217
+from vibe. Unnamed baggage_buffer is 70 only when the quote is EUR;
+otherwise 0.
 """
 
 
@@ -59,7 +68,7 @@ def build_server():
         require_overnight: str | None = None,
         exclude_airports: str | None = None,
         include_airports: str | None = None,
-        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        baggage_buffer: int | None = None,
         sort: str = "ranked",
         bags: int | None = None,
         carry_on: int | None = None,
@@ -67,10 +76,19 @@ def build_server():
         children: int = 0,
         infants_in_seat: int = 0,
         infants_on_lap: int = 0,
-        currency: str = "EUR",
+        currency: str | None = None,
         country: str | None = None,
         nearby: bool = False,
     ) -> dict:
+        """Search Google Flights.
+
+        Currency is currency or inferred from a named origin's owned country.
+        If unknown, ask. Viajante does not convert. The calling agent may
+        convert for the user. Unproven country, dest, or currency (city with
+        several airports, Europe, unnamed origin, two currencies) must not be
+        guessed. Unnamed baggage_buffer is 70 only when the quote is EUR;
+        otherwise 0.
+        """
         return dict(
             search_flights_tool(
                 routes,
@@ -143,11 +161,18 @@ def build_server():
         max_duration: float | None = None,
         min_layover: float | None = None,
         max_layover: float | None = None,
-        currency: str = "EUR",
+        currency: str | None = None,
         country: str | None = None,
-        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        baggage_buffer: int | None = None,
         sort: str | None = None,
     ) -> dict:
+        """Cheapest-per-day calendar.
+
+        Currency is currency or inferred from a named origin's owned country.
+        If unknown, ask. Viajante does not convert. The calling agent may
+        convert for the user. Unnamed baggage_buffer is 70 only when the quote
+        is EUR; otherwise 0.
+        """
         return dict(
             search_dates_tool(
                 route,
@@ -202,7 +227,7 @@ def build_server():
         trip: str = "one-way",
         nights: int | None = None,
         top: int = DEFAULT_TOP,
-        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        baggage_buffer: int | None = None,
         sort: str = "ranked",
         airlines: str | None = None,
         exclude_airlines: str | None = None,
@@ -224,9 +249,16 @@ def build_server():
         max_duration: float | None = None,
         min_layover: float | None = None,
         max_layover: float | None = None,
-        currency: str = "EUR",
+        currency: str | None = None,
         country: str | None = None,
     ) -> dict:
+        """Flex window, then one shopping search.
+
+        Currency is currency or inferred from a named origin's owned country.
+        If unknown, ask. Viajante does not convert. The calling agent may
+        convert for the user. Unnamed baggage_buffer is 70 only when the quote
+        is EUR; otherwise 0.
+        """
         return dict(
             search_flex_tool(
                 route,
@@ -302,11 +334,18 @@ def build_server():
         max_duration: float | None = None,
         min_layover: float | None = None,
         max_layover: float | None = None,
-        currency: str = "EUR",
+        currency: str | None = None,
         country: str | None = None,
         sort: str = "price",
-        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        baggage_buffer: int | None = None,
     ) -> dict:
+        """Destinations from one origin, then a priced shortlist.
+
+        Currency is currency or inferred from a named origin's owned country.
+        If unknown, ask. Viajante does not convert. The calling agent may
+        convert for the user. Unnamed baggage_buffer is 70 only when the quote
+        is EUR; otherwise 0.
+        """
         return dict(
             search_explore_tool(
                 origin,
@@ -360,7 +399,14 @@ def build_server():
         entire_home: bool = False,
         free_cancellation: bool = True,
         source: str = "google",
+        currency: str | None = None,
     ) -> dict:
+        """Hotel search. Currency is required (no origin airport).
+
+        Quotes are in the requested ISO 4217 currency as the provider returned
+        them. Viajante does not convert. The calling agent may convert for the
+        user. Do not invent ISO 4217 from vibe.
+        """
         return dict(
             search_hotels_tool(
                 location,
@@ -373,6 +419,7 @@ def build_server():
                 entire_home=entire_home,
                 free_cancellation=free_cancellation,
                 source=source,  # type: ignore[arg-type]
+                currency=currency,
             )
         )
 
@@ -389,7 +436,7 @@ def build_server():
         cabin: str = "economy",
         top: int = DEFAULT_TOP,
         fetch: str = "auto",
-        baggage_buffer: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+        baggage_buffer: int | None = None,
         sort: str = "ranked",
         bags: int | None = None,
         carry_on: int | None = None,
@@ -409,7 +456,7 @@ def build_server():
         children: int = 0,
         infants_in_seat: int = 0,
         infants_on_lap: int = 0,
-        currency: str = "EUR",
+        currency: str | None = None,
         country: str | None = None,
         min_rating: float | None = None,
         entire_home: bool = False,
@@ -417,6 +464,12 @@ def build_server():
         source: str = "google",
         nearby: bool = False,
     ) -> dict:
+        """Flights then hotel. Currency follows the flight origin or an explicit code.
+
+        If unknown, ask. Viajante does not convert. The calling agent may convert
+        for the user. Unnamed baggage_buffer is 70 only when the quote is EUR;
+        otherwise 0. The same currency is passed to hotels.
+        """
         return dict(
             search_trip_tool(
                 routes,

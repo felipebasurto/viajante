@@ -13,7 +13,6 @@ from typing import Callable, Optional, Sequence, Tuple
 
 from viajante.airports import get_airport
 from viajante.flights import (
-    DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
     FlightSort,
     search_flights,
@@ -32,6 +31,7 @@ from viajante.models import (
     TripSearchReport,
     TripTotal,
 )
+from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import write_json_atomic
 
 
@@ -185,7 +185,7 @@ def search_trip(
     hotel_query: HotelQuery,
     *,
     top: int = DEFAULT_TOP,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
     fetch: str = "auto",
@@ -208,11 +208,15 @@ def search_trip(
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap_eur: Optional[int] = None,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     hotel_source: HotelSourceName = "google",
 ) -> TripSearchReport:
     """Run flights then hotels sequentially. Omit trip_total when either misses."""
+    if not trips:
+        raise ValueError("at least one query is required")
+    currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     flights = search_flights(
         _overlay_trip_shop_filters(
             trips,
@@ -249,6 +253,7 @@ def search_trip(
         top=top,
         progress=progress,
         source=hotel_source,
+        currency=currency,
     )
     fetch_ms: Optional[int] = None
     if flights.fetch_ms is not None or hotels.fetch_ms is not None:

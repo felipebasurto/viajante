@@ -42,7 +42,6 @@ from viajante.models import (
     StopsCompareSide,
     Trip,
     normalize_country,
-    normalize_currency,
     owned_calendar_summary,
 )
 from viajante.orchestration import (
@@ -61,6 +60,7 @@ from viajante.parsers import (
     parse_price_eur,
     parse_stops_count,
 )
+from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import default_state_dir, write_json_atomic
 from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
@@ -1867,7 +1867,7 @@ def search_flights(
     queries: Sequence[Trip],
     *,
     top: int = DEFAULT_TOP,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
     fetch: FetchMode = "auto",
@@ -1887,15 +1887,15 @@ def search_flights(
     require_overnight: Optional[Sequence[str]] = None,
     exclude_airports: Optional[Sequence[str]] = None,
     include_airports: Optional[Sequence[str]] = None,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
 ) -> SearchReport:
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
         raise ValueError("top must be positive")
-    if buffer_eur < 0:
-        raise ValueError("buffer_eur must not be negative")
+    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
     validate_layover_hours(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
@@ -1916,7 +1916,6 @@ def search_flights(
         )
     if fetch not in ("auto", "sweep", "detail"):
         raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
-    currency = normalize_currency(currency)
     country = normalize_country(country)
     original = tuple(queries)
     kept = keep_included_dest_trips(original, parsed_include_airports)

@@ -34,6 +34,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 - Typical vs same-route calendar median: `src/viajante/typical.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
 - Offline IATA lookup: `src/viajante/airports.py`
+- Origin-country cash currency for Google `curr` (no FX): `src/viajante/quote.py`
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
@@ -47,9 +48,18 @@ CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `trip
 MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
-English fetch. Prompts any language. No implied home hub. Quotes default to EUR
-(`curr`; optional `gl`, omit when unset; do not default `gl` to a home hub).
-Never invent a fare, typical, token, via list, bag count, dest, or price cap.
+English fetch. Prompts any language. Product voice is English. A Spanish
+(or other) prompt is planner *input*, not product voice. No implied home hub.
+Currency is `--currency` / MCP `currency`, or inferred from a named origin
+airport's owned country (JFK USD, LHR GBP, NRT JPY, GRU BRL). Unproven
+asks (error: currency required). Hotels have no origin: currency is required.
+If country, destination, or currency is not proven (a city with several
+airports, “Europe”, unnamed origin, two possible currencies), ask or error.
+Unknown cannot prove include. Do not invent IATA, `gl`, or ISO 4217 from vibe.
+Viajante does not convert; the MCP caller does FX.
+Optional `gl`, omit when unset; do not default `gl` to a home hub.
+Never invent a fare, typical, token, via list, bag count, dest, price cap,
+or exchange rate.
 
 > **CLI sketches in `.cursor/skills/viajante/SKILL.md` are not argparse.** If a
 > skill line omits a flag `cli.py` defines, the code wins. Do not silently
@@ -73,16 +83,19 @@ non-excluded same-city code. Unnamed stays unset. Do not rewrite to a substitute
 dest. `--via` / `--exclude-via` / `--no-overnight` / `--require-overnight` filter
 on owned layover city+clock; unknown cannot prove include or exclude.
 `--arrive-before` / `--depart-after` are named HH:MM on owned clocks. Named
-`--price-cap` is a local post-filter of owned EUR (shopping index 7 stays
-`None`). Flex is calendar then one shop (miss = empty). Trip total is omitted if
-either side misses, dates do not overlap, or currencies differ. Nearby
-alternatives take the cheapest owned fare in that city group, not a sum.
+`--price-cap` is a local post-filter of owned amounts in the quote currency
+(shopping index 7 stays `None`). Flex is calendar then one shop (miss = empty).
+Trip total is omitted if either side misses, dates do not overlap, or
+currencies differ. Nearby alternatives take the cheapest owned fare in that
+city group, not a sum.
 
-`--baggage-buffer` / MCP `baggage_buffer` is a ranking add-on
-(`DEFAULT_BAGGAGE_BUFFER_EUR` in `src/viajante/flights.py`; 70 is **not** a
-fare). `0` ranks on fare alone. Compact date-grid cells and Explore catalog
-places omit the stamp. Dates sweep-fallback / shopped day rows pick the day's
-winner by fare+buffer. Explore dest ranking applies it only when `--sort ranked`.
+`--baggage-buffer` / MCP `baggage_buffer` is a ranking add-on in the same quote
+currency (`DEFAULT_BAGGAGE_BUFFER_EUR` in `src/viajante/flights.py` is **70
+only when the quote is EUR**; unnamed is 0 otherwise; 70 is **not** a fare and
+is not FX-converted). `0` ranks on fare alone. Compact date-grid cells and
+Explore catalog places omit the stamp. Dates sweep-fallback / shopped day rows
+pick the day's winner by fare+buffer. Explore dest ranking applies it only when
+`--sort ranked`.
 
 ## Invariants
 
@@ -119,7 +132,7 @@ winner by fare+buffer. Explore dest ranking applies it only when `--sort ranked`
 
 ### Flights
 
-- Keep EUR, `hl=en` / `locale="en-US"` for flights, ranked/fare sort, and the
+- Keep the owned quote currency, `hl=en` / `locale="en-US"` for flights, ranked/fare sort, and the
   baggage buffer in both modes. JSON `locale` stays `"en"`. Currency is `curr`,
   independent of `hl`. Planner prompts may be any language; the plan still emits
   English IATA and English fetch locale.
@@ -222,16 +235,18 @@ the one-search process lock.
 
 When helping pick destinations (not a single named route/date), follow
 `.cursor/skills/viajante/SKILL.md` → **Destination triage**: shortlist by vibe
-and a rough price band for the origin the user named (the MAD weekend table is
-MAD-origin only; no implied home hub), scrape fixed natural dates first, and only
-then expand ±1 day on 1–3 finalists. Around/±N on a named route is `viajante flex`;
-cheapest week is `viajante dates`. Do not brute-force full date matrices across a
-long destination list in one run.
+and a rough price band for the origin the user named (if origin is unnamed, ask;
+do not invent a band from another origin), scrape fixed natural dates first, and
+only then expand ±1 day on 1–3 finalists. If country, destination, or currency
+is not proven (a city with several airports, “Europe”, two possible currencies),
+ask or error. Unknown cannot prove include. Around/±N on a named route is
+`viajante flex`; cheapest week is `viajante dates`. Do not brute-force full date
+matrices across a long destination list in one run.
 
 ## Private-data boundary
 
 This tree is the public export. Do not add scraped caches, CSVs, personal trip
 scripts or routes, reservation data, browser session files, or paths from a
-private repository. Heuristic price *bands* in the viajante skill are allowed;
-live scrapes and personal trip JSON are not. Never invent a fare, typical, token,
-or via list.
+private repository. Origin-agnostic heuristic bands in the viajante skill are
+allowed; an origin-specific fare table is not. Live scrapes and personal trip
+JSON are not. Never invent a fare, typical, token, or via list.

@@ -35,8 +35,8 @@ from viajante.models import (
     SearchError,
     StopsCompare,
     normalize_country,
-    normalize_currency,
 )
+from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
 from viajante.storage import write_json_atomic
 from viajante.typical import with_typical_dest
 
@@ -371,22 +371,19 @@ def search_explore(
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
     nearby: bool = False,
-    currency: str = "EUR",
+    currency: Optional[str] = None,
     country: Optional[str] = None,
     sort: FlightSort = "price",
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    buffer_eur: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
 ) -> ExploreReport | tuple[ExploreReport, ...]:
-    currency = normalize_currency(currency)
     country = normalize_country(country)
     validate_explore_window(start, days)
     if top <= 0:
         raise ValueError("top must be positive")
     if top > MAX_EXPLORE_TOP:
         raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
-    if buffer_eur < 0:
-        raise ValueError("baggage buffer must not be negative")
     if sort not in FLIGHT_SORTS:
         raise ValueError(
             "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
@@ -408,6 +405,10 @@ def search_explore(
     origin = origin.strip().upper()
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
+    currency = resolve_quote_currency(currency, origin)
+    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
+    if buffer_eur < 0:
+        raise ValueError("baggage buffer must not be negative")
     report_progress = progress or (lambda _: None)
     drop_unpriced = _named_shop_filters(
         bags=bags,
