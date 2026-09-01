@@ -67,7 +67,7 @@ or exchange rate.
 
 Successful flights, dates, flex, and explore may carry owned `google_flights_url`
 (`booking_token` wins when present on a shop offer; omit if encode cannot run),
-`typical_eur` / `vs_typical` / `vs_typical_pct` / `typical_deal`, and
+`typical` / `vs_typical` / `vs_typical_pct` / `typical_deal`, and
 `stops_compare`. Stamp rules live with the search loops (`flights.py`, `dates.py`,
 `explore.py`, `typical.py`). Compact calendar cells and Explore catalog places
 are not offers: they may carry a query URL; they do not grow a token, buffer

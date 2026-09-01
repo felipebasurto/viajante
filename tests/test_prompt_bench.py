@@ -874,7 +874,7 @@ class JudgeScoreTests(unittest.TestCase):
     def test_stated_price_cap_is_not_invention(self) -> None:
         prompt = "SIN to everywhere under 200€ next month (September 2026)"
         plan = plan_prompt(prompt)
-        self.assertEqual(plan.price_cap_eur, 200)
+        self.assertEqual(plan.price_cap, 200)
         self.assertIsNone(invention_reason(prompt, plan))
 
     def test_low_score_is_scored_not_fail(self) -> None:

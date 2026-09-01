@@ -21,62 +21,69 @@ _VS_TYPICAL: tuple[VsTypical, ...] = ("below", "near", "above")
 NEAR_TYPICAL_RATIO = 0.10
 
 
-def vs_typical(price_eur: float, typical_eur: Optional[float]) -> Optional[VsTypical]:
+def format_money(amount: float, currency: str, *, width: int = 0) -> str:
+    """Owned amount in the quote currency. € only when currency is EUR."""
+    number = f"{amount:{width}.0f}" if width else f"{amount:.0f}"
+    unit = "€" if currency == "EUR" else currency
+    return f"{number} {unit}"
+
+
+def vs_typical(price: float, typical: Optional[float]) -> Optional[VsTypical]:
     """Coarse label against an owned typical. None when there is no typical."""
-    if typical_eur is None or typical_eur <= 0:
+    if typical is None or typical <= 0:
         return None
-    if price_eur < typical_eur * (1.0 - NEAR_TYPICAL_RATIO):
+    if price < typical * (1.0 - NEAR_TYPICAL_RATIO):
         return "below"
-    if price_eur > typical_eur * (1.0 + NEAR_TYPICAL_RATIO):
+    if price > typical * (1.0 + NEAR_TYPICAL_RATIO):
         return "above"
     return "near"
 
 
-def vs_typical_pct(price_eur: float, typical_eur: Optional[float]) -> Optional[int]:
+def vs_typical_pct(price: float, typical: Optional[float]) -> Optional[int]:
     """Signed percent of the fare versus an owned typical. None without a typical."""
-    if typical_eur is None or typical_eur <= 0:
+    if typical is None or typical <= 0:
         return None
-    return int(round((price_eur / typical_eur - 1.0) * 100.0))
+    return int(round((price / typical - 1.0) * 100.0))
 
 
 def _require_typical_triple(
-    typical_eur: Optional[float],
+    typical: Optional[float],
     vs: Optional[VsTypical],
     pct: Optional[int],
 ) -> None:
-    have = (typical_eur is None, vs is None, pct is None)
+    have = (typical is None, vs is None, pct is None)
     if len(set(have)) != 1:
-        raise ValueError(
-            "typical_eur, vs_typical, and vs_typical_pct must all be set or all omitted"
-        )
-    if typical_eur is not None and typical_eur <= 0:
-        raise ValueError("typical_eur must be positive")
+        raise ValueError("typical, vs_typical, and vs_typical_pct must all be set or all omitted")
+    if typical is not None and typical <= 0:
+        raise ValueError("typical must be positive")
     if vs is not None and vs not in _VS_TYPICAL:
         raise ValueError(f"invalid vs_typical: {vs!r}")
 
 
 def _typical_json(
-    typical_eur: Optional[float],
+    typical: Optional[float],
     vs: Optional[VsTypical],
     pct: Optional[int],
+    currency: str = "EUR",
 ) -> dict[str, object]:
-    if typical_eur is None or vs is None or pct is None:
+    if typical is None or vs is None or pct is None:
         return {}
     return {
-        "typical_eur": typical_eur,
+        "typical": typical,
         "vs_typical": vs,
         "vs_typical_pct": pct,
-        "typical_deal": format_typical_deal(vs, typical_eur, pct),
+        "typical_deal": format_typical_deal(vs, typical, pct, currency),
     }
 
 
 def format_typical_deal(
     vs: Optional[VsTypical],
-    typical_eur: Optional[float],
+    typical: Optional[float],
     pct: Optional[int],
+    currency: str = "EUR",
 ) -> Optional[str]:
     """English one-liner, or None when typical is omitted."""
-    if vs is None or typical_eur is None or pct is None:
+    if vs is None or typical is None or pct is None:
         return None
     if pct > 0:
         shown = f"+{pct}%"
@@ -84,7 +91,7 @@ def format_typical_deal(
         shown = f"−{abs(pct)}%"
     else:
         shown = "0%"
-    return f"{vs} typical {typical_eur:.0f} € ({shown})"
+    return f"{vs} typical {format_money(typical, currency)} ({shown})"
 
 
 def _normalize_iata(code: str, *, role: str) -> str:
@@ -137,7 +144,7 @@ def _require_price_cap(value: Optional[int]) -> None:
     if value is None:
         return
     if value <= 0:
-        raise ValueError("price_cap_eur must be positive")
+        raise ValueError("price_cap must be positive")
 
 
 def _optional_bag_fields(bags: Optional[int], carry_on: Optional[int]) -> dict[str, int]:
@@ -149,10 +156,10 @@ def _optional_bag_fields(bags: Optional[int], carry_on: Optional[int]) -> dict[s
     return payload
 
 
-def _optional_price_cap_fields(price_cap_eur: Optional[int]) -> dict[str, int]:
-    if price_cap_eur is None:
+def _optional_price_cap_fields(price_cap: Optional[int]) -> dict[str, int]:
+    if price_cap is None:
         return {}
-    return {"price_cap_eur": price_cap_eur}
+    return {"price_cap": price_cap}
 
 
 def _optional_occupancy_fields(
@@ -256,7 +263,7 @@ class FlightQuery:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
-    price_cap_eur: Optional[int] = None
+    price_cap: Optional[int] = None
     airlines: Optional[Tuple[str, ...]] = None
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
@@ -277,7 +284,7 @@ class FlightQuery:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
-        _require_price_cap(self.price_cap_eur)
+        _require_price_cap(self.price_cap)
         _require_airline_codes(self.airlines, role="airlines")
         _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
         _require_alliances(self.alliances, role="alliances")
@@ -312,7 +319,7 @@ class FlightQuery:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
-        payload.update(_optional_price_cap_fields(self.price_cap_eur))
+        payload.update(_optional_price_cap_fields(self.price_cap))
         payload.update(
             _optional_carrier_fields(
                 self.airlines,
@@ -338,7 +345,7 @@ class RoundTrip:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
-    price_cap_eur: Optional[int] = None
+    price_cap: Optional[int] = None
     airlines: Optional[Tuple[str, ...]] = None
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
@@ -363,7 +370,7 @@ class RoundTrip:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
-        _require_price_cap(self.price_cap_eur)
+        _require_price_cap(self.price_cap)
         _require_airline_codes(self.airlines, role="airlines")
         _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
         _require_alliances(self.alliances, role="alliances")
@@ -388,7 +395,7 @@ class RoundTrip:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
-        payload.update(_optional_price_cap_fields(self.price_cap_eur))
+        payload.update(_optional_price_cap_fields(self.price_cap))
         payload.update(
             _optional_carrier_fields(
                 self.airlines,
@@ -417,7 +424,7 @@ class MultiCity:
     cabin: FlightCabin = "economy"
     bags: Optional[int] = None
     carry_on: Optional[int] = None
-    price_cap_eur: Optional[int] = None
+    price_cap: Optional[int] = None
     airlines: Optional[Tuple[str, ...]] = None
     exclude_airlines: Optional[Tuple[str, ...]] = None
     alliances: Optional[Tuple[str, ...]] = None
@@ -438,7 +445,7 @@ class MultiCity:
         _require_cabin(self.cabin)
         _require_bag_count(self.bags, role="bags")
         _require_bag_count(self.carry_on, role="carry_on")
-        _require_price_cap(self.price_cap_eur)
+        _require_price_cap(self.price_cap)
         _require_airline_codes(self.airlines, role="airlines")
         _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
         _require_alliances(self.alliances, role="alliances")
@@ -467,7 +474,7 @@ class MultiCity:
             _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
         )
         payload.update(_optional_bag_fields(self.bags, self.carry_on))
-        payload.update(_optional_price_cap_fields(self.price_cap_eur))
+        payload.update(_optional_price_cap_fields(self.price_cap))
         payload.update(
             _optional_carrier_fields(
                 self.airlines,
@@ -536,13 +543,13 @@ class FlightOffer:
     airline: Optional[str]
     departure: Optional[str]
     arrival: Optional[str]
-    price: str
-    price_eur: float
+    price_text: str
+    price: float
     duration: Optional[str]
     duration_hours: Optional[float]
     stops: Optional[str]
     stops_count: Optional[int]
-    baggage_buffer_eur: int
+    baggage_buffer: int
     needs_bag_verify: bool
     layover_city: Optional[str] = None
     layover_hours: Optional[float] = None
@@ -550,40 +557,40 @@ class FlightOffer:
     booking_token: Optional[str] = None
     google_flights_url: Optional[str] = None
     legs: Tuple[RawJourneyLeg, ...] = ()
-    typical_eur: Optional[float] = None
+    typical: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
     cheapest_date: Optional[date] = None
-    cheapest_eur: Optional[float] = None
+    cheapest: Optional[float] = None
     checked_bags: Optional[int] = None
     carry_on: Optional[int] = None
 
     def __post_init__(self) -> None:
-        if self.price_eur <= 0:
-            raise ValueError("price_eur must be positive")
-        if self.baggage_buffer_eur < 0:
-            raise ValueError("baggage_buffer_eur must not be negative")
-        if self.baggage_buffer_eur > 0 and not self.needs_bag_verify:
+        if self.price <= 0:
+            raise ValueError("price must be positive")
+        if self.baggage_buffer < 0:
+            raise ValueError("baggage_buffer must not be negative")
+        if self.baggage_buffer > 0 and not self.needs_bag_verify:
             raise ValueError("a baggage buffer only applies to a carrier flagged for verification")
         have_typical = (
-            self.typical_eur is None,
+            self.typical is None,
             self.vs_typical is None,
             self.vs_typical_pct is None,
         )
         if len(set(have_typical)) != 1:
             raise ValueError(
-                "typical_eur, vs_typical, and vs_typical_pct must all be set or all omitted"
+                "typical, vs_typical, and vs_typical_pct must all be set or all omitted"
             )
-        if self.typical_eur is not None and self.typical_eur <= 0:
-            raise ValueError("typical_eur must be positive")
+        if self.typical is not None and self.typical <= 0:
+            raise ValueError("typical must be positive")
         if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
             raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
-        if (self.cheapest_date is None) != (self.cheapest_eur is None):
-            raise ValueError("cheapest_date and cheapest_eur must both be set or both omitted")
-        if self.cheapest_eur is not None and self.cheapest_eur <= 0:
-            raise ValueError("cheapest_eur must be positive")
-        if self.cheapest_date is not None and self.typical_eur is None:
-            raise ValueError("cheapest day is omitted unless typical_eur is set")
+        if (self.cheapest_date is None) != (self.cheapest is None):
+            raise ValueError("cheapest_date and cheapest must both be set or both omitted")
+        if self.cheapest is not None and self.cheapest <= 0:
+            raise ValueError("cheapest must be positive")
+        if self.cheapest_date is not None and self.typical is None:
+            raise ValueError("cheapest day is omitted unless typical is set")
         _require_bag_count(self.checked_bags, role="checked_bags")
         _require_bag_count(self.carry_on, role="carry_on")
         if not self.legs:
@@ -604,22 +611,22 @@ class FlightOffer:
                 ),
             )
 
-    def typical_deal(self) -> Optional[str]:
-        return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
+    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+        return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self) -> Mapping[str, object]:
+    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
         lead = self.legs[0]
         two_stop = self.stops_count is not None and self.stops_count >= 2
         payload: dict[str, object] = {
             "airline": self.airline,
             "departure": lead.departure,
             "arrival": lead.arrival,
+            "price_text": self.price_text,
             "price": self.price,
-            "price_eur": self.price_eur,
-            "typical_eur": self.typical_eur,
+            "typical": self.typical,
             "vs_typical": self.vs_typical,
             "vs_typical_pct": self.vs_typical_pct,
-            "typical_deal": self.typical_deal(),
+            "typical_deal": self.typical_deal(currency),
             "duration": self.duration,
             "duration_hours": self.duration_hours,
             "stops": self.stops,
@@ -628,7 +635,7 @@ class FlightOffer:
             "layover_hours": None if two_stop else self.layover_hours,
             "flight_numbers": list(self.flight_numbers) if self.flight_numbers else None,
             "booking_token": self.booking_token,
-            "baggage_buffer_eur": self.baggage_buffer_eur,
+            "baggage_buffer": self.baggage_buffer,
             "needs_bag_verify": self.needs_bag_verify,
             "legs": [leg.to_dict() for leg in self.legs],
         }
@@ -638,9 +645,9 @@ class FlightOffer:
             payload["checked_bags"] = self.checked_bags
         if self.carry_on is not None:
             payload["carry_on"] = self.carry_on
-        if self.cheapest_date is not None and self.cheapest_eur is not None:
+        if self.cheapest_date is not None and self.cheapest is not None:
             payload["cheapest_date"] = self.cheapest_date.isoformat()
-            payload["cheapest_eur"] = self.cheapest_eur
+            payload["cheapest"] = self.cheapest
         return payload
 
 
@@ -648,8 +655,8 @@ class FlightOffer:
 class StopsCompareSide:
     """Cheapest parsed offer in one stop bucket. Cabin fare only; never invented."""
 
-    price: str
-    price_eur: float
+    price_text: str
+    price: float
     duration: Optional[str]
     duration_hours: Optional[float]
     airline: Optional[str]
@@ -661,8 +668,8 @@ class StopsCompareSide:
     layover_hours: Optional[float] = None
 
     def __post_init__(self) -> None:
-        if self.price_eur <= 0:
-            raise ValueError("price_eur must be positive")
+        if self.price <= 0:
+            raise ValueError("price must be positive")
         if self.stops_count not in (0, 1):
             raise ValueError("stops_count must be 0 or 1")
 
@@ -671,8 +678,8 @@ class StopsCompareSide:
             "airline": self.airline,
             "departure": self.departure,
             "arrival": self.arrival,
+            "price_text": self.price_text,
             "price": self.price,
-            "price_eur": self.price_eur,
             "duration": self.duration,
             "duration_hours": self.duration_hours,
             "stops": self.stops,
@@ -686,8 +693,8 @@ class StopsCompareSide:
         if offer.stops_count not in (0, 1):
             raise ValueError("stops compare side is only nonstop or 1-stop")
         return cls(
+            price_text=offer.price_text,
             price=offer.price,
-            price_eur=offer.price_eur,
             duration=offer.duration,
             duration_hours=offer.duration_hours,
             airline=offer.airline,
@@ -758,7 +765,7 @@ class QuerySuccess:
         if self.eligible_count < len(self.offers):
             raise ValueError("eligible_count must be >= number of offers")
 
-    def to_dict(self) -> Mapping[str, object]:
+    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
         query = dict(self.query.to_dict())
         if self.google_flights_url:
             query["google_flights_url"] = self.google_flights_url
@@ -767,7 +774,7 @@ class QuerySuccess:
             "query": query,
             "raw_count": self.raw_count,
             "eligible_count": self.eligible_count,
-            "offers": [offer.to_dict() for offer in self.offers],
+            "offers": [offer.to_dict(currency) for offer in self.offers],
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
@@ -823,7 +830,12 @@ class SearchReport:
             "locale": self.locale,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
-            "queries": [result.to_dict() for result in self.queries],
+            "queries": [
+                result.to_dict(currency=self.currency)
+                if isinstance(result, QuerySuccess)
+                else result.to_dict()
+                for result in self.queries
+            ],
         }
 
 
@@ -837,17 +849,17 @@ MIN_PRICED_DAYS_FOR_SUMMARY = 3
 class DateCalendarSummary:
     """Min / median / max over owned priced days. Absent when the grid is thin."""
 
-    min_eur: float
-    median_eur: float
-    max_eur: float
+    min_price: float
+    median_price: float
+    max_price: float
     cheapest_date: date
     n_priced: int
 
     def to_dict(self) -> Mapping[str, object]:
         return {
-            "min_eur": self.min_eur,
-            "median_eur": self.median_eur,
-            "max_eur": self.max_eur,
+            "min_price": self.min_price,
+            "median_price": self.median_price,
+            "max_price": self.max_price,
             "cheapest_date": self.cheapest_date.isoformat(),
             "n_priced": self.n_priced,
         }
@@ -861,11 +873,11 @@ def owned_calendar_summary(
     if len(priced) < MIN_PRICED_DAYS_FOR_SUMMARY:
         return None
     prices = [price for _day, price in priced]
-    cheapest_date, min_eur = min(priced, key=lambda item: (item[1], item[0]))
+    cheapest_date, min_price = min(priced, key=lambda item: (item[1], item[0]))
     return DateCalendarSummary(
-        min_eur=min_eur,
-        median_eur=float(median(prices)),
-        max_eur=max(prices),
+        min_price=min_price,
+        median_price=float(median(prices)),
+        max_price=max(prices),
         cheapest_date=cheapest_date,
         n_priced=len(priced),
     )
@@ -873,28 +885,28 @@ def owned_calendar_summary(
 
 def _stamp_date_row_typical(
     row: "DatePriceRow",
-    typical_eur: Optional[float],
+    typical: Optional[float],
 ) -> "DatePriceRow":
     """Stamp or omit the owned window median. Empty/error rows stay omitted."""
-    if row.status != "ok" or row.price_eur is None or row.price_eur <= 0:
-        if row.typical_eur is None:
+    if row.status != "ok" or row.price is None or row.price <= 0:
+        if row.typical is None:
             return row
-        return replace(row, typical_eur=None, vs_typical=None, vs_typical_pct=None)
-    label = vs_typical(row.price_eur, typical_eur)
-    pct = vs_typical_pct(row.price_eur, typical_eur)
-    if typical_eur is None or label is None or pct is None:
-        if row.typical_eur is None:
+        return replace(row, typical=None, vs_typical=None, vs_typical_pct=None)
+    label = vs_typical(row.price, typical)
+    pct = vs_typical_pct(row.price, typical)
+    if typical is None or label is None or pct is None:
+        if row.typical is None:
             return row
-        return replace(row, typical_eur=None, vs_typical=None, vs_typical_pct=None)
-    if row.typical_eur == typical_eur and row.vs_typical == label and row.vs_typical_pct == pct:
+        return replace(row, typical=None, vs_typical=None, vs_typical_pct=None)
+    if row.typical == typical and row.vs_typical == label and row.vs_typical_pct == pct:
         return row
-    return replace(row, typical_eur=typical_eur, vs_typical=label, vs_typical_pct=pct)
+    return replace(row, typical=typical, vs_typical=label, vs_typical_pct=pct)
 
 
 @dataclass(frozen=True)
 class DatePriceRow:
     departure_date: date
-    price_eur: Optional[float] = None
+    price: Optional[float] = None
     airline: Optional[str] = None
     stops_count: Optional[int] = None
     return_date: Optional[date] = None
@@ -902,34 +914,34 @@ class DatePriceRow:
     error: Optional[SearchError] = None
     stops_compare: Optional[StopsCompare] = None
     google_flights_url: Optional[str] = None
-    typical_eur: Optional[float] = None
+    typical: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
-    baggage_buffer_eur: Optional[int] = None
+    baggage_buffer: Optional[int] = None
     duration_hours: Optional[float] = None
     departure: Optional[str] = None
     arrival: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
-        if (self.status != "ok" or self.price_eur is None) and self.typical_eur is not None:
+        _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
+        if (self.status != "ok" or self.price is None) and self.typical is not None:
             raise ValueError("empty/error rows omit typical")
-        if self.baggage_buffer_eur is not None and self.baggage_buffer_eur < 0:
-            raise ValueError("baggage_buffer_eur must not be negative")
-        if (self.status != "ok" or self.price_eur is None) and self.baggage_buffer_eur is not None:
+        if self.baggage_buffer is not None and self.baggage_buffer < 0:
+            raise ValueError("baggage_buffer must not be negative")
+        if (self.status != "ok" or self.price is None) and self.baggage_buffer is not None:
             raise ValueError("empty/error rows omit baggage buffer")
-        if (self.status != "ok" or self.price_eur is None) and (
+        if (self.status != "ok" or self.price is None) and (
             self.duration_hours is not None or self.departure or self.arrival
         ):
             raise ValueError("shop duration/clocks require an owned day fare")
 
-    def typical_deal(self) -> Optional[str]:
-        return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
+    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+        return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self) -> Mapping[str, object]:
+    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
         payload: dict[str, object] = {
             "date": self.departure_date.isoformat(),
-            "price_eur": self.price_eur,
+            "price": self.price,
             "airline": self.airline,
             "stops_count": self.stops_count,
             "status": self.status,
@@ -942,15 +954,15 @@ class DatePriceRow:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
-        if self.baggage_buffer_eur is not None:
-            payload["baggage_buffer_eur"] = self.baggage_buffer_eur
+        if self.baggage_buffer is not None:
+            payload["baggage_buffer"] = self.baggage_buffer
         if self.duration_hours is not None:
             payload["duration_hours"] = self.duration_hours
         if self.departure:
             payload["departure"] = self.departure
         if self.arrival:
             payload["arrival"] = self.arrival
-        payload.update(_typical_json(self.typical_eur, self.vs_typical, self.vs_typical_pct))
+        payload.update(_typical_json(self.typical, self.vs_typical, self.vs_typical_pct, currency))
         return payload
 
 
@@ -985,9 +997,9 @@ class DateCalendarReport:
         object.__setattr__(
             self,
             "summary",
-            owned_calendar_summary([(row.departure_date, row.price_eur) for row in self.days]),
+            owned_calendar_summary([(row.departure_date, row.price) for row in self.days]),
         )
-        typical = None if self.summary is None else self.summary.median_eur
+        typical = None if self.summary is None else self.summary.median_price
         object.__setattr__(
             self,
             "days",
@@ -1007,7 +1019,7 @@ class DateCalendarReport:
             "trip": self.trip,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
-            "days": [row.to_dict() for row in self.days],
+            "days": [row.to_dict(self.currency) for row in self.days],
         }
         if self.nights is not None:
             payload["nights"] = self.nights
@@ -1037,7 +1049,7 @@ class FlexSearchReport:
     return_date: Optional[date] = None
     offers: Tuple[FlightOffer, ...] = ()
     stops_compare: Optional[StopsCompare] = None
-    typical_eur: Optional[float] = None
+    typical: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     locale: str = "en"
     currency: str = "EUR"
@@ -1053,12 +1065,12 @@ class FlexSearchReport:
     def __post_init__(self) -> None:
         if self.flex_days < 1:
             raise ValueError("flex_days must be at least 1")
-        if self.typical_eur is not None and self.typical_eur <= 0:
-            raise ValueError("typical_eur must be positive")
+        if self.typical is not None and self.typical <= 0:
+            raise ValueError("typical must be positive")
         if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
             raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
-        if self.vs_typical is not None and self.typical_eur is None:
-            raise ValueError("vs_typical requires typical_eur")
+        if self.vs_typical is not None and self.typical is None:
+            raise ValueError("vs_typical requires typical")
         if self.searched_at.tzinfo is not None:
             object.__setattr__(
                 self,
@@ -1082,12 +1094,12 @@ class FlexSearchReport:
             "to": self.end_date.isoformat(),
             "trip": self.trip,
             "chosen_date": self.chosen_date.isoformat() if self.chosen_date else None,
-            "typical_eur": self.typical_eur,
+            "typical": self.typical,
             "vs_typical": self.vs_typical,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
-            "days": [row.to_dict() for row in self.days],
-            "offers": [offer.to_dict() for offer in self.offers],
+            "days": [row.to_dict(self.currency) for row in self.days],
+            "offers": [offer.to_dict(self.currency) for offer in self.offers],
         }
         if self.nights is not None:
             payload["nights"] = self.nights
@@ -1107,39 +1119,39 @@ class ExploreDestination:
     iata: str
     city: str
     country: Optional[str]
-    price_eur: Optional[float] = None
+    price: Optional[float] = None
     duration_hours: Optional[float] = None
     departure: Optional[str] = None
     arrival: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
     google_flights_url: Optional[str] = None
-    typical_eur: Optional[float] = None
+    typical: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
-    baggage_buffer_eur: Optional[int] = None
+    baggage_buffer: Optional[int] = None
 
     def __post_init__(self) -> None:
-        _require_typical_triple(self.typical_eur, self.vs_typical, self.vs_typical_pct)
-        if self.price_eur is None and self.typical_eur is not None:
+        _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
+        if self.price is None and self.typical is not None:
             raise ValueError("typical requires an owned dest fare")
-        if self.price_eur is None and (
+        if self.price is None and (
             self.duration_hours is not None or self.departure or self.arrival
         ):
             raise ValueError("shop duration/clocks require an owned dest fare")
-        if self.baggage_buffer_eur is not None and self.baggage_buffer_eur < 0:
-            raise ValueError("baggage_buffer_eur must not be negative")
-        if self.price_eur is None and self.baggage_buffer_eur is not None:
+        if self.baggage_buffer is not None and self.baggage_buffer < 0:
+            raise ValueError("baggage_buffer must not be negative")
+        if self.price is None and self.baggage_buffer is not None:
             raise ValueError("baggage buffer requires an owned dest fare")
 
-    def typical_deal(self) -> Optional[str]:
-        return format_typical_deal(self.vs_typical, self.typical_eur, self.vs_typical_pct)
+    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+        return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self) -> Mapping[str, object]:
+    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
         payload: dict[str, object] = {
             "iata": self.iata,
             "city": self.city,
             "country": self.country,
-            "price_eur": self.price_eur,
+            "price": self.price,
         }
         if self.duration_hours is not None:
             payload["duration_hours"] = self.duration_hours
@@ -1151,9 +1163,9 @@ class ExploreDestination:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
-        if self.baggage_buffer_eur is not None:
-            payload["baggage_buffer_eur"] = self.baggage_buffer_eur
-        payload.update(_typical_json(self.typical_eur, self.vs_typical, self.vs_typical_pct))
+        if self.baggage_buffer is not None:
+            payload["baggage_buffer"] = self.baggage_buffer
+        payload.update(_typical_json(self.typical, self.vs_typical, self.vs_typical_pct, currency))
         return payload
 
 
@@ -1194,7 +1206,7 @@ class ExploreReport:
             "days": self.days,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
-            "destinations": [row.to_dict() for row in self.destinations],
+            "destinations": [row.to_dict(self.currency) for row in self.destinations],
         }
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
@@ -1299,8 +1311,8 @@ class AppliedHotelFilters:
 class HotelOffer:
     title: str
     address: Optional[str]
-    total_price: str
-    total_price_eur: float
+    total_price_text: str
+    total_price: float
     rating: Optional[str]
     rating_score: Optional[float]
     details: str
@@ -1316,8 +1328,8 @@ class HotelOffer:
         title = self.title.strip()
         if not title:
             raise ValueError("title must not be blank")
-        if self.total_price_eur <= 0:
-            raise ValueError("total_price_eur must be positive")
+        if self.total_price <= 0:
+            raise ValueError("total_price must be positive")
         if self.rating_score is not None and not 0.0 <= self.rating_score <= 10.0:
             raise ValueError("rating_score must be between 0.0 and 10.0")
         object.__setattr__(self, "title", title)
@@ -1326,8 +1338,8 @@ class HotelOffer:
         return {
             "title": self.title,
             "address": self.address,
+            "total_price_text": self.total_price_text,
             "total_price": self.total_price,
-            "total_price_eur": self.total_price_eur,
             "rating": self.rating,
             "rating_score": self.rating_score,
             "details": self.details,
@@ -1427,27 +1439,27 @@ class HotelSearchReport:
 class TripTotal:
     """Owned flight fare plus owned hotel stay. Omitted unless both sides hit."""
 
-    flight_fare_eur: float
-    hotel_stay_eur: float
-    total_eur: float
+    flight_fare: float
+    hotel_stay: float
+    total: float
     nights: int
     hotel_price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
 
     def __post_init__(self) -> None:
-        if self.flight_fare_eur <= 0:
-            raise ValueError("flight_fare_eur must be a positive owned fare")
-        if self.hotel_stay_eur <= 0:
-            raise ValueError("hotel_stay_eur must be a positive owned stay total")
-        if abs(self.total_eur - (self.flight_fare_eur + self.hotel_stay_eur)) > 1e-9:
-            raise ValueError("total_eur must equal flight_fare_eur + hotel_stay_eur")
+        if self.flight_fare <= 0:
+            raise ValueError("flight_fare must be a positive owned fare")
+        if self.hotel_stay <= 0:
+            raise ValueError("hotel_stay must be a positive owned stay total")
+        if abs(self.total - (self.flight_fare + self.hotel_stay)) > 1e-9:
+            raise ValueError("total must equal flight_fare + hotel_stay")
         if self.nights < 1:
             raise ValueError("nights must be at least 1")
 
     def to_dict(self) -> Mapping[str, object]:
         return {
-            "flight_fare_eur": self.flight_fare_eur,
-            "hotel_stay_eur": self.hotel_stay_eur,
-            "total_eur": self.total_eur,
+            "flight_fare": self.flight_fare,
+            "hotel_stay": self.hotel_stay,
+            "total": self.total,
             "hotel_price_basis": self.hotel_price_basis,
             "nights": self.nights,
         }

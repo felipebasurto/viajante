@@ -87,7 +87,7 @@ class RawFlightCard:
 @dataclass(frozen=True)
 class CompactCalendarDay:
     departure_date: date
-    price_eur: Optional[float]
+    price: Optional[float]
     return_date: Optional[date] = None
 
 
@@ -191,7 +191,7 @@ def _constraints_from_segments(
             infants_in_seat=infants_in_seat,
             infants_on_lap=infants_on_lap,
         ),
-        None,  # 7 price-cap: RPC layout unknown; named cap is a local EUR post-filter
+        None,  # 7 price-cap: RPC layout unknown; named cap is a local post-filter
         None,
         None,
         _bags_constraint(bags=bags, carry_on=carry_on),  # [checked, carry_on]
@@ -939,7 +939,7 @@ def _calendar_row(item: object) -> Optional[CompactCalendarDay]:
             amount = block[1]
             if isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount > 0:
                 price = float(amount)
-    return CompactCalendarDay(departure_date=day, price_eur=price, return_date=returning)
+    return CompactCalendarDay(departure_date=day, price=price, return_date=returning)
 
 
 def _explore_place(item: object) -> Optional[CompactExplorePlace]:

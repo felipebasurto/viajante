@@ -125,7 +125,7 @@ After a live scrape, report owned numbers in the quote currency. Do not invent p
 
 Use `--save results/<name>.viajante.json` for date matrices, round trips, or downstream parsing. Skip it for a single price answer in chat. Paths under `results/` and `*.viajante.json` are gitignored.
 
-Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. JSON keys live in `src/viajante/models.py`. Successful flights may carry `google_flights_url`, `typical_eur` / `vs_typical` / `vs_typical_pct`, and `stops_compare`. Dates priced rows stamp typical from the owned calendar `summary` (omit when thin). Explore dests that already ran a shopping POST stamp typical from the same-route calendar path flights use; catalog-only dests omit. Compact calendar cells and Explore catalog places omit `stops_compare`. Trip reports add `trip_total` only when both sides hit. Do not invent keys.
+Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. JSON keys live in `src/viajante/models.py`. Successful flights may carry `google_flights_url`, `typical` / `vs_typical` / `vs_typical_pct`, and `stops_compare`. Dates priced rows stamp typical from the owned calendar `summary` (omit when thin). Explore dests that already ran a shopping POST stamp typical from the same-route calendar path flights use; catalog-only dests omit. Compact calendar cells and Explore catalog places omit `stops_compare`. Trip reports add `trip_total` only when both sides hit. Do not invent keys.
 
 ## Agent rules
 
@@ -141,7 +141,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. JSON
 - Keep the scrape locale on English (`hl=en` / `lang=en`, `locale=en-US`). Planner prompts may be any language; fetch queries stay English.
 - Ranking adds `DEFAULT_BAGGAGE_BUFFER_EUR` (`src/viajante/flights.py`) to known low-cost fares when bag counts are still unknown **and the quote is EUR**. Unnamed buffer is 0 in any other quote currency. That 70 is **ranking, not a fare**, and is not FX-converted. `--bags N` / `--carry-on` put counts on the shopping request. Default bags are unset. Never invent a bag count from the buffer. Report the ranked total when a buffer was added. Use `--baggage-buffer 0` for hand luggage only. The low-cost list is partial — never tell the user an airline includes a bag because it is absent.
 - Remind the user to verify checked baggage on Google Flights before booking.
-- Print `typical_deal` when `typical_eur` is present. If those fields are null or omitted, skip the comparison. Do not invent a market average.
+- Print `typical_deal` when `typical` is present. If those fields are null or omitted, skip the comparison. Do not invent a market average.
 - Print cheapest nonstop vs cheapest 1-stop from the same parsed set when `stops_compare` exists. This is not a second Google request.
 
 ### Hotels

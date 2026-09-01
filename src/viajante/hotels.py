@@ -57,7 +57,7 @@ from viajante.orchestration import (
 from viajante.parsers import (
     parse_cancellation_evidence,
     parse_lodging_kind,
-    parse_price_eur,
+    parse_price,
     parse_property_type_evidence,
     parse_rating,
     parse_unit_hints,
@@ -85,15 +85,15 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         return None
     if title.casefold() in NON_PROPERTY_TITLES:
         return None
-    total_price_eur = parse_price_eur(card.total_price)
-    if total_price_eur is None or total_price_eur <= 0:
+    total_price = parse_price(card.total_price)
+    if total_price is None or total_price <= 0:
         return None
     hints = parse_unit_hints(card.details)
     return HotelOffer(
         title=card.title,
         address=card.address,
-        total_price=card.total_price,
-        total_price_eur=total_price_eur,
+        total_price_text=card.total_price,
+        total_price=total_price,
         rating=card.rating,
         rating_score=parse_rating(card.rating),
         details=card.details,
@@ -131,7 +131,7 @@ def _sorted_deduplicated_offers(
     rows = sorted(
         offers,
         key=lambda offer: (
-            offer.total_price_eur,
+            offer.total_price,
             offer.rating_score is None,
             -(offer.rating_score or 0.0),
             _normalized_text(offer.title),
@@ -143,7 +143,7 @@ def _sorted_deduplicated_offers(
         identity = (
             _normalized_text(offer.title),
             _normalized_text(offer.address),
-            offer.total_price_eur,
+            offer.total_price,
         )
         if identity in seen:
             continue

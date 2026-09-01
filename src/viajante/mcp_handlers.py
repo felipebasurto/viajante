@@ -132,7 +132,7 @@ def search_flights_tool(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap,
+        price_cap=price_cap,
     )
     trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
@@ -240,7 +240,7 @@ def search_dates_tool(
             include_airports=parse_via_airports(include_airports, role="include-airports"),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
             arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
@@ -331,7 +331,7 @@ def search_flex_tool(
             include_airports=parse_via_airports(include_airports, role="include-airports"),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
             arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
@@ -422,7 +422,7 @@ def search_explore_tool(
             exclude_regions=parse_exclude_regions(exclude_regions),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             nearby=nearby,
             depart_window=parse_depart_window(depart_window),
             arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
@@ -530,7 +530,7 @@ def search_trip_tool(
         cabin=cabin,
         bags=bags,
         carry_on=carry_on,
-        price_cap_eur=price_cap,
+        price_cap=price_cap,
     )
     trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
@@ -583,7 +583,7 @@ def search_trip_tool(
             depart_after=parse_named_clock(depart_after, role="depart-after"),
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             currency=currency,
             country=country,
             hotel_source=source,

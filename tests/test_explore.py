@@ -29,7 +29,7 @@ from viajante.google_flights_rpc import (
 from viajante.models import ExploreDestination, FlightQuery, RawJourneyLeg, RawLayover, RawSegment
 from viajante.prompt_plan import plan_prompt
 from viajante.typical import (
-    typical_eur_from_daily_prices,
+    typical_from_daily_prices,
     vs_typical,
     vs_typical_pct,
     with_typical_dest,
@@ -226,12 +226,12 @@ class ExploreSearchTests(unittest.TestCase):
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual(report.origin, "MAD")
         self.assertEqual(report.destinations[0].iata, "OPO")
-        self.assertEqual(report.destinations[0].price_eur, 28.0)
+        self.assertEqual(report.destinations[0].price, 28.0)
         self.assertEqual(report.destinations[1].iata, "LIS")
-        self.assertEqual(report.destinations[1].price_eur, 61.0)
-        self.assertIsNone(report.destinations[0].typical_eur)
-        self.assertIsNone(report.destinations[1].typical_eur)
-        self.assertNotIn("typical_eur", report.destinations[0].to_dict())
+        self.assertEqual(report.destinations[1].price, 61.0)
+        self.assertIsNone(report.destinations[0].typical)
+        self.assertIsNone(report.destinations[1].typical)
+        self.assertNotIn("typical", report.destinations[0].to_dict())
         self.assertTrue(source.closed)
 
     def test_named_price_cap_drops_dests_without_an_owned_under_cap_fare(self) -> None:
@@ -265,13 +265,13 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, price_cap_eur=200, source=source
+            "MAD", date(2026, 9, 1), days=7, top=3, price_cap=200, source=source
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
-        self.assertEqual(report.destinations[0].price_eur, 28.0)
+        self.assertEqual(report.destinations[0].price, 28.0)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
         self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS", "FCO"])
-        self.assertIsNone(unnamed.destinations[2].price_eur)
+        self.assertIsNone(unnamed.destinations[2].price)
 
     def test_named_bags_via_airlines_drop_dests_whose_surviving_fare_contradicts(self) -> None:
         silent = _card(
@@ -328,7 +328,7 @@ class ExploreSearchTests(unittest.TestCase):
             layover_city="LIS",
             price="€70",
         )
-        filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap_eur=200)
+        filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap=200)
         self.assertIsNotNone(_normalize_offer(silent, 1, buffer_eur=0, **filters))
         self.assertIsNone(_normalize_offer(too_few, 1, buffer_eur=0, **filters))
         self.assertIsNotNone(_normalize_offer(enough, 1, buffer_eur=0, **filters))
@@ -352,17 +352,17 @@ class ExploreSearchTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source, **filters)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "LIS"])
-        self.assertEqual(report.destinations[0].price_eur, 40.0)
-        self.assertEqual(report.destinations[1].price_eur, 80.0)
+        self.assertEqual(report.destinations[0].price, 40.0)
+        self.assertEqual(report.destinations[1].price, 80.0)
         self.assertEqual(
             [query.destination for query in source.fetched_queries], ["OPO", "LIS", "FCO"]
         )
         self.assertEqual(source.fetched_queries[0].bags, 1)
         self.assertEqual(source.fetched_queries[0].carry_on, 1)
         self.assertEqual(source.fetched_queries[0].airlines, ("IB",))
-        self.assertEqual(source.fetched_queries[0].price_cap_eur, 200)
+        self.assertEqual(source.fetched_queries[0].price_cap, 200)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
-        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 35.0)
@@ -396,9 +396,9 @@ class ExploreSearchTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source, **filters)
         self.assertEqual([row.iata for row in report.destinations], ["BCN"])
-        self.assertEqual(report.destinations[0].price_eur, 100.0)
+        self.assertEqual(report.destinations[0].price, 100.0)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
-        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"BCN", "FCO"})
         self.assertEqual(by_iata["FCO"], 70.0)
         self.assertEqual(by_iata["BCN"], 70.0)
@@ -427,9 +427,9 @@ class ExploreSearchTests(unittest.TestCase):
             "MAD", date(2026, 9, 1), days=7, top=3, source=source, depart_window=window
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
-        self.assertEqual(report.destinations[0].price_eur, 90.0)
+        self.assertEqual(report.destinations[0].price, 90.0)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
-        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 28.0)
@@ -459,9 +459,9 @@ class ExploreSearchTests(unittest.TestCase):
             "MAD", date(2026, 9, 1), days=7, top=3, source=source, arrive_before=bound
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
-        self.assertEqual(report.destinations[0].price_eur, 90.0)
+        self.assertEqual(report.destinations[0].price, 90.0)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
-        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 28.0)
@@ -491,9 +491,9 @@ class ExploreSearchTests(unittest.TestCase):
             "MAD", date(2026, 9, 1), days=7, top=3, source=source, depart_after=bound
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
-        self.assertEqual(report.destinations[0].price_eur, 90.0)
+        self.assertEqual(report.destinations[0].price, 90.0)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
-        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 28.0)
@@ -537,10 +537,10 @@ class ExploreSearchTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source, **filters)
         self.assertEqual([row.iata for row in report.destinations], ["LIS", "OPO"])
-        self.assertEqual(report.destinations[0].price_eur, 40.0)
-        self.assertEqual(report.destinations[1].price_eur, 90.0)
+        self.assertEqual(report.destinations[0].price, 40.0)
+        self.assertEqual(report.destinations[1].price, 90.0)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
-        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 28.0)
@@ -581,10 +581,10 @@ class ExploreSearchTests(unittest.TestCase):
             "MAD", date(2026, 9, 1), days=7, top=3, source=source, no_overnight=("IST",)
         )
         self.assertEqual([row.iata for row in report.destinations], ["FCO", "OPO"])
-        self.assertEqual(report.destinations[0].price_eur, 70.0)
-        self.assertEqual(report.destinations[1].price_eur, 90.0)
+        self.assertEqual(report.destinations[0].price, 70.0)
+        self.assertEqual(report.destinations[1].price, 90.0)
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
-        by_iata = {row.iata: row.price_eur for row in unnamed.destinations}
+        by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 28.0)
@@ -620,7 +620,7 @@ class ExploreSearchTests(unittest.TestCase):
             "MAD", date(2026, 9, 1), days=7, top=3, source=source, require_overnight=("IST",)
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
-        self.assertEqual(report.destinations[0].price_eur, 80.0)
+        self.assertEqual(report.destinations[0].price, 80.0)
 
     def test_named_overnight_contradiction_does_not_pick_one(self) -> None:
         overnight = _overnight_card(
@@ -701,7 +701,7 @@ class ExploreSearchTests(unittest.TestCase):
             build_shopping_inner(shop)[1][13][0][7],
             [None, [["*A"]], [["*O"]]],
         )
-        by_iata = {row.iata: row.price_eur for row in report.destinations}
+        by_iata = {row.iata: row.price for row in report.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 28.0)
@@ -795,7 +795,7 @@ class ExploreSortTests(unittest.TestCase):
         )
         unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
         self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS", "FCO"])
-        self.assertEqual(unnamed.destinations[0].price_eur, 40.0)
+        self.assertEqual(unnamed.destinations[0].price, 40.0)
         self.assertEqual(unnamed.destinations[0].duration_hours, 8.0)
         self.assertNotEqual(unnamed.destinations[0].duration_hours, 1.0)
         ranked = search_explore(
@@ -803,7 +803,7 @@ class ExploreSortTests(unittest.TestCase):
         )
         self.assertEqual([row.iata for row in ranked.destinations], ["FCO", "LIS", "OPO"])
         self.assertEqual([row.duration_hours for row in ranked.destinations], [2.0, 5.0, 8.0])
-        self.assertEqual(ranked.destinations[0].price_eur, 120.0)
+        self.assertEqual(ranked.destinations[0].price, 120.0)
         self.assertEqual(ranked.destinations[2].duration_hours, 8.0)
 
     def test_unnamed_sort_stays_cheapest_first(self) -> None:
@@ -851,7 +851,7 @@ class ExploreSortTests(unittest.TestCase):
         self.assertEqual(by_iata["OPO"].duration_hours, 2.0)
         self.assertIsNone(by_iata["LIS"].duration_hours)
         self.assertNotIn("duration_hours", by_iata["LIS"].to_dict())
-        self.assertIsNone(by_iata["FCO"].price_eur)
+        self.assertIsNone(by_iata["FCO"].price)
         self.assertIsNone(by_iata["FCO"].duration_hours)
         self.assertNotIn("duration_hours", by_iata["FCO"].to_dict())
         self.assertNotEqual(by_iata["LIS"].duration_hours, 0.0)
@@ -1017,7 +1017,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
         self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
-        self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["price_cap"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(kwargs["arrive_before"], 10 * 60)
         self.assertEqual(kwargs["depart_after"], 18 * 60)
@@ -1047,7 +1047,7 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["alliances"])
         self.assertIsNone(kwargs["exclude_alliances"])
-        self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["price_cap"])
         self.assertIsNone(kwargs["depart_window"])
         self.assertIsNone(kwargs["arrive_before"])
         self.assertIsNone(kwargs["depart_after"])
@@ -1252,7 +1252,7 @@ class ExcludeAirportsExploreTests(unittest.TestCase):
         )
         iata = [row.iata for row in report.destinations]
         self.assertEqual(iata, ["NRT"])
-        self.assertIsNone(report.destinations[0].price_eur)
+        self.assertIsNone(report.destinations[0].price)
         self.assertNotIn("TYO", iata)
         self.assertNotIn("HND", iata)
         self.assertEqual([query.destination for query in source.fetched_queries], ["NRT"])
@@ -1518,15 +1518,15 @@ class TypicalExploreDestTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "LIS", "FCO"])
-        mix = typical_eur_from_daily_prices([row.price_eur for row in report.destinations])
+        mix = typical_from_daily_prices([row.price for row in report.destinations])
         self.assertEqual(mix, 61.0)
         for dest in report.destinations:
-            self.assertIsNone(dest.typical_eur)
+            self.assertIsNone(dest.typical)
             self.assertIsNone(dest.vs_typical)
             self.assertIsNone(dest.vs_typical_pct)
             self.assertIsNone(dest.typical_deal())
-            self.assertNotIn("typical_eur", dest.to_dict())
-            self.assertNotEqual(dest.typical_eur, mix)
+            self.assertNotIn("typical", dest.to_dict())
+            self.assertNotEqual(dest.typical, mix)
 
     def test_unnamed_still_lists_dests_without_typical(self) -> None:
         source = FakeExploreSource(
@@ -1538,11 +1538,11 @@ class TypicalExploreDestTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "FCO"])
-        self.assertEqual(report.destinations[0].price_eur, 28.0)
-        self.assertIsNone(report.destinations[0].typical_eur)
-        self.assertIsNone(report.destinations[1].price_eur)
-        self.assertIsNone(report.destinations[1].typical_eur)
-        self.assertNotIn("typical_eur", report.destinations[0].to_dict())
+        self.assertEqual(report.destinations[0].price, 28.0)
+        self.assertIsNone(report.destinations[0].typical)
+        self.assertIsNone(report.destinations[1].price)
+        self.assertIsNone(report.destinations[1].typical)
+        self.assertNotIn("typical", report.destinations[0].to_dict())
 
     def test_shopped_dest_stamps_the_same_triple_as_flights(self) -> None:
         days = (
@@ -1557,17 +1557,17 @@ class TypicalExploreDestTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
         dest = report.destinations[0]
-        self.assertEqual(dest.price_eur, 80.0)
+        self.assertEqual(dest.price, 80.0)
         shop = FlightQuery("MAD", "OPO", date(2026, 9, 1))
         summary = _calendar_summary_from_source(source, shop, {})
         assert summary is not None
-        self.assertEqual(summary.median_eur, typical_eur_from_daily_prices((100.0, 120.0, 80.0)))
-        self.assertEqual(dest.typical_eur, summary.median_eur)
-        self.assertEqual(dest.vs_typical, vs_typical(80.0, summary.median_eur))
-        self.assertEqual(dest.vs_typical_pct, vs_typical_pct(80.0, summary.median_eur))
+        self.assertEqual(summary.median_price, typical_from_daily_prices((100.0, 120.0, 80.0)))
+        self.assertEqual(dest.typical, summary.median_price)
+        self.assertEqual(dest.vs_typical, vs_typical(80.0, summary.median_price))
+        self.assertEqual(dest.vs_typical_pct, vs_typical_pct(80.0, summary.median_price))
         self.assertEqual(dest.typical_deal(), "below typical 100 € (−20%)")
-        stamped = with_typical_dest(dest, summary.median_eur)
-        self.assertEqual(stamped.typical_eur, dest.typical_eur)
+        stamped = with_typical_dest(dest, summary.median_price)
+        self.assertEqual(stamped.typical, dest.typical)
         self.assertEqual(stamped.vs_typical, dest.vs_typical)
         self.assertEqual(stamped.vs_typical_pct, dest.vs_typical_pct)
         self.assertTrue(any(call[1] == "OPO" for call in source.calendar_calls))
@@ -1584,18 +1584,18 @@ class TypicalExploreDestTests(unittest.TestCase):
             },
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=thin)
-        self.assertEqual(report.destinations[0].price_eur, 80.0)
-        self.assertIsNone(report.destinations[0].typical_eur)
-        self.assertNotIn("typical_eur", report.destinations[0].to_dict())
+        self.assertEqual(report.destinations[0].price, 80.0)
+        self.assertIsNone(report.destinations[0].typical)
+        self.assertNotIn("typical", report.destinations[0].to_dict())
         missed = FakeExploreCalendarSource(
             (CompactExplorePlace("LIS", "Lisbon", "Portugal"),),
             prices={"LIS": (_card(price="€61"),)},
             calendars={"LIS": CompactParseMiss("no wrb.fr calendar payload")},
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=missed)
-        self.assertEqual(report.destinations[0].price_eur, 61.0)
-        self.assertIsNone(report.destinations[0].typical_eur)
-        self.assertNotIn("typical_eur", report.destinations[0].to_dict())
+        self.assertEqual(report.destinations[0].price, 61.0)
+        self.assertIsNone(report.destinations[0].typical)
+        self.assertNotIn("typical", report.destinations[0].to_dict())
 
     def test_does_not_copy_typical_from_another_dest(self) -> None:
         source = FakeExploreCalendarSource(
@@ -1617,11 +1617,11 @@ class TypicalExploreDestTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
         by_iata = {row.iata: row for row in report.destinations}
-        self.assertEqual(by_iata["OPO"].typical_eur, 100.0)
+        self.assertEqual(by_iata["OPO"].typical, 100.0)
         self.assertEqual(by_iata["OPO"].vs_typical, "below")
-        self.assertIsNone(by_iata["LIS"].typical_eur)
-        self.assertNotIn("typical_eur", by_iata["LIS"].to_dict())
-        self.assertNotEqual(by_iata["LIS"].typical_eur, by_iata["OPO"].typical_eur)
+        self.assertIsNone(by_iata["LIS"].typical)
+        self.assertNotIn("typical", by_iata["LIS"].to_dict())
+        self.assertNotEqual(by_iata["LIS"].typical, by_iata["OPO"].typical)
 
     def test_explore_cli_prints_typical_deal_for_shopped_dest(self) -> None:
         source = FakeExploreCalendarSource(
@@ -1666,17 +1666,17 @@ class StopsCompareExploreShopTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
         dest = report.destinations[0]
-        self.assertEqual(dest.price_eur, 49.0)
+        self.assertEqual(dest.price, 49.0)
         compare = dest.stops_compare
         assert compare is not None
         assert compare.nonstop is not None
         assert compare.one_stop is not None
-        self.assertEqual(compare.nonstop.price_eur, 88.0)
-        self.assertEqual(compare.one_stop.price_eur, 49.0)
+        self.assertEqual(compare.nonstop.price, 88.0)
+        self.assertEqual(compare.one_stop.price, 49.0)
         self.assertEqual(compare.one_stop.layover_city, "OPO")
         payload = dest.to_dict()["stops_compare"]
-        self.assertEqual(payload["nonstop"]["price_eur"], 88.0)
-        self.assertEqual(payload["one_stop"]["price_eur"], 49.0)
+        self.assertEqual(payload["nonstop"]["price"], 88.0)
+        self.assertEqual(payload["one_stop"]["price"], 49.0)
 
     def test_catalog_place_without_shop_offers_omits_compare(self) -> None:
         source = FakeExploreSource(
@@ -1690,22 +1690,22 @@ class StopsCompareExploreShopTests(unittest.TestCase):
         )
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
         by_iata = {row.iata: row for row in report.destinations}
-        self.assertEqual(by_iata["OPO"].price_eur, 28.0)
+        self.assertEqual(by_iata["OPO"].price, 28.0)
         assert by_iata["OPO"].stops_compare is not None
-        self.assertEqual(by_iata["OPO"].stops_compare.nonstop.price_eur, 28.0)
+        self.assertEqual(by_iata["OPO"].stops_compare.nonstop.price, 28.0)
         self.assertIsNone(by_iata["OPO"].stops_compare.one_stop)
-        self.assertIsNone(by_iata["FCO"].price_eur)
+        self.assertIsNone(by_iata["FCO"].price)
         self.assertIsNone(by_iata["FCO"].stops_compare)
         self.assertNotIn("stops_compare", by_iata["FCO"].to_dict())
-        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
         self.assertIsNone(catalog.stops_compare)
         self.assertNotIn("stops_compare", catalog.to_dict())
-        self.assertIsNone(catalog.typical_eur)
-        self.assertNotIn("typical_eur", catalog.to_dict())
-        self.assertIsNone(by_iata["FCO"].typical_eur)
-        self.assertNotIn("typical_eur", by_iata["FCO"].to_dict())
-        self.assertIsNone(by_iata["OPO"].typical_eur)
-        self.assertNotIn("typical_eur", by_iata["OPO"].to_dict())
+        self.assertIsNone(catalog.typical)
+        self.assertNotIn("typical", catalog.to_dict())
+        self.assertIsNone(by_iata["FCO"].typical)
+        self.assertNotIn("typical", by_iata["FCO"].to_dict())
+        self.assertIsNone(by_iata["OPO"].typical)
+        self.assertNotIn("typical", by_iata["OPO"].to_dict())
 
     def test_omits_empty_side_and_block(self) -> None:
         only_one = FakeExploreSource(
@@ -1725,7 +1725,7 @@ class StopsCompareExploreShopTests(unittest.TestCase):
         compare = report.destinations[0].stops_compare
         assert compare is not None
         self.assertIsNone(compare.nonstop)
-        self.assertEqual(compare.one_stop.price_eur, 49.0)
+        self.assertEqual(compare.one_stop.price, 49.0)
         self.assertEqual(set(report.destinations[0].to_dict()["stops_compare"]), {"one_stop"})
         two_stop = FakeExploreSource(
             (CompactExplorePlace("OPO", "Porto", "Portugal"),),
@@ -1744,7 +1744,7 @@ class StopsCompareExploreShopTests(unittest.TestCase):
             "MAD", date(2026, 9, 1), days=7, top=1, max_stops=2, source=two_stop
         )
         dest = report.destinations[0]
-        self.assertEqual(dest.price_eur, 314.0)
+        self.assertEqual(dest.price, 314.0)
         self.assertIsNone(dest.stops_compare)
         self.assertNotIn("stops_compare", dest.to_dict())
 
@@ -1787,7 +1787,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertNotIn("google_flights_url", report.to_dict())
 
     def test_catalog_place_does_not_invent_a_token_or_url(self) -> None:
-        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price_eur=61.0)
+        catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
         self.assertIsNone(catalog.google_flights_url)
         self.assertNotIn("google_flights_url", catalog.to_dict())
         self.assertNotIn("booking_token", catalog.to_dict())
@@ -1852,7 +1852,7 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             buffer_eur=70,
         )
         self.assertEqual([row.iata for row in by_fare.destinations], ["OPO", "LIS"])
-        self.assertEqual(by_fare.destinations[0].price_eur, 40.0)
+        self.assertEqual(by_fare.destinations[0].price, 40.0)
         ranked_off = search_explore(
             "MAD",
             date(2026, 9, 1),
@@ -1873,10 +1873,10 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             source=FakeExploreSource(places, prices),
         )
         self.assertEqual([row.iata for row in ranked.destinations], ["LIS", "OPO"])
-        self.assertEqual(ranked.destinations[0].price_eur, 90.0)
-        self.assertEqual(ranked.destinations[1].price_eur, 40.0)
-        self.assertEqual(ranked.destinations[1].baggage_buffer_eur, 70)
-        self.assertNotEqual(ranked.destinations[1].price_eur, 110.0)
+        self.assertEqual(ranked.destinations[0].price, 90.0)
+        self.assertEqual(ranked.destinations[1].price, 40.0)
+        self.assertEqual(ranked.destinations[1].baggage_buffer, 70)
+        self.assertNotEqual(ranked.destinations[1].price, 110.0)
 
     def test_unnamed_sort_ignores_buffer_and_unnamed_buffer_uses_default(self) -> None:
         places = (
@@ -1913,11 +1913,11 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             "MAD", date(2026, 9, 1), days=7, top=2, sort="ranked", source=source
         )
         by_iata = {row.iata: row for row in report.destinations}
-        self.assertEqual(by_iata["OPO"].price_eur, 40.0)
-        self.assertEqual(by_iata["OPO"].baggage_buffer_eur, 70)
-        self.assertIsNone(by_iata["FCO"].price_eur)
-        self.assertIsNone(by_iata["FCO"].baggage_buffer_eur)
-        self.assertNotIn("baggage_buffer_eur", by_iata["FCO"].to_dict())
+        self.assertEqual(by_iata["OPO"].price, 40.0)
+        self.assertEqual(by_iata["OPO"].baggage_buffer, 70)
+        self.assertIsNone(by_iata["FCO"].price)
+        self.assertIsNone(by_iata["FCO"].baggage_buffer)
+        self.assertNotIn("baggage_buffer", by_iata["FCO"].to_dict())
         self.assertNotIn("needs_bag_verify", by_iata["FCO"].to_dict())
 
     def test_cli_forwards_named_buffer(self) -> None:

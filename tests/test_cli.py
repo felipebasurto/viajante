@@ -56,17 +56,17 @@ def _offer(
     duration_hours: Optional[float] = 2.8333333333333335,
     stops: Optional[str] = "Nonstop",
     stops_count: Optional[int] = 0,
-    price_eur: float = 129.0,
-    baggage_buffer_eur: int = 0,
+    price: float = 129.0,
+    baggage_buffer: int = 0,
     needs_bag_verify: bool = False,
     layover_city: Optional[str] = None,
     layover_hours: Optional[float] = None,
     booking_token: Optional[str] = None,
-    typical_eur: Optional[float] = None,
+    typical: Optional[float] = None,
     vs_typical: Optional[VsTypical] = None,
     vs_typical_pct: Optional[int] = None,
     cheapest_date: Optional[date] = None,
-    cheapest_eur: Optional[float] = None,
+    cheapest: Optional[float] = None,
     checked_bags: Optional[int] = None,
     carry_on: Optional[int] = None,
 ) -> FlightOffer:
@@ -74,31 +74,36 @@ def _offer(
         airline=airline,
         departure=departure,
         arrival=arrival,
-        price=f"€{price_eur:.0f}",
-        price_eur=price_eur,
+        price_text=f"€{price:.0f}",
+        price=price,
         duration=duration,
         duration_hours=duration_hours,
         stops=stops,
         stops_count=stops_count,
         layover_city=layover_city,
         layover_hours=layover_hours,
-        baggage_buffer_eur=baggage_buffer_eur,
+        baggage_buffer=baggage_buffer,
         needs_bag_verify=needs_bag_verify,
         booking_token=booking_token,
-        typical_eur=typical_eur,
+        typical=typical,
         vs_typical=vs_typical,
         vs_typical_pct=vs_typical_pct,
         cheapest_date=cheapest_date,
-        cheapest_eur=cheapest_eur,
+        cheapest=cheapest,
         checked_bags=checked_bags,
         carry_on=carry_on,
     )
 
 
-def _report(*offers: FlightOffer, stops_compare: Optional[StopsCompare] = None) -> SearchReport:
+def _report(
+    *offers: FlightOffer,
+    stops_compare: Optional[StopsCompare] = None,
+    currency: str = "EUR",
+) -> SearchReport:
     shown = offers or (_offer(),)
     return SearchReport(
         searched_at=SEARCHED_AT,
+        currency=currency,
         queries=(
             QuerySuccess(
                 query=QUERY,
@@ -273,7 +278,7 @@ class CliTests(unittest.TestCase):
         queries = search.call_args.args[0]
         self.assertIsNone(queries[0].bags)
         self.assertIsNone(queries[0].carry_on)
-        self.assertIsNone(queries[0].price_cap_eur)
+        self.assertIsNone(queries[0].price_cap)
 
     def test_price_cap_flag_reaches_parsed_queries(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
@@ -281,14 +286,14 @@ class CliTests(unittest.TestCase):
                 code = main(["flights", ROUTE, "--price-cap", "200"])
         self.assertEqual(code, 0)
         queries = search.call_args.args[0]
-        self.assertEqual(queries[0].price_cap_eur, 200)
+        self.assertEqual(queries[0].price_cap, 200)
 
     def test_price_cap_default_stays_unset(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
                 main(["flights", ROUTE])
         queries = search.call_args.args[0]
-        self.assertIsNone(queries[0].price_cap_eur)
+        self.assertIsNone(queries[0].price_cap)
 
     def test_non_positive_price_cap_is_rejected_before_searching(self) -> None:
         with patch("viajante.cli.search_flights") as search:
@@ -394,18 +399,14 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("2 stops", output)
 
     def test_ranking_note_shows_the_effective_total(self) -> None:
-        low_cost = _offer(
-            airline="Ryanair", price_eur=50.0, baggage_buffer_eur=70, needs_bag_verify=True
-        )
+        low_cost = _offer(airline="Ryanair", price=50.0, baggage_buffer=70, needs_bag_verify=True)
         output = _rendered(_report(low_cost))
         self.assertIn("50 €", output)
         self.assertIn("120 € ranked", output)
         self.assertNotIn("(+70 bag", output)
 
     def test_disabled_buffer_still_flags_the_carrier(self) -> None:
-        low_cost = _offer(
-            airline="Ryanair", price_eur=50.0, baggage_buffer_eur=0, needs_bag_verify=True
-        )
+        low_cost = _offer(airline="Ryanair", price=50.0, baggage_buffer=0, needs_bag_verify=True)
         output = _rendered(_report(low_cost))
         self.assertIn("[baggage?]", output)
         self.assertNotIn("ranked", output)
@@ -414,40 +415,59 @@ class ReportRenderingTests(unittest.TestCase):
         with_typical = _rendered(
             _report(
                 _offer(
-                    price_eur=289.0,
-                    typical_eur=340.0,
+                    price=289.0,
+                    typical=340.0,
                     vs_typical="below",
                     vs_typical_pct=-15,
                 )
             )
         )
         self.assertIn("below typical 340 € (−15%)", with_typical)
-        silent = _rendered(_report(_offer(price_eur=289.0)))
+        silent = _rendered(_report(_offer(price=289.0)))
         self.assertNotIn("typical", silent)
 
     def test_typical_label_prints_cheapest_owned_day_when_present(self) -> None:
         output = _rendered(
             _report(
                 _offer(
-                    price_eur=289.0,
-                    typical_eur=340.0,
+                    price=289.0,
+                    typical=340.0,
                     vs_typical="below",
                     vs_typical_pct=-15,
                     cheapest_date=date(2026, 9, 16),
-                    cheapest_eur=300.0,
+                    cheapest=300.0,
                 )
             )
         )
         self.assertIn("below typical 340 € (−15%)", output)
         self.assertIn("cheapest 2026-09-16 300 €", output)
-        self.assertNotIn("cheapest", _rendered(_report(_offer(price_eur=289.0))))
+
+    def test_non_eur_currency_does_not_print_euro_glyph(self) -> None:
+        output = _rendered(
+            _report(
+                _offer(
+                    price=289.0,
+                    typical=340.0,
+                    vs_typical="below",
+                    vs_typical_pct=-15,
+                    cheapest_date=date(2026, 9, 16),
+                    cheapest=300.0,
+                ),
+                currency="USD",
+            )
+        )
+        self.assertIn("289 USD", output)
+        self.assertIn("below typical 340 USD (−15%)", output)
+        self.assertIn("cheapest 2026-09-16 300 USD", output)
+        self.assertNotIn("€", output)
+        self.assertNotIn("cheapest", _rendered(_report(_offer(price=289.0))))
 
     def test_parsed_bag_counts_print_when_present(self) -> None:
         output = _rendered(_report(_offer(checked_bags=1, carry_on=1)))
         self.assertIn("1 checked", output)
         self.assertIn("1 carry-on", output)
         self.assertNotIn("None", output)
-        silent = _rendered(_report(_offer(price_eur=289.0)))
+        silent = _rendered(_report(_offer(price=289.0)))
         self.assertNotIn("typical", silent)
         output = _rendered(_report(_offer()))
         self.assertIn("Verify checked baggage on Google Flights before booking.", output)
@@ -514,11 +534,11 @@ class ReportRenderingTests(unittest.TestCase):
 
     def test_stops_compare_prints_both_english_sides(self) -> None:
         compare = StopsCompare(
-            nonstop=StopsCompareSide.from_offer(_offer(airline="Iberia", price_eur=88.0)),
+            nonstop=StopsCompareSide.from_offer(_offer(airline="Iberia", price=88.0)),
             one_stop=StopsCompareSide.from_offer(
                 _offer(
                     airline="Ryanair",
-                    price_eur=49.0,
+                    price=49.0,
                     duration="5 h",
                     stops="1 stop",
                     stops_count=1,
@@ -527,7 +547,7 @@ class ReportRenderingTests(unittest.TestCase):
                 )
             ),
         )
-        output = _rendered(_report(_offer(airline="Iberia", price_eur=88.0), stops_compare=compare))
+        output = _rendered(_report(_offer(airline="Iberia", price=88.0), stops_compare=compare))
         self.assertIn("Cheapest nonstop:", output)
         self.assertIn("88 €", output)
         self.assertIn("Iberia", output)
@@ -542,7 +562,7 @@ class ReportRenderingTests(unittest.TestCase):
             one_stop=StopsCompareSide.from_offer(
                 _offer(
                     airline="Ryanair",
-                    price_eur=49.0,
+                    price=49.0,
                     duration="5 h",
                     stops="1 stop",
                     stops_count=1,
@@ -553,7 +573,7 @@ class ReportRenderingTests(unittest.TestCase):
             _report(
                 _offer(
                     airline="Ryanair",
-                    price_eur=49.0,
+                    price=49.0,
                     duration="5 h",
                     stops="1 stop",
                     stops_count=1,
@@ -713,7 +733,7 @@ class ReportRenderingTests(unittest.TestCase):
                     duration_hours=20 + 20 / 60,
                     stops="1 stop",
                     stops_count=1,
-                    price_eur=74.0,
+                    price=74.0,
                     layover_city="Lisbon",
                     layover_hours=18.0,
                 )
@@ -871,8 +891,8 @@ class ReportRenderingTests(unittest.TestCase):
                     offers=(
                         _offer(
                             airline="Ryanair",
-                            price_eur=75.0,
-                            baggage_buffer_eur=70,
+                            price=75.0,
+                            baggage_buffer=70,
                             needs_bag_verify=True,
                         ),
                     ),
@@ -881,7 +901,7 @@ class ReportRenderingTests(unittest.TestCase):
                     query=inbound,
                     raw_count=1,
                     eligible_count=1,
-                    offers=(_offer(airline="TAP", price_eur=80.0),),
+                    offers=(_offer(airline="TAP", price=80.0),),
                 ),
             ),
         )
@@ -956,11 +976,13 @@ def _sample_hotel_report(
     offers: tuple[HotelOffer, ...] = (),
     raw_count: int = 5,
     eligible_count: int = 3,
+    currency: str = "EUR",
 ) -> HotelSearchReport:
     query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
     applied = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
     return HotelSearchReport(
         searched_at=datetime(2026, 8, 10, 9, 0, 0),
+        currency=currency,
         queries=(
             HotelQuerySuccess(
                 query=query,
@@ -977,8 +999,8 @@ def _sample_hotel_offer(*, total_price: str = "420 €") -> HotelOffer:
     return HotelOffer(
         title="Old Town Apartment",
         address="Prague 1, Czech Republic",
-        total_price=total_price,
-        total_price_eur=420.0,
+        total_price_text=total_price,
+        total_price=420.0,
         rating="8.9",
         rating_score=8.9,
         details="Free cancellation · Entire home",
@@ -1116,8 +1138,8 @@ class HotelCliTests(unittest.TestCase):
         open_match = HotelOffer(
             title="  Old Town Apartment ",
             address="Prague 1,   Czech Republic",
-            total_price="380 €",
-            total_price_eur=380.0,
+            total_price_text="380 €",
+            total_price=380.0,
             rating="8.9",
             rating_score=8.9,
             details="Non-refundable",
@@ -1132,8 +1154,8 @@ class HotelCliTests(unittest.TestCase):
         open_only = HotelOffer(
             title="Other Stay",
             address="Prague 2",
-            total_price="200 €",
-            total_price_eur=200.0,
+            total_price_text="200 €",
+            total_price=200.0,
             rating=None,
             rating_score=None,
             details="",
@@ -1155,7 +1177,7 @@ class HotelCliTests(unittest.TestCase):
         self.assertIsNotNone(matched[1])
         self.assertIsNotNone(matched[2])
         assert matched[2] is not None
-        self.assertEqual(matched[2].total_price_eur, 380.0)
+        self.assertEqual(matched[2].total_price, 380.0)
 
     def test_compare_output_prints_join_when_both_succeed(self) -> None:
         free_query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
@@ -1171,8 +1193,8 @@ class HotelCliTests(unittest.TestCase):
         open_offer = HotelOffer(
             title="Old Town Apartment",
             address="Prague 1, Czech Republic",
-            total_price="380 €",
-            total_price_eur=380.0,
+            total_price_text="380 €",
+            total_price=380.0,
             rating="8.9",
             rating_score=8.9,
             details="Non-refundable",
@@ -1458,7 +1480,7 @@ class HotelCliTests(unittest.TestCase):
             self.assertIn("3 night", output)
             self.assertIn("free cancellation required", output.casefold())
             self.assertIn("booking chips: oos=1", output.casefold())
-            self.assertIn("419,50 € total stay", output)
+            self.assertIn("420 € total stay", output)
             self.assertIn("rating 8.9", output)
             self.assertIn("Old Town Apartment", output)
             self.assertIn("Prague 1, Czech Republic", output)
@@ -1470,6 +1492,20 @@ class HotelCliTests(unittest.TestCase):
             self.assertIn("eligible: 3", output.casefold())
             self.assertIn("shown: 1", output.casefold())
             self.assertIn("booking.com", output.casefold())
+
+    def test_non_eur_hotel_currency_does_not_print_euro_glyph(self) -> None:
+        report = _sample_hotel_report(
+            offers=(_sample_hotel_offer(),),
+            currency="CZK",
+        )
+        with patch("viajante.cli.search_hotels", return_value=report):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
+            self.assertEqual(code, 0)
+            output = buffer.getvalue()
+            self.assertIn("420 CZK total stay", output)
+            self.assertNotIn("€", output)
 
     def test_entire_home_output_shows_property_evidence(self) -> None:
         query = HotelQuery(
@@ -1517,8 +1553,8 @@ class HotelCliTests(unittest.TestCase):
         silent = HotelOffer(
             title="Quiet Stay",
             address="Prague 1",
-            total_price="200 €",
-            total_price_eur=200.0,
+            total_price_text="200 €",
+            total_price=200.0,
             rating="8,7 Fabuloso",
             rating_score=8.7,
             details="Wifi",
@@ -1635,15 +1671,15 @@ class TripCliTests(unittest.TestCase):
                     query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10), adults=2),
                     raw_count=1,
                     eligible_count=1,
-                    offers=(_offer(price_eur=412, baggage_buffer_eur=0),),
+                    offers=(_offer(price=412, baggage_buffer=0),),
                 ),
             ),
         )
         stay = HotelOffer(
             title="Southbank Stay",
             address="Melbourne",
-            total_price="246 €",
-            total_price_eur=246.0,
+            total_price_text="246 €",
+            total_price=246.0,
             rating="8.9",
             rating_score=8.9,
             details="Free cancellation",
@@ -1675,9 +1711,9 @@ class TripCliTests(unittest.TestCase):
             flights=flights,
             hotels=hotels,
             trip_total=TripTotal(
-                flight_fare_eur=412.0,
-                hotel_stay_eur=246.0,
-                total_eur=658.0,
+                flight_fare=412.0,
+                hotel_stay=246.0,
+                total=658.0,
                 nights=4,
             ),
             fetch_ms=18,
@@ -1722,7 +1758,7 @@ class TripCliTests(unittest.TestCase):
                     query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10)),
                     raw_count=1,
                     eligible_count=1,
-                    offers=(_offer(price_eur=412),),
+                    offers=(_offer(price=412),),
                 ),
             ),
         )
@@ -1838,13 +1874,13 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
-        self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["price_cap"], 200)
         self.assertEqual(kwargs["arrive_before"], 10 * 60)
         self.assertEqual(kwargs["depart_after"], 18 * 60)
         trip = search.call_args.args[0][0]
         self.assertEqual(trip.bags, 1)
         self.assertEqual(trip.carry_on, 1)
-        self.assertEqual(trip.price_cap_eur, 200)
+        self.assertEqual(trip.price_cap, 200)
 
     def test_trip_unnamed_shop_filters_stay_unset(self) -> None:
         with (
@@ -1881,13 +1917,13 @@ class TripCliTests(unittest.TestCase):
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
-        self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["price_cap"])
         self.assertIsNone(kwargs["arrive_before"])
         self.assertIsNone(kwargs["depart_after"])
         trip = search.call_args.args[0][0]
         self.assertIsNone(trip.bags)
         self.assertIsNone(trip.carry_on)
-        self.assertIsNone(trip.price_cap_eur)
+        self.assertIsNone(trip.price_cap)
 
     def test_trip_nearby_expands_london_and_default_keeps_heathrow(self) -> None:
         back = FUTURE_DATE + timedelta(days=4)

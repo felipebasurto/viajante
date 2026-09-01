@@ -882,7 +882,7 @@ class PromptPlan:
     fetch: Optional[str] = None
     weekday: Optional[str] = None
     date_strategy: Optional[str] = None
-    price_cap_eur: Optional[int] = None
+    price_cap: Optional[int] = None
     require_return_legs: bool = False
     require_arrival_clock: bool = False
     around_the_world: bool = False
@@ -918,7 +918,7 @@ class PromptPlan:
     flex_days: Optional[int] = None
     currency: Optional[str] = None
     country: Optional[str] = None
-    baggage_buffer_eur: Optional[int] = None
+    baggage_buffer: Optional[int] = None
 
     def to_dict(self) -> dict[str, Any]:
         def iso(value: Optional[date]) -> Optional[str]:
@@ -952,7 +952,7 @@ class PromptPlan:
             "fetch": self.fetch,
             "weekday": self.weekday,
             "date_strategy": self.date_strategy,
-            "price_cap_eur": self.price_cap_eur,
+            "price_cap": self.price_cap,
             "require_return_legs": self.require_return_legs,
             "require_arrival_clock": self.require_arrival_clock,
             "around_the_world": self.around_the_world,
@@ -988,7 +988,7 @@ class PromptPlan:
             "flex_days": self.flex_days,
             "currency": self.currency,
             "country": self.country,
-            "baggage_buffer_eur": self.baggage_buffer_eur,
+            "baggage_buffer": self.baggage_buffer,
         }
 
     def matches(self, expect: Mapping[str, Any]) -> tuple[bool, str]:
@@ -1871,7 +1871,7 @@ def _bag_fields(
     return _baggage_label(carry_only=carry_only, no_checked=no_checked, bags=bags), bags, carry_on
 
 
-def _named_price_cap_eur(folded: str, flags: Mapping[str, str]) -> Optional[int]:
+def _named_price_cap(folded: str, flags: Mapping[str, str]) -> Optional[int]:
     """Named cap only. Unnamed stays None. Do not invent a fare or a cap."""
     if "price-cap" in flags:
         try:
@@ -1888,7 +1888,7 @@ def _named_price_cap_eur(folded: str, flags: Mapping[str, str]) -> Optional[int]
     return value if value > 0 else None
 
 
-def _named_baggage_buffer_eur(folded: str, flags: Mapping[str, str]) -> Optional[int]:
+def _named_baggage_buffer(folded: str, flags: Mapping[str, str]) -> Optional[int]:
     """Named ranking buffer only. Unnamed stays None. Do not invent a fare or bags."""
     if "baggage-buffer" in flags:
         try:
@@ -2319,7 +2319,7 @@ def plan_to_trips(plan: PromptPlan) -> FlightPlan:
         cabin=cabin,
         bags=plan.bags,
         carry_on=plan.carry_on,
-        price_cap_eur=plan.price_cap_eur,
+        price_cap=plan.price_cap,
     )
     if not plan.nearby or not isinstance(parsed, tuple):
         return parsed
@@ -2550,7 +2550,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if "viernes" in folded or "friday" in folded:
         weekday = "friday"
 
-    price_cap = _named_price_cap_eur(folded, flags)
+    price_cap = _named_price_cap(folded, flags)
     currency = _named_currency(flags)
     country = _named_country(flags)
 
@@ -2843,7 +2843,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if trip == "rt":
         notes = _append_note(
             notes,
-            "Stamp typical_eur / vs_typical / typical_deal from the owned same-stay "
+            "Stamp typical / vs_typical / typical_deal from the owned same-stay "
             "calendar when it has at least three priced days; omit on a miss or "
             "multi-city. Do not invent a typical.",
         )
@@ -2859,7 +2859,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         refuse.append("past_date")
 
     baggage, bags, carry_on = _bag_fields(folded, flags, raw)
-    baggage_buffer = _named_baggage_buffer_eur(folded, flags)
+    baggage_buffer = _named_baggage_buffer(folded, flags)
     arrive_before = _named_hhmm(folded, flags, flag="arrive-before", pattern=_ARRIVE_BEFORE)
     depart_after = _named_hhmm(folded, flags, flag="depart-after", pattern=_DEPART_AFTER)
     depart_window = _depart_window(folded, flags)
@@ -3063,7 +3063,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             cabin=cabin,
             date_strategy=date_strategy,
             max_stops=max_stops,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             max_layover=max_layover,
             exclude_regions=tuple(exclude_regions),
             exclude_airports=tuple(exclude_airports),
@@ -3088,7 +3088,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             currency=currency,
             country=country,
             sort=sort,
-            baggage_buffer_eur=baggage_buffer,
+            baggage_buffer=baggage_buffer,
         )
 
     if intent == "flex":
@@ -3113,7 +3113,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             baggage=baggage,
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             flex_days=_flex_days_value(folded, flags, dates),
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
@@ -3135,7 +3135,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             country=country,
             exclude_airports=tuple(exclude_airports),
             include_airports=tuple(include_airports),
-            baggage_buffer_eur=baggage_buffer,
+            baggage_buffer=baggage_buffer,
         )
 
     if intent == "dates":
@@ -3160,7 +3160,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             baggage=baggage,
             bags=bags,
             carry_on=carry_on,
-            price_cap_eur=price_cap,
+            price_cap=price_cap,
             via_airports=tuple(via_airports),
             exclude_via=tuple(exclude_via),
             no_overnight=tuple(no_overnight),
@@ -3179,7 +3179,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             country=country,
             exclude_airports=tuple(exclude_airports),
             include_airports=tuple(include_airports),
-            baggage_buffer_eur=baggage_buffer,
+            baggage_buffer=baggage_buffer,
             sort=sort,
         )
 
@@ -3224,7 +3224,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         check_out=check_out if plan_hotels else None,
         fetch=fetch,
         weekday=weekday,
-        price_cap_eur=price_cap,
+        price_cap=price_cap,
         require_return_legs=require_return or trip == "rt",
         require_arrival_clock=require_clock,
         around_the_world=around,
@@ -3258,5 +3258,5 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         notes=notes,
         currency=currency,
         country=country,
-        baggage_buffer_eur=baggage_buffer,
+        baggage_buffer=baggage_buffer,
     )

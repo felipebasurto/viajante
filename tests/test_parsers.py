@@ -8,7 +8,7 @@ from viajante.parsers import (
     parse_cancellation_evidence,
     parse_duration_hours,
     parse_lodging_kind,
-    parse_price_eur,
+    parse_price,
     parse_property_type_evidence,
     parse_rating,
     parse_stops_count,
@@ -61,10 +61,10 @@ STOPS_CASES = [
 
 
 class ParserTests(unittest.TestCase):
-    def test_parse_price_eur(self) -> None:
+    def test_parse_price(self) -> None:
         for text, want in PRICE_CASES:
             with self.subTest(text=text):
-                self.assertEqual(parse_price_eur(text), want)
+                self.assertEqual(parse_price(text), want)
 
     def test_parse_duration_hours(self) -> None:
         for text, want in DURATION_CASES:

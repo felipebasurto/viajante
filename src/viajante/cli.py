@@ -76,6 +76,7 @@ from viajante.models import (
     StopsCompareSide,
     Trip,
     TripSearchReport,
+    format_money,
     normalize_country,
 )
 from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
@@ -233,7 +234,7 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
         cabin=args.cabin,
         bags=args.bags,
         carry_on=carry_on,
-        price_cap_eur=args.price_cap,
+        price_cap=args.price_cap,
     )
     today = date.today()
     for departure in _plan_departure_dates(plan):
@@ -296,12 +297,12 @@ def _format_clock(text: Optional[str]) -> str:
 
 
 def _ranked_total(offer: FlightOffer) -> float:
-    return offer.price_eur + offer.baggage_buffer_eur
+    return offer.price + offer.baggage_buffer
 
 
 def _sort_value(offer: FlightOffer, sort: FlightSort) -> float:
     if sort in ("fare", "price"):
-        return offer.price_eur
+        return offer.price
     if sort == "duration":
         return offer.duration_hours if offer.duration_hours is not None else float("inf")
     if sort == "departure":
@@ -313,48 +314,56 @@ def _sort_value(offer: FlightOffer, sort: FlightSort) -> float:
     return _ranked_total(offer)
 
 
-def _format_ranking_columns(offer: FlightOffer) -> str:
-    fare = f"{offer.price_eur:>7.0f} €"
-    if offer.baggage_buffer_eur:
-        return f"{fare}  {_ranked_total(offer):>7.0f} € ranked"
+def _format_ranking_columns(offer: FlightOffer, currency: str) -> str:
+    fare = format_money(offer.price, currency, width=7)
+    if offer.baggage_buffer:
+        return f"{fare}  {format_money(_ranked_total(offer), currency, width=7)} ranked"
     extra = "  [baggage?]" if offer.needs_bag_verify else ""
     return f"{fare}{extra}"
 
 
-def _format_compare_side(side: StopsCompareSide) -> str:
+def _format_compare_side(side: StopsCompareSide, currency: str) -> str:
     label = _format_stops(side.stops_count)
     if side.layover_city:
         label = f"{label} {side.layover_city}"
     if side.layover_hours is not None:
         label = f"{label} {_format_layover_hours(side.layover_hours)}"
     duration = side.duration or "?"
-    return f"{side.price_eur:.0f} €  {duration}  {label}  {_format_airline(side.airline)}"
+    return (
+        f"{format_money(side.price, currency)}  {duration}  {label}  "
+        f"{_format_airline(side.airline)}"
+    )
 
 
-def format_stops_compare(compare: StopsCompare) -> str:
+def format_stops_compare(compare: StopsCompare, currency: str = "EUR") -> str:
     lines: list[str] = []
     if compare.nonstop is not None:
-        lines.append(f"  Cheapest nonstop:  {_format_compare_side(compare.nonstop)}")
+        lines.append(f"  Cheapest nonstop:  {_format_compare_side(compare.nonstop, currency)}")
     else:
         lines.append("  Cheapest nonstop:  no nonstop")
     if compare.one_stop is not None:
-        lines.append(f"  Cheapest 1-stop:   {_format_compare_side(compare.one_stop)}")
+        lines.append(f"  Cheapest 1-stop:   {_format_compare_side(compare.one_stop, currency)}")
     return "\n".join(lines)
 
 
-def _format_typical_deal(row: object) -> str:
-    line = getattr(row, "typical_deal", lambda: None)()
+def _format_typical_deal(row: object, currency: str = "EUR") -> str:
+    deal = getattr(row, "typical_deal", None)
+    if not callable(deal):
+        return ""
+    line = deal(currency)
     if not line:
         return ""
     return f"  {line}"
 
 
-def _format_typical(offer: FlightOffer) -> str:
-    text = _format_typical_deal(offer)
+def _format_typical(offer: FlightOffer, currency: str) -> str:
+    text = _format_typical_deal(offer, currency)
     if not text:
         return ""
-    if offer.cheapest_date is not None and offer.cheapest_eur is not None:
-        text += f"  cheapest {offer.cheapest_date.isoformat()} {offer.cheapest_eur:.0f} €"
+    if offer.cheapest_date is not None and offer.cheapest is not None:
+        text += (
+            f"  cheapest {offer.cheapest_date.isoformat()} {format_money(offer.cheapest, currency)}"
+        )
     return text
 
 
@@ -435,14 +444,17 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
             back_value = _ranked_total(back_offer)
             unit = "ranked"
         else:
-            out_value = out_offer.price_eur
-            back_value = back_offer.price_eur
+            out_value = out_offer.price
+            back_value = back_offer.price
             unit = "fare"
+        currency = report.currency
         print(
             f"\nBest pair ({unit}): "
-            f"{outbound.query.origin}->{outbound.query.destination} {out_value:.0f} € {unit} + "
-            f"{inbound.query.origin}->{inbound.query.destination} {back_value:.0f} € {unit} = "
-            f"{out_value + back_value:.0f} €"
+            f"{outbound.query.origin}->{outbound.query.destination} "
+            f"{format_money(out_value, currency)} {unit} + "
+            f"{inbound.query.origin}->{inbound.query.destination} "
+            f"{format_money(back_value, currency)} {unit} = "
+            f"{format_money(out_value + back_value, currency)}"
         )
         index += 2
 
@@ -522,7 +534,8 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
             for offer in result.offers:
                 times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
                 print(
-                    f"  {_format_ranking_columns(offer)}{_format_typical(offer)}"
+                    f"  {_format_ranking_columns(offer, currency)}"
+                    f"{_format_typical(offer, currency)}"
                     f"{_format_parsed_bags(offer)}  "
                     f"{offer.duration or '?':<12} "
                     f"{_format_stops_with_layover(offer):<16} {times:<18} "
@@ -542,7 +555,7 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
             if result.offers and not print_per_offer:
                 _print_google_flights_url(query_url, indent="  ")
             if result.stops_compare is not None:
-                print(format_stops_compare(result.stops_compare))
+                print(format_stops_compare(result.stops_compare, currency))
             print(
                 f"  Raw: {result.raw_count}; "
                 f"eligible: {result.eligible_count}; "
@@ -650,7 +663,7 @@ def _cheapest_by_identity(offers: Sequence[HotelOffer]) -> dict[Tuple[str, str],
     for offer in offers:
         key = _hotel_offer_identity(offer)
         current = chosen.get(key)
-        if current is None or offer.total_price_eur < current.total_price_eur:
+        if current is None or offer.total_price < current.total_price:
             chosen[key] = offer
     return chosen
 
@@ -670,7 +683,7 @@ def _join_cancellation_rows(
         rows.append((sample, free_offer, open_offer))
     rows.sort(
         key=lambda row: (
-            min(offer.total_price_eur for offer in (row[1], row[2]) if offer is not None),
+            min(offer.total_price for offer in (row[1], row[2]) if offer is not None),
             row[0].title.casefold(),
         )
     )
@@ -680,6 +693,7 @@ def _join_cancellation_rows(
 def _print_cancellation_compare(
     free_result: HotelQuerySuccess,
     open_result: HotelQuerySuccess,
+    currency: str,
 ) -> None:
     print("\n=== Cancellation compare ===")
     rows = _join_cancellation_rows(free_result.offers, open_result.offers)
@@ -687,12 +701,16 @@ def _print_cancellation_compare(
         print("  (no matching stays)")
         return
     for sample, free_offer, open_offer in rows:
-        free_label = f"{free_offer.total_price_eur:.0f} €" if free_offer is not None else "—"
-        open_label = f"{open_offer.total_price_eur:.0f} €" if open_offer is not None else "—"
+        free_label = (
+            format_money(free_offer.total_price, currency) if free_offer is not None else "—"
+        )
+        open_label = (
+            format_money(open_offer.total_price, currency) if open_offer is not None else "—"
+        )
         delta = ""
         if free_offer is not None and open_offer is not None:
-            diff = free_offer.total_price_eur - open_offer.total_price_eur
-            delta = f"  delta {diff:.0f} €"
+            diff = free_offer.total_price - open_offer.total_price
+            delta = f"  delta {format_money(diff, currency)}"
         print(f"  {sample.title}  free cancel {free_label}  no free cancel {open_label}{delta}")
         detail_query = free_result.query if free_offer is not None else open_result.query
         detail_applied = free_result.applied if free_offer is not None else open_result.applied
@@ -709,7 +727,7 @@ def _print_hotel_report(report) -> None:
         and queries[0].query.free_cancellation
         and not queries[1].query.free_cancellation
     ):
-        _print_cancellation_compare(queries[0], queries[1])
+        _print_cancellation_compare(queries[0], queries[1], report.currency)
     for result in queries:
         query = result.query
         nights_label = "night" if query.nights == 1 else "nights"
@@ -728,7 +746,10 @@ def _print_hotel_report(report) -> None:
             for offer in result.offers:
                 rating = f"{offer.rating_score:.1f}" if offer.rating_score is not None else "-"
                 address = f"  {offer.address}" if offer.address else ""
-                print(f"  {offer.total_price} total stay  rating {rating}  {offer.title}{address}")
+                print(
+                    f"  {format_money(offer.total_price, report.currency)} total stay  "
+                    f"rating {rating}  {offer.title}{address}"
+                )
                 _print_hotel_offer_details(offer, query=query, applied=result.applied)
             print(
                 f"  Raw cards: {result.raw_count}; "
@@ -840,7 +861,7 @@ def _run_hotels(args: argparse.Namespace) -> int:
 def _print_trip_total(report: TripSearchReport) -> None:
     if report.trip_total is None:
         return
-    print(f"\n{format_trip_total(report.trip_total)}")
+    print(f"\n{format_trip_total(report.trip_total, report.currency)}")
 
 
 def _combined_exit_code(*reports: object) -> int:
@@ -974,14 +995,15 @@ def _print_dates_report(report: DateCalendarReport) -> None:
     if spark:
         print(f"  {spark}")
     if report.summary is not None:
-        print(format_summary_line(report.summary))
+        print(format_summary_line(report.summary, report.currency))
     print()
     any_price = False
+    currency = report.currency
     for row in report.days:
         if row.status == "error" and row.error is not None:
             print(f"  {row.departure_date.isoformat()}   ERROR: {row.error.message}")
             continue
-        if row.price_eur is None:
+        if row.price is None:
             print(f"  {row.departure_date.isoformat()}      —")
             continue
         any_price = True
@@ -990,10 +1012,13 @@ def _print_dates_report(report: DateCalendarReport) -> None:
             extra += f"  {row.airline}"
         if row.stops_count is not None:
             extra += f"  {_format_stops(row.stops_count)}"
-        deal = _format_typical_deal(row)
-        print(f"  {row.departure_date.isoformat()}  {row.price_eur:>7.0f} €{extra}{deal}")
+        deal = _format_typical_deal(row, currency)
+        print(
+            f"  {row.departure_date.isoformat()}  "
+            f"{format_money(row.price, currency, width=7)}{extra}{deal}"
+        )
         if row.stops_compare is not None:
-            print(format_stops_compare(row.stops_compare))
+            print(format_stops_compare(row.stops_compare, currency))
     if any_price:
         print("\nVerify checked baggage on Google Flights before booking.")
 
@@ -1011,16 +1036,20 @@ def _print_explore_report(report: ExploreReport) -> None:
     if not report.destinations:
         print("  (no destinations)")
         return
+    currency = report.currency
     for row in report.destinations:
-        price = f"{row.price_eur:>7.0f} €" if row.price_eur is not None else "      —"
+        price = format_money(row.price, currency, width=7) if row.price is not None else "      —"
         country = f"  {row.country}" if row.country else ""
         hours = ""
         if row.duration_hours is not None:
             hours = f"  {_format_layover_hours(row.duration_hours)}"
-        print(f"  {price}  {row.iata}  {row.city}{country}{hours}{_format_typical_deal(row)}")
+        print(
+            f"  {price}  {row.iata}  {row.city}{country}{hours}"
+            f"{_format_typical_deal(row, currency)}"
+        )
         _print_google_flights_url(row.google_flights_url)
         if row.stops_compare is not None:
-            print(format_stops_compare(row.stops_compare))
+            print(format_stops_compare(row.stops_compare, currency))
     print("\nVerify checked baggage on Google Flights before booking.")
 
 
@@ -1374,7 +1403,7 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
     return {
         "bags": args.bags,
         "carry_on": carry_on,
-        "price_cap_eur": args.price_cap,
+        "price_cap": args.price_cap,
         "airlines": parse_airline_codes(args.airlines),
         "exclude_airlines": parse_airline_codes(args.exclude_airlines),
         "alliances": parse_alliances(getattr(args, "alliance", None)),
@@ -1419,7 +1448,7 @@ def _run_dates(args: argparse.Namespace) -> int:
             max_stops=args.max_stops,
             bags=shop["bags"],
             carry_on=shop["carry_on"],
-            price_cap_eur=shop["price_cap_eur"],
+            price_cap=shop["price_cap"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],
@@ -1441,7 +1470,7 @@ def _run_dates(args: argparse.Namespace) -> int:
             nights=nights,
             bags=shop["bags"],
             carry_on=shop["carry_on"],
-            price_cap_eur=shop["price_cap_eur"],
+            price_cap=shop["price_cap"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],
@@ -1523,7 +1552,8 @@ def _print_flex_report(report: FlexSearchReport) -> None:
     for offer in report.offers:
         times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
         print(
-            f"  {_format_ranking_columns(offer)}{_format_typical(offer)}"
+            f"  {_format_ranking_columns(offer, report.currency)}"
+            f"{_format_typical(offer, report.currency)}"
             f"{_format_parsed_bags(offer)}  "
             f"{offer.duration or '?':<12} "
             f"{_format_stops_with_layover(offer):<16} {times:<18} "
@@ -1534,7 +1564,7 @@ def _print_flex_report(report: FlexSearchReport) -> None:
     if not print_per_offer:
         _print_google_flights_url(report.google_flights_url, indent="  ")
     if report.stops_compare is not None:
-        print(format_stops_compare(report.stops_compare))
+        print(format_stops_compare(report.stops_compare, report.currency))
     print("\nVerify checked baggage on Google Flights before booking.")
 
 
@@ -1560,7 +1590,7 @@ def _run_flex(args: argparse.Namespace) -> int:
             max_stops=args.max_stops,
             bags=shop["bags"],
             carry_on=shop["carry_on"],
-            price_cap_eur=shop["price_cap_eur"],
+            price_cap=shop["price_cap"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],
@@ -1582,7 +1612,7 @@ def _run_flex(args: argparse.Namespace) -> int:
             nights=nights,
             bags=shop["bags"],
             carry_on=shop["carry_on"],
-            price_cap_eur=shop["price_cap_eur"],
+            price_cap=shop["price_cap"],
             airlines=shop["airlines"],
             exclude_airlines=shop["exclude_airlines"],
             alliances=shop["alliances"],

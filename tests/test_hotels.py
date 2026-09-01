@@ -110,7 +110,7 @@ def offer(
     *,
     title: str = "Casa Azul",
     address: str | None = "Centro, Lisboa",
-    total_price_eur: float = 400.0,
+    total_price: float = 400.0,
     rating_score: float | None = 8.7,
     cancellation: CancellationEvidence = CancellationEvidence.FREE,
     property_type: PropertyTypeEvidence = PropertyTypeEvidence.ENTIRE_HOME,
@@ -125,8 +125,8 @@ def offer(
     return HotelOffer(
         title=title,
         address=address,
-        total_price=f"{total_price_eur:g} €",
-        total_price_eur=total_price_eur,
+        total_price_text=f"{total_price:g} €",
+        total_price=total_price,
         rating=None if rating_score is None else f"{rating_score:g}",
         rating_score=rating_score,
         details="details",
@@ -159,8 +159,8 @@ class PureHotelLogicTests(unittest.TestCase):
         normalized = _normalize_card(card())
 
         assert normalized is not None
-        self.assertEqual(normalized.total_price, "400 €")
-        self.assertEqual(normalized.total_price_eur, 400.0)
+        self.assertEqual(normalized.total_price_text, "400 €")
+        self.assertEqual(normalized.total_price, 400.0)
         self.assertEqual(normalized.rating, "Rating: 8.7")
         self.assertEqual(normalized.rating_score, 8.7)
         self.assertEqual(normalized.details, card().details)
@@ -256,15 +256,15 @@ class PureHotelLogicTests(unittest.TestCase):
     def test_rank_deduplicates_normalized_identity_and_sorts_ties(self) -> None:
         ranked = _rank_offers(
             (
-                offer(title="Beta", total_price_eur=200, rating_score=None),
-                offer(title="alpha", total_price_eur=200, rating_score=8.5),
+                offer(title="Beta", total_price=200, rating_score=None),
+                offer(title="alpha", total_price=200, rating_score=8.5),
                 offer(
                     title=" ALPHA ",
                     address="  Centro,   Lisboa ",
-                    total_price_eur=200,
+                    total_price=200,
                     rating_score=9.0,
                 ),
-                offer(title="Cheap", total_price_eur=150, rating_score=7.0),
+                offer(title="Cheap", total_price=150, rating_score=7.0),
             ),
             top=3,
         )

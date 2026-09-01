@@ -164,10 +164,10 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             search_flights_tool([f"MAD-BCN:{FUTURE}"], price_cap=200)
         trip = search.call_args.args[0][0]
-        self.assertEqual(trip.price_cap_eur, 200)
+        self.assertEqual(trip.price_cap, 200)
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             search_flights_tool([f"MAD-BCN:{FUTURE}"])
-        self.assertIsNone(search.call_args.args[0][0].price_cap_eur)
+        self.assertIsNone(search.call_args.args[0][0].price_cap)
 
     def test_search_flights_accepts_occupancy_and_locale_params(self) -> None:
         fake = _report(queries=[], currency="USD")
@@ -215,7 +215,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["exclude_airlines"])
         self.assertIsNone(kwargs["alliances"])
         self.assertIsNone(kwargs["exclude_alliances"])
-        self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["price_cap"])
         self.assertIsNone(kwargs["depart_window"])
         self.assertIsNone(kwargs["arrive_before"])
         self.assertIsNone(kwargs["depart_after"])
@@ -314,7 +314,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
         self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
-        self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["price_cap"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(kwargs["arrive_before"], 10 * 60)
         self.assertEqual(kwargs["depart_after"], 18 * 60)
@@ -368,7 +368,7 @@ class McpHandlerTests(unittest.TestCase):
         fake = _report(
             chosen_date=FUTURE,
             offers=[],
-            typical_eur=None,
+            typical=None,
             vs_typical=None,
             trip="rt",
             nights=7,
@@ -390,7 +390,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["alliances"])
         self.assertIsNone(kwargs["exclude_alliances"])
-        self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["price_cap"])
         self.assertIsNone(kwargs["depart_window"])
         self.assertIsNone(kwargs["arrive_before"])
         self.assertIsNone(kwargs["depart_after"])
@@ -464,7 +464,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["airlines"], ("BA",))
         self.assertEqual(kwargs["alliances"], ("oneworld",))
         self.assertEqual(kwargs["exclude_alliances"], ("star",))
-        self.assertEqual(kwargs["price_cap_eur"], 400)
+        self.assertEqual(kwargs["price_cap"], 400)
         self.assertEqual(kwargs["depart_window"], (6 * 60, 20 * 60))
         self.assertEqual(kwargs["arrive_before"], 10 * 60)
         self.assertEqual(kwargs["depart_after"], 18 * 60)
@@ -527,7 +527,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["sort"], "price")
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool("SIN", FUTURE, price_cap=200)
-        self.assertEqual(search.call_args.kwargs["price_cap_eur"], 200)
+        self.assertEqual(search.call_args.kwargs["price_cap"], 200)
 
     def test_search_explore_unnamed_buffer_uses_the_default(self) -> None:
         fake = _report(destinations=[])
@@ -608,7 +608,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
         self.assertEqual(kwargs["alliances"], ("star",))
         self.assertEqual(kwargs["exclude_alliances"], ("oneworld",))
-        self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["price_cap"], 200)
         self.assertEqual(kwargs["depart_window"], (7 * 60, 12 * 60 + 59))
         self.assertEqual(kwargs["arrive_before"], 10 * 60)
         self.assertEqual(kwargs["depart_after"], 18 * 60)
@@ -701,12 +701,12 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["include_airports"])
         self.assertIsNone(kwargs["airlines"])
         self.assertIsNone(kwargs["exclude_airlines"])
-        self.assertIsNone(kwargs["price_cap_eur"])
+        self.assertIsNone(kwargs["price_cap"])
         self.assertIsNone(kwargs["arrive_before"])
         self.assertIsNone(kwargs["depart_after"])
         trip = search.call_args.args[0][0]
         self.assertIsNone(trip.bags)
-        self.assertIsNone(trip.price_cap_eur)
+        self.assertIsNone(trip.price_cap)
 
     def test_search_trip_forwards_owned_shop_filters(self) -> None:
         fake = _report(
@@ -743,13 +743,13 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
         self.assertEqual(kwargs["airlines"], ("IB",))
         self.assertEqual(kwargs["exclude_airlines"], ("FR",))
-        self.assertEqual(kwargs["price_cap_eur"], 200)
+        self.assertEqual(kwargs["price_cap"], 200)
         self.assertEqual(kwargs["arrive_before"], 10 * 60)
         self.assertEqual(kwargs["depart_after"], 18 * 60)
         trip = search.call_args.args[0][0]
         self.assertEqual(trip.bags, 1)
         self.assertEqual(trip.carry_on, 1)
-        self.assertEqual(trip.price_cap_eur, 200)
+        self.assertEqual(trip.price_cap, 200)
 
     def test_search_trip_nearby_expands_before_search(self) -> None:
         fake = _report(
