@@ -3172,7 +3172,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
             source=FakeCalendarSource(CompactParseMiss("no wrb.fr calendar payload")),
         )
         expected = google_flights_url(
-            calendar_trip("BOS", "LHR", date(2026, 9, 12), max_stops=1), currency="EUR"
+            calendar_trip("BOS", "LHR", date(2026, 9, 12), max_stops=1), currency="USD"
         )
         self.assertEqual(miss.offers, ())
         self.assertEqual(miss.google_flights_url, expected)
