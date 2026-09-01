@@ -15,6 +15,7 @@ from viajante.booking import (
 from viajante.booking import (
     build_applied_filters as build_booking_filters,
 )
+from viajante.flights import DEFAULT_TOP
 from viajante.google_hotels import (
     GoogleHotelsSource,
 )
@@ -282,7 +283,7 @@ HotelSourceName = Literal["booking", "google"]
 def search_hotels(
     queries: Sequence[HotelQuery],
     *,
-    top: int = 8,
+    top: int = DEFAULT_TOP,
     progress: Optional[Callable[[str], None]] = None,
     source: HotelSourceName = "booking",
 ) -> HotelSearchReport:

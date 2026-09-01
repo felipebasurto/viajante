@@ -1123,7 +1123,7 @@ def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
         "--country",
         default=None,
         metavar="CC",
-        help="ISO country for Google gl (omit to leave unset; not a home-hub default)",
+        help="ISO country for Google gl. Omitted when unset.",
     )
 
 
@@ -1702,44 +1702,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of adults (default 1)",
     )
-    flights.add_argument(
-        "--children",
-        type=int,
-        default=0,
-        help="Children aged 2-11 (default 0)",
-    )
-    flights.add_argument(
-        "--infants-in-seat",
-        type=int,
-        default=0,
-        dest="infants_in_seat",
-        help="Infants in their own seat (default 0)",
-    )
-    flights.add_argument(
-        "--infants-on-lap",
-        type=int,
-        default=0,
-        dest="infants_on_lap",
-        help="Infants on lap (default 0)",
-    )
+    _add_occupancy_flags(flights)
     flights.add_argument(
         "--cabin",
         default="economy",
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
     )
-    flights.add_argument(
-        "--currency",
-        default="EUR",
-        metavar="CODE",
-        help="ISO 4217 currency for Google params (default EUR)",
-    )
-    flights.add_argument(
-        "--country",
-        default=None,
-        metavar="CC",
-        help="ISO country for Google gl (omit to leave unset; not a home-hub default)",
-    )
+    _add_currency_country_flags(flights)
     flights.add_argument(
         "--bags",
         type=int,
@@ -1966,8 +1936,8 @@ def _build_parser() -> argparse.ArgumentParser:
     hotels.add_argument(
         "--top",
         type=int,
-        default=8,
-        help="Stays to show (default 8)",
+        default=DEFAULT_TOP,
+        help=f"Stays to show (default {DEFAULT_TOP})",
     )
     hotels.add_argument(
         "--min-rating",
@@ -2081,18 +2051,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["economy", "premium-economy", "business", "first"],
         help="Cabin class (default economy)",
     )
-    trip.add_argument(
-        "--currency",
-        default="EUR",
-        metavar="CODE",
-        help="ISO 4217 currency for Google params (default EUR)",
-    )
-    trip.add_argument(
-        "--country",
-        default=None,
-        metavar="CC",
-        help="ISO country for Google gl (omit to leave unset; not a home-hub default)",
-    )
+    _add_currency_country_flags(trip)
     trip.add_argument(
         "--top",
         type=int,

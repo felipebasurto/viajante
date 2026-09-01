@@ -2,8 +2,8 @@
 
 One-way: median of cheapest-per-day calendar prices on that origin-destination.
 Packaged round-trip: median of that same-stay calendar (same origin/destination
-and the same number of nights). Missing or thin owned data means no comparison
-— never a guessed market average, never a third-party fare history, never a
+and the same number of nights). Missing or thin owned data means no comparison.
+Never a guessed market average, never a third-party fare history, never a
 hardcoded city fare. Multi-city has no honest same-stay grid, so it stays omitted.
 """
 
@@ -15,7 +15,6 @@ from statistics import median
 from typing import Optional, Sequence
 
 from viajante.models import (
-    NEAR_TYPICAL_RATIO,
     ExploreDestination,
     FlightOffer,
     vs_typical,
@@ -25,7 +24,6 @@ from viajante.models import (
 # Same cap as dates.MAX_DATE_WINDOW_DAYS. Tests pin the two together.
 TYPICAL_WINDOW_DAYS = 31
 MIN_DAILY_PRICES = 3
-NEAR_RATIO = NEAR_TYPICAL_RATIO
 
 
 def typical_eur_from_daily_prices(
