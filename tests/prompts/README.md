@@ -12,9 +12,10 @@ those languages; English cards generalize. Origins and destinations are
 international (North America, LatAm, Europe, Africa, Middle East, South
 Asia, East Asia, SE Asia, Oceania). No city is the implied home hub.
 
-`viajante bench` (no flags) stays the weekday keep-or-revert loop: unittest +
-ruff + owned `tests/bench/` parse. Do not delete these prompts to “win”
-that loop.
+`viajante bench` (no flags) is the offline **gate** (unittest + ruff + owned
+`tests/bench/` parse) plus `score_ms`. Weekday **keep** is `judge_mean` on
+`viajante bench --prompts` when the judge ran; see `program.md`. Do not
+delete these prompts to “win” the gate. Do not optimize `score_ms`.
 
 ## Run
 
@@ -63,7 +64,8 @@ is off, stdout prints `sweep_ms:` blank. Live Google is never
 
 Listed in `manifest.json`. Empty or dropped files fail the prompts run,
 same spirit as the parse corpus floors. `holdout.jsonl` is **not** listed;
-see `holdout.md`. Looping speed agents must not open it to pick work.
+see `holdout.md`. Holdout is a **human veto**. Looping agents must not
+open `holdout.jsonl` to pick work.
 
 Each JSONL row: `id`, `tier`, `lang` (ISO 639-1; smoke→insane: `en`;
 i18n/savage may be another language), `prompt`, `expect`, `judge`
@@ -75,7 +77,6 @@ Non-English prompts must plan English fetch `locale` / city strings.
 
 - **smoke / easy**: one city pair, one date (BOS–LHR, NRT–ICN, GRU–SCL, …),
   airports lookup, cheapest Friday, invalid IATA, missing date.
-- **medium**: packaged RT vs two one-ways, open jaw, max-stops, cabin,
 - **medium**: packaged RT vs two one-ways, open jaw, max-stops, cabin,
   adults, explore, dates calendar, hotel nights / rooms, packaged RT
   typical omit-on-miss.

@@ -9,51 +9,40 @@ Do not redo a listed keep or loss. Do not open `tests/prompts/holdout.jsonl`.
 After a keep or revert, record this host's real `judge_mean`. Never invent
 a figure. Holdout is a **human veto**, not the weekday keep.
 
+Origin (`fil/viajante`) is the source of truth.
+
 ## Goal
 
 Raise weekday `judge_mean` without breaking the public contract. **KEEP
 METRIC** is `judge_mean` (arithmetic mean of `score_1_100` on `judge=llm`
-scored rows). Higher is better. `score_ms` is **not** the keep.
+scored rows). Higher is better. `score_ms` is **not** the keep. Do not
+optimize `score_ms`.
 
-Gate = suite + `fail: 0`. A looping agent
-may not delete `tests/prompts/` (or drop cases below the floors) to “win”.
-Do not edit the judge or pad easy prompts. Humans may later make easy-tier
-failures part of the gate; do not silently do that for insane/llm cases.
+Gate = unittest + ruff (`viajante bench`) and prompt battery `fail: 0`.
+A looping agent may not delete `tests/prompts/` (or drop cases below the
+floors) to “win”. Do not edit the judge or pad easy prompts. Humans may
+later make easy-tier failures part of the gate; do not silently do that
+for insane/llm cases.
 
-## Operator lock (2026-08-20 16:05 CEST)
+## Keep numbers (do not invent)
 
-Keep is **only** `judge_mean`. The print landed in #34 (`3ee5b8e`).
-Do not restate that print by editing `bench.py` / `prompt_bench.py`.
-This lock is the rest of the weekday law #34 did not copy:
+Last **kept** `judge_mean`: **97.9** on `60d9ed4` (26 scored). Last judged
+**95.7** on `22da78a` is not a keep. Checked-in `bench-baseline.json`
+`score_ms` is a **fossil**, not keep. Do not plot `score_ms` across VMs.
 
-- Last real mean: **97.9** on `60d9ed4` (26 scored). Same prompt set.
-  Do not invent a mean. Checked-in `bench-baseline.json` **1603** is a
-  **fossil**, not keep. Do not plot `score_ms` across VMs.
-- `bench.py`, `prompt_bench.py`, `tests/bench/`, `tests/prompts/` are
-  **read-only** to the looping agent (`prepare.py` style).
-- Import-only / unittest-cache / FastMCP-off-tests / IATA-regex keeps
-  a MCP user cannot feel = automatic **veto**. Do not launch those.
-- parse+rank replay / 2×MAD / live `sweep_ms` are **not** weekday keep.
-  Replay may be a later loop. Never mash quality and speed into one
-  number.
-- Weekday loop launches planner / honest parse / English fetch /
-  savage hardness — not another IATA frozenset.
-- Cold `--help` worse = revert (**veto**, not score).
+Quality keep is `judge_mean` **strictly above** that last kept run on this
+host (same prompt set), until a later judged keep lands.
 
 ## One experiment
 
 1. Read this file, `AGENTS.md`, and the current `bench-baseline.json`.
-   Fossil 1603 is not the keep baseline. Keep baseline is this host's
-   last `judge_mean` on the same prompt set (**97.9** on `60d9ed4`,
-   26 scored, until a later judged keep lands).
-2. Pick **one** small hypothesis. Weekday launches:
-   - planner: any-language prompt → English query
-   - honest parse: bags on the RPC, `typical_eur` calendar median, clocks
-   - English fetch locale
-   - savage hardness (without rewriting old expects or padding easy rows)
-   Also still in tree: packaged `--trip rt` vs two one-ways the user
-   asked for; refuse rest-of-trip / trains / cars without inventing a
-   fare; occupancy, cabin, or dests the prompt named.
+   Fossil `score_ms` is not the keep baseline.
+2. Pick **one** small hypothesis. Weekday launches: planner (any-language
+   prompt → English query); honest parse; English fetch locale; savage
+   hardness (without rewriting old expects or padding easy rows). Also
+   still in tree: packaged `--trip rt` vs two one-ways the user asked for;
+   refuse rest-of-trip / trains / cars without inventing a fare;
+   occupancy, cabin, or dests the prompt named.
    Do **not** launch import-only / unittest-cache / FastMCP-off-tests /
    IATA-regex work a MCP user cannot feel.
 3. Change only the files that test that hypothesis. Keep the diff small.
@@ -81,7 +70,7 @@ This lock is the rest of the weekday law #34 did not copy:
    ```
 
    If the judge skipped or `judge_mean:` is blank, there is no keep
-   metric. Do not invent one.
+   metric. Do not invent one. The `89.0` line above is format only.
 
 6. **Keep** the change only if the gate is ok, `fail: 0`, **and**
    `judge_mean` is **strictly higher** than the last kept `judge_mean` on
@@ -104,8 +93,7 @@ invent one. Do not keep the change.
 `viajante bench` is offline. No Chromium. No live Google unless
 `VIAJANTE_BENCH_LIVE=1` (off by default). That optional path may print
 `sweep_ms` as extra. `sweep_ms` is **never** the keep/revert score.
-`score_ms` is also **not** the keep; it is the speed loop's number only.
-Replay p50 and 2×MAD are not weekday keep.
+`score_ms` is also **not** the keep.
 
 Gate (must pass or exit non-zero):
 
@@ -120,51 +108,32 @@ KEEP METRIC (one number, higher is better):
   mixed in.
 
 `score_ms` = wall ms of the unittest suite + wall ms of the checked-in
-corpus in `tests/bench/` (owned compact-shopping / `wrb.fr` / HTML card
-parse). Not a network call. Record it if you like; do not keep on it.
+corpus in `tests/bench/`. Not a network call. Record it if you like; do
+not keep on it.
 
 The bench has no flags to skip tests, subset the parse corpus, or change
-`--top`. Product defaults stay `DEFAULT_TOP = 8` and
-`DEFAULT_BAGGAGE_BUFFER_EUR = 70`. `--prompts` is the quality battery,
+`--top`. Product defaults stay `DEFAULT_TOP` and
+`DEFAULT_BAGGAGE_BUFFER_EUR` in `src/viajante/flights.py` (bench asserts
+them in `src/viajante/bench.py`). `--prompts` is the quality battery,
 never mixed into `score_ms`. `bench.py`, `prompt_bench.py`,
 `tests/bench/`, and `tests/prompts/` are read-only to the looping agent.
 
-## Prompt battery (quality keep: judge_mean)
+## Prompt battery
 
 ```bash
 uv run viajante bench --prompts
 ```
 
-Checked-in corpus: `tests/prompts/` (JSONL + README, smoke → savage).
-Smoke→brutal prompts are English. Savage may be other languages; the
-plan still emits English IATA and English flight fetch locale (`hl=en`).
-User prompts may be any language. Planned Google Flights / Google Hotels /
-Booking queries and fetch locale stay English (`en` / `en-US`). Do not grow
-card-evidence regexes per language; English cards generalize. Origins are
-international; no city is the implied
-home hub. Named outbound+return without "two one-way" / "without --trip rt"
-/ "separate tickets" is packaged `--trip rt`; two one-ways only when the
-user asked for that split. DeepSeek and the pre-judge harness zero a
-plan that splits a packaged RT or packages `--trip rt` when the prompt
-asked for two one-ways. Do not invent fares. Default run is offline deterministic cases. LLM-as-judge is
-`VIAJANTE_BENCH_JUDGE=1` with DeepSeek `deepseek-chat` (`DEEPSEEK_API_KEY`
-outside the repo, or `VIAJANTE_JUDGE_KEY` as override; optional
-`DEEPSEEK_MODEL` / `VIAJANTE_JUDGE_MODEL`). There is no single correct
-answer: record `score_1_100` plus a one-line reason, not pass/fail as
-the only output. When the judge ran and `scores[]` is non-empty, stdout
-prints `judge_mean:` to one decimal. Unset key prints `judge: skip` and
-`judge_mean:` blank; do not invent a score or a mean.
-Each row also prints `plan_ms` (planner wall ms). Summary prints
-`plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. Optional live find-flights
-timer: `VIAJANTE_BENCH_SWEEP=1` or `--timeit-sweep` (cap 8 HTTP sweeps,
-MCP `search_flights` fetch=sweep). Off by default; skipped print is
-`sweep_ms:` blank. `plan_ms` and live `sweep_ms` are **not** keep and are
-never folded into `judge_mean` or `score_ms`.
-Judge wall time and live scrapes are never `score_ms`.
-Empty or dropped prompt files fail the prompts run. Holdout is **not**
-in that weekday battery. Do not add `holdout.jsonl` to `manifest.json`.
-Operator-only: `uv run viajante bench --prompts --holdout`. A human may
-veto a keep after holdout; the agent must not open that file.
+Corpus and tiers: `tests/prompts/README.md`. Smoke→brutal prompts are
+English. Savage may be other languages; the plan still emits English IATA
+and English flight fetch locale (`hl=en`). No implied home hub. Do not
+invent fares. LLM-as-judge is `VIAJANTE_BENCH_JUDGE=1` (DeepSeek;
+`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`; optional model env vars).
+Unset key prints `judge: skip` and `judge_mean:` blank. Do not edit
+`JUDGE_SYSTEM_PROMPT`. `plan_ms` and live `sweep_ms` are not keep.
+
+Holdout is **not** in the weekday battery. Do not add `holdout.jsonl` to
+`manifest.json`. Operator-only: `uv run viajante bench --prompts --holdout`.
 
 ## Anti-maxxing
 
@@ -187,15 +156,13 @@ Existing smoke→insane rows are frozen except to fix a real planner bug
 
 Do not skip tests, shrink `tests/bench/` or `tests/prompts/`, weaken MCP
 coverage, drop a fixture from `manifest.json`, add empty fixtures, lower
-`--top` or the baggage buffer, or stub parsers. Do not count `sweep_ms`, prompt `plan_ms`, live Google, replay p50, 2×MAD,
-or LLM-judge latency as the keep.
-Do not edit `src/viajante/bench.py`, `src/viajante/prompt_bench.py`,
+`--top` or the baggage buffer, or stub parsers. Do not count `sweep_ms`,
+prompt `plan_ms`, live Google, replay p50, 2×MAD, or LLM-judge latency as
+the keep. Do not edit `src/viajante/bench.py`, `src/viajante/prompt_bench.py`,
 `tests/bench/`, or `tests/prompts/`.
 
 Looping agents read this file and `bench-history.md` only. They
 must not open `tests/prompts/holdout.jsonl` when choosing a hypothesis.
-Holdout is the operator overfitting check and a **human veto**, not the
-weekday keep.
 
 ## Constraints (already in AGENTS.md)
 
@@ -219,8 +186,8 @@ tests.
   body only contains the outbound flight. Query `return_date` is not a
   second leg. Wrapped or sibling return flights in that body should parse.
 
-Late-evening compact clocks (including proto3-omitted hour 0) and Google
-Hotels `--rooms` occupancy are covered by tests; do not regress them.
+Do not regress late-evening compact clocks (including proto3-omitted hour
+0) or Google Hotels `--rooms` occupancy.
 
 Touch leftover holes only if the gate still passes and `judge_mean` does
 not get worse, or if you add a failing test first and the mean stays
@@ -229,7 +196,7 @@ honest.
 ## After the run
 
 - Write the recorded `judge_mean` in the PR body next to this host's
-  last keep (**97.9** on `60d9ed4` / 26 scored until replaced).
+  last keep (97.9 on `60d9ed4` / 26 scored until replaced).
   `score_ms` may be noted; it is not the keep. If Δ < 3, record the
   second run. Record cold `viajante --help` ms; worse `--help` is a veto.
 - If it is a win, say so. A human merges and may run holdout as veto.
