@@ -1312,7 +1312,18 @@ class HotelCliTests(unittest.TestCase):
     def test_google_source_reaches_search(self) -> None:
         with patch("viajante.cli.search_hotels", return_value=_sample_hotel_report()) as search:
             with patch("viajante.cli._print_hotel_report"):
-                code = main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK", "--source", "google"])
+                code = main(
+                    [
+                        "hotels",
+                        "Prague",
+                        "2026-12-04",
+                        "2026-12-07",
+                        "--currency",
+                        "CZK",
+                        "--source",
+                        "google",
+                    ]
+                )
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["source"], "google")
 

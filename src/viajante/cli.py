@@ -1145,9 +1145,7 @@ def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_baggage_buffer_flag(
-    parser: argparse.ArgumentParser, extra: str = ""
-) -> None:
+def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -> None:
     help_text = (
         "Ranking add-on in the quote currency. Unnamed is 70 only when the quote is "
         "EUR; otherwise 0. Named value is used as-is. Viajante does not convert the 70."
@@ -1955,7 +1953,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     hotels = sub.add_parser(
         "hotels",
-        help="Hotel search (total-stay). Currency required (no origin airport). Default Booking; --source google is HTTP.",
+        help=(
+            "Hotel search (total-stay). Currency required (no origin airport). "
+            "Default Booking; --source google is HTTP."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=HOTELS_EXAMPLES,
     )
@@ -2109,9 +2110,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TOP,
         help=f"Offers per query (default {DEFAULT_TOP})",
     )
-    _add_baggage_buffer_flag(
-        trip, extra="Trip total uses the owned cabin fare, not this buffer."
-    )
+    _add_baggage_buffer_flag(trip, extra="Trip total uses the owned cabin fare, not this buffer.")
     trip.add_argument(
         "--sort",
         default="ranked",
