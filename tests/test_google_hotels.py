@@ -159,6 +159,14 @@ class HotelsParseTests(unittest.TestCase):
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0].total_price, "€71")
 
+    def test_pair_slot_with_missing_total_does_not_fall_back(self) -> None:
+        for slot in (["€14", None], ["€14", ""]):
+            with self.subTest(slot=slot):
+                record = _hotel_record()
+                record[6][2][9] = slot
+                with self.assertRaises(HotelsParseMiss):
+                    parse_hotels_body(_wrap_wrb(_search_payload(record)))
+
     def test_search_echo_without_hotels_is_empty(self) -> None:
         with self.assertRaises(EmptyHotelResults):
             parse_hotels_body(_wrap_wrb([[[[9, []]]], [1, "Prague hotels"]]))

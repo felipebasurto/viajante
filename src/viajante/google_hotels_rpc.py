@@ -242,12 +242,14 @@ def _stay_total(record: list[Any]) -> Optional[str]:
     if not isinstance(pair, list) or not pair:
         return None
     # Slot 9 is usually a [?, stay-total] pair; live compact bodies now
-    # send a bare single-element ["€71"] list instead. Prefer the pair
-    # slot first so a leading nightly-ish figure never wins.
+    # send a bare single-element ["€71"] list instead. The first element
+    # is only valid for an exactly one-element list: in a pair slot it
+    # is a nightly-ish figure that must never stand in for the total.
     candidates: list[Any] = []
-    if len(pair) >= 2:
+    if len(pair) == 1:
+        candidates.append(pair[0])
+    elif len(pair) >= 2:
         candidates.append(pair[1])
-    candidates.append(pair[0])
     for candidate in candidates:
         if not (isinstance(candidate, str) and candidate):
             continue
