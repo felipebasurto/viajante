@@ -25,14 +25,13 @@ class ClassifyFailureTests(unittest.TestCase):
     def test_browser_unavailable_markers(self) -> None:
         for marker in BROWSER_UNAVAILABLE_MARKERS:
             with self.subTest(marker=marker):
-                error = classify_failure(RuntimeError(marker), provider="Booking.com")
+                error = classify_failure(RuntimeError(marker))
                 self.assertEqual(error.code, SearchErrorCode.BROWSER_UNAVAILABLE)
                 self.assertIn("playwright install chromium", error.message)
 
     def test_hotels_do_not_treat_empty_pages_as_no_results_by_default(self) -> None:
         error = classify_failure(
             RuntimeError("Booking results page has no recognized result state"),
-            provider="Booking.com",
         )
         self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
         self.assertIn("RuntimeError", error.message)
@@ -41,14 +40,13 @@ class ClassifyFailureTests(unittest.TestCase):
     def test_fetch_failed_keeps_exception_type_and_message(self) -> None:
         error = classify_failure(
             RuntimeError("temporary upstream failure"),
-            provider="Google Flights",
         )
         self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
         self.assertEqual(error.message, "RuntimeError: temporary upstream failure")
 
     def test_fetch_failed_message_is_capped(self) -> None:
         blob = "x" * 20_000
-        error = classify_failure(RuntimeError(blob), provider="Google Flights")
+        error = classify_failure(RuntimeError(blob))
         self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
         self.assertLessEqual(len(error.message), 500)
         self.assertTrue(error.message.endswith("..."))

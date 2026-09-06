@@ -41,11 +41,7 @@ def _clip_error_message(text: str, *, limit: int = ERROR_MESSAGE_MAX_CHARS) -> s
     return text[: limit - 3] + "..."
 
 
-def classify_failure(
-    exc: BaseException,
-    *,
-    provider: str,
-) -> SearchError:
+def classify_failure(exc: BaseException) -> SearchError:
     text = f"{type(exc).__name__}: {exc}".strip()
     lowered = text.casefold()
     if any(marker in lowered for marker in BROWSER_UNAVAILABLE_MARKERS):

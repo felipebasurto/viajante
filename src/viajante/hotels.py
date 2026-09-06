@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Optional, Protocol, Sequence, Tuple
@@ -161,7 +162,7 @@ def _rank_offers(
     return _sorted_deduplicated_offers(offers)[:top]
 
 
-def _classify_hotel_failure(exc: BaseException, *, provider: HotelProvider) -> SearchError:
+def _classify_hotel_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, EmptyHotelResults):
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
@@ -182,8 +183,7 @@ def _classify_hotel_failure(exc: BaseException, *, provider: HotelProvider) -> S
             code=SearchErrorCode.MARKUP_DRIFT,
             message="Google Hotels compact parse missed.",
         )
-    label = "Google Hotels" if provider == "google-hotels" else "Booking.com"
-    return classify_failure(exc, provider=label)
+    return classify_failure(exc)
 
 
 def _run_search(
@@ -242,7 +242,7 @@ def _run_search(
                 )
                 break
             except Exception as exc:
-                failure = _classify_hotel_failure(exc, provider=provider)
+                failure = _classify_hotel_failure(exc)
                 source.reset()
                 if failure.code in NON_RETRIABLE_CODES or isinstance(exc, BookingResultsTimeout):
                     break
@@ -328,15 +328,7 @@ def search_hotels(
     finally:
         hotel_source.close()
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return HotelSearchReport(
-        searched_at=report.searched_at,
-        queries=report.queries,
-        locale=report.locale,
-        currency=report.currency,
-        provider=report.provider,
-        fetch_backend=fetch_backend,
-        fetch_ms=fetch_ms,
-    )
+    return replace(report, fetch_ms=fetch_ms)
 
 
 def write_hotel_report_atomic(

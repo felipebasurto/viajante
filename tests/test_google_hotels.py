@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from random import Random
 from urllib.parse import parse_qs, unquote, urlparse
 
-from viajante.google_hotels import build_applied_filters
+from viajante.google_flights import SweepHttpResponse
+from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
 from viajante.google_hotels_rpc import (
     EmptyHotelResults,
     HotelsParseMiss,
@@ -15,7 +17,8 @@ from viajante.google_hotels_rpc import (
     build_hotels_request,
     parse_hotels_body,
 )
-from viajante.models import HotelQuery
+from viajante.hotels import _run_search
+from viajante.models import HotelQuery, HotelQuerySuccess
 
 QUERY = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
 
@@ -171,6 +174,60 @@ class HotelsParseTests(unittest.TestCase):
         )
         cards = parse_hotels_body(body)
         self.assertEqual([card.title for card in cards], ["Plus Prague Hostel"])
+
+
+class _ScriptedHotelClient:
+    def __init__(self, replies: list[object]) -> None:
+        self._replies = list(replies)
+        self.posts: list[str] = []
+
+    def post(
+        self,
+        url: str,
+        *,
+        data: str,
+        headers: object,
+        timeout: float,
+    ) -> SweepHttpResponse:
+        del data, headers, timeout
+        self.posts.append(url)
+        reply = self._replies.pop(0)
+        if isinstance(reply, BaseException):
+            raise reply
+        if not isinstance(reply, SweepHttpResponse):
+            raise TypeError(f"unexpected scripted hotel reply: {type(reply)!r}")
+        return reply
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        raise AssertionError("Google Hotels sweep posts only")
+
+    def close(self) -> None:
+        return None
+
+
+class GoogleHotelsFetchTests(unittest.TestCase):
+    def test_temporary_network_failure_can_retry(self) -> None:
+        body = _wrap_wrb(_search_payload(_hotel_record()))
+        client = _ScriptedHotelClient(
+            [
+                ConnectionError("temporary"),
+                SweepHttpResponse(200, body, "https://www.google.com/travel/search"),
+            ]
+        )
+        source = GoogleHotelsSource(client=client)
+        sleeps: list[float] = []
+        report = _run_search(
+            (QUERY,),
+            top=1,
+            source=source,
+            sleep=sleeps.append,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            provider="google-hotels",
+        )
+        self.assertEqual(len(client.posts), 2)
+        self.assertEqual(len(sleeps), 1)
+        self.assertIsInstance(report.queries[0], HotelQuerySuccess)
 
 
 class GoogleAppliedFiltersTests(unittest.TestCase):

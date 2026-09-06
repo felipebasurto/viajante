@@ -56,6 +56,9 @@ PROMPTS_ENV = "VIAJANTE_BENCH_PROMPTS"
 HOLDOUT_NAME = "holdout.jsonl"
 HOLDOUT_TIER = "holdout"
 SWEEP_ENV = "VIAJANTE_BENCH_SWEEP"
+# Frozen planner calendar for this battery. Named corpus dates start 2026-09-01.
+# Production CLI/MCP omit today= and still reject past dates with date.today().
+PROMPT_BENCH_TODAY = date(2026, 8, 20)
 MAX_SWEEP_PROMPTS = 8
 JUDGE_ENV = "VIAJANTE_BENCH_JUDGE"
 JUDGE_KEY_ENV = "DEEPSEEK_API_KEY"
@@ -407,7 +410,9 @@ def _fmt_optional_ms(key: str, value: Optional[int]) -> str:
     return f"{key}: {value}"
 
 
-def sweep_routes_for_plan(plan: PromptPlan) -> Optional[tuple[str, ...]]:
+def sweep_routes_for_plan(
+    plan: PromptPlan, *, today: Optional[date] = None
+) -> Optional[tuple[str, ...]]:
     """Owned route specs for a live sweep, or None when the plan is not a pair+date."""
     if plan.intent != "flights":
         return None
@@ -419,7 +424,7 @@ def sweep_routes_for_plan(plan: PromptPlan) -> Optional[tuple[str, ...]]:
         return None
     if not is_known_iata(plan.origin) or not is_known_iata(plan.destination):
         return None
-    if plan.departure_date < date.today():
+    if plan.departure_date < (today or date.today()):
         return None
     if plan.route_specs:
         if len(plan.route_specs) > 2:
@@ -454,7 +459,7 @@ def _sweep_search_flights(
 def _maybe_time_sweep(plan: PromptPlan, sweep_left: Optional[list[int]]) -> Optional[int]:
     if sweep_left is None or sweep_left[0] <= 0:
         return None
-    routes = sweep_routes_for_plan(plan)
+    routes = sweep_routes_for_plan(plan, today=PROMPT_BENCH_TODAY)
     if routes is None:
         return None
     trip = plan.trip if plan.trip in {"one-way", "rt"} else "one-way"
@@ -1180,7 +1185,7 @@ def _evaluate_case(
     sweep_left: Optional[list[int]] = None,
 ) -> PromptRunResult:
     started = _clock()
-    plan = plan_prompt(case.prompt)
+    plan = plan_prompt(case.prompt, today=PROMPT_BENCH_TODAY)
     if case.judge == "deterministic":
         ok, reason = plan.matches(case.expect)
         plan_ms = _ms_since(started)

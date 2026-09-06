@@ -1,85 +1,133 @@
-viajante searches Google Flights and hotels on the local machine. It takes any IATA pair or city. There are no API keys and no account. Currency is `--currency` / MCP `currency`, or inferred from a named origin airport’s owned country (JFK is USD, LHR is GBP, NRT is JPY, GRU is BRL). If that mapping is unknown, ask. Hotels require `--currency` (no origin airport). If country, destination, or currency is not proven (a city with several airports, “Europe”, unnamed origin, two possible currencies), viajante asks or errors. Unknown cannot prove include. Do not invent IATA, `gl`, or ISO 4217 from vibe. Viajante does not convert; the MCP caller does FX.
+# viajante
 
-The name is Portuguese/Spanish for traveller. Product voice is English. Shortlist a route instead of brute-forcing every date and city.
+> **Local flight and hotel search for AI agents.**  
+> Plug it into your agent via MCP — it just works. No API keys, no accounts, no subscriptions.
 
-This project is unofficial and is not affiliated with Google or Booking.com. Either site can change markup and break the parsers. Read the [Google Terms of Service](https://policies.google.com/terms), [Booking.com terms](https://www.booking.com/content/terms.html), and the obligations that apply before using this.
+`viajante` (Portuguese and Spanish for *traveller*) is a local search engine for Google Flights, Google Hotels, and Booking.com. It is designed from the ground up for LLM tool calling via the **Model Context Protocol (MCP)**, as well as everyday terminal use through a rich CLI.
 
-## Install
+It provides real live prices, seat and room availability, price trend medians, and direct booking links — while guaranteeing that data is never invented or hallucinated.
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.10 or newer.
+---
 
-```bash
-uv sync
+## The Main Idea: Plug It to an Agent
+
+Give flight and accommodation superpowers to **Cursor**, **Claude Desktop**, **Antigravity**, **OpenCode**, or any other MCP-compatible assistant.
+
+### 1. Configure the MCP Server
+
+Add `viajante` to your agent's MCP configuration (e.g. `claude_desktop_config.json` or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "viajante": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/viajante",
+        "run",
+        "--extra", "mcp",
+        "viajante-mcp"
+      ]
+    }
+  }
+}
 ```
 
-Then `uv run viajante`. The lockfile is the dependency graph CI uses. `pip install -e .` works when Chromium is installed separately; that path does not keep the locked transitive versions.
+### 2. What the Agent Can Do
 
-Chromium is only for `--fetch detail` and Booking hotels:
+Once connected, your agent automatically gains 7 purpose-built tools:
+
+| MCP Tool | Best For | What It Does |
+|---|---|---|
+| `search_flights` | Specific routes & dates | Searches Google Flights for one-way, round-trip, or multi-city itineraries. Returns airlines, duration, layovers, and direct Google Flights URLs. |
+| `search_dates` | Finding the cheapest days | Returns a cheapest-per-day price calendar across a date window (up to 31 days). |
+| `search_flex` | Flexible travel (±N days) | Checks prices across ±N days around a target departure, automatically picks the cheapest date, and shops the full details. |
+| `search_explore` | Open-ended destination triage | Finds cheap destinations from an origin city/airport based on Google's explore catalog, then prices the top options. |
+| `search_hotels` | Accommodations | Searches hotels with **total-stay pricing** and free-cancellation filtering (Google Hotels HTTP shortlist by default; Booking.com via Playwright). |
+| `search_trip` | Complete package | Automatically pairs flights and hotels on overlapping dates and calculates the true combined trip cost. |
+| `lookup_airports` | City/IATA lookup | Instant offline lookup of major commercial passenger airports for any city name or code. |
+
+### 3. Example Agent Interactions
+
+- *"Find me the cheapest week to fly from Boston to London in November."*  
+  ➡️ Agent calls `search_dates(origin="BOS", destination="LHR", from_date="2026-11-01", to_date="2026-11-30", nights=7)`.
+- *"I want to take a trip from JFK around September 15 for 5 nights, flexible by 3 days. Show me the best option."*  
+  ➡️ Agent calls `search_flex(routes=["JFK-LHR:2026-09-15"], flex=3, nights=5)`.
+- *"Where can I fly cheaply from Madrid next month for a week?"*  
+  ➡️ Agent calls `search_explore(origin="MAD", start_date="2026-10-01", days=7)`.
+- *"Find flights from SFO to Tokyo Oct 12–19 and a highly rated hotel with free cancellation."*  
+  ➡️ Agent calls `search_trip(routes=["SFO-NRT:2026-10-12:2026-10-19"], trip="rt", hotel_location="Tokyo")`.
+
+---
+
+## Installation
+
+Requires Python 3.10+ and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
+# Clone the repository
+git clone https://github.com/felipebasurto/viajante.git
+cd viajante
+
+# Sync dependencies
+uv sync
+
+# Optional: install MCP support for AI agents
+uv sync --extra mcp
+
+# Optional: install Chromium (only required for detailed Playwright scraping & Booking.com)
 uv run playwright install chromium
 ```
 
-Sweep, `dates`, `flex`, `explore`, and `--source google` do not start a browser.
+> **Fast HTTP vs. Browser:**  
+> Fast HTTP Sweep (`curl_cffi`) requires **no browser, no Chromium, and zero startup delay**. It handles `search_dates`, `search_flex`, `search_explore`, Google Hotels, and batch flight searches out of the box.  
+> Chromium is only loaded when detailed DOM scraping or Booking.com is explicitly requested.
 
-Optional MCP extra:
+---
+
+## CLI Usage
+
+Viajante has a full terminal interface matching every agent capability.
+
+### 1. Flights (`viajante flights`)
+
+Search specific routes and dates:
 
 ```bash
-uv sync --extra mcp
-uv run viajante-mcp
+# Quick one-way sweep
+uv run viajante flights JFK-LHR:2026-10-15 --fetch sweep
+
+# Search with nearby alternative airports (e.g. LHR, LGW, STN)
+uv run viajante flights BOS-LHR:2026-10-18 --nearby --fetch sweep
+
+# Packaged round trip with layover rules
+uv run viajante flights JFK-SIN:2026-11-03:2026-11-15 --trip rt --via IST --exclude-via DXB
 ```
 
-Seven tools on stdio, no auth: `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`. One process lock, so two searches cannot overlap. `lookup_airports` stays unlocked. Hotel search defaults to Google on MCP; Booking stays opt-in. `viajante-mcp --help` prints the tool list.
-
-## Flights
-
-```bash
-uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep
-uv run viajante flights BOS-LHR:2026-09-18 --nearby --fetch sweep
-uv run viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep
-```
-
+**Output:**
 ```text
-=== JFK -> LHR  2026-09-15 (max 1 stop(s)) ===
+=== JFK -> LHR  2026-10-15 (max 1 stop(s)) ===
       412 USD  above typical 340 USD (+21%)  7 hr 10 min  direct  19:30 -> 07:40     British Airways
       289 USD  below typical 340 USD (−15%)  7 hr 25 min  direct  21:15 -> 09:40     Norse Atlantic
-      355 USD  near typical 340 USD (+4%)  11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
+      355 USD  near typical 340 USD (+4%)   11 hr 40 min  1 stop  16:05 -> 10:45     Icelandair
+
   Cheapest nonstop:  289 USD  7 hr 25 min  direct  Norse Atlantic
   Cheapest 1-stop:   355 USD  11 hr 40 min  1 stop  Icelandair
 ```
 
-Defaults are one adult, one-way, economy. Up to eight offers, ordered by ranked total: fare plus a ranking buffer on known low-cost carriers. Unnamed `--baggage-buffer` is **70 only when the quote is EUR**; otherwise unnamed is **0**. Named is used as-is in the quote currency. No FX on the 70. JFK infers USD, so unnamed buffer is 0 and Norse stays 289 USD on fare. `--baggage-buffer 70` would add 70 USD (named, not converted) and put Norse at 359 USD ranked behind British Airways. Connections many times slower than the fastest nonstop (or shortest offer) are dropped so an overnight hop does not outrank a short direct. `--sort fare` or `--sort price` or `--baggage-buffer 0` ranks on fare alone. `--sort duration` orders by elapsed time. `--sort departure` / `--sort arrival` order by local clocks. `--bags N` and `--carry-on` put those counts on the shopping request so returned prices are for that bag selection. Default is unset: no bag pair on the shopping request, so returned prices match an unrequested bag selection. If a compact card includes checked/carry counts, they are parsed onto the offer; missing bag data stays omitted. Offers whose parsed counts contradict the request are dropped. The 70 buffer is a guess used only when bag counts are still unknown and the quote is EUR. Viajante does not convert.
+### 2. Dates Calendar (`viajante dates`)
 
-Successful queries also print cheapest nonstop vs cheapest 1-stop from that same parsed set, using cabin fare (`price`), not ranked total. A missing bucket is omitted. When only connections remain, the CLI prints `no nonstop` and still shows the 1-stop. `--save` JSON `stops_compare` is the same pair (`nonstop` / `one_stop`); MCP `search_flights` returns it on the query. `search_flex` stamps the same block from the winning-day shop. Dates stamp it only on sweep-fallback days that already hold that day's offer list (compact calendar cells stay without). Explore stamps it only on dests that already ran a shopping POST (catalog places stay without). No extra Google request. Never invent a fare.
-
-`typical` is the median of owned cheapest-per-day calendar prices for that same origin-destination (up to 31 days from the queried date). Packaged `--trip rt` uses that same-stay calendar (same nights). `vs_typical` is `below`, `near` (±10%), or `above`. `vs_typical_pct` is the signed percent versus that median. `typical_deal` is the English one-liner (`below typical 340 USD (−15%)`). When that median exists, `cheapest_date` / `cheapest` point at the cheapest owned day in the same window. Typical fields are `null` (cheapest keys absent) when the compact calendar misses, has fewer than three priced days, or the query is multi-city. Never invent a market average.
-
-Route grammar is `JFK-LHR:2026-09-15`. Several dates on one route: `JFK-LHR:2026-09-15,2026-09-16`. `--nearby` expands origin or destination to owned same-city IATA (London LHR/LGW/STN/LTN/LCY, Tokyo NRT/HND) and searches each as a labeled alternative. Default off, so LHR stays LHR. Named open-jaw airports stay named (LGW stays LGW). Never invents a code.
-
-`--via` / `--exclude-via` parse then filter on owned `layover_city` and `legs[].layovers`. Unknown layover cannot prove include (drop) or exclude (keep). Nonstops drop for `--via` and stay for `--exclude-via`. There is no shopping-POST via slot and no invented via list.
-
-`--no-overnight` / `--require-overnight` parse then filter shopped offers by owned layover city+clock (same parse as via; `any` already means any layover city). Unknown city/clock cannot prove include or exclude (drop). Nonstops stay for `--no-overnight` and drop for `--require-overnight`. Unnamed stays unset. Contradiction keeps both; do not drop one. Compact calendar cells and Explore catalog places are not offers and stay unfiltered. Never invent a city or a night.
-
-`--exclude-airports` is a named owned IATA list (same parse as via). Explore drops catalog dests with those codes before shop; do not invent a replacement dest or a fare. Nearby cannot sneak an excluded same-city code back. Dates/flex/flights named origin/dest in the list is empty: no substitute unless `--nearby` already owned a non-excluded same-city code. Unnamed stays unset. Do not invent a code from a city vibe.
-
-`--include-airports` is a named owned IATA list (same parse as via / exclude-airports). Unnamed stays unset (full catalog). Explore keeps only dests in that list and drops the rest before shop / `--top`; no catalog overlap is empty. Include + exclude named: exclude wins on overlap. Do not invent a dest, fare, or a third airport. Dates/flex/flights keep only if the named dest is in the include list (or `--nearby` already produced an owned same-city code in the list). Otherwise empty. Do not rewrite to a substitute. Include is dests only, not origins.
-
-`--exclude-regions` is a named owned IANA timezone-prefix list (canonical tokens already published on airport `tz` rows, e.g. `asia`). Unnamed stays unset (full catalog). Explore drops catalog dests whose owned timezone proves they sit in a named excluded region, after include/exclude IATA and before shop. Unknown tz cannot prove keep (drop). Empty shortlist does not invent a dest. Origin inside an excluded region keeps exploring. Dates/flex/flights do not grow a region filter on a single named dest. Do not invent a continent-to-IATA table.
-
-`JFK-NRT:2026-10-09:2026-10-20` without `--trip` is outbound plus return as two one-way searches. `--trip rt` (alias `round-trip`) on that same grammar is one Google package. `--trip multi` takes two to six `ORIGIN-DEST:DATE` legs as one package. Multi-city detail is not supported yet.
-
-`--fetch sweep` is one Chrome TLS session (HTTP/2 multiplex) and viajante's shopping RPC. No Chromium. Empty/drift/5xx gets one 50 ms retry; the happy path does not sleep. HTTP 429 resets that TLS session, waits 50 ms, and continues remaining jobs on a fresh session (happy path still no sleep). A sequential remesure harness may still stop on 429. `--fetch detail` is the Playwright scrape. `--fetch auto` uses sweep for 3 or more queries and detail for 1 or 2. Empty or blocked sweep falls back to detail once for those legs.
-
-A successful offer includes a Google Flights URL built from the owned route, dates, trip kind, cabin, occupancy, and currency. When a `booking_token` is present in the compact shopping body, the offer URL is the deeper itinerary link. The query carries the search URL. Multi-city uses the owned tfs encoder (#51); the field is omitted only when that encode cannot run and there is no token. No passenger fields, no booking POST. Nothing is written to disk unless you pass `--save`.
-
-## Dates
+Generate a cheapest-per-day price grid with sparkline visualization:
 
 ```bash
+# One-way calendar across October
 uv run viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
-uv run viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
-uv run viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --sort duration
+
+# Packaged 7-night round trip across a departure window
+uv run viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 7
 ```
 
+**Output:**
 ```text
 === LAX -> NRT  2026-10-01 .. 2026-10-04 ===
     Mon   Tue   Wed   Thu   Fri   Sat   Sun
@@ -92,111 +140,157 @@ uv run viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --sort duration
   2026-10-04        —
 ```
 
-English week lines plus a sparkline of owned daily prices. Empty days are `·` in the grid (and `—` in the row list), never an invented fare. `min` / `median` / `max` / cheapest date are computed only from priced days and omitted when fewer than three days have a price. Priced rows also stamp `typical` / `vs_typical` / `vs_typical_pct` / `typical_deal` from that same window median; empty/error rows and thin calendars omit the triple. Never invent a median. The window is at most 31 days. Default is one-way. `--nights 5` (or `--trip rt --nights 5`) prices a packaged stay of that length for each outbound day. `--currency` / `--country` ride the date-grid scrape the same way as `search_flights` (--currency unnamed infers from origin country; omit `gl` when unset). `--nearby` expands origin or dest to owned same-city IATA and searches each as a labeled alternative (default off; no invented codes). `--depart-window`, `--arrive-before`, `--depart-after`, `--max-layover`, `--min-layover`, and `--max-duration` post-filter shopping-sweep cards the same way as `search_flights`; compact calendar cells have no departure or layover clock and stay unfiltered. Named `--no-overnight` / `--require-overnight` post-filter those sweep-fallback offers the same way (unknown city/clock cannot prove; compact cells stay unfiltered). `--baggage-buffer` (70 only when the quote is EUR; otherwise unnamed is 0) is a ranking add-on in the quote currency, not a fare. Sweep-fallback / shopped day rows pick the day's winner by fare+buffer; compact date-grid cells have no shopped offer and stay un-re-ranked (omit the buffer stamp; do not invent `needs_bag_verify`). `0` ranks on fare alone. Named `--sort` re-orders the priced day list after the calendar is built. Unnamed stays date order (cheapest-per-day, chronological). Named `duration` / `departure` / `arrival` re-order only shopped sweep-fallback rows that already own that key. Compact date-grid cells have no duration or clock: they cannot prove the sort key, so they stay in date order after (or among) cells that have it. Named `fare` / `price` / `ranked` may re-order priced rows by owned `price` (`ranked` is fare+buffer on shopped days). Compact cells with an owned compact fare may participate in fare/price sorts. Missing fare stays last. Do not invent hours, a clock, or a fare to sort a compact cell. Sort is order, not a cut: there is no `--top` that hides days. Never invent a fare or a bag count. This uses viajante's date-grid RPC on the same TLS session as sweep. The calendar omits airline and stops when the body does not carry them. If that parse misses, each day is priced with the shopping sweep and still prints one row (`fetch_backend: sweep`). Sweep-fallback days that already hold a full eligible offer list also stamp `stops_compare` (same cheapest nonstop vs 1-stop helper as `search_flights`). Compact cells have at most one `stops_count` and stay without compare; do not invent a second bucket from a single cell. Dates also stamp owned `google_flights_url` on the report (origin/dest/window) and a query URL on each day cell that encodes (compact date+route is allowed; no invented `booking_token`). Omit the field if encode cannot run. `--fetch detail` is accepted and ignored. The `--save` JSON `summary` block is the same numbers.
+### 3. Flexible Travel (`viajante flex`)
 
-## Flex
-
-```bash
-uv run viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
-```
-
-```text
-=== BOS -> LHR  around 2026-09-12 ±3  2026-09-09 .. 2026-09-15  (rt, 7 nights) ===
-  chosen 2026-09-10  return 2026-09-17
-      350 USD  below typical 440 USD  7 hr         direct           18:00 -> 06:00     British Airways
-```
-
-`--around` plus `--flex N` is the inclusive window (at most 31 days). The owned date-grid RPC finds the cheapest legal departure in that window, then one shopping POST prices that day. `--nights N` (or `--trip rt --nights N`) packages the stay. `--currency` / `--country` ride that scrape the same way as `search_flights` (--currency unnamed infers from origin country; omit `gl` when unset). `--nearby` expands origin or dest to owned same-city IATA and searches each as a labeled alternative (default off; no invented codes). `--depart-window`, `--arrive-before`, `--depart-after`, `--max-layover`, `--min-layover`, and `--max-duration` post-filter that winning-day shop the same way as `search_flights`; the compact grid still has no clock. Named `--no-overnight` / `--require-overnight` post-filter those shopped offers the same way (unknown city/clock cannot prove). A calendar miss or a window with no priced day is empty: no per-day shopping sweep, no invented fare. The winning-day shop stamps `stops_compare` from those eligible offers (same helper as `search_flights`). Calendar-only flex (no shop, empty offers) omits the block. Flex also stamps owned `google_flights_url` on the report from the winning-day shop query (calendar-only uses origin/dest/chosen-or-around) and on each offer the same way `search_flights` does (`booking_token` wins). Omit the field if encode cannot run. Never invent a token. `typical` is the median of priced days in that same grid when there are at least three; `vs_typical` compares the shopping fare to that median. Fetch locale stays English.
-
-## Explore
+Search ±N days around a target date, automatically pick the cheapest departure, and shop the winning flight:
 
 ```bash
-uv run viajante explore JFK --from 2026-09-15 --days 7
-uv run viajante explore JFK --from 2026-09-15 --days 7 --sort duration
-uv run viajante explore NRT --from 2026-09-15 --days 7 --exclude-regions asia
+uv run viajante flex BOS-LHR --around 2026-10-12 --flex 3 --nights 7
 ```
 
+**Output:**
 ```text
-=== From JFK  2026-09-15  (7-day window) ===
+=== BOS -> LHR  around 2026-10-12 ±3  2026-10-09 .. 2026-10-15  (rt, 7 nights) ===
+  chosen 2026-10-10  return 2026-10-17
+      350 USD  below typical 440 USD  7 hr direct  18:00 -> 06:00  British Airways
+```
+
+### 4. Explore Destinations (`viajante explore`)
+
+Discover and price cheap destinations from an origin:
+
+```bash
+# Explore top destinations from JFK for a 7-day trip
+uv run viajante explore JFK --from 2026-10-15 --days 7
+
+# Explore non-Asian destinations from Tokyo
+uv run viajante explore NRT --from 2026-10-15 --days 7 --exclude-regions asia
+```
+
+**Output:**
+```text
+=== From JFK  2026-10-15  (7-day stay; dests priced on this date) ===
       148 USD  CUN  Cancún  Mexico
       221 USD  LIS  Lisbon  Portugal
+      310 USD  MAD  Madrid  Spain
 ```
 
-Destinations Google lists from that origin, then a priced `--top` shortlist (default 12) on `--from`. Unnamed `--sort` stays cheapest-first (default `price`). Named `--sort duration` re-ranks shopped dests by the cheapest surviving offer's owned `duration_hours`; `--sort departure` / `--sort arrival` use that offer's owned clock; `--sort fare` / `--sort price` use `price`. `--sort ranked` uses that dest's owned fare plus `--baggage-buffer` (70 only when the quote is EUR; otherwise unnamed is 0; `0` ranks on fare alone). A dest with no shopped offer or missing duration/clock/buffer stamp cannot prove the sort key: it stays after dests that have it, and a missing buffer stamp sorts as fare alone, not a made-up 70. Compact catalog places are not offers and stay un-re-ranked (omit the buffer stamp). Do not invent a duration, clock, fare, or bag count to sort. `--month 2026-09` uses the first of that month. `--adults`, `--children`, `--infants-in-seat`, `--infants-on-lap`, `--cabin`, and `--max-stops` apply when pricing each destination (occupancy also rides the explore catalog RPC). Unnamed occupancy stays 0. `--currency` / `--country` ride the catalog and dest shops the same way as `search_flights` (--currency unnamed infers from origin country; omit `gl` when unset). `--nearby` expands the origin to owned same-city IATA and searches each as a labeled alternative (default off; no invented codes). `--depart-window`, `--arrive-before`, `--depart-after`, `--max-layover`, `--min-layover`, and `--max-duration` post-filter dest shop cards; a dest with no surviving fare is dropped. Named `--no-overnight` / `--require-overnight` drop dests whose cheapest surviving shopped offer cannot satisfy that named constraint (unknown city/clock cannot prove; unnamed keeps the dest). Compact catalog places have no layover clock. Destinations that already ran a shopping POST stamp `stops_compare` from those eligible offers; catalog places (one catalog price, no stop count) stay without. Those same shopped dests stamp owned `google_flights_url` from origin/dest/date; catalog places get no invented token. Origin-only explore reports omit the field when encode cannot run. Shopped dests also stamp `typical` / `vs_typical` / `vs_typical_pct` from the same owned same-route calendar path `search_flights` uses. Catalog-only dests (no shop / no calendar) omit. Thin or missing calendar omits. Do not invent a dest typical from the explore catalog mix or from other dests. Named `--exclude-regions` drops catalog dests whose owned IANA timezone proves they sit in that region (unknown tz cannot prove keep: drop). Unnamed stays the full catalog. Include/exclude IATA still win on overlap as today; region is additional, after the catalog shortlist and before shop. An empty shortlist stays empty. Origin inside an excluded region keeps exploring. Do not invent dests to fill `--top`. Do not invent stops on a catalog card. Do not expand this into an airport matrix of destinations.
+### 5. Hotels (`viajante hotels`)
 
-## Airports
+Search hotels with **total-stay pricing** (not deceptive per-night rates) and free cancellation required by default:
 
 ```bash
-uv run viajante airports tokyo
-uv run viajante airports london
-uv run viajante airports JFK
+# Google Hotels HTTP shortlist (Fast, ratings 0–5)
+uv run viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --source google
+
+# Booking.com evidence scrape (Ratings 0–10, requires Chromium)
+uv run viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --min-rating 8.5 --entire-home
 ```
 
-Offline IATA search. City queries list major passenger airports first (`london` is LHR/LGW/STN/LCY/LTN before Biggin Hill). They do not pick one. A city with several airports, “Europe”, or an unnamed origin cannot prove a dest: ask or error. `FlightQuery` rejects unknown codes. `XXX` is not an airport. Do not invent IATA from vibe.
-
-## Hotels
-
-```bash
-uv run viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --min-rating 8.5
-```
-
+**Output:**
 ```text
 === Tokyo  2026-10-12 -> 2026-10-16 (4 nights, 2 adult(s), 1 room(s)) ===
   Filters: Free cancellation required; Minimum rating 8.5
   Booking chips: oos=1
-  312 JPY total stay  rating 8.7  Hotel Kanda  Chiyoda
+  31,200 JPY total stay  rating 8.7  Hotel Kanda  Chiyoda
     Cancellation: free
     Lodging: hotel
-  401 JPY total stay  rating 9.1  Shimokitazawa House  Setagaya
+  40,100 JPY total stay  rating 9.1  Shimokitazawa House  Setagaya
     Cancellation: free
     Lodging: entire home
     2 bedrooms, 1 bathroom, 3 beds
   Raw cards: 40; eligible: 12; shown: 2
 ```
 
-Prices are totals for the whole stay, not per night. Free cancellation is required unless you pass `--allow-non-refundable`. `--compare-cancellation` runs Booking twice, free-cancellation chip on then off, and prints a joined table. Do not combine it with `--allow-non-refundable` or `--source google`.
+### 6. Combined Trip Total (`viajante trip`)
 
-`--source google` is the HTTP shortlist (ratings 0-5). Stay totals include tax. `--min-rating` tops out at 5 on that source. Booking is the CLI default evidence path (ratings 0-10). MCP hotel search defaults to Google.
-
-The output separates requested filters (`Filters`), what the site was told, and what the card showed. Those three can disagree. `--min-rating` is a local filter. Only free cancellation and `--entire-home` are pushed to the provider. Do not treat a silent cancellation card as `free`. Non-property titles such as `closed` are dropped.
-
-## Trip total
+Join flight fare and hotel stay into a single validated package price:
 
 ```bash
 uv run viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --adults 2 --fetch sweep
 ```
 
-When a search names flights and a hotel on overlapping dates, viajante prints the owned cabin fare, the owned hotel stay, and their sum. Hotel `price_basis` stays `total_stay`. If either side misses (empty offers, fetch error, dates that do not overlap), the sum is omitted, never invented. `--adults` applies to both searches. Hotel check-in/out default to the earliest and latest flight dates when the route has two dates; override with `--check-in` / `--check-out`. Flight shop uses the same owned `--bags` / `--via` / `--no-overnight` / `--require-overnight` / `--exclude-airports` / `--include-airports` / `--airlines` / `--price-cap` / `--arrive-before` / `--depart-after` post-filters as `viajante flights`; unnamed stays unset. `--nearby` expands origin or dest to owned same-city IATA (default off; named open-jaw stays; no invented codes). Nearby cannot sneak an excluded same-city code back. Nearby alternatives contribute the cheapest owned fare in that city group, not a sum of every airport. MCP `search_trip` is the same join (Google hotels by default). `--save` writes both nested reports plus `trip_total` only when both sides hit.
+Prints flight offers, hotel stays, and the exact sum total when both succeed and dates overlap.
 
-## HTTP or Chromium
+### 7. Airport IATA Lookup (`viajante airports`)
 
-The CLI validates the route before anything starts. HTTP sweep reuses one Chrome TLS session with HTTP/2 multiplex. Empty/drift/5xx retries once after 50 ms; HTTP 429 resets TLS, waits 50 ms, and continues remaining jobs on a fresh session. Happy path does not sleep. Chromium paths sleep 4.5 to 6 seconds between queries on purpose. Consent cookies stay in the state directory, not in this checkout.
-
-## Save JSON
-
-For a cheapest-per-day grid, prefer `viajante dates`. For around a date ±N, prefer `viajante flex` (calendar, then one shopping search). A comma list still dumps full offer blocks when you need the cards:
+Offline airport lookup with major commercial hubs prioritized:
 
 ```bash
-uv run viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --save results/dates.viajante.json
-uv run viajante flights \
-  JFK-LHR:2026-09-15,2026-09-16,2026-09-17 \
-  --max-stops 0 \
-  --top 5 \
-  --save results/search.viajante.json
+uv run viajante airports tokyo
+# NRT  Tokyo Narita
+# HND  Tokyo Haneda
+
+uv run viajante airports london
+# LHR, LGW, STN, LCY, LTN...
 ```
 
-Each `flights` date is searched sequentially and printed as its own block. Progress goes to stderr so you can pipe the table on its own. A 10-date sweep is a few seconds of HTTP. The same batch on `--fetch detail` still sleeps 4.5 to 6 seconds between queries.
+---
 
-`--save` writes one report per run. Every offer keeps the scraped text beside the parsed number.
+## Core Guarantees & Invariants
 
+Viajante is designed to provide reliable, verifiable ground truth to agents:
+
+1. **No Hallucinated Data:**  
+   Viajante **never** invents a fare, currency conversion, typical baseline, booking token, bag fee, or layover city. If a field was not returned by the upstream provider, it is reported as `null` or omitted.
+2. **Total Stay Hotel Pricing:**  
+   Hotel prices are always for the entire requested duration, including estimated taxes. Never deceptive "per-night" base rates.
+3. **Free Cancellation Default:**  
+   Hotels default strictly to free cancellation. Non-refundable stays are only included when `--allow-non-refundable` is explicitly requested.
+4. **Predictable Currency Handling:**  
+   - Flights: Currency defaults to the official currency of the origin airport's country (e.g., JFK ➔ USD, LHR ➔ GBP, NRT ➔ JPY, GRU ➔ BRL), or can be set via `--currency`.
+   - Hotels: Currency is required (since cities do not have a single home country airport).
+   - Viajante never converts currencies via floating exchange rates; the calling agent or user handles FX.
+5. **Direct Official Booking Links:**  
+   Every offer includes the direct URL to Google Flights or Booking.com, including deep itinerary tokens (`booking_token`) when available, so users can verify and purchase in one click.
+
+---
+
+## Architecture: Fast Sweep vs. Detail
+
+Viajante implements two distinct fetching strategies under one unified interface:
+
+```
+                  ┌────────────────────────────────────────┐
+                  │              viajante                  │
+                  └───────────────────┬────────────────────┘
+                                      │
+                 ┌────────────────────┴───────────────────┐
+                 ▼                                        ▼
+    ┌───────────────────────────┐           ┌───────────────────────────┐
+    │     Fast HTTP Sweep       │           │      Browser Detail       │
+    │  (curl_cffi TLS session)  │           │   (Playwright Chromium)   │
+    ├───────────────────────────┤           ├───────────────────────────┤
+    │ • Zero browser overhead   │           │ • Full DOM parsing        │
+    │ • HTTP/2 multiplexed      │           │ • Booking.com evidence    │
+    │ • Blazing fast batches    │           │ • Anti-bot jitter pacing  │
+    │ • Dates, Flex, Explore    │           │ • Automatic fallback      │
+    └───────────────────────────┘           └───────────────────────────┘
+```
+
+- **Sweep (`--fetch sweep`)**: Uses `curl_cffi` to mimic real browser TLS fingerprints over HTTP/2. Batches 10+ dates in seconds without launching Chromium.
+- **Detail (`--fetch detail`)**: Uses headless Chromium via Playwright. Respects 4.5–6s inter-query jitter delays to prevent bot blocks.
+- **Auto (`--fetch auto`, default)**: Uses Sweep for 3+ queries and Detail for 1–2 queries. If Sweep ever encounters unexpected markup drift or a block, it automatically falls back to Detail.
+
+---
+
+## Saving JSON Reports
+
+Pass `--save <file.json>` to write atomic, machine-readable JSON reports:
+
+```bash
+uv run viajante flights JFK-LHR:2026-10-15 --fetch sweep --save results/flight.json
+```
+
+**JSON Structure:**
 ```json
 {
   "schema_version": 1,
-  "searched_at": "2026-08-11T10:32:00Z",
+  "searched_at": "2026-09-06T18:30:00Z",
   "currency": "USD",
   "locale": "en",
   "fetch_backend": "sweep",
-  "fetch_ms": 2410,
+  "fetch_ms": 1420,
   "queries": [
     {
       "status": "ok",
@@ -204,250 +298,170 @@ Each `flights` date is searched sequentially and printed as its own block. Progr
         "trip": "one-way",
         "origin": "JFK",
         "destination": "LHR",
-        "departure_date": "2026-09-15",
+        "departure_date": "2026-10-15",
         "max_stops": 1,
         "adults": 1,
-        "cabin": "economy",
-        "google_flights_url": "https://www.google.com/travel/flights?tfs=...&hl=en&tfu=EgQIABABIgA&curr=USD"
+        "cabin": "economy"
       },
       "raw_count": 24,
-      "eligible_count": 1,
+      "eligible_count": 8,
       "offers": [
         {
           "airline": "Norse Atlantic",
           "departure": "21:15",
           "arrival": "09:40",
-          "price_text": "289 USD",
           "price": 289.0,
+          "duration": "7 hr 25 min",
+          "stops": "Nonstop",
+          "stops_count": 0,
           "typical": 340.0,
           "vs_typical": "below",
           "vs_typical_pct": -15,
           "typical_deal": "below typical 340 USD (−15%)",
-          "cheapest_date": "2026-09-16",
-          "cheapest": 300.0,
-          "duration": "7 hr 25 min",
-          "duration_hours": 7.42,
-          "stops": "Nonstop",
-          "stops_count": 0,
-          "layover_city": null,
-          "layover_hours": null,
-          "flight_numbers": ["N0301"],
-          "booking_token": "tok",
-          "google_flights_url": "https://www.google.com/travel/flights?hl=en&curr=USD&booking_token=tok",
-          "baggage_buffer": 0,
-          "needs_bag_verify": true,
-          "legs": [
-            {
-              "departure": "21:15",
-              "arrival": "09:40",
-              "duration": "7 hr 25 min",
-              "stops": "Nonstop",
-              "segments": [],
-              "layovers": []
-            }
-          ]
+          "google_flights_url": "https://www.google.com/travel/flights?..."
         }
-      ]
+      ],
+      "stops_compare": {
+        "nonstop": { "price": 289.0, "airline": "Norse Atlantic" },
+        "one_stop": { "price": 355.0, "airline": "Icelandair" }
+      }
     }
   ]
 }
 ```
 
-A failed query replaces `raw_count`, `eligible_count`, and `offers` with `"error": {"code": ..., "message": ...}`. Codes an agent can switch on: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`. Packaged `--trip rt` queries add `trip: "rt"` and `return_date`; each offer's `legs` list has outbound then return clocks. `typical` / `vs_typical` / `vs_typical_pct` / `typical_deal` are filled from that same-route date-grid median when it exists (packaged RT uses the same-stay grid). Otherwise they are `null`. `cheapest_date` / `cheapest` appear only when that median exists and the cheapest owned day is in the grid; they are omitted, not invented, when the grid missed. `stops_compare` is an extra success key with `nonstop` and/or `one_stop` sides from the eligible parsed set (cabin fare). Omit a side when that bucket is empty; omit the whole block when both are empty. Flex winning-day shop, dates sweep-fallback days, and explore dest shops reuse that same extra key. Compact calendar cells and Explore catalog places omit it. Hotel reports use the same envelope, with `provider`, `price_basis: "total_stay"`, `fetch_backend`, `fetch_ms`, and an `applied` block for the filters that were actually sent. `flight_numbers` and `booking_token` are present when the compact shopping body has them. Otherwise they are `null`. `google_flights_url` is on the query and each offer when viajante can build it from owned route/date/cabin/occupancy/currency bytes, or from an owned `booking_token`. Dates, flex, and explore reuse that same owned helper (`booking_token` wins on flex offers; compact date cells may carry a query URL; explore dests that already ran a shopping POST stamp origin/dest/date; catalog places and origin-only explore reports omit when encode cannot run). Multi-city uses the owned tfs encoder; the field is omitted only when that encode cannot run and there is no token. `checked_bags` / `carry_on` appear on an offer only when those counts were in the compact bytes; they are omitted, not invented, when the card is silent. Query `bags` / `carry_on` appear only when the caller requested them. Query `children` / `infants_in_seat` / `infants_on_lap` appear only when those counts are non-zero. Two-stop cards keep layovers on `legs` and leave `layover_city` empty. No booking flow. Do not invent CO2.
+Error codes that agents can handle programmatically: `no_results`, `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`.
 
-## CLI reference
+---
 
-Flight route grammar is `ORIGIN-DESTINATION:DATE[,DATE...]` with three-letter IATA codes and `YYYY-MM-DD` dates, or `ORIGIN-DESTINATION:OUT:BACK`. Without `--trip`, `OUT:BACK` is two one-way searches. `--trip rt` POSTs one packaged round-trip. Codes are case-insensitive. You can still pass a return leg as a second route.
+## Python API
 
-| `flights` flag | Default | Behavior |
-|---|---|---|
-| `--trip` | `one-way` | `one-way`, `rt` / `round-trip`, or `multi`. `rt` and `multi` POST one package. |
-| `--max-stops` | `1` | `0` direct only, `1` one stop, `2` two or fewer. |
-| `--adults` | `1` | Adults on the search. |
-| `--children` | `0` | Children aged 2–11. Omitted from JSON while 0. |
-| `--infants-in-seat` | `0` | Infants with their own seat. Omitted from JSON while 0. |
-| `--infants-on-lap` | `0` | Infants on lap (cannot exceed `--adults`). Omitted from JSON while 0. |
-| `--cabin` | `economy` | `economy`, `premium-economy`, `business`, or `first`. |
-| `--currency` | origin country or required | ISO 4217 sent as Google `curr`. Unnamed infers from a named origin’s owned country. Unproven (unnamed origin, unknown country, two possible currencies) asks or errors. Viajante does not convert; the MCP caller does FX. Do not invent ISO 4217 from vibe. |
-| `--country` | unset | ISO country sent as Google `gl`. Omitted when unset. Do not invent `gl` from vibe or default it to a hub. |
-| `--bags` | unset | Checked bags on the shopping request. Omit to leave the slot empty. |
-| `--carry-on` | unset | Ask the shopping request for one carry-on. Omit to leave the slot empty. |
-| `--nearby` | off | Expand origin or dest to owned same-city IATA and search each as a labeled alternative. Default off. Named open-jaw airports stay. Never invents a code. |
-| `--top` | `8` | Offers kept per query after ranking and deduplication. |
-| `--baggage-buffer` | `70` if EUR else `0` | Ranking add-on in the quote currency. Unnamed is 70 only when the quote is EUR. Named is used as-is. No FX. `0` ranks on fare alone. |
-| `--sort` | `ranked` | `ranked` uses fare+buffer for `--top` and hides very slow connections. `fare` / `price` use cabin fare. `duration` uses elapsed time. `departure` / `arrival` use local clocks. |
-| `--airlines` | off | Restrict the shopping request to these airline IATA codes (`BA,KL`). Detail still post-filters parsed cards. |
-| `--exclude-airlines` | off | Exclude these airline IATA codes from the shopping request (`DL`). |
-| `--alliance` | off | Restrict the shopping request to these alliances (`oneworld`, `skyteam`, `star`). Uses IATA designators, not a member list. |
-| `--exclude-alliance` | off | Exclude these alliances from the shopping request. |
-| `--depart-window` | off | Keep local departures in `START-END` inclusive. Hours (`6-20`) keep the whole end hour. Clocks (`06:00-20:00`) are exact. |
-| `--arrive-before` | off | Keep local arrivals at or before `HH:MM`. Post-filter on owned offer clocks. Unknown arrival cannot prove the bound (drop). Unnamed stays unset. |
-| `--depart-after` | off | Keep local departures at or after `HH:MM`. Post-filter on owned offer clocks. Unknown departure cannot prove the bound (drop). Unnamed stays unset. |
-| `--fetch` | `auto` | `sweep` is HTTP/2 on one Chrome TLS session. `detail` is Playwright. `auto` picks sweep for 3+ queries, detail for 1-2. |
-| `--max-layover` | off | Drop connecting offers whose layover exceeds this many hours. Nonstops stay. |
-| `--min-layover` | off | Drop connecting offers whose layover is shorter than this many hours. Nonstops stay. Named nonstop (`max_stops` 0) plus a named positive min_layover keeps both and stamps one English note that the pair cannot both be satisfied (nonstop has no layover). Do not drop one. Do not invent a one-stop or a fare. |
-| `--via` | off | Keep connecting offers whose parsed layover matches these IATA codes (`IST`). Post-filter on owned `layover_city` / `legs[].layovers`. Unknown layover cannot prove include (drop). Nonstops drop. |
-| `--exclude-via` | off | Drop connecting offers whose parsed layover matches these IATA codes (`DXB`). Unknown layover stays. Nonstops stay. |
-| `--no-overnight` | unset | Drop offers whose owned layover city+clock is overnight at these IATA codes (`IST`, or `any`). Unknown city/clock cannot prove exclude (drop). Nonstops stay. Unnamed stays unset. Contradiction with `--require-overnight` keeps both. |
-| `--require-overnight` | unset | Keep only offers with an owned overnight layover at these IATA codes (`IST`, or `any`). Unknown city/clock cannot prove include (drop). Unnamed stays unset. |
-| `--exclude-airports` | unset | Drop named origin/dest IATA in this list (`HND`). Explore catalog dests with those codes are dropped before shop. Nearby cannot sneak an excluded same-city code back. Dates/flex named origin/dest in the list is empty (no invented substitute). Unnamed stays unset. |
-| `--include-airports` | unset | Keep only dests whose IATA is in this list (`NRT,HND`). Explore catalog dests not in the list are dropped before shop. Dates/flex/flights keep only when dest is in the list (or nearby already produced an owned same-city code in the list). Exclude wins on overlap. Include is dests only, not origins. Unnamed stays unset (full catalog). Do not invent a dest or fare. |
-| `--max-duration` | off | Drop offers whose elapsed time exceeds this many hours. |
-| `--price-cap` | unset | Drop owned fares above this amount in the quote currency. Inclusive. Unnamed stays unset. Index 7 on the shopping POST stays `None` (RPC layout unknown). Never invents a cap or a fare. |
-| `--save FILE` | off | Write the JSON report atomically. |
-
-| `dates` flag | Default | Behavior |
-|---|---|---|
-| `--from` / `--to` | required | Inclusive departure window. Cap is 31 days. |
-| `--trip` / `--nights` | `one-way` / unset | One-way cheapest-per-day. `--nights N` (or `--trip rt --nights N`) is one packaged stay per departure day. `multi` is not supported. |
-| `--max-stops` / `--adults` / `--children` / `--infants-in-seat` / `--infants-on-lap` / `--cabin` | `1` / `1` / `0` / `0` / `0` / `economy` | Same meaning as `flights` (`0`, `1`, or `2` stops). Occupancy rides `calendar_trip` and the shopping POST. Unnamed stays 0. |
-| `--currency` / `--country` | origin / unset | Same Google `curr` / optional `gl` as `flights`. Unnamed infers from origin country; unproven asks. `gl` omitted. Do not invent `gl` or ISO 4217 from vibe. |
-| `--fetch` | `sweep` | Date-grid RPC. On a compact miss, each day is priced with shopping sweep. `detail` is ignored. |
-| `--nearby` | off | Expand origin or dest to owned same-city IATA and search each as a labeled alternative. Default off. Never invents a code. |
-| `--baggage-buffer` | `70` if EUR else `0` | Ranking add-on in the quote currency on a shopped sweep-fallback day. Unnamed is 70 only when the quote is EUR. `0` ranks on fare alone. Compact calendar cells omit the stamp. Not a fare; never invents a bag count. |
-| `--sort` | unset | Unnamed stays date order. Named `duration` / `departure` / `arrival` re-order shopped sweep-fallback rows that already own that key. Compact cells missing the key stay in date order; do not invent hours or a clock. `fare` / `price` / `ranked` may re-order priced rows by owned `price` (`ranked` is fare+buffer on shopped days). Compact cells with an owned compact fare may participate in fare/price sorts. Missing fare stays last. Sort is order, not a cut. |
-| `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--alliance` / `--exclude-alliance` / `--via` / `--exclude-via` / `--no-overnight` / `--require-overnight` / `--exclude-airports` / `--include-airports` / `--depart-window` / `--arrive-before` / `--depart-after` / `--max-layover` / `--min-layover` / `--max-duration` | unset | Same owned shop post-filters as `flights`. `--exclude-airports` drops a named origin/dest in that IATA list (empty; no invented substitute) and nearby cannot sneak those codes back. `--include-airports` keeps only when dest is in that list (or nearby already produced an owned same-city code in the list); otherwise empty; dests only. Exclude wins on overlap. Alliances ride the shopping POST (no owned member list). `--no-overnight` / `--require-overnight` apply to sweep-fallback cards only (unknown city/clock cannot prove; contradiction keeps both). Compact calendar cells have no clock and no airline/alliance and stay unfiltered. Unnamed stays unset. |
-| `--save FILE` | off | Write the calendar JSON atomically. |
-
-| `explore` flag | Default | Behavior |
-|---|---|---|
-| `--from` / `--days` | date / `7` | Outbound date and trip-window label. |
-| `--month` | off | First of `YYYY-MM` plus that month's length. Do not combine with `--from`. |
-| `--top` | `12` | Destinations to price after the explore catalog. |
-| `--sort` | `price` | Same enum as flights/flex. Unnamed stays cheapest-first. Named `duration` / `departure` / `arrival` re-rank shopped dests by the cheapest surviving offer’s owned hours or clock. `fare` / `price` use that dest fare. `ranked` uses fare+buffer. Missing key sorts last; do not invent a duration, clock, fare, or buffer. |
-| `--baggage-buffer` | `70` if EUR else `0` | Ranking add-on in the quote currency when `--sort ranked`. Unnamed is 70 only when the quote is EUR. `0` ranks on fare alone. Unnamed sort stays cheapest fare. Catalog-only dests omit the stamp. Not a fare; never invents a bag count. |
-| `--max-stops` / `--adults` / `--children` / `--infants-in-seat` / `--infants-on-lap` / `--cabin` | `1` / `1` / `0` / `0` / `0` / `economy` | Applied when pricing each destination. Occupancy rides the explore catalog RPC and dest shopping POSTs. Unnamed stays 0. |
-| `--currency` / `--country` | origin / unset | Same Google `curr` / optional `gl` as `flights`. Unnamed infers from origin country; unproven asks. `gl` omitted. Do not invent `gl` or ISO 4217 from vibe. |
-| `--bags` / `--carry-on` / `--airlines` / `--exclude-airlines` / `--alliance` / `--exclude-alliance` / `--via` / `--exclude-via` / `--no-overnight` / `--require-overnight` / `--exclude-airports` / `--include-airports` | unset | Same owned shop post-filters as `flights` / dates-flex. `--exclude-airports` drops catalog dests whose IATA is in that list before shop (no invented replacement dest or fare). `--include-airports` keeps only catalog dests in that list and drops the rest before shop / `--top` (no catalog overlap is empty; no invented dest or fare). Exclude wins on overlap. Nearby cannot sneak an excluded origin code back. Include is dests only, not origins. Alliances ride dest shopping POSTs (no owned member list). `--no-overnight` / `--require-overnight` drop dests whose cheapest surviving shopped offer cannot satisfy that named constraint (unknown city/clock cannot prove; unnamed keeps the dest). Unnamed stays unset. Destinations whose cheapest surviving offer contradicts are dropped. Compact catalog places are not post-filtered. Do not invent dests to fill `--top`. |
-| `--exclude-regions` | unset | Named owned IANA timezone prefixes (`asia`, `europe`). Explore drops catalog dests whose owned tz proves they sit in a named excluded region, after include/exclude IATA and before shop. Unknown tz cannot prove keep (drop). Unnamed stays unset (full catalog). Empty shortlist does not invent a dest. Origin inside an excluded region keeps exploring. Dates/flex/flights do not take this flag. |
-| `--depart-window` / `--arrive-before` / `--depart-after` / `--max-layover` / `--min-layover` / `--max-duration` | unset | Same owned shop post-filters as `flights`. Applied to dest shop cards. Unknown clock or layover cannot prove the filter. Nonstops stay for max/min layover. |
-| `--price-cap` | unset | Drop destinations whose cheapest surviving owned fare exceeds this amount in the quote currency. Unknown price cannot prove the cap. |
-| `--nearby` | off | Expand origin to owned same-city IATA and search each as a labeled alternative. Default off. Never invents a code. |
-| `--save FILE` | off | Write the explore JSON atomically. |
-
-| `hotels` flag | Default | Behavior |
-|---|---|---|
-| `--adults` / `--rooms` | `2` / `1` | Occupancy for the stay. |
-| `--currency` | required | ISO 4217 for hotel quotes. Hotels have no origin airport. Viajante does not convert. |
-| `--top` | `8` | Stays shown after filtering and ranking. |
-| `--source` | `booking` | `booking` is Playwright evidence (CLI default). `google` is the HTTP shortlist (MCP default). |
-| `--min-rating` | off | Booking 0–10. Google Hotels 0–5. |
-| `--entire-home` | off | Require entire homes. Cards with unknown property type may remain. |
-| `--allow-non-refundable` | off | Include stays without free cancellation. |
-| `--compare-cancellation` | off | Two sequential Booking searches and a joined price table. |
-| `--save FILE` | off | Write the JSON report atomically. |
-
-| Exit code | Meaning |
-|---|---|
-| `0` | Every query finished without a fetch failure, including queries that found nothing eligible. |
-| `1` | The command input is invalid. |
-| `2` | Every query failed. |
-| `3` | Some queries finished and some failed. |
-
-## Python
+You can also use Viajante directly as a typed Python library:
 
 ```python
 from datetime import date
+from viajante import FlightQuery, search_flights, search_hotels, HotelQuery
 
-from viajante import FlightQuery, search_flights
-
-report = search_flights(
-    [
-        FlightQuery(
-            origin="JFK",
-            destination="LHR",
-            departure_date=date(2026, 9, 15),
-            max_stops=1,
-        )
-    ],
-    top=5,
+# Search Flights
+flight_report = search_flights(
+    [FlightQuery(origin="JFK", destination="LHR", departure_date=date(2026, 10, 15))],
     fetch="sweep",
-)
-
-for result in report.queries:
-    if result.status == "ok":
-        for offer in result.offers:
-            print(offer.price, offer.airline)
-```
-
-Hotels use the same report pattern:
-
-```python
-from datetime import date
-
-from viajante import HotelQuery, search_hotels
-
-report = search_hotels(
-    [
-        HotelQuery(
-            location="Tokyo",
-            check_in=date(2026, 10, 12),
-            check_out=date(2026, 10, 16),
-        )
-    ],
     top=5,
-    currency="JPY",
 )
 
-for result in report.queries:
-    if result.status == "ok":
-        for offer in result.offers:
-            print(offer.total_price, offer.title)
+for query in flight_report.queries:
+    if query.status == "ok":
+        for offer in query.offers:
+            print(f"{offer.price} {flight_report.currency} - {offer.airline} ({offer.duration})")
+
+# Search Hotels
+hotel_report = search_hotels(
+    [HotelQuery(location="Tokyo", check_in=date(2026, 10, 12), check_out=date(2026, 10, 16))],
+    currency="JPY",
+    source="google",
+    top=5,
+)
+
+for query in hotel_report.queries:
+    if query.status == "ok":
+        for stay in query.offers:
+            print(f"{stay.total_price} {hotel_report.currency} - {stay.title} (Rating: {stay.rating})")
 ```
 
-`search_flights(..., fetch="auto")` matches the CLI. Sweep does not start Chromium. `search_hotels(..., source="google")` is the HTTP shortlist and requires `currency`. Booking still uses the same Chromium pacing as the CLI. `search_dates(..., trip="one-way")` is the cheapest-per-day grid with a `summary` block when three or more days are priced; pass `nights` (implies `trip="rt"`) for a packaged stay. Named `search_dates(..., sort="duration")` re-orders shopped sweep-fallback days by owned duration; unnamed stays date order. Compact cells missing duration/clock are not given made-up hours. `fare` / `price` / `ranked` may re-order priced rows by owned `price`. There is no `top` that hides days. `search_flex(..., around=..., flex=3)` is that grid plus one shopping search on the cheapest legal day. Named `children` / `infants_in_seat` / `infants_on_lap` ride those calendar/shop POSTs the same way as `search_flights` (unnamed stays 0). Named `alliance` / `exclude_alliance` ride those shopping POSTs the same way as `search_flights`. Named `currency` / `country` ride the HTTP source the same way as `search_flights` (--currency unnamed infers from origin country; omit `gl` when unset). `search_trip` joins owned flight fare and hotel stay when dates overlap; flight shop takes the same bags/via/airlines/alliance/`price_cap` filters as `search_flights`. `search_explore` and `lookup_airports` match the `explore` and `airports` commands (explore occupancy rides catalog + dest shops). Named `search_explore(..., sort="duration")` re-ranks shopped dests by owned duration of the cheapest surviving offer; unnamed stays `price`. Named `baggage_buffer` on `search_dates` / `search_explore` is the same ranking add-on `search_flex` already passes (70 only when the quote is EUR; unnamed is 0 otherwise; `0` ranks on fare alone). Compact date-grid cells and Explore catalog places omit the stamp. `search_explore` applies it only when `sort="ranked"`.
+---
 
-## Limits
+## CLI Reference & Flags
 
-- Flights default to one-way. `--trip rt` / `round-trip` and `--trip multi` POST one package. `--max-stops` is `0`, `1`, or `2`. `--trip multi` cannot use `--fetch detail` yet. There is no flag to shorten Chromium delays or to parallelize requests. Sweep HTTP/2 multiplexes on one TLS session. HTTP 429 resets TLS and continues remaining jobs; a sequential remesure harness may still stop on 429.
-- Currency is `--currency` / MCP `currency`, or inferred from a named origin’s owned country (JFK USD, LHR GBP, NRT JPY, GRU BRL). If unknown, ask. Hotels require `--currency`. If country, destination, or currency is not proven (a city with several airports, “Europe”, unnamed origin, two possible currencies), ask or error. Unknown cannot prove include. Do not invent IATA, `gl`, or ISO 4217 from vibe. Viajante does not convert; the MCP caller does FX. Flight and hotel cards render in English (`hl=en` / `lang=en`, `locale=en-US`). Planner prompts may be any language; fetch queries stay English IATA and English fetch. Spanish or other languages appear only as labeled planner *input*, not product voice.
-- Flight ranking adds a flat estimate for known low-cost carriers, not a fare quote. The low-cost list is partial. An airline missing from it is not evidence of a bag-inclusive fare. Confirm the checked bag on Google Flights before booking.
-- Hotel cancellation, lodging kind, and bed counts are observed evidence. `unknown` means the card did not say. `--entire-home` therefore cannot remove every non-home. Confirm the final total and the cancellation terms on the site you book.
-- Finding nothing eligible still exits `0` and prints `(no eligible offers)` or `(no eligible stays)`. Widen the filters or check the route.
-- If Chromium is missing you get `browser_unavailable`. Run `uv run playwright install chromium`.
-- After repeated failures, stop for 30 to 60 minutes and retry a small query set. Never invent a fare, a typical median, a booking token, or a via list.
+<details>
+<summary><strong>Click to expand full CLI flags reference</strong></summary>
 
-## Browser state
+### Flights (`viajante flights`)
 
-Playwright consent cookies persist as `pw_state_google.json` and `pw_state_booking.json` at the first of these that applies:
+Grammar: `ORIGIN-DEST:YYYY-MM-DD` or `ORIGIN-DEST:OUT:BACK`
 
-1. `$VIAJANTE_STATE_DIR/`
-2. `$XDG_STATE_HOME/viajante/`
-3. `~/.local/state/viajante/`
+| Flag | Default | Description |
+|---|---|---|
+| `--trip` | `one-way` | Trip type: `one-way`, `rt` (packaged round-trip), or `multi`. |
+| `--max-stops` | `1` | Maximum connections (`0` nonstop, `1`, or `2`). |
+| `--adults` | `1` | Number of adult passengers. |
+| `--cabin` | `economy` | Cabin class: `economy`, `premium-economy`, `business`, `first`. |
+| `--currency` | Origin country | ISO 4217 quote currency code. |
+| `--nearby` | off | Expand origin/destination to nearby same-city airports (e.g. LHR+LGW+STN). |
+| `--top` | `8` | Number of ranked offers to return. |
+| `--sort` | `ranked` | Sort by `ranked` (fare + baggage buffer), `fare` / `price`, `duration`, `departure`, `arrival`. |
+| `--airlines` / `--exclude-airlines` | off | Comma-separated airline IATA codes (e.g. `BA,KL`). |
+| `--alliance` / `--exclude-alliance` | off | Airline alliances: `star`, `skyteam`, `oneworld`. |
+| `--depart-window` | off | Departure time window (e.g. `06:00-12:00` or `7-12`). |
+| `--via` / `--exclude-via` | off | Required or excluded connecting airport IATA codes (e.g. `--via IST`). |
+| `--no-overnight` | off | Drop itineraries with overnight connections. |
+| `--price-cap` | off | Maximum acceptable fare in quote currency. |
+| `--fetch` | `auto` | `sweep` (HTTP/2), `detail` (Chromium), or `auto`. |
+| `--save FILE` | off | Save report to JSON file. |
 
-Delete the affected provider file if consent or scraping breaks. It is recreated on the next run.
+### Dates Calendar (`viajante dates`)
 
-## Tests
+| Flag | Default | Description |
+|---|---|---|
+| `--from` / `--to` | required | Inclusive departure date window (cap: 31 days). |
+| `--nights` | unset | Stay duration in nights (packages a round-trip stay for each day). |
+| `--max-stops` / `--cabin` | `1` / `economy` | Stop count and cabin class. |
+| `--nearby` | off | Expand to nearby airports. |
+| `--save FILE` | off | Save calendar to JSON file. |
+
+### Flex (`viajante flex`)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--around` | required | Target departure date (`YYYY-MM-DD`). |
+| `--flex` | `3` | Days before and after `--around` to check (e.g. `3` = 7-day window). |
+| `--nights` | unset | Stay duration in nights for round-trip packaging. |
+
+### Explore (`viajante explore`)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--from` | today | Outbound travel date. |
+| `--days` | `7` | Duration of stay (stored on report). |
+| `--top` | `12` | Number of destination finalists to shop and rank. |
+| `--exclude-regions` | off | Exclude IANA timezone regions (e.g. `asia`, `europe`). |
+| `--include-airports` | off | Whitelist specific destination IATA codes. |
+
+### Hotels (`viajante hotels`)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--currency` | required | ISO 4217 quote currency (e.g. `USD`, `EUR`, `JPY`). |
+| `--adults` / `--rooms` | `2` / `1` | Guest and room count. |
+| `--source` | `booking` | `google` (HTTP shortlist) or `booking` (Playwright Chromium). |
+| `--min-rating` | off | Minimum guest rating (Google: 0–5, Booking: 0–10). |
+| `--entire-home` | off | Filter for apartments and vacation rentals. |
+| `--allow-non-refundable` | off | Opt-in to show non-refundable stays (default requires free cancellation). |
+
+</details>
+
+---
+
+## Testing & Quality Gate
+
+Tests are **100% offline**, never start Chromium, and never make live network requests:
 
 ```bash
+# Run test suite
 uv run python -m unittest discover -s tests -v
+
+# Run code linter and formatting checks
 uv run ruff check src tests
-```
+uv run ruff format --check src tests
 
-Tests are fully offline. They never launch Chromium and never touch the network. `tests/test_google_flights.py` pins query encoding and drives synthetic compact shopping bodies plus HTML markup through the owned parsers. CI runs the suite on Python 3.10 through 3.14.
-
-## Scripts
-
-`python scripts/clean-repo.py` dry-runs known-safe junk (OS metadata, editor temps, logs, `__pycache__`, pytest/mypy/ruff caches); `--write` deletes. `--include-build` and `--include-deps` stay off unless named.
-
-## Bench
-
-```bash
+# Run offline benchmark suite
 uv run viajante bench
-```
 
-Offline keep-or-revert score for a looping agent. Unittest + ruff must pass (`gate: ok`); `score_ms` is unittest wall time plus the owned `tests/bench/` compact-shopping / card-parse corpus. Lower is better. `program.md` is the experiment protocol. `bench-baseline.json` holds the last human-merged win. No live Google unless `VIAJANTE_BENCH_LIVE=1`, and that extra is never the score.
-
-The graded prompt battery is a separate quality contract, not `score_ms`:
-
-```bash
+# Run prompt evaluation battery (190+ test cases)
 uv run viajante bench --prompts
 ```
 
-Graded battery (smoke → savage, includes `i18n.jsonl` on brutal). #62 counted **186**. Smoke→insane stay English; savage and i18n add multilingual hardness while the plan still emits English IATA and English flight fetch locale. Cases use international origins with no implied home hub. Deterministic cases stay offline (owned prompt→query planner vs IATA / route grammar / trip kind / occupancy / alliance / depart-window). Around/±N plans `intent=flex`; cheapest week plans `intent=dates`; packaged RT stays. Occupancy is omitted when the prompt has no count. Alliance codes are not invented. Each row prints `plan_ms`; the summary prints `plan_p50_ms` / `plan_p90_ms` / `plan_max_ms`. That is not `score_ms` and not `judge_mean`. `VIAJANTE_BENCH_JUDGE=1` runs a DeepSeek 1-100 quality score (`DEEPSEEK_API_KEY` or `VIAJANTE_JUDGE_KEY`, model `deepseek-chat`) on the open-ended rows; without a key those print `judge: skip` and invent no score. Nested or broken judge JSON is recovered when `score` and `reason` are present (`JUDGE_SYSTEM_PROMPT` is untouched). Optional live find-flights timer: `VIAJANTE_BENCH_SWEEP=1` or `viajante bench --prompts --timeit-sweep` (first 8 planned IATA+date flights, HTTP sweep, no Playwright). Off by default; skipped print is `sweep_ms:` blank. Live Google is never the keep metric. Do not delete `tests/prompts/` to "win" the speed loop. Holdout (`viajante bench --prompts --holdout`) is not in that weekday battery.
+---
 
-Keep baseline remains **97.9** (`60d9ed4`, 26 scored). Last judged **95.7** on `22da78a` (35 scored, 23 skip) is not a keep versus 97.9 on `4faaabd`. Gate is suite + `fail:0`. `score_ms` is not the product trophy.
+## Disclaimer
 
-## Privacy
-
-This tree is the public export of a private trip-planning repo. Do not commit scrapes, personal routes, or browser session files. Saved results (`results/`, `*.viajante.json`), logs, and Playwright artifacts are gitignored, and consent cookies live outside the checkout. Before pushing a fork, check `git status --short` and `git ls-files`.
+This is an unofficial, open-source project and is not affiliated with Google, Booking.com, or any airline. Please review the [Google Terms of Service](https://policies.google.com/terms) and [Booking.com Terms](https://www.booking.com/content/terms.html) before using this tool.

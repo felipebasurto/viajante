@@ -29,6 +29,7 @@ from viajante.prompt_bench import (
     MIN_PROMPT_CASES,
     MIN_TIER_CASES,
     MIN_UNIQUE_ORIGINS,
+    PROMPT_BENCH_TODAY,
     PROMPTS_ENV,
     REQUIRED_PROMPT_IDS,
     REQUIRED_SAVAGE_LANGS,
@@ -56,7 +57,11 @@ from viajante.prompt_bench import (
     sweep_routes_for_plan,
     validate_prompt_corpus,
 )
-from viajante.prompt_plan import plan_prompt
+from viajante.prompt_plan import plan_prompt as _plan_prompt
+
+
+def plan_prompt(text: str, *, today: date | None = PROMPT_BENCH_TODAY):
+    return _plan_prompt(text, today=today)
 
 
 def _load_verdict_fixtures() -> tuple[list[tuple[str, int, str, str]], list[tuple[str, str]]]:
@@ -1199,11 +1204,14 @@ class PromptTimingTests(unittest.TestCase):
 
     def test_sweep_routes_need_a_real_iata_pair_and_date(self) -> None:
         flights = plan_prompt("Flights BOS-LHR on 2026-09-01")
-        self.assertEqual(sweep_routes_for_plan(flights), ("BOS-LHR:2026-09-01",))
+        self.assertEqual(
+            sweep_routes_for_plan(flights, today=PROMPT_BENCH_TODAY),
+            ("BOS-LHR:2026-09-01",),
+        )
         refuse = plan_prompt("Flights XXX-LHR on 2026-09-01")
-        self.assertIsNone(sweep_routes_for_plan(refuse))
+        self.assertIsNone(sweep_routes_for_plan(refuse, today=PROMPT_BENCH_TODAY))
         airports = plan_prompt("IATA code for Tokyo")
-        self.assertIsNone(sweep_routes_for_plan(airports))
+        self.assertIsNone(sweep_routes_for_plan(airports, today=PROMPT_BENCH_TODAY))
         past = replace(flights, departure_date=date.today() - timedelta(days=1), route_specs=())
         self.assertIsNone(sweep_routes_for_plan(past))
         world = replace(flights, around_the_world=True)

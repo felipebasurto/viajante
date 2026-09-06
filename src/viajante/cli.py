@@ -1027,7 +1027,7 @@ def _print_explore_report(report: ExploreReport) -> None:
     nearby = f"; {report.nearby_label}" if report.nearby_label else ""
     print(
         f"\n=== From {report.origin}  {report.start_date.isoformat()}  "
-        f"({report.days}-day window){nearby} ==="
+        f"({report.days}-day stay; dests priced on this date){nearby} ==="
     )
     _print_google_flights_url(report.google_flights_url, indent="  ")
     if report.error is not None and not report.destinations:
@@ -2381,7 +2381,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--days",
         type=int,
         default=7,
-        help="Trip length in days (default 7; used as the explore window label)",
+        help=(
+            "Stay length in days (default 7). Stored on the report; "
+            "catalog and dest shops use --from only"
+        ),
     )
     explore.add_argument(
         "--month",

@@ -4,12 +4,12 @@ import io
 import json
 import unittest
 from contextlib import redirect_stdout
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from viajante.airports import airport_geo
-from viajante.cli import main
+from viajante.cli import _print_explore_report, main
 from viajante.explore import search_explore
 from viajante.flights import (
     _calendar_summary_from_source,
@@ -26,7 +26,15 @@ from viajante.google_flights_rpc import (
     build_shopping_inner,
     parse_explore_body,
 )
-from viajante.models import ExploreDestination, FlightQuery, RawJourneyLeg, RawLayover, RawSegment
+from viajante.models import (
+    ExploreDestination,
+    ExploreReport,
+    FlightQuery,
+    RawJourneyLeg,
+    RawLayover,
+    RawSegment,
+)
+from viajante.prompt_bench import PROMPT_BENCH_TODAY
 from viajante.prompt_plan import plan_prompt
 from viajante.typical import (
     typical_from_daily_prices,
@@ -915,6 +923,21 @@ class ExploreCliTests(unittest.TestCase):
         self.assertIn("Porto", output)
         self.assertIn("28 €", output)
 
+    def test_explore_header_does_not_call_days_a_window(self) -> None:
+        report = ExploreReport(
+            searched_at=datetime(2026, 8, 20, 12, 0, 0),
+            origin="JFK",
+            start_date=date(2026, 9, 15),
+            days=7,
+            destinations=(),
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            _print_explore_report(report)
+        output = buffer.getvalue()
+        self.assertIn("7-day stay; dests priced on this date", output)
+        self.assertNotIn("7-day window", output)
+
     def test_explore_help_has_examples(self) -> None:
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
@@ -1480,7 +1503,10 @@ class ExcludeRegionsExploreTests(unittest.TestCase):
         self.assertEqual([query.destination for query in source.fetched_queries], ["LHR"])
 
     def test_planner_not_asia_reaches_explore_filter(self) -> None:
-        plan = plan_prompt("Destinations from NRT on 2026-09-15, not Asia")
+        plan = plan_prompt(
+            "Destinations from NRT on 2026-09-15, not Asia",
+            today=PROMPT_BENCH_TODAY,
+        )
         self.assertEqual(plan.intent, "explore")
         self.assertIn("asia", plan.exclude_regions)
         places = (

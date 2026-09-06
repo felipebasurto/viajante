@@ -193,7 +193,7 @@ def classify_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.MARKUP_DRIFT,
             message=str(exc) or "Google Flights markup could not be parsed.",
         )
-    return classify_provider_failure(exc, provider="Google Flights")
+    return classify_provider_failure(exc)
 
 
 class _SourceConfig(Protocol):
@@ -1792,22 +1792,6 @@ def _run_search(
     )
 
 
-def _attach_fetch_meta(
-    report: SearchReport,
-    *,
-    fetch_backend: FetchBackend,
-    fetch_ms: int,
-) -> SearchReport:
-    return SearchReport(
-        searched_at=report.searched_at,
-        queries=report.queries,
-        locale=report.locale,
-        currency=report.currency,
-        fetch_backend=fetch_backend,
-        fetch_ms=fetch_ms,
-    )
-
-
 def _search_with_source(
     trips: Sequence[Trip],
     *,
@@ -1942,18 +1926,34 @@ def search_flights(
             raise ValueError("--trip multi does not support --fetch detail yet")
     report_progress = progress or (lambda _: None)
     started = time.perf_counter()
+
+    def _zero_backoff(_attempt: int, _rng: random.Random) -> float:
+        return 0.0
+
     if planned == "sweep":
-        noun = "query" if len(trips) == 1 else "queries"
-        report_progress(f"fetch: sweep ({len(trips)} {noun})")
-        report = _search_with_source(
-            trips,
-            source=GoogleFlightsHttpSource(currency=currency, country=country),
+        source: _FlightSource = GoogleFlightsHttpSource(currency=currency, country=country)
+        delay = sweep_inter_query_delay_seconds
+        backoff = _zero_backoff
+    else:
+        source = GoogleFlightsSource(default_state_dir(), currency=currency, country=country)
+        delay = inter_query_delay_seconds
+        backoff = retry_backoff_seconds
+
+    def execute(
+        trips_to_search: Sequence[Trip],
+        *,
+        source: _FlightSource,
+        inter_query_delay: Callable[[random.Random], float],
+        retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
+    ) -> SearchReport:
+        return _search_with_source(
+            trips_to_search,
+            source=source,
             top=top,
             buffer_eur=buffer_eur,
             progress=progress,
             sort=sort,
-            inter_query_delay=sweep_inter_query_delay_seconds,
-            retry_backoff=lambda _attempt, _rng: 0.0,
+            inter_query_delay=inter_query_delay,
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
@@ -1966,73 +1966,37 @@ def search_flights(
             exclude_via=exclude_via,
             no_overnight=no_overnight,
             require_overnight=require_overnight,
+            retry_backoff=retry_backoff,
         )
+
+    noun = "query" if len(trips) == 1 else "queries"
+    report_progress(f"fetch: {planned} ({len(trips)} {noun})")
+    report = execute(
+        trips,
+        source=source,
+        inter_query_delay=delay,
+        retry_backoff=backoff,
+    )
+    backend: FetchBackend = planned
+    if planned == "sweep":
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
         ]
         if retry_indexes:
             report_progress("sweep empty/markup/block; falling back to detail")
             retry_trips = tuple(trips[index] for index in retry_indexes)
-            detail_report = _search_with_source(
+            detail_report = execute(
                 retry_trips,
                 source=GoogleFlightsSource(default_state_dir(), currency=currency, country=country),
-                top=top,
-                buffer_eur=buffer_eur,
-                progress=progress,
-                sort=sort,
                 inter_query_delay=inter_query_delay_seconds,
-                max_layover_hours=max_layover_hours,
-                min_layover_hours=min_layover_hours,
-                max_duration_hours=max_duration_hours,
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
             )
             merged = list(report.queries)
             for index, detail_result in zip(retry_indexes, detail_report.queries, strict=True):
                 merged[index] = detail_result
-            report = SearchReport(
-                searched_at=report.searched_at,
-                queries=tuple(merged),
-                locale=report.locale,
-                currency=report.currency,
-            )
-            backend: FetchBackend = "sweep_then_detail"
-        else:
-            backend = "sweep"
-    else:
-        noun = "query" if len(trips) == 1 else "queries"
-        report_progress(f"fetch: detail ({len(trips)} {noun})")
-        report = _search_with_source(
-            trips,
-            source=GoogleFlightsSource(default_state_dir(), currency=currency, country=country),
-            top=top,
-            buffer_eur=buffer_eur,
-            progress=progress,
-            sort=sort,
-            inter_query_delay=inter_query_delay_seconds,
-            max_layover_hours=max_layover_hours,
-            min_layover_hours=min_layover_hours,
-            max_duration_hours=max_duration_hours,
-            airlines=airlines,
-            exclude_airlines=exclude_airlines,
-            depart_window=depart_window,
-            arrive_before=arrive_before,
-            depart_after=depart_after,
-            via=via,
-            exclude_via=exclude_via,
-            no_overnight=no_overnight,
-            require_overnight=require_overnight,
-        )
-        backend = "detail"
+            report = replace(report, queries=tuple(merged))
+            backend = "sweep_then_detail"
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return _attach_fetch_meta(report, fetch_backend=backend, fetch_ms=fetch_ms)
+    return replace(report, fetch_backend=backend, fetch_ms=fetch_ms)
 
 
 def write_report_atomic(report: SearchReport, destination: Path) -> None:

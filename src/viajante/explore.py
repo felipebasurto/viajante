@@ -1,4 +1,7 @@
-"""Cheap destinations from an origin via the owned Explore RPC, then priced."""
+"""Cheap destinations from an origin.
+
+Catalog RPC, then price the first --top dests on the start date.
+"""
 
 from __future__ import annotations
 
@@ -227,7 +230,7 @@ def _explore_for_origin(
 ) -> ExploreReport:
     nearby = f" ({nearby_label})" if nearby_label else ""
     report_progress(
-        f"explore: from {origin} on {start.isoformat()} ({days}-day trip window){nearby}"
+        f"explore: from {origin} on {start.isoformat()} (top {top} catalog dests that day){nearby}"
     )
     started = time.perf_counter()
     error: Optional[SearchError] = None

@@ -74,12 +74,7 @@ class GoogleHotelsSource:
         del applied
         client = self._ensure_client()
         url, body = build_hotels_request(query, html_lang=self._html_lang, currency=self._currency)
-        try:
-            response = client.post(
-                url, data=body, headers=HOTELS_POST_HEADERS, timeout=self._timeout
-            )
-        except Exception as exc:
-            raise HotelsParseMiss(f"hotel POST failed: {exc}") from exc
+        response = client.post(url, data=body, headers=HOTELS_POST_HEADERS, timeout=self._timeout)
         if response.status in {403, 429, 503} or _looks_blocked(response.text, response.url):
             raise HotelsBlocked(f"Google Hotels HTTP {response.status} from {url}")
         if response.status >= 400:

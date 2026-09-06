@@ -7,7 +7,13 @@ from viajante.airports import is_known_iata
 from viajante.flights import parse_flight_plan, plan_unit_count
 from viajante.google_flights_rpc import build_shopping_inner
 from viajante.models import HotelQuery, MultiCity, RoundTrip, Trip
-from viajante.prompt_plan import _IATA_TO_ENGLISH, plan_prompt, plan_to_trips
+from viajante.prompt_bench import PROMPT_BENCH_TODAY
+from viajante.prompt_plan import _IATA_TO_ENGLISH, plan_to_trips
+from viajante.prompt_plan import plan_prompt as _plan_prompt
+
+
+def plan_prompt(text: str, *, today: date | None = PROMPT_BENCH_TODAY):
+    return _plan_prompt(text, today=today)
 
 
 def _shopping_bags_slot(trip: Trip) -> object:
