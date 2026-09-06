@@ -239,11 +239,22 @@ def _stay_total(record: list[Any]) -> Optional[str]:
         pair = record[6][2][9]
     except (IndexError, TypeError):
         return None
-    if not (isinstance(pair, list) and len(pair) >= 2 and isinstance(pair[1], str) and pair[1]):
+    if not isinstance(pair, list) or not pair:
         return None
-    if "€" not in pair[1] and not any(ch.isdigit() for ch in pair[1]):
-        return None
-    return pair[1]
+    # Slot 9 is usually a [?, stay-total] pair; live compact bodies now
+    # send a bare single-element ["€71"] list instead. Prefer the pair
+    # slot first so a leading nightly-ish figure never wins.
+    candidates: list[Any] = []
+    if len(pair) >= 2:
+        candidates.append(pair[1])
+    candidates.append(pair[0])
+    for candidate in candidates:
+        if not (isinstance(candidate, str) and candidate):
+            continue
+        if "€" not in candidate and not any(ch.isdigit() for ch in candidate):
+            continue
+        return candidate
+    return None
 
 
 def _nightly_pair(record: list[Any]) -> Optional[list[Any]]:

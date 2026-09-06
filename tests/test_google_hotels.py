@@ -152,6 +152,13 @@ class HotelsParseTests(unittest.TestCase):
         with self.assertRaises(HotelsParseMiss):
             parse_hotels_body(_wrap_wrb(_search_payload(record)))
 
+    def test_single_element_stay_total_slot_parses(self) -> None:
+        record = _hotel_record()
+        record[6][2][9] = ["€71"]
+        cards = parse_hotels_body(_wrap_wrb(_search_payload(record)))
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].total_price, "€71")
+
     def test_search_echo_without_hotels_is_empty(self) -> None:
         with self.assertRaises(EmptyHotelResults):
             parse_hotels_body(_wrap_wrb([[[[9, []]]], [1, "Prague hotels"]]))
