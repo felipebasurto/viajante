@@ -44,6 +44,28 @@ from viajante.typical import (
 )
 
 
+class _FrozenDate(date):
+    @classmethod
+    def today(cls) -> date:
+        return PROMPT_BENCH_TODAY
+
+
+_patchers: list[object] = []
+
+
+def setUpModule() -> None:
+    p1 = patch("viajante.explore.date", _FrozenDate)
+    p2 = patch("viajante.cli.date", _FrozenDate)
+    p1.start()
+    p2.start()
+    _patchers.extend([p1, p2])
+
+
+def tearDownModule() -> None:
+    while _patchers:
+        _patchers.pop().stop()  # type: ignore[attr-defined]
+
+
 def _explore_row(iata: str, city: str, country: str) -> list[object]:
     row: list[object] = [None] * 29
     row[0] = "/m/x"

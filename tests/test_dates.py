@@ -48,7 +48,30 @@ from viajante.models import (
     SearchErrorCode,
     owned_calendar_summary,
 )
+from viajante.prompt_bench import PROMPT_BENCH_TODAY
 from viajante.typical import MIN_DAILY_PRICES, typical_from_daily_prices
+
+
+class _FrozenDate(date):
+    @classmethod
+    def today(cls) -> date:
+        return PROMPT_BENCH_TODAY
+
+
+_patchers: list[object] = []
+
+
+def setUpModule() -> None:
+    p1 = patch("viajante.dates.date", _FrozenDate)
+    p2 = patch("viajante.cli.date", _FrozenDate)
+    p1.start()
+    p2.start()
+    _patchers.extend([p1, p2])
+
+
+def tearDownModule() -> None:
+    while _patchers:
+        _patchers.pop().stop()  # type: ignore[attr-defined]
 
 
 def _calendar_body(rows: list[list[object]]) -> str:
