@@ -47,6 +47,16 @@ class PromptPlanSmokeTests(unittest.TestCase):
         self.assertEqual(plan.currency, "USD")
         self.assertEqual(plan.country, "US")
 
+    def test_nonstop_via_keeps_both_constraints_with_note(self) -> None:
+        from datetime import timedelta
+
+        future = (date.today() + timedelta(days=30)).isoformat()
+        plan = _plan_prompt(f"Fly MAD to BCN nonstop via IST on {future}", today=date.today())
+        self.assertEqual(plan.max_stops, 0)
+        self.assertEqual(plan.via_airports, ("IST",))
+        self.assertIn("Nonstop max 0 stops cannot also be via IST", plan.notes)
+        self.assertIn("Keep both constraints", plan.notes)
+
     def test_boston_london_city_names(self) -> None:
         plan = plan_prompt("I want to fly from Boston to London on 2026-09-04")
         self.assertEqual(plan.origin, "BOS")

@@ -9,7 +9,8 @@ Do not redo a listed keep or loss. Do not open `tests/prompts/holdout.jsonl`.
 After a keep or revert, record this host's real `judge_mean`. Never invent
 a figure. Holdout is a **human veto**, not the weekday keep.
 
-Origin (`fil/viajante`) is the source of truth.
+This checkout (`git@github.com:felipebasurto/viajante.git`) is the source of truth.
+The `cursor` remote is a backup with expired credentials.
 
 ## Goal
 

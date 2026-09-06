@@ -364,6 +364,47 @@ class McpHandlerTests(unittest.TestCase):
                 search_dates_tool("MAD-BCN", PAST, FUTURE)
         search.assert_not_called()
 
+    def test_flight_failure_payload_carries_no_price_keys(self) -> None:
+        from datetime import date as _date
+        from datetime import datetime
+
+        from viajante.models import (
+            FlightQuery,
+            QueryFailure,
+            SearchError,
+            SearchErrorCode,
+            SearchReport,
+        )
+
+        query = FlightQuery("MAD", "BCN", _date.fromisoformat(FUTURE))
+        report = SearchReport(
+            searched_at=datetime(2026, 8, 11, 10, 32, 0),
+            queries=(
+                QueryFailure(
+                    query=query,
+                    error=SearchError(SearchErrorCode.BLOCKED, "blocked"),
+                ),
+            ),
+            currency="EUR",
+        )
+        with patch("viajante.mcp_handlers.search_flights", return_value=report):
+            payload = search_flights_tool([f"MAD-BCN:{FUTURE}"])
+        text = str(payload)
+        self.assertNotIn("flight_fare", text)
+        self.assertNotIn("hotel_stay", text)
+        failure = payload["queries"][0]
+        self.assertEqual(failure["status"], "error")
+        self.assertNotIn("offers", failure)
+        self.assertNotIn("price", str(failure.get("error")))
+
+    def test_gru_origin_proves_brl_at_handler(self) -> None:
+        with patch("viajante.mcp_handlers.search_flights") as search:
+            fake = _report(queries=[], currency="BRL")
+            search.return_value = fake
+            payload = search_flights_tool([f"GRU-SCL:{FUTURE}"])
+        self.assertEqual(search.call_args.kwargs.get("currency"), "BRL")
+        self.assertEqual(payload["currency"], "BRL")
+
     def test_search_flex_calendar_then_one_shop(self) -> None:
         fake = _report(
             chosen_date=FUTURE,

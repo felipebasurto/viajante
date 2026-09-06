@@ -4,10 +4,9 @@ Operative argparse, JSON keys, and ranking defaults live in source. This file is
 the agent contract: where to edit, traps, and what must not be invented.
 `README.md` is owned elsewhere (do not edit it in a docs-cleanup).
 
-> **Authority:** this Origin checkout (`fil/viajante`) is the source of truth.
-> `pyproject.toml` still lists `github.com/felipebasurto/viajante` as Homepage;
-> do not treat that URL as the repo of record, and do not rewrite it from this
-> markdown pass.
+> **Authority:** this checkout (`git@github.com:felipebasurto/viajante.git`) is the source of truth.
+> The `cursor` remote (`origin.cursor.com/fil/viajante.git`) is a backup with expired credentials; it is not used for fetch/push.
+> `pyproject.toml` still lists `github.com/felipebasurto/viajante` as Homepage; do not treat that URL as the repo of record, and do not rewrite it from this markdown pass.
 
 ## Where to edit
 

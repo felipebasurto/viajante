@@ -420,6 +420,47 @@ class TripJoinTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             TripTotal(flight_fare=10, hotel_stay=10, total=21, nights=1)
 
+    def test_search_trip_partial_hotel_failure_omits_total_keeps_both(self) -> None:
+        from viajante.models import HotelQueryFailure, SearchError, SearchErrorCode
+
+        flights = _flight_report(
+            QuerySuccess(
+                query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10)),
+                raw_count=1,
+                eligible_count=1,
+                offers=(_flight_offer(price=100),),
+            )
+        )
+        hotels = _hotel_report(
+            HotelQueryFailure(
+                query=HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10)),
+                applied=_applied(),
+                error=SearchError(SearchErrorCode.BLOCKED, "blocked"),
+            )
+        )
+
+        def fake_flights(*_args: object, **_kwargs: object) -> SearchReport:
+            return flights
+
+        def fake_hotels(*_args: object, **_kwargs: object) -> HotelSearchReport:
+            return hotels
+
+        query = HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10))
+        with (
+            patch("viajante.trip.search_flights", fake_flights),
+            patch("viajante.trip.search_hotels", fake_hotels),
+        ):
+            report = search_trip(
+                (RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10)),),
+                query,
+                hotel_source="google",
+            )
+        self.assertIsNone(report.trip_total)
+        payload = report.to_dict()
+        self.assertIn("flights", payload)
+        self.assertIn("hotels", payload)
+        self.assertNotIn("trip_total", payload)
+
 
 class TripShopFilterTests(unittest.TestCase):
     def test_named_bags_via_airlines_price_cap_drop_the_same_cards_as_flights(self) -> None:

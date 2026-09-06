@@ -484,6 +484,19 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsNone(unnamed[0].price_cap)
         self.assertIsNone(build_shopping_inner(unnamed[0])[1][7])
 
+    def test_out_back_without_trip_is_two_one_ways_not_packaged(self) -> None:
+        from datetime import timedelta
+
+        out = (date.today() + timedelta(days=30)).isoformat()
+        back = (date.today() + timedelta(days=33)).isoformat()
+        default = parse_flight_plan([f"MAD-BCN:{out}:{back}"], max_stops=1)
+        self.assertIsInstance(default, tuple)
+        self.assertEqual(len(default), 2)
+        self.assertEqual(default[0].origin, "MAD")
+        self.assertEqual(default[1].origin, "BCN")
+        packaged = parse_flight_plan([f"MAD-BCN:{out}:{back}"], trip="rt", max_stops=1)
+        self.assertIsInstance(packaged, RoundTrip)
+
     def test_unlabelled_stops_are_rejected_when_only_direct_flights_are_wanted(self) -> None:
         unknown = card(stops="Unknown", price="90 €", departure="14:00", arrival="15:00")
         self.assertIsNone(_normalize_offer(unknown, max_stops=0))
