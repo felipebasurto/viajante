@@ -984,7 +984,7 @@ class McpWorkerTests(unittest.TestCase):
 
 class ReadmeContractTests(unittest.TestCase):
     def test_mcp_examples_use_real_tool_arguments(self) -> None:
-        text = Path("README.md").read_text(encoding="utf-8")
+        text = Path("docs/usage.md").read_text(encoding="utf-8")
         self.assertIn("start=", text)
         self.assertIn("around=", text)
         self.assertIn("location=", text)
