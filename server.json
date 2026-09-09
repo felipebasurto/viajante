@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.felipebasurto/viajante",
+  "title": "Viajante",
+  "description": "Flight and hotel search for the terminal, Python, and AI assistants.",
+  "repository": {
+    "url": "https://github.com/felipebasurto/viajante",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "viajante",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
