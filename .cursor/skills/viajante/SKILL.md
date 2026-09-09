@@ -17,6 +17,8 @@ Flags: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/via
 
 CLI rejects dates in the past. Compute ISO dates from **today**. Never copy a calendar date from this skill, README, or old chat. Grammar: `ORIGIN-DEST:YYYY-MM-DD`. Two dates on one spec without `--trip` are two one-ways. `--trip rt` is one package. `--flex` is required. Explore needs `--from` or `--month`.
 
+Fuzzy timing (for example, “late October / early November”) is not an ISO window. Propose the computed `start` and `end`, then wait for the user's confirmation before searching. For `search_flights`, every `routes` entry is exactly `ORIGIN-DEST:YYYY-MM-DD`; for `search_dates`, `route` is `ORIGIN-DEST` and `start` / `end` are separate ISO dates. Do not replace the colon with whitespace.
+
 ## Which tool
 
 | Need | MCP | CLI |
@@ -47,6 +49,8 @@ Free-cancellation filter is on by default. A silent card is not proof of free ca
 
 `--fetch auto`: sweep for 3+ flight queries; detail for 1–2 when Playwright is installed. Sweep empty or `blocked` may fall back to detail once. `markup_drift` does not. Sweep needs no Chromium. Detail and Booking sleep ~4.5–6s between queries. Never shorten that or parallelize. One MCP search at a time.
 
+`search_dates` is an HTTP calendar and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment.
+
 Unnamed `baggage_buffer` is 0. Prefer `bags` / `carry_on` on the request. Do not invent a bag fee.
 
 ## Destination triage
@@ -62,6 +66,8 @@ No implied home hub. Use the origin the user named. If unnamed, ask.
 
 Copy owned numbers. Print `typical_deal` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
 
+Only values returned by a Viajante payload are search evidence. Do not use a manually operated Google Flights tab to continue an MCP failure or present its price as a Viajante result.
+
 After Booking, 1–3 finalists may get a browser second opinion (same dates, occupancy, visible total). Do not write those into `--save` JSON.
 
 ## Recovery
@@ -71,12 +77,13 @@ After Booking, 1–3 finalists may get a browser second opinion (same dates, occ
 | `no_results` | Stop. Do not retry. |
 | `rejected` | Stop. Check IATA with `lookup_airports`. |
 | `blocked` | Wait 30–60 minutes. Do not start a new batch. |
+| `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
 | `markup_drift` | Stop. Do not retry the same parse. |
 | no eligible offers/stays, exit 0 | Widen filters or dates. Not a fetch failure. |
-| `browser_unavailable` | Install browser extra **in the MCP env**, then Chromium. See [mcp.md](mcp.md). |
+| `browser_unavailable` | For `search_flights` detail or Booking only: install browser extra **in the MCP env**, then Chromium. See [mcp.md](mcp.md). |
 | `fetch_failed` / exit 2 | Wait 30–60 minutes. Retry failed queries only. |
 | Exit 3 | Re-run only failed legs. |
-| Consent/markup break | Delete `pw_state_google.json` or `pw_state_booking.json` in the state dir. |
+| Detail/Booking consent break | Delete `pw_state_google.json` or `pw_state_booking.json` in the state dir. |
 
 State dir: `VIAJANTE_STATE_DIR` or XDG. Exit 0/1/2/3 = all ok / bad input / all failed / partial.
 
