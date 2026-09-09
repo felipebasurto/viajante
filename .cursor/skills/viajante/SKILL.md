@@ -11,7 +11,7 @@ Currency is `--currency` / MCP `currency`, or inferred from a **named** origin a
 
 Flags: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. This skill is not argparse.
 
-**Configure MCP:** [mcp.md](mcp.md). Checkout file: `.cursor/mcp.json`. Server: `src/viajante/mcp_server.py`, script `viajante-mcp`.
+**Install the MCP:** [mcp.md](mcp.md) — `uvx` + `viajante-mcp` in the client’s `mcpServers`. Not this repo’s skill, not a clone. Checkout `.cursor/mcp.json` is contributors only.
 
 ## Dates
 

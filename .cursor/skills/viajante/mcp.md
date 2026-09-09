@@ -1,62 +1,10 @@
-# Configure viajante MCP
+# Install viajante as an MCP server
 
-Stdio only. No auth. No Streamable HTTP. One search at a time in the process.
+Stdio process. No API keys. No Streamable HTTP. One search at a time.
 
-## Contents
+Paste this into Cursor Settings → MCP, Claude Desktop, or any `mcpServers` client. Requires [`uv`](https://docs.astral.sh/uv/). No clone.
 
-- This checkout (Cursor)
-- Booking / detail (same process needs Chromium)
-- No clone (`uvx` from git)
-- Reload
-
-## This checkout (Cursor)
-
-Server: `src/viajante/mcp_server.py`. Script: `viajante-mcp`.
-
-Committed config: `.cursor/mcp.json`
-
-```json
-{
-  "mcpServers": {
-    "viajante": {
-      "command": "uv",
-      "args": ["run", "--extra", "mcp", "viajante-mcp"]
-    }
-  }
-}
-```
-
-```bash
-uv sync --extra mcp
-```
-
-Then reload MCP in Cursor Settings. Sweep and Google Hotels need no Chromium.
-
-## Booking / detail
-
-The MCP process that will call Booking or `fetch=detail` must include the browser extra **and** Chromium in that same env. Installing `viajante[browser]` elsewhere does nothing.
-
-Checkout:
-
-```json
-{
-  "mcpServers": {
-    "viajante": {
-      "command": "uv",
-      "args": ["run", "--extra", "mcp", "--extra", "browser", "viajante-mcp"]
-    }
-  }
-}
-```
-
-```bash
-uv sync --extra mcp --extra browser
-uv run playwright install chromium
-```
-
-## No clone
-
-Claude Desktop, Cursor user MCP, or any `mcpServers` client:
+## Sweep + Google Hotels (no Chromium)
 
 ```json
 {
@@ -73,7 +21,13 @@ Claude Desktop, Cursor user MCP, or any `mcpServers` client:
 }
 ```
 
-With Chromium (install into **this** uvx env):
+That is the install. Reload MCP. The agent gets `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`.
+
+PyPI is unpublished. Do not use `--from viajante[mcp]` until `pypi.org/pypi/viajante/json` returns 200.
+
+## Booking.com or `fetch=detail`
+
+Same MCP process needs the browser extra **and** Chromium in that uvx env. Another venv does not count.
 
 ```json
 {
@@ -94,4 +48,21 @@ With Chromium (install into **this** uvx env):
 uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' playwright install chromium
 ```
 
-`pip install viajante` is not on PyPI yet. Use git until `pypi.org/pypi/viajante/json` returns 200.
+## This checkout (contributors)
+
+`.cursor/mcp.json` is only for developing this tree:
+
+```json
+{
+  "mcpServers": {
+    "viajante": {
+      "command": "uv",
+      "args": ["run", "--extra", "mcp", "viajante-mcp"]
+    }
+  }
+}
+```
+
+```bash
+uv sync --extra mcp
+```
