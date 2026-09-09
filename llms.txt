@@ -72,8 +72,12 @@ Do not invent a bag fee.
 ```python
 from viajante import get_flights, plan_prompt, search_flights, SearchErrorCode, QueryFailure
 
-report = get_flights("JFK-LHR:2026-10-15", fetch="sweep")
-plan = plan_prompt("Flights JFK-LHR on 2026-10-15")
+# Dates must be on or after today. Do not copy aged examples.
+report = get_flights("JFK-LHR:YYYY-MM-DD", fetch="sweep")
+plan = plan_prompt("Flights JFK-LHR on YYYY-MM-DD")
 ```
 
 Sweep `proxy` covers flights, dates, flex, and explore. Hotels have no proxy flag.
+
+This checkout: Cursor MCP is `.cursor/mcp.json` (`uv run --extra mcp viajante-mcp`).
+Signatures: `src/viajante/mcp_server.py`.

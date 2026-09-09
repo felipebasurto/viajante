@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 import threading
 import types
@@ -992,6 +993,13 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertNotIn("from_date", text)
         self.assertNotIn("hotel_location", text)
         self.assertNotIn("start_date", text)
+
+    def test_project_mcp_json_points_at_viajante_mcp(self) -> None:
+        data = json.loads(Path(".cursor/mcp.json").read_text(encoding="utf-8"))
+        server = data["mcpServers"]["viajante"]
+        self.assertEqual(server["command"], "uv")
+        self.assertIn("viajante-mcp", server["args"])
+        self.assertIn("mcp", server["args"])
 
 
 if __name__ == "__main__":
