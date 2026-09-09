@@ -326,6 +326,13 @@ class EnglishHotelEvidenceSeamTests(unittest.TestCase):
 
 
 class HotelOrchestrationTests(unittest.TestCase):
+    def test_google_search_rejects_min_rating_above_five(self) -> None:
+        with patch("viajante.hotels.GoogleHotelsSource") as source:
+            with self.assertRaises(ValueError) as ctx:
+                search_hotels((query(min_rating=8.5),), source="google", currency="USD")
+        source.assert_not_called()
+        self.assertIn("at most 5", str(ctx.exception))
+
     def test_failure_then_success_resets_once(self) -> None:
         source = FakeSource(
             [

@@ -21,6 +21,50 @@ jobs:
       - run: uv sync --locked --no-dev --extra mcp --extra browser
       - run: uv run --no-sync python -m unittest discover -s tests -v
 
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv build
+      - name: Install wheel in a venv and smoke CLI plus MCP
+        run: |
+          uv venv /tmp/viajante-wheel
+          WHEEL=$(echo dist/*.whl)
+          uv pip install --python /tmp/viajante-wheel "$WHEEL"
+          uv pip install --python /tmp/viajante-wheel 'mcp>=1.6,<2'
+          /tmp/viajante-wheel/bin/viajante airports JFK
+          /tmp/viajante-wheel/bin/python -c "from importlib.resources import files; t=files('viajante').joinpath('THIRD_PARTY_NOTICES').read_text(); assert 'Permission is hereby granted' in t"
+          /tmp/viajante-wheel/bin/python - <<'PY'
+          import asyncio
+          from mcp import ClientSession
+          from mcp.client.stdio import StdioServerParameters, stdio_client
+
+          async def main() -> None:
+              params = StdioServerParameters(command="/tmp/viajante-wheel/bin/viajante-mcp")
+              async with stdio_client(params) as (read, write):
+                  async with ClientSession(read, write) as session:
+                      await session.initialize()
+                      tools = await session.list_tools()
+                      names = {tool.name for tool in tools.tools}
+                      expected = {
+                          "search_flights",
+                          "search_dates",
+                          "search_flex",
+                          "search_explore",
+                          "search_hotels",
+                          "search_trip",
+                          "lookup_airports",
+                      }
+                      missing = expected - names
+                      assert not missing, missing
+
+          asyncio.run(main())
+          PY
+
   lint:
     runs-on: ubuntu-latest
     steps:

@@ -1266,6 +1266,73 @@ class GetFlightsTests(unittest.TestCase):
             get_flights("JFK-LHR:2026-10-01", proxy="http://127.0.0.1:8080")
         self.assertEqual(search.call_args.kwargs["proxy"], "http://127.0.0.1:8080")
 
+    def test_named_kwargs_overlay_prompt(self) -> None:
+        fake = SearchReport(
+            searched_at=datetime(2026, 8, 10),
+            currency="USD",
+            queries=(),
+        )
+        with patch("viajante.flights.search_flights", return_value=fake) as search:
+            get_flights(
+                "Flights JFK-LHR on 2026-10-15",
+                adults=2,
+                children=1,
+                bags=1,
+                cabin="business",
+                max_stops=0,
+                price_cap=500,
+                fetch="sweep",
+            )
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.adults, 2)
+        self.assertEqual(trip.children, 1)
+        self.assertEqual(trip.bags, 1)
+        self.assertEqual(trip.cabin, "business")
+        self.assertEqual(trip.max_stops, 0)
+        self.assertEqual(trip.price_cap, 500)
+
+    def test_unset_kwargs_leave_plan_occupancy(self) -> None:
+        fake = SearchReport(
+            searched_at=datetime(2026, 8, 10),
+            currency="USD",
+            queries=(),
+        )
+        with patch("viajante.flights.search_flights", return_value=fake) as search:
+            get_flights(
+                "Flights JFK-LHR on 2026-10-15 --adults 2 --cabin business",
+                fetch="sweep",
+            )
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.adults, 2)
+        self.assertEqual(trip.cabin, "business")
+
+    def test_named_kwargs_overlay_built_trip(self) -> None:
+        fake = SearchReport(
+            searched_at=datetime(2026, 8, 10),
+            currency="USD",
+            queries=(),
+        )
+        query = FlightQuery("JFK", "LHR", date(2026, 10, 15), adults=1, cabin="economy")
+        with patch("viajante.flights.search_flights", return_value=fake) as search:
+            get_flights(query, bags=1, adults=2, fetch="sweep")
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.adults, 2)
+        self.assertEqual(trip.bags, 1)
+        self.assertEqual(trip.cabin, "economy")
+
+    def test_unset_kwargs_leave_built_trip(self) -> None:
+        fake = SearchReport(
+            searched_at=datetime(2026, 8, 10),
+            currency="USD",
+            queries=(),
+        )
+        query = FlightQuery("JFK", "LHR", date(2026, 10, 15), adults=3, cabin="first")
+        with patch("viajante.flights.search_flights", return_value=fake) as search:
+            get_flights(query, fetch="sweep")
+        trip = search.call_args.args[0][0]
+        self.assertEqual(trip.adults, 3)
+        self.assertEqual(trip.cabin, "first")
+
 
 class OfferFilterTests(unittest.TestCase):
     def test_include_airlines_keeps_matching_codes(self) -> None:

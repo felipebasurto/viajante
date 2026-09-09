@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "viajante": {
+      "command": "uv",
+      "args": ["run", "--extra", "mcp", "viajante-mcp"]
+    }
+  }
+}

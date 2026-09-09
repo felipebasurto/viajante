@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 import threading
 import types
@@ -956,6 +957,54 @@ class McpServerImportTests(unittest.TestCase):
                 "lookup_airports",
             ],
         )
+
+
+class McpWorkerTests(unittest.TestCase):
+    def test_tool_body_runs_off_the_asyncio_loop(self) -> None:
+        import asyncio
+        import threading
+
+        from viajante.mcp_server import run_mcp_tool
+
+        def body() -> tuple[bool, str]:
+            try:
+                asyncio.get_running_loop()
+                loop_running = True
+            except RuntimeError:
+                loop_running = False
+            return loop_running, threading.current_thread().name
+
+        async def main() -> tuple[bool, str]:
+            return await run_mcp_tool(body)
+
+        loop_running, name = asyncio.run(main())
+        self.assertFalse(loop_running)
+        self.assertTrue(name.startswith("viajante-mcp"))
+
+
+class ReadmeContractTests(unittest.TestCase):
+    def test_mcp_examples_use_real_tool_arguments(self) -> None:
+        text = Path("README.md").read_text(encoding="utf-8")
+        self.assertIn("start=", text)
+        self.assertIn("around=", text)
+        self.assertIn("location=", text)
+        self.assertNotIn("from_date", text)
+        self.assertNotIn("hotel_location", text)
+        self.assertNotIn("start_date", text)
+
+    def test_project_mcp_json_points_at_viajante_mcp(self) -> None:
+        data = json.loads(Path(".cursor/mcp.json").read_text(encoding="utf-8"))
+        server = data["mcpServers"]["viajante"]
+        self.assertEqual(server["command"], "uv")
+        self.assertIn("viajante-mcp", server["args"])
+        self.assertIn("mcp", server["args"])
+
+    def test_skill_does_not_bake_calendar_dates(self) -> None:
+        skill = Path(".cursor/skills/viajante/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("[mcp.md](mcp.md)", skill)
+        self.assertNotRegex(skill, r"20\d{2}-\d{2}-\d{2}")
+        mcp = Path(".cursor/skills/viajante/mcp.md").read_text(encoding="utf-8")
+        self.assertIn("viajante-mcp", mcp)
 
 
 if __name__ == "__main__":

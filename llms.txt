@@ -20,8 +20,29 @@ Fetch locale is English. User prompts may be any language. No implied home hub.
 }
 ```
 
-After PyPI: `--from viajante[mcp]`. Sweep and Google Hotels need no Chromium.
-Detail scrape and Booking.com: `pip install 'viajante[browser]' && playwright install chromium`.
+After PyPI publishes, `--from viajante[mcp]`. Sweep and Google Hotels need no Chromium.
+Detail scrape and Booking.com need both extras in the **same** uvx environment:
+
+```json
+{
+  "mcpServers": {
+    "viajante": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/felipebasurto/viajante.git[mcp,browser]",
+        "viajante-mcp"
+      ]
+    }
+  }
+}
+```
+
+```bash
+uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' playwright install chromium
+```
+
+Installing `viajante[browser]` elsewhere does not update the uvx environment.
 
 ## Tools
 
@@ -49,5 +70,11 @@ Do not invent a bag fee.
 ## Python
 
 ```python
-from viajante import search_flights, SearchErrorCode, QueryFailure
+from viajante import get_flights, plan_prompt, search_flights, SearchErrorCode, QueryFailure
+
+report = get_flights("JFK-LHR:YYYY-MM-DD", fetch="sweep")
+plan = plan_prompt("Flights JFK-LHR on YYYY-MM-DD")
 ```
+
+Sweep `proxy` covers flights, dates, flex, and explore. Hotels have no proxy flag.
+Signatures: `src/viajante/mcp_server.py`.

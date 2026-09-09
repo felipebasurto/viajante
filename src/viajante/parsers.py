@@ -6,42 +6,76 @@ import re
 
 from viajante.models import CancellationEvidence, LodgingKind, PropertyTypeEvidence
 
-_PRICE_NUMBER = re.compile(r"([\d.,]+)")
+_PRICE_NUMBER = re.compile(r"([\d.,']+)")
+_CURRENCY_PREFIX = re.compile(r"([A-Za-z]{3})")
+_THREE_DEC_CURRENCIES = frozenset({"BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"})
+_APOSTROPHE_GROUPS = re.compile(r"^-?\d{1,3}(?:'\d{3})+(?:[.,]\d{1,2})?$")
 _DURATION_DAYS = re.compile(r"(\d+)\s*(?:days?|d)\b")
 _DURATION_HOURS = re.compile(r"(\d+)\s*(?:h|hr|hrs|hours?)\b")
 _DURATION_MINUTES = re.compile(r"(\d+)\s*(?:min|mins|minutes?|m)\b")
 _DIGITS = re.compile(r"(\d+)")
 
 
-def parse_price(price_text: str | None) -> float | None:
-    if not price_text:
-        return None
-    cleaned = price_text.replace("\xa0", "").replace(" ", "").replace("€", "").strip()
-    m = _PRICE_NUMBER.search(cleaned)
-    if not m:
-        return None
-    num = m.group(1)
-    if cleaned.startswith("-"):
-        num = f"-{num}"
+def _parse_grouped_number(num: str, *, three_decimal: bool) -> float:
+    if "'" in num:
+        if not _APOSTROPHE_GROUPS.fullmatch(num):
+            raise ValueError("malformed apostrophe grouping")
+        num = num.replace("'", "")
     if "," in num and "." in num:
         if num.rfind(",") > num.rfind("."):
             return float(num.replace(".", "").replace(",", "."))
         return float(num.replace(",", ""))
     if "," in num:
-        frac = num.rsplit(",", 1)[-1]
+        parts = num.split(",")
+        if len(parts) > 2:
+            if not all(len(part) == 3 and part.isdigit() for part in parts[1:]):
+                raise ValueError("inconsistent comma groups")
+            return float("".join(parts))
+        frac = parts[-1]
         if len(frac) <= 2 and frac.isdigit():
             return float(num.replace(",", "."))
-        return float(num.replace(",", ""))
+        if len(frac) == 3 and frac.isdigit():
+            return float("".join(parts))
+        raise ValueError("malformed comma number")
     if "." in num:
         parts = num.split(".")
         if len(parts) == 2 and len(parts[1]) == 3 and parts[1].isdigit():
+            if three_decimal:
+                return float(num)
             return float(parts[0] + parts[1])
-        if len(parts) > 2 and all(len(p) == 3 for p in parts[1:]):
+        if len(parts) > 2 and all(len(part) == 3 for part in parts[1:]):
             return float(parts[0] + "".join(parts[1:]))
         if len(parts) == 2 and len(parts[1]) <= 2:
             return float(num)
+        raise ValueError("malformed dotted number")
+    return float(num)
+
+
+def parse_price(price_text: str | None) -> float | None:
+    if not price_text:
+        return None
+    cleaned = (
+        price_text.replace("\xa0", "")
+        .replace(" ", "")
+        .replace("€", "")
+        .replace("\u2019", "'")
+        .strip()
+    )
+    match = _PRICE_NUMBER.search(cleaned)
+    if not match:
+        return None
+    num = match.group(1)
+    if cleaned.startswith("-"):
+        num = f"-{num}"
+    leftover = (cleaned[: match.start()] + cleaned[match.end() :]).replace("-", "")
+    if re.search(r"\d", leftover):
+        return None
+    iso = None
+    prefix = _CURRENCY_PREFIX.search(cleaned[: match.start()])
+    if prefix:
+        iso = prefix.group(1).upper()
     try:
-        return float(num)
+        return _parse_grouped_number(num, three_decimal=iso in _THREE_DEC_CURRENCIES)
     except ValueError:
         return None
 

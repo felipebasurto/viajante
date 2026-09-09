@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
-from typing import Optional, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from typing import Callable, Optional, Sequence, TypeVar
 
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
@@ -17,13 +20,17 @@ from viajante.mcp_handlers import (
     search_trip_tool,
 )
 
+_T = TypeVar("_T")
+_SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viajante-mcp")
+
 _HELP = """\
 viajante-mcp is the stdio MCP server for local flight and hotel search.
 
 Install:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp
 Checkout: uv sync --extra mcp && viajante-mcp
-Browser:  pip install 'viajante[browser]' && playwright install chromium
-          (only for --fetch detail and Booking.com)
+Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' \\
+            playwright install chromium
+          (only for --fetch detail and Booking.com; extras must match the MCP env)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_trip, lookup_airports.
@@ -44,13 +51,18 @@ Fetch locale is English. User prompts may be any language.
 """
 
 
+async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_SEARCH_EXECUTOR, partial(fn, *args, **kwargs))
+
+
 def build_server():
     from mcp.server.fastmcp import FastMCP
 
     server = FastMCP("viajante", instructions=_HELP)
 
     @server.tool()
-    def search_flights(
+    async def search_flights(
         routes: list[str],
         trip: str = "one-way",
         max_stops: int = 1,
@@ -98,7 +110,8 @@ def build_server():
         shopping request. Do not invent a bag fee.
         """
         return dict(
-            search_flights_tool(
+            await run_mcp_tool(
+                search_flights_tool,
                 routes,
                 trip=trip,
                 max_stops=max_stops,
@@ -138,7 +151,7 @@ def build_server():
         )
 
     @server.tool()
-    def search_dates(
+    async def search_dates(
         route: str,
         start: str,
         end: str,
@@ -184,7 +197,8 @@ def build_server():
         convert for the user. Unnamed baggage_buffer is 0.
         """
         return dict(
-            search_dates_tool(
+            await run_mcp_tool(
+                search_dates_tool,
                 route,
                 start,
                 end,
@@ -225,7 +239,7 @@ def build_server():
         )
 
     @server.tool()
-    def search_flex(
+    async def search_flex(
         route: str,
         around: str,
         flex: int,
@@ -272,7 +286,8 @@ def build_server():
         convert for the user. Unnamed baggage_buffer is 0.
         """
         return dict(
-            search_flex_tool(
+            await run_mcp_tool(
+                search_flex_tool,
                 route,
                 around,
                 flex,
@@ -314,7 +329,7 @@ def build_server():
         )
 
     @server.tool()
-    def search_explore(
+    async def search_explore(
         origin: str,
         start: str | None = None,
         days: int = 7,
@@ -360,7 +375,8 @@ def build_server():
         convert for the user. Unnamed baggage_buffer is 0.
         """
         return dict(
-            search_explore_tool(
+            await run_mcp_tool(
+                search_explore_tool,
                 origin,
                 start,
                 days=days,
@@ -402,7 +418,7 @@ def build_server():
         )
 
     @server.tool()
-    def search_hotels(
+    async def search_hotels(
         location: str,
         check_in: str,
         check_out: str,
@@ -422,7 +438,8 @@ def build_server():
         user. Do not invent ISO 4217 from vibe.
         """
         return dict(
-            search_hotels_tool(
+            await run_mcp_tool(
+                search_hotels_tool,
                 location,
                 check_in,
                 check_out,
@@ -438,7 +455,7 @@ def build_server():
         )
 
     @server.tool()
-    def search_trip(
+    async def search_trip(
         routes: list[str],
         location: str,
         check_in: str | None = None,
@@ -485,7 +502,8 @@ def build_server():
         shopping request. The same currency is passed to hotels.
         """
         return dict(
-            search_trip_tool(
+            await run_mcp_tool(
+                search_trip_tool,
                 routes,
                 location,
                 check_in=check_in,
@@ -528,8 +546,8 @@ def build_server():
         )
 
     @server.tool()
-    def lookup_airports(query: str, limit: int = 20) -> list:
-        return lookup_airports_tool(query, limit=limit)
+    async def lookup_airports(query: str, limit: int = 20) -> list:
+        return await run_mcp_tool(lookup_airports_tool, query, limit=limit)
 
     return server
 

@@ -89,8 +89,9 @@ on owned layover city+clock; unknown cannot prove include or exclude.
 `--price-cap` is a local post-filter of owned amounts in the quote currency
 (shopping index 7 stays `None`). Flex is calendar then one shop (miss = empty).
 Trip total is omitted if either side misses, dates do not overlap, or
-currencies differ. Nearby alternatives take the cheapest owned fare in that
-city group, not a sum.
+currencies differ. `search_trip` / `viajante trip` reject child or infant
+occupancy (hotel occupancy is adults-only). Nearby alternatives take the
+cheapest owned fare in that city group, not a sum.
 
 `--baggage-buffer` / MCP `baggage_buffer` is a ranking add-on in the same quote
 currency. **Unnamed is 0.** Named `N` is used as-is (not FX-converted). Compare
@@ -199,7 +200,8 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   second opinion). Do not invent prices from snippets or write them into `--save`
   JSON.
 - `viajante trip` / MCP `search_trip` run flights then hotels sequentially (one
-  lock). Hotel `price_basis` stays `total_stay`. Never invent a fare or a stay.
+  lock). Child or infant occupancy is rejected (hotel occupancy is adults-only).
+  Hotel `price_basis` stays `total_stay`. Never invent a fare or a stay.
 
 ## Tests
 

@@ -6,7 +6,6 @@ flight then hotel loops sequentially. Never invents a fare or a stay.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
@@ -15,6 +14,7 @@ from viajante.airports import get_airport
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
+    overlay_trip_fields,
     search_flights,
 )
 from viajante.hotels import HotelSourceName, search_hotels
@@ -162,25 +162,6 @@ def owned_trip_total(
     )
 
 
-def _overlay_trip_shop_filters(
-    trips: Sequence[Trip],
-    *,
-    bags: Optional[int] = None,
-    carry_on: Optional[int] = None,
-    price_cap: Optional[int] = None,
-) -> tuple[Trip, ...]:
-    overlay: dict[str, object] = {}
-    if bags is not None:
-        overlay["bags"] = bags
-    if carry_on is not None:
-        overlay["carry_on"] = carry_on
-    if price_cap is not None:
-        overlay["price_cap"] = price_cap
-    if not overlay:
-        return tuple(trips)
-    return tuple(replace(trip, **overlay) for trip in trips)
-
-
 def search_trip(
     trips: Sequence[Trip],
     hotel_query: HotelQuery,
@@ -216,10 +197,15 @@ def search_trip(
     """Run flights then hotels sequentially. Omit trip_total when either misses."""
     if not trips:
         raise ValueError("at least one query is required")
+    if any(item.children or item.infants_in_seat or item.infants_on_lap for item in trips):
+        raise ValueError(
+            "search_trip cannot combine child or infant occupancy with hotels; "
+            "hotel occupancy is adults-only. Use search_flights, then search_hotels."
+        )
     currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     flights = search_flights(
-        _overlay_trip_shop_filters(
+        overlay_trip_fields(
             trips,
             bags=bags,
             carry_on=carry_on,
