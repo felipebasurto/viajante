@@ -958,5 +958,41 @@ class McpServerImportTests(unittest.TestCase):
         )
 
 
+class McpWorkerTests(unittest.TestCase):
+    def test_tool_body_runs_off_the_asyncio_loop(self) -> None:
+        import asyncio
+        import threading
+
+        from viajante.mcp_server import _SEARCH_EXECUTOR, run_mcp_tool
+
+        self.assertEqual(_SEARCH_EXECUTOR._max_workers, 1)
+
+        def body() -> tuple[bool, str]:
+            try:
+                asyncio.get_running_loop()
+                loop_running = True
+            except RuntimeError:
+                loop_running = False
+            return loop_running, threading.current_thread().name
+
+        async def main() -> tuple[bool, str]:
+            return await run_mcp_tool(body)
+
+        loop_running, name = asyncio.run(main())
+        self.assertFalse(loop_running)
+        self.assertTrue(name.startswith("viajante-mcp"))
+
+
+class ReadmeContractTests(unittest.TestCase):
+    def test_mcp_examples_use_real_tool_arguments(self) -> None:
+        text = Path("README.md").read_text(encoding="utf-8")
+        self.assertIn("start=", text)
+        self.assertIn("around=", text)
+        self.assertIn("location=", text)
+        self.assertNotIn("from_date", text)
+        self.assertNotIn("hotel_location", text)
+        self.assertNotIn("start_date", text)
+
+
 if __name__ == "__main__":
     unittest.main()

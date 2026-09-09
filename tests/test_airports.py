@@ -134,5 +134,15 @@ class AirportCliTests(unittest.TestCase):
         self.assertIn("viajante airports london", buffer.getvalue())
 
 
+class BundledAirportNoticeTests(unittest.TestCase):
+    def test_packaged_notice_includes_airportsdata_mit(self) -> None:
+        from importlib.resources import files
+
+        text = files("viajante").joinpath("THIRD_PARTY_NOTICES").read_text(encoding="utf-8")
+        self.assertIn("airportsdata", text)
+        self.assertIn("Permission is hereby granted", text)
+        self.assertIn("Mike Borsetti", text)
+
+
 if __name__ == "__main__":
     unittest.main()

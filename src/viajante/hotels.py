@@ -296,6 +296,10 @@ def search_hotels(
         raise ValueError("top must be positive")
     if source not in ("booking", "google"):
         raise ValueError("source must be booking or google")
+    if source == "google":
+        for query in queries:
+            if query.min_rating is not None and query.min_rating > 5:
+                raise ValueError("min_rating must be at most 5 with source google")
     currency = resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
     if source == "google":
         hotel_source: _HotelSource = GoogleHotelsSource(currency=currency)

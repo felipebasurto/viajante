@@ -111,7 +111,10 @@ NEARBY_MAX = 5
 
 
 def _load_iata_airports() -> dict[str, Airport]:
-    """Load iata/name/city/country. Prefer the marshal blob; geo still uses airportsdata."""
+    """Load iata/name/city/country. Prefer the marshal blob; geo still uses airportsdata.
+
+    The blob redistributes airportsdata fields. The MIT notice is THIRD_PARTY_NOTICES.
+    """
     cached = files("viajante").joinpath("iata_rows.marshal")
     try:
         payload = marshal.loads(cached.read_bytes())

@@ -414,6 +414,38 @@ class TripJoinTests(unittest.TestCase):
         self.assertEqual(report.hotels.price_basis, "total_stay")
         self.assertEqual(report.fetch_ms, 180)
 
+    def test_search_trip_rejects_child_occupancy_before_fetch(self) -> None:
+        hotel = HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10))
+        with patch("viajante.trip.search_flights") as flights:
+            with patch("viajante.trip.search_hotels") as hotels:
+                with self.assertRaises(ValueError) as ctx:
+                    search_trip(
+                        (FlightQuery("SIN", "MEL", date(2026, 11, 6), children=1),),
+                        hotel,
+                    )
+        flights.assert_not_called()
+        hotels.assert_not_called()
+        self.assertIn("adults-only", str(ctx.exception))
+        self.assertIn("search_flights", str(ctx.exception))
+
+    def test_search_trip_rejects_infant_occupancy_before_fetch(self) -> None:
+        hotel = HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10))
+        with patch("viajante.trip.search_flights") as flights:
+            with self.assertRaises(ValueError):
+                search_trip(
+                    (
+                        RoundTrip(
+                            "SIN",
+                            "MEL",
+                            date(2026, 11, 6),
+                            date(2026, 11, 10),
+                            infants_in_seat=1,
+                        ),
+                    ),
+                    hotel,
+                )
+        flights.assert_not_called()
+
     def test_trip_total_rejects_invented_zero(self) -> None:
         with self.assertRaises(ValueError):
             TripTotal(flight_fare=0, hotel_stay=10, total=10, nights=1)

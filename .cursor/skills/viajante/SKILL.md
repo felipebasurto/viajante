@@ -40,7 +40,7 @@ uv run viajante bench
 uv run viajante bench --prompts
 ```
 
-Route grammar: `JFK-LHR:2026-09-15`, or several dates comma-separated on one route. `JFK-NRT:2026-10-09:2026-10-20` without `--trip` is sugar for outbound + return as two one-way queries. `--trip rt` POSTs one package. You can still pass a return leg as a second route.
+Route grammar: `JFK-LHR:2026-10-15`, or several dates comma-separated on one route. `JFK-NRT:2026-10-09:2026-10-20` without `--trip` is sugar for outbound + return as two one-way queries. `--trip rt` POSTs one package. You can still pass a return leg as a second route.
 
 `--nearby` is opt-in same-city IATA on flights, dates, flex, explore, and trip (default off; named open-jaw airports stay; no invented codes). `--exclude-airports` / `--include-airports` are named owned IATA lists (same parse as via). Include is dests only. Exclude wins on overlap. Named origin/dest in an exclude list is empty. Do not rewrite to a substitute. `--exclude-regions` is explore-only (owned IANA tz prefixes; unknown tz cannot prove keep). `--via` / `--exclude-via` / `--no-overnight` / `--require-overnight` filter owned layover city+clock; unknown cannot prove include or exclude. `--arrive-before` / `--depart-after` are named HH:MM. Named `--price-cap` is a local post-filter of owned amounts in the quote currency. Compact calendar cells and Explore catalog places are not offers and stay unfiltered.
 
@@ -53,17 +53,17 @@ MCP (stdio, no auth): `uvx --from 'git+https://github.com/felipebasurto/viajante
 uv run python -m unittest discover -s tests -v
 
 # Fast HTTP shortlist (no Chromium)
-uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep --top 3
-uv run viajante flights BOS-LHR:2026-09-18 --nearby --fetch sweep --top 3
+uv run viajante flights JFK-LHR:2026-10-15 --fetch sweep --top 3
+uv run viajante flights BOS-LHR:2026-10-18 --nearby --fetch sweep --top 3
 uv run viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep --top 3
-uv run viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14
-uv run viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --sort duration
-uv run viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
-uv run viajante explore JFK --from 2026-09-15 --days 7 --exclude-airports HND
-uv run viajante explore JFK --from 2026-09-15 --days 7 --include-airports NRT,HND
-uv run viajante explore NRT --from 2026-09-15 --days 7 --exclude-regions asia
-uv run viajante explore JFK --from 2026-09-15 --days 7 --sort duration
-uv run viajante explore JFK --from 2026-09-15 --days 7 --no-overnight any
+uv run viajante dates BOS-LHR --from 2026-10-01 --to 2026-10-14
+uv run viajante dates JFK-LHR --from 2026-10-01 --to 2026-10-14 --sort duration
+uv run viajante flex BOS-LHR --around 2026-10-12 --flex 3 --nights 7
+uv run viajante explore JFK --from 2026-10-15 --days 7 --exclude-airports HND
+uv run viajante explore JFK --from 2026-10-15 --days 7 --include-airports NRT,HND
+uv run viajante explore NRT --from 2026-10-15 --days 7 --exclude-regions asia
+uv run viajante explore JFK --from 2026-10-15 --days 7 --sort duration
+uv run viajante explore JFK --from 2026-10-15 --days 7 --no-overnight any
 uv run viajante airports tokyo
 
 # Playwright max evidence
@@ -91,7 +91,7 @@ Do not run a hotel search without confirmation when lodging intent is unclear.
 ## Multi-leg trips
 
 ```bash
-uv run viajante flights JFK-LHR:2026-09-25 LHR-JFK:2026-09-27 --max-stops 0
+uv run viajante flights JFK-LHR:2026-10-25 LHR-JFK:2026-10-27 --max-stops 0
 ```
 
 Each route and each comma-separated date is a separate sequential query. `--max-stops` applies to every leg in that invocation. Progress lines go to stderr as `[i/N] ORIGIN -> DEST DATE`.
@@ -104,7 +104,7 @@ Each route and each comma-separated date is a separate sequential query. `--max-
 
 Use sweep to shortlist a 10–20 route batch. Use `--bags N` / `--carry-on` on sweep when the user asked for bags. Use `--fetch detail` when they want times or the full card set. Do not mix backends across legs of one report unless that fallback fired.
 
-For “when is this route cheap?” use `viajante dates` (31-day cap; `summary` omitted under three priced days). For a stay, add `--nights N`. For “around this date, ±N days, then price the winner” use `viajante flex` (calendar then one shop; miss = empty). For “where is cheap from this airport?” use `viajante explore`. For flights plus a hotel on overlapping dates, use `viajante trip` / `search_trip` (omit the sum if either side misses, dates do not overlap, or currencies differ). Do not brute-force comma date lists or every airport when these commands exist. `viajante airports tokyo` resolves IATA codes offline.
+For “when is this route cheap?” use `viajante dates` (31-day cap; `summary` omitted under three priced days). For a stay, add `--nights N`. For “around this date, ±N days, then price the winner” use `viajante flex` (calendar then one shop; miss = empty). For “where is cheap from this airport?” use `viajante explore`. For flights plus a hotel on overlapping dates, use `viajante trip` / `search_trip` (omit the sum if either side misses, dates do not overlap, or currencies differ; reject child or infant occupancy because hotel occupancy is adults-only). Do not brute-force comma date lists or every airport when these commands exist. `viajante airports tokyo` resolves IATA codes offline.
 
 Named `--sort` / `--baggage-buffer` on dates and explore follow `src/viajante/cli.py` and `src/viajante/flights.py`. Unnamed dates stay date order. Unnamed explore stays cheapest-first. `--baggage-buffer` ranks explore dests only when sort is ranked. Compact cells have no duration or clock: do not invent one to sort. Sort is order, not a cut. Compact cells omit the buffer stamp. Unnamed buffer is 0.
 

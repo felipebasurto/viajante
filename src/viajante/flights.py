@@ -1878,19 +1878,63 @@ def _search_with_source(
         source.close()
 
 
+def overlay_trip_fields(
+    trips: Sequence[Trip],
+    *,
+    adults: Optional[int] = None,
+    children: Optional[int] = None,
+    infants_in_seat: Optional[int] = None,
+    infants_on_lap: Optional[int] = None,
+    cabin: Optional[FlightCabin] = None,
+    max_stops: Optional[int] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
+) -> tuple[Trip, ...]:
+    overlay: dict[str, object] = {}
+    if adults is not None:
+        overlay["adults"] = adults
+    if children is not None:
+        overlay["children"] = children
+    if infants_in_seat is not None:
+        overlay["infants_in_seat"] = infants_in_seat
+    if infants_on_lap is not None:
+        overlay["infants_on_lap"] = infants_on_lap
+    if cabin is not None:
+        overlay["cabin"] = cabin
+    if bags is not None:
+        overlay["bags"] = bags
+    if carry_on is not None:
+        overlay["carry_on"] = carry_on
+    if price_cap is not None:
+        overlay["price_cap"] = price_cap
+    if max_stops is None and not overlay:
+        return tuple(trips)
+    out: list[Trip] = []
+    for item in trips:
+        extra = dict(overlay)
+        if max_stops is not None:
+            if isinstance(item, MultiCity):
+                extra["legs"] = tuple(replace(leg, max_stops=max_stops) for leg in item.legs)
+            else:
+                extra["max_stops"] = max_stops
+        out.append(replace(item, **extra) if extra else item)
+    return tuple(out)
+
+
 def get_flights(
     query: str | Sequence[str] | Trip | Sequence[Trip],
     *,
     trip: str = "one-way",
-    max_stops: int = 1,
-    adults: int = 1,
-    cabin: FlightCabin = "economy",
+    max_stops: Optional[int] = None,
+    adults: Optional[int] = None,
+    cabin: Optional[FlightCabin] = None,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
+    children: Optional[int] = None,
+    infants_in_seat: Optional[int] = None,
+    infants_on_lap: Optional[int] = None,
     nearby: bool = False,
     top: int = DEFAULT_TOP,
     baggage_buffer: Optional[int] = None,
@@ -1950,6 +1994,24 @@ def get_flights(
         "country": country,
         "proxy": proxy,
     }
+
+    def _search(trips: Sequence[Trip]) -> SearchReport:
+        return search_flights(
+            overlay_trip_fields(
+                trips,
+                adults=adults,
+                children=children,
+                infants_in_seat=infants_in_seat,
+                infants_on_lap=infants_on_lap,
+                cabin=cabin,
+                max_stops=max_stops,
+                bags=bags,
+                carry_on=carry_on,
+                price_cap=price_cap,
+            ),
+            **search_kw,
+        )
+
     if isinstance(query, str) and not _is_route_spec(query):
         from viajante.prompt_plan import plan_prompt, plan_to_trips
 
@@ -1974,34 +2036,34 @@ def get_flights(
             search_kw["sort"] = plan.sort
         if fetch == "auto" and plan.fetch:
             search_kw["fetch"] = plan.fetch
-        return search_flights(trips, **search_kw)
+        return _search(trips)
     if isinstance(query, str):
         specs: Sequence[str] = (query.strip(),)
     elif isinstance(query, (FlightQuery, RoundTrip, MultiCity)):
         trips = expand_nearby_trips((query,), nearby=nearby)
-        return search_flights(trips, **search_kw)
+        return _search(trips)
     else:
         items = tuple(query)
         if items and isinstance(items[0], str):
             specs = items  # type: ignore[assignment]
         else:
             trips = expand_nearby_trips(_as_trip_tuple(items), nearby=nearby)  # type: ignore[arg-type]
-            return search_flights(trips, **search_kw)
+            return _search(trips)
     parsed_plan = parse_flight_plan(
         specs,
         trip=trip,
-        max_stops=max_stops,
-        adults=adults,
-        cabin=cabin,
+        max_stops=max_stops if max_stops is not None else 1,
+        adults=adults if adults is not None else 1,
+        cabin=cabin if cabin is not None else "economy",
         bags=bags,
         carry_on=carry_on,
         price_cap=price_cap,
-        children=children,
-        infants_in_seat=infants_in_seat,
-        infants_on_lap=infants_on_lap,
+        children=children if children is not None else 0,
+        infants_in_seat=infants_in_seat if infants_in_seat is not None else 0,
+        infants_on_lap=infants_on_lap if infants_on_lap is not None else 0,
     )
     trips = expand_nearby_trips(_as_trip_tuple(parsed_plan), nearby=nearby)
-    return search_flights(trips, **search_kw)
+    return _search(trips)
 
 
 def search_flights(
