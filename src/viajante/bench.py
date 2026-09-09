@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-from viajante.flights import DEFAULT_BAGGAGE_BUFFER_EUR, DEFAULT_TOP, search_flights
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.google_flights import NoFlightsFound, parse_flight_cards, parse_http_flight_cards
 from viajante.google_flights_rpc import (
     EmptyShoppingResults,
@@ -28,6 +28,7 @@ from viajante.google_flights_rpc import (
     parse_shopping_body,
 )
 from viajante.models import FlightQuery
+from viajante.quote import resolve_baggage_buffer
 
 LIVE_ENV = "VIAJANTE_BENCH_LIVE"
 BENCH_RUNNING_ENV = "VIAJANTE_BENCH_RUNNING"
@@ -35,7 +36,7 @@ MANIFEST_NAME = "manifest.json"
 
 # Product defaults the bench must keep honest. Changing these to "win" is a fail.
 REQUIRED_FLIGHT_TOP = 8
-REQUIRED_BAGGAGE_BUFFER_EUR = 70
+REQUIRED_UNNAMED_BAGGAGE_BUFFER = 0
 
 # Named owned fixtures. Dropping a name from the manifest is a fail.
 REQUIRED_FIXTURE_NAMES = frozenset(
@@ -135,10 +136,11 @@ def check_product_defaults() -> None:
         raise BenchIntegrityError(
             f"DEFAULT_TOP must stay {REQUIRED_FLIGHT_TOP} (got {DEFAULT_TOP})"
         )
-    if DEFAULT_BAGGAGE_BUFFER_EUR != REQUIRED_BAGGAGE_BUFFER_EUR:
+    if resolve_baggage_buffer(None, "EUR") != REQUIRED_UNNAMED_BAGGAGE_BUFFER:
         raise BenchIntegrityError(
-            "DEFAULT_BAGGAGE_BUFFER_EUR must stay "
-            f"{REQUIRED_BAGGAGE_BUFFER_EUR} (got {DEFAULT_BAGGAGE_BUFFER_EUR})"
+            "unnamed baggage buffer must stay "
+            f"{REQUIRED_UNNAMED_BAGGAGE_BUFFER} "
+            f"(got {resolve_baggage_buffer(None, 'EUR')})"
         )
     top_default = inspect.signature(search_flights).parameters["top"].default
     if top_default != REQUIRED_FLIGHT_TOP:
@@ -309,7 +311,7 @@ def maybe_live_sweep() -> Optional[int]:
         max_stops=0,
     )
     started = time.perf_counter()
-    search_flights((query,), top=1, fetch="sweep", buffer_eur=0)
+    search_flights((query,), top=1, fetch="sweep", baggage_buffer=0)
     return _ms_since(started)
 
 

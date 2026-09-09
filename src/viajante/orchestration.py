@@ -31,6 +31,10 @@ NON_RETRIABLE_CODES = frozenset(
 )
 
 ERROR_MESSAGE_MAX_CHARS = 500
+BROWSER_INSTALL_HINT = (
+    "Chromium is not available to Playwright. "
+    "Install viajante[browser] and run 'playwright install chromium'."
+)
 
 
 def _clip_error_message(text: str, *, limit: int = ERROR_MESSAGE_MAX_CHARS) -> str:
@@ -47,7 +51,7 @@ def classify_failure(exc: BaseException) -> SearchError:
     if any(marker in lowered for marker in BROWSER_UNAVAILABLE_MARKERS):
         return SearchError(
             code=SearchErrorCode.BROWSER_UNAVAILABLE,
-            message=("Chromium is not available to Playwright. Run 'playwright install chromium'."),
+            message=BROWSER_INSTALL_HINT,
         )
     return SearchError(code=SearchErrorCode.FETCH_FAILED, message=_clip_error_message(text))
 

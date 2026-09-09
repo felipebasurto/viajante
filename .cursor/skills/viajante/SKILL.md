@@ -11,13 +11,15 @@ Fetch locale is English (`hl=en` / `lang=en`, `locale=en-US`). User prompts may 
 
 ## Invocation
 
-Prefer the checkout CLI:
+Agents: `uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp` (stdio MCP, no local path). Sweep and Google Hotels need no Chromium.
+
+Checkout CLI:
 
 ```bash
 uv run viajante ...
 ```
 
-After `uv sync` and `uv run playwright install chromium`, the entry point is available. Do not use a global `viajante` binary from another checkout.
+After `uv sync` the CLI is available. Playwright Chromium is only for `--fetch detail` and Booking.com (`uv sync --extra browser` then `uv run playwright install chromium`). Do not use a global `viajante` binary from another checkout when you mean this tree.
 
 ## Commands
 
@@ -42,7 +44,7 @@ Route grammar: `JFK-LHR:2026-09-15`, or several dates comma-separated on one rou
 
 `--nearby` is opt-in same-city IATA on flights, dates, flex, explore, and trip (default off; named open-jaw airports stay; no invented codes). `--exclude-airports` / `--include-airports` are named owned IATA lists (same parse as via). Include is dests only. Exclude wins on overlap. Named origin/dest in an exclude list is empty. Do not rewrite to a substitute. `--exclude-regions` is explore-only (owned IANA tz prefixes; unknown tz cannot prove keep). `--via` / `--exclude-via` / `--no-overnight` / `--require-overnight` filter owned layover city+clock; unknown cannot prove include or exclude. `--arrive-before` / `--depart-after` are named HH:MM. Named `--price-cap` is a local post-filter of owned amounts in the quote currency. Compact calendar cells and Explore catalog places are not offers and stay unfiltered.
 
-MCP (stdio, no auth): `uv sync --extra mcp` then `viajante-mcp`. Tools: `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`. Signatures: `src/viajante/mcp_server.py`. Currency is `currency` or inferred from a named origin’s owned country; if unknown, ask. Viajante does not convert; the MCP caller does FX. Hotels require `currency`. Unproven country, dest, or currency does not pick. Keep the one-search process lock.
+MCP (stdio, no auth): `uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp`. Checkout: `uv sync --extra mcp` then `viajante-mcp`. Tools: `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`. Signatures: `src/viajante/mcp_server.py`. Currency is `currency` or inferred from a named origin’s owned country; if unknown, ask. Viajante does not convert; the MCP caller does FX. Hotels require `currency`. Unproven country, dest, or currency does not pick. Keep the one-search process lock. Playwright (`viajante[browser]`) is only for `--fetch detail` and Booking.com.
 
 ## Smoke
 
@@ -54,9 +56,9 @@ uv run python -m unittest discover -s tests -v
 uv run viajante flights JFK-LHR:2026-09-15 --fetch sweep --top 3
 uv run viajante flights BOS-LHR:2026-09-18 --nearby --fetch sweep --top 3
 uv run viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep --top 3
-uv run viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14 --fetch sweep
+uv run viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14
 uv run viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --sort duration
-uv run viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7 --fetch sweep
+uv run viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
 uv run viajante explore JFK --from 2026-09-15 --days 7 --exclude-airports HND
 uv run viajante explore JFK --from 2026-09-15 --days 7 --include-airports NRT,HND
 uv run viajante explore NRT --from 2026-09-15 --days 7 --exclude-regions asia
@@ -104,7 +106,7 @@ Use sweep to shortlist a 10–20 route batch. Use `--bags N` / `--carry-on` on s
 
 For “when is this route cheap?” use `viajante dates` (31-day cap; `summary` omitted under three priced days). For a stay, add `--nights N`. For “around this date, ±N days, then price the winner” use `viajante flex` (calendar then one shop; miss = empty). For “where is cheap from this airport?” use `viajante explore`. For flights plus a hotel on overlapping dates, use `viajante trip` / `search_trip` (omit the sum if either side misses, dates do not overlap, or currencies differ). Do not brute-force comma date lists or every airport when these commands exist. `viajante airports tokyo` resolves IATA codes offline.
 
-Named `--sort` / `--baggage-buffer` on dates and explore follow `src/viajante/cli.py` and `src/viajante/flights.py`. Unnamed dates stay date order. Unnamed explore stays cheapest-first. `--baggage-buffer` ranks explore dests only when sort is ranked. Compact cells have no duration or clock: do not invent one to sort. Sort is order, not a cut. Compact cells omit the buffer stamp. The buffer (`DEFAULT_BAGGAGE_BUFFER_EUR` in `flights.py`) is ranking, not a fare.
+Named `--sort` / `--baggage-buffer` on dates and explore follow `src/viajante/cli.py` and `src/viajante/flights.py`. Unnamed dates stay date order. Unnamed explore stays cheapest-first. `--baggage-buffer` ranks explore dests only when sort is ranked. Compact cells have no duration or clock: do not invent one to sort. Sort is order, not a cut. Compact cells omit the buffer stamp. Unnamed buffer is 0.
 
 ## Timing
 
@@ -139,7 +141,7 @@ Read `queries[].status`. `"ok"` with empty `offers` is not a fetch failure. JSON
 ### Flights
 
 - Keep the scrape locale on English (`hl=en` / `lang=en`, `locale=en-US`). Planner prompts may be any language; fetch queries stay English.
-- Ranking adds `DEFAULT_BAGGAGE_BUFFER_EUR` (`src/viajante/flights.py`) to known low-cost fares when bag counts are still unknown **and the quote is EUR**. Unnamed buffer is 0 in any other quote currency. That 70 is **ranking, not a fare**, and is not FX-converted. `--bags N` / `--carry-on` put counts on the shopping request. Default bags are unset. Never invent a bag count from the buffer. Report the ranked total when a buffer was added. Use `--baggage-buffer 0` for hand luggage only. The low-cost list is partial — never tell the user an airline includes a bag because it is absent.
+- Ranking does not invent a bag fee. Unnamed `--baggage-buffer` is 0. Named `N` is a ranking add-on in the quote currency, not FX-converted. `--bags N` / `--carry-on` put counts on the shopping request so Google can price the bag. Default bags are unset. Never invent a bag count. Use a named `--baggage-buffer` only when the caller asked for a fudge. The low-cost list is partial — never tell the user an airline includes a bag because it is absent.
 - Remind the user to verify checked baggage on Google Flights before booking.
 - Print `typical_deal` when `typical` is present. If those fields are null or omitted, skip the comparison. Do not invent a market average.
 - Print cheapest nonstop vs cheapest 1-stop from the same parsed set when `stops_compare` exists. This is not a second Google request.
@@ -173,7 +175,7 @@ viajante does not scrape other OTAs or hotel official sites. After Booking, for 
 | `blocked` | Wait 30-60 minutes. Sweep may have already fallen back to detail once. HTTP 429 already reset TLS and continued remaining jobs on a fresh session; do not start a new batch. |
 | `markup_drift` | Stop. Do not retry the same parse. Sweep HTTP may already have retried empty/drift/5xx once after 50 ms. |
 | `(no eligible offers)` / `(no eligible stays)` with exit 0 | Widen filters or try other dates. Do not retry the same query as a fetch failure. |
-| `browser_unavailable` | Run `uv run playwright install chromium`. |
+| `browser_unavailable` | `pip install 'viajante[browser]' && playwright install chromium` (checkout: `uv sync --extra browser` then `uv run playwright install chromium`). |
 | `fetch_failed` / exit 2 | Wait 30-60 minutes. Retry failed queries only. For Booking, inspect `booking-last-failure.html` in the state dir before retrying. |
 | Exit 3 (partial failure) | Re-run only the failed route or date legs. Do not re-run the whole batch. |
 | Consent or markup break | Delete `pw_state_google.json` or `pw_state_booking.json` in the state dir, then retry one query. |

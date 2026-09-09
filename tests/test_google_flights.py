@@ -187,7 +187,7 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertEqual(google_flights_url(query, booking_token="   "), GOLDEN_URL_DIRECT)
 
     def test_google_flights_url_prefers_owned_booking_token(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0)
+        query = FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0)
         url = google_flights_url(query, booking_token="tok")
         parsed = parse_qs(urlparse(url).query)
         self.assertEqual(parsed["booking_token"], ["tok"])
@@ -196,8 +196,8 @@ class QueryEncodingTests(unittest.TestCase):
     def test_google_flights_url_encodes_multi_city_from_owned_tfs(self) -> None:
         trip = MultiCity(
             (
-                FlightLeg("MAD", "BCN", date(2026, 9, 1)),
-                FlightLeg("BCN", "FCO", date(2026, 9, 3)),
+                FlightLeg("JFK", "LHR", date(2026, 9, 1)),
+                FlightLeg("LHR", "CDG", date(2026, 9, 3)),
             )
         )
         url = google_flights_url(trip)
@@ -210,11 +210,11 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertNotIn("tfs=", token_url)
 
     def test_google_flights_url_keeps_occupancy_and_currency(self) -> None:
-        solo = google_flights_url(FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0))
+        solo = google_flights_url(FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0))
         family = google_flights_url(
             FlightQuery(
-                "MAD",
-                "BCN",
+                "JFK",
+                "LHR",
                 date(2026, 12, 4),
                 max_stops=0,
                 adults=2,
@@ -255,7 +255,7 @@ class QueryEncodingTests(unittest.TestCase):
 
     def test_child_and_lap_infant_use_distinct_passenger_types(self) -> None:
         encoded = _encode_legs(
-            (FlightLeg("MAD", "BCN", date(2026, 12, 4), max_stops=0),),
+            (FlightLeg("JFK", "LHR", date(2026, 12, 4), max_stops=0),),
             adults=2,
             children=1,
             infants_in_seat=1,
@@ -278,16 +278,16 @@ class QueryEncodingTests(unittest.TestCase):
     def test_multi_city_tfs_repeats_legs_and_sets_trip_kind(self) -> None:
         trip = MultiCity(
             (
-                FlightLeg("MAD", "BCN", date(2026, 9, 1)),
-                FlightLeg("BCN", "FCO", date(2026, 9, 3)),
+                FlightLeg("JFK", "LHR", date(2026, 9, 1)),
+                FlightLeg("LHR", "CDG", date(2026, 9, 3)),
             )
         )
         encoded = encode_tfs(trip)
         fields = _proto_fields(base64.b64decode(encoded))
         flights = [payload for field, payload in fields if field == 3]
         self.assertEqual(len(flights), 2)
-        self.assertEqual(_tfs_leg(flights[0]), ("MAD", "BCN", "2026-09-01"))
-        self.assertEqual(_tfs_leg(flights[1]), ("BCN", "FCO", "2026-09-03"))
+        self.assertEqual(_tfs_leg(flights[0]), ("JFK", "LHR", "2026-09-01"))
+        self.assertEqual(_tfs_leg(flights[1]), ("LHR", "CDG", "2026-09-03"))
         self.assertEqual([value for field, value in fields if field == 19], [3])
         self.assertEqual(
             encoded,
@@ -333,7 +333,7 @@ class QueryEncodingTests(unittest.TestCase):
 
     def test_html_lang_and_currency_args_reach_url_params(self) -> None:
         params = build_search_params(
-            FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0),
+            FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0),
             html_lang="en",
             currency="USD",
         )
@@ -343,7 +343,7 @@ class QueryEncodingTests(unittest.TestCase):
 
     def test_country_arg_reaches_url_params(self) -> None:
         params = build_search_params(
-            FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0),
+            FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0),
             html_lang="en",
             currency="GBP",
             country="GB",
@@ -498,7 +498,7 @@ class HttpSweepParseTests(unittest.TestCase):
                 return _Resp()
 
         source = GoogleFlightsHttpSource(opener=_Opener())
-        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€131")
 
@@ -525,7 +525,7 @@ class HttpSweepParseTests(unittest.TestCase):
 
         source = GoogleFlightsHttpSource(opener=_Opener())
         with self.assertRaises(GoogleFlightsBlocked):
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
 
 
 def _itinerary(
@@ -543,10 +543,10 @@ def _itinerary(
         code,
         [airline],
         [[] for _ in range(legs)],
-        "MAD",
+        "JFK",
         None,
         list(dep),
-        "BCN",
+        "LHR",
         None,
         list(arr),
         minutes,
@@ -619,11 +619,11 @@ class _FakeSweepClient:
 
 class ShoppingRpcTests(unittest.TestCase):
     def test_inner_payload_keeps_owned_airport_nesting(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1, adults=2, cabin="business")
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1, adults=2, cabin="business")
         inner = build_shopping_inner(query)
         flight = inner[1][13][0]
-        self.assertEqual(flight[0], [[["MAD", 0]]])
-        self.assertEqual(flight[1], [[["BCN", 0]]])
+        self.assertEqual(flight[0], [[["JFK", 0]]])
+        self.assertEqual(flight[1], [[["LHR", 0]]])
         self.assertEqual(flight[3], 2)
         self.assertEqual(flight[6], "2026-09-01")
         self.assertEqual(inner[1][5], 3)
@@ -633,8 +633,8 @@ class ShoppingRpcTests(unittest.TestCase):
 
     def test_occupancy_slot_is_adults_children_seat_lap(self) -> None:
         query = FlightQuery(
-            "MAD",
-            "BCN",
+            "JFK",
+            "LHR",
             date(2026, 9, 1),
             adults=2,
             children=1,
@@ -643,42 +643,42 @@ class ShoppingRpcTests(unittest.TestCase):
         )
         inner = build_shopping_inner(query)
         self.assertEqual(inner[1][6], [2, 1, 1, 1])
-        default = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1)))
+        default = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1)))
         self.assertEqual(default[1][6], [1, 0, 0, 0])
 
     def test_bags_pair_fills_constraints_index_10(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=1, carry_on=1)
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), bags=1, carry_on=1)
         inner = build_shopping_inner(query)
         self.assertEqual(inner[1][6], [1, 0, 0, 0])
         self.assertIsNone(inner[1][7])
         self.assertIsNone(inner[1][8])
         self.assertIsNone(inner[1][9])
         self.assertEqual(inner[1][10], [1, 1])
-        checked_only = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=2))
+        checked_only = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1), bags=2))
         self.assertEqual(checked_only[1][10], [2, 0])
         self.assertIsNone(checked_only[1][7])
-        carry_only = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1), carry_on=1))
+        carry_only = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1), carry_on=1))
         self.assertEqual(carry_only[1][10], [0, 1])
-        default = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1)))
+        default = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1)))
         self.assertIsNone(default[1][7])
         self.assertIsNone(default[1][10])
 
     def test_named_price_cap_does_not_guess_constraints_index_7(self) -> None:
-        named = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=200)
+        named = FlightQuery("JFK", "LHR", date(2026, 9, 1), price_cap=200)
         inner = build_shopping_inner(named)
         self.assertEqual(named.price_cap, 200)
         self.assertIsNone(inner[1][7])
         four = FlightQuery("NRT", "ICN", date(2026, 10, 9), price_cap=400)
         self.assertEqual(four.price_cap, 400)
         self.assertIsNone(build_shopping_inner(four)[1][7])
-        unnamed = FlightQuery("MAD", "BCN", date(2026, 9, 1))
+        unnamed = FlightQuery("JFK", "LHR", date(2026, 9, 1))
         self.assertIsNone(unnamed.price_cap)
         self.assertIsNone(build_shopping_inner(unnamed)[1][7])
 
     def test_airline_include_fills_segment_index_7(self) -> None:
         query = FlightQuery(
-            "MAD",
-            "BCN",
+            "JFK",
+            "LHR",
             date(2026, 9, 1),
             airlines=("BA", "KL"),
         )
@@ -689,23 +689,23 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertIsNone(inner[1][10])
 
     def test_airline_exclude_fills_segment_index_7(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), exclude_airlines=("DL",))
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), exclude_airlines=("DL",))
         flight = build_shopping_inner(query)[1][13][0]
         self.assertEqual(flight[7], [1, [["DL"]]])
 
     def test_alliance_include_and_exclude_use_iata_designators(self) -> None:
-        oneworld = FlightQuery("MAD", "LHR", date(2026, 9, 1), alliances=("oneworld",))
+        oneworld = FlightQuery("JFK", "CDG", date(2026, 9, 1), alliances=("oneworld",))
         self.assertEqual(
             build_shopping_inner(oneworld)[1][13][0][7],
             [None, [["*O"]]],
         )
-        not_star = FlightQuery("MAD", "FRA", date(2026, 9, 1), exclude_alliances=("star",))
+        not_star = FlightQuery("JFK", "FRA", date(2026, 9, 1), exclude_alliances=("star",))
         self.assertEqual(
             build_shopping_inner(not_star)[1][13][0][7],
             [1, [["*A"]]],
         )
         mixed = FlightQuery(
-            "MAD",
+            "LHR",
             "JFK",
             date(2026, 9, 1),
             airlines=("BA",),
@@ -718,7 +718,7 @@ class ShoppingRpcTests(unittest.TestCase):
 
     def test_round_trip_carrier_filter_applies_to_both_segments(self) -> None:
         trip = RoundTrip(
-            "MAD",
+            "JFK",
             "LHR",
             date(2026, 10, 9),
             date(2026, 10, 12),
@@ -732,20 +732,20 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(shopping_stop_code(0), 1)
         self.assertEqual(shopping_stop_code(1), 2)
         self.assertEqual(shopping_stop_code(2), 3)
-        nonstop = build_shopping_inner(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=0))
+        nonstop = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=0))
         self.assertEqual(nonstop[1][13][0][3], 1)
         two_stop = build_shopping_inner(
-            RoundTrip("MAD", "NRT", date(2026, 10, 1), date(2026, 10, 20), max_stops=2)
+            RoundTrip("LAX", "NRT", date(2026, 10, 1), date(2026, 10, 20), max_stops=2)
         )
         self.assertEqual(two_stop[1][13][0][3], 3)
         self.assertEqual(two_stop[1][13][1][3], 3)
         self.assertEqual(
-            FlightLeg("MAD", "NRT", date(2026, 10, 1), max_stops=2).max_stops,
+            FlightLeg("LAX", "NRT", date(2026, 10, 1), max_stops=2).max_stops,
             2,
         )
 
     def test_round_trip_shopping_sets_kind_and_return_classifier(self) -> None:
-        trip = RoundTrip("MAD", "OPO", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
+        trip = RoundTrip("LAX", "NRT", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
         inner = build_shopping_inner(trip)
         self.assertEqual(inner[1][2], 1)
         outbound, inbound = inner[1][13]
@@ -757,9 +757,9 @@ class ShoppingRpcTests(unittest.TestCase):
     def test_multi_city_shopping_kind_keeps_outbound_classifier(self) -> None:
         trip = MultiCity(
             (
-                FlightLeg("MAD", "BCN", date(2026, 9, 1)),
-                FlightLeg("BCN", "FCO", date(2026, 9, 3)),
-                FlightLeg("FCO", "MAD", date(2026, 9, 6)),
+                FlightLeg("JFK", "LHR", date(2026, 9, 1)),
+                FlightLeg("LHR", "CDG", date(2026, 9, 3)),
+                FlightLeg("FCO", "JFK", date(2026, 9, 6)),
             )
         )
         constraints = build_search_constraints(trip)
@@ -769,13 +769,13 @@ class ShoppingRpcTests(unittest.TestCase):
     def test_selected_flight_lands_on_the_first_segment(self) -> None:
         pinned = ["tok"]
         constraints = build_search_constraints(
-            FlightQuery("MAD", "BCN", date(2026, 9, 1)),
+            FlightQuery("JFK", "LHR", date(2026, 9, 1)),
             selected_flight=pinned,
         )
         self.assertEqual(constraints[13][0][8], pinned)
 
     def test_request_body_is_f_req_envelope(self) -> None:
-        query = FlightQuery("MAD", "OPO", date(2026, 10, 9), max_stops=0)
+        query = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=0)
         url, body = build_shopping_request(query)
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
@@ -787,15 +787,23 @@ class ShoppingRpcTests(unittest.TestCase):
         envelope = json.loads(unquote(body[len("f.req=") :]))
         self.assertIsNone(envelope[0])
         inner = json.loads(envelope[1])
-        self.assertEqual(inner[1][13][0][1], [[["OPO", 0]]])
+        self.assertEqual(inner[1][13][0][1], [[["NRT", 0]]])
 
     def test_currency_and_country_reach_rpc_params(self) -> None:
-        query = FlightQuery("MAD", "OPO", date(2026, 10, 9), max_stops=0)
+        query = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=0)
         url, _body = build_shopping_request(query, html_lang="en", currency="USD", country="US")
         params = parse_qs(urlparse(url).query)
         self.assertEqual(params["hl"], ["en"])
         self.assertEqual(params["curr"], ["USD"])
         self.assertEqual(params["gl"], ["US"])
+
+    def test_compact_price_text_uses_quote_currency_not_a_euro_glyph(self) -> None:
+        item = _itinerary(price=199)
+        euro = parse_shopping_body(_compact_body(item))[0]
+        usd = parse_shopping_body(_compact_body(item), currency="USD")[0]
+        self.assertEqual(euro.price, "€199")
+        self.assertEqual(usd.price, "199 USD")
+        self.assertNotIn("€", usd.price)
 
     def test_journey_list_keeps_outbound_clocks_and_package_price(self) -> None:
         outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]
@@ -819,7 +827,7 @@ class ShoppingRpcTests(unittest.TestCase):
         outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]
         inbound = _itinerary(airline="TAP", dep=(18, 0), arr=(19, 20), minutes=80, price=40)[0]
         inbound[3] = "OPO"
-        inbound[6] = "MAD"
+        inbound[6] = "JFK"
         item = [[[outbound], [inbound]], [[None, 199], "tok"]]
         card = parse_shopping_body(_compact_body(item))[0]
         self.assertEqual(len(card.legs), 2)
@@ -837,7 +845,7 @@ class ShoppingRpcTests(unittest.TestCase):
         outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]
         inbound = _itinerary(airline="Iberia", dep=(18, 0), arr=(19, 20), minutes=80, price=40)[0]
         inbound[3] = "OPO"
-        inbound[6] = "MAD"
+        inbound[6] = "JFK"
         item = [outbound, [[None, 199], "tok"], inbound]
         card = parse_shopping_body(_compact_body(item))[0]
         self.assertEqual(len(card.legs), 2)
@@ -854,8 +862,8 @@ class ShoppingRpcTests(unittest.TestCase):
             airline="Tap Air Portugal",
             legs=[
                 _live_leg(
-                    origin="MAD",
-                    origin_name="Adolfo Suárez Madrid-Barajas Airport",
+                    origin="JFK",
+                    origin_name="John F. Kennedy International Airport",
                     dest="OPO",
                     dest_name="Francisco Sá Carneiro Airport",
                     dep=[8, 0],
@@ -865,7 +873,7 @@ class ShoppingRpcTests(unittest.TestCase):
                     arr_date=day_out,
                 )
             ],
-            origin="MAD",
+            origin="JFK",
             dest="OPO",
             dep_date=day_out,
             dep=[8, 0],
@@ -880,8 +888,8 @@ class ShoppingRpcTests(unittest.TestCase):
                 _live_leg(
                     origin="OPO",
                     origin_name="Francisco Sá Carneiro Airport",
-                    dest="MAD",
-                    dest_name="Adolfo Suárez Madrid-Barajas Airport",
+                    dest="JFK",
+                    dest_name="John F. Kennedy International Airport",
                     dep=[18, 0],
                     arr=[19, 20],
                     minutes=80,
@@ -890,7 +898,7 @@ class ShoppingRpcTests(unittest.TestCase):
                 )
             ],
             origin="OPO",
-            dest="MAD",
+            dest="JFK",
             dep_date=day_back,
             dep=[18, 0],
             arr_date=day_back,
@@ -1008,7 +1016,7 @@ class ShoppingRpcTests(unittest.TestCase):
         sleeps: list[float] = []
         client = _FakeSweepClient(post_text=_compact_body(_itinerary(price=88, airline="Iberia")))
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
-        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€88")
         self.assertEqual(len(client.posts), 1)
@@ -1020,7 +1028,7 @@ class ShoppingRpcTests(unittest.TestCase):
         html = _http_page(build_results_page(build_card(price="€39", airline="Vueling")))
         client = _FakeSweepClient(post_text="totally unrelated", get_text=html)
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
-        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Vueling")
         self.assertEqual(cards[0].price, "€39")
         self.assertEqual(len(client.posts), 1)
@@ -1032,7 +1040,7 @@ class ShoppingRpcTests(unittest.TestCase):
         client = _FakeSweepClient(post_text=_compact_body())
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(NoFlightsFound):
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(client.gets, [])
         self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
@@ -1042,7 +1050,7 @@ class ShoppingRpcTests(unittest.TestCase):
         client = _FakeSweepClient(post_status=403, post_text="no")
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(GoogleFlightsBlocked):
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 1)
         self.assertEqual(client.gets, [])
         self.assertEqual(sleeps, [])
@@ -1052,7 +1060,7 @@ class ShoppingRpcTests(unittest.TestCase):
         client = _FakeSweepClient(post_status=429, post_text="no")
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(GoogleFlightsBlocked) as caught:
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(caught.exception.status, 429)
         self.assertEqual(len(client.posts), 1)
         self.assertEqual(client.gets, [])
@@ -1075,7 +1083,7 @@ class HttpSweepRetryTests(unittest.TestCase):
             get_replies=(SweepHttpResponse(200, tiny),),
         )
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
-        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€77")
         self.assertEqual(len(client.posts), 2)
@@ -1088,7 +1096,7 @@ class HttpSweepRetryTests(unittest.TestCase):
         client = _FakeSweepClient(post_text="not shopping", get_text=tiny)
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(GoogleFlightsMarkupError):
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(len(client.gets), 2)
         self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
@@ -1102,7 +1110,7 @@ class HttpSweepRetryTests(unittest.TestCase):
             )
         )
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
-        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Ryanair")
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(client.gets, [])
@@ -1117,7 +1125,7 @@ class HttpSweepRetryTests(unittest.TestCase):
             )
         )
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
-        cards = source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].price, "€91")
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(client.gets, [])
@@ -1128,7 +1136,7 @@ class HttpSweepRetryTests(unittest.TestCase):
         client = _FakeSweepClient(post_status=500, post_text="no")
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(GoogleFlightsBlocked) as caught:
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(caught.exception.status, 500)
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(client.gets, [])
@@ -1139,7 +1147,7 @@ class HttpSweepRetryTests(unittest.TestCase):
         client = _FakeSweepClient(post_text=_error_response_body())
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(GoogleFlightsRejected):
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 1)
         self.assertEqual(client.gets, [])
         self.assertEqual(sleeps, [])
@@ -1153,7 +1161,7 @@ class HttpSweepRetryTests(unittest.TestCase):
         )
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
         with self.assertRaises(GoogleFlightsBlocked) as caught:
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertIsNone(caught.exception.status)
         self.assertEqual(len(client.posts), 1)
         self.assertEqual(len(client.gets), 1)
@@ -1260,8 +1268,8 @@ def _tap_long_layover() -> list[object]:
     arr_date = [2026, 10, 10]
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="LIS",
             dest_name="Humberto Delgado Airport",
             dep=[13, 40],
@@ -1290,7 +1298,7 @@ def _tap_long_layover() -> list[object]:
             code="TP",
             airline="Tap Air Portugal",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="OPO",
             dep_date=dep_date,
             dep=[13, 40],
@@ -1319,8 +1327,8 @@ def _iberia_late_nonstop() -> list[object]:
     day = [2026, 9, 15]
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="PMI",
             dest_name="Palma de Mallorca Airport",
             dep=[23, 10],
@@ -1340,7 +1348,7 @@ def _iberia_late_nonstop() -> list[object]:
             code="I2",
             airline="Iberia Express",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="PMI",
             dep_date=day,
             dep=[23, 10],
@@ -1357,8 +1365,8 @@ def _iberia_fco_late_evening() -> list[object]:
     next_day = [2026, 9, 16]
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="FCO",
             dest_name="Leonardo da Vinci International Airport",
             dep=[21, 50],
@@ -1377,7 +1385,7 @@ def _iberia_fco_late_evening() -> list[object]:
             code="IB",
             airline="Iberia",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="FCO",
             dep_date=day,
             dep=[21, 50],
@@ -1394,8 +1402,8 @@ def _ryanair_fco_late_evening() -> list[object]:
     next_day = [2026, 9, 16]
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="FCO",
             dest_name="Leonardo da Vinci International Airport",
             dep=[22, 15],
@@ -1413,7 +1421,7 @@ def _ryanair_fco_late_evening() -> list[object]:
         code="FR",
         airline="Ryanair",
         legs=legs,
-        origin="MAD",
+        origin="JFK",
         dest="FCO",
         dep_date=day,
         dep=[22, 15],
@@ -1429,8 +1437,8 @@ def _iberia_fco_omitted_midnight_hour() -> list[object]:
     next_day = [2026, 9, 16]
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="FCO",
             dest_name="Leonardo da Vinci International Airport",
             dep=[21, 50],
@@ -1449,7 +1457,7 @@ def _iberia_fco_omitted_midnight_hour() -> list[object]:
             code="IB",
             airline="Iberia",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="FCO",
             dep_date=day,
             dep=[21, 50],
@@ -1466,8 +1474,8 @@ def _ryanair_fco_omitted_midnight_hour() -> list[object]:
     next_day = [2026, 9, 16]
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="FCO",
             dest_name="Leonardo da Vinci International Airport",
             dep=[22, 15],
@@ -1485,7 +1493,7 @@ def _ryanair_fco_omitted_midnight_hour() -> list[object]:
         code="FR",
         airline="Ryanair",
         legs=legs,
-        origin="MAD",
+        origin="JFK",
         dest="FCO",
         dep_date=day,
         dep=[22, 15],
@@ -1499,8 +1507,8 @@ def _ryanair_fco_omitted_midnight_hour() -> list[object]:
 def _two_stop_mad_icn() -> list[object]:
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="HEL",
             dest_name="Helsinki Airport",
             dep=[11, 0],
@@ -1547,7 +1555,7 @@ def _two_stop_mad_icn() -> list[object]:
             code="AY",
             airline="Finnair",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="ICN",
             dep_date=[2026, 9, 22],
             dep=[11, 0],
@@ -1586,8 +1594,8 @@ def _iberia_hour_only_arrival() -> list[object]:
     day = [2026, 10, 9]
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="OPO",
             dest_name="Francisco Sá Carneiro Airport",
             dep=[19, 40],
@@ -1606,7 +1614,7 @@ def _iberia_hour_only_arrival() -> list[object]:
             code="IB",
             airline="Iberia",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="OPO",
             dep_date=day,
             dep=[19, 40],
@@ -1621,8 +1629,8 @@ def _iberia_hour_only_arrival() -> list[object]:
 def _longhaul_cz_hour_only_dep() -> list[object]:
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="CAN",
             dest_name="Guangzhou Baiyun International Airport",
             dep=[21],
@@ -1656,7 +1664,7 @@ def _longhaul_cz_hour_only_dep() -> list[object]:
             code="CZ",
             airline="China Southern",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="ICN",
             dep_date=[2026, 9, 22],
             dep=[21],
@@ -1684,8 +1692,8 @@ def _longhaul_cz_hour_only_dep() -> list[object]:
 def _longhaul_etihad() -> list[object]:
     legs = [
         _live_leg(
-            origin="MAD",
-            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
             dest="AUH",
             dest_name="Zayed International Airport",
             dep=[10, 45],
@@ -1718,7 +1726,7 @@ def _longhaul_etihad() -> list[object]:
             code="EY",
             airline="Etihad",
             legs=legs,
-            origin="MAD",
+            origin="JFK",
             dest="ICN",
             dep_date=[2026, 9, 22],
             dep=[10, 45],
@@ -1895,7 +1903,7 @@ class LiveShapedCompactTests(unittest.TestCase):
         client = _FakeSweepClient(post_text=_error_response_body())
         source = GoogleFlightsHttpSource(client=client)
         with self.assertRaises(GoogleFlightsRejected):
-            source.fetch(FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1))
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(client.gets, [])
 
 
@@ -2007,7 +2015,7 @@ class _TrackingHttpSource(GoogleFlightsHttpSource):
 class SweepRateLimitSessionTests(unittest.TestCase):
     def _trips(self, n: int) -> tuple[FlightQuery, ...]:
         return tuple(
-            FlightQuery("MAD", "BCN", date(2026, 9, day), max_stops=1) for day in range(1, n + 1)
+            FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, n + 1)
         )
 
     def test_fetch_many_continues_remaining_after_429_on_a_fresh_session(self) -> None:
@@ -2155,11 +2163,11 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         source = _TrackingHttpSource(client=client, sleep=sleeps.append)
         jobs = tuple(
             (
-                FlightQuery("MAD", dest, date(2026, 9, 1), max_stops=1),
+                FlightQuery("JFK", dest, date(2026, 9, 1), max_stops=1),
                 date(2026, 9, 1),
                 date(2026, 9, 3),
             )
-            for dest in ("BCN", "LHR", "CDG")
+            for dest in ("NRT", "LHR", "CDG")
         )
         results = source.fetch_many_with_calendar(jobs)
         self.assertEqual(len(results), 3)
@@ -2186,7 +2194,7 @@ class SweepClientShapeTests(unittest.TestCase):
         source = GoogleFlightsHttpSource(client=client)
         started = time.perf_counter()
         cards, days = source.fetch_with_calendar(
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1),
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),
             date(2026, 9, 1),
             date(2026, 9, 3),
         )
@@ -2203,7 +2211,7 @@ class SweepClientShapeTests(unittest.TestCase):
         client = _MuxFakeSweepClient(shop_text=shop, rtt=0.04)
         source = GoogleFlightsHttpSource(client=client)
         trips = tuple(
-            FlightQuery("MAD", "BCN", date(2026, 9, day), max_stops=1) for day in range(1, 8)
+            FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, 8)
         )
         started = time.perf_counter()
         results = source.fetch_many(trips)
@@ -2229,11 +2237,11 @@ class SweepClientShapeTests(unittest.TestCase):
         source = GoogleFlightsHttpSource(client=client)
         jobs = tuple(
             (
-                FlightQuery("MAD", dest, date(2026, 9, 1), max_stops=1),
+                FlightQuery("JFK", dest, date(2026, 9, 1), max_stops=1),
                 date(2026, 9, 1),
                 date(2026, 9, 3),
             )
-            for dest in ("BCN", "LHR", "CDG")
+            for dest in ("NRT", "LHR", "CDG")
         )
         started = time.perf_counter()
         results = source.fetch_many_with_calendar(jobs)
@@ -2283,7 +2291,8 @@ class SweepClientShapeTests(unittest.TestCase):
         created: list[object] = []
 
         class FakeChrome:
-            def __init__(self) -> None:
+            def __init__(self, *, proxy: str | None = None) -> None:
+                self.proxy = proxy
                 created.append(self)
 
             def close(self) -> None:
@@ -2306,7 +2315,7 @@ class SweepClientShapeTests(unittest.TestCase):
             reset_shared_chrome_sweep_client()
             first = GoogleFlightsHttpSource()
             second = GoogleFlightsHttpSource()
-            query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+            query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
             first.fetch(query)
             second.fetch(query)
             self.assertIs(shared_chrome_sweep_client(), created[0])
@@ -2316,6 +2325,43 @@ class SweepClientShapeTests(unittest.TestCase):
             third = GoogleFlightsHttpSource()
             third.fetch(query)
             self.assertEqual(len(created), 1)
+            reset_shared_chrome_sweep_client()
+
+    def test_http_source_passes_proxy_and_resets_when_it_changes(self) -> None:
+        created: list[object] = []
+        closed: list[object] = []
+
+        class FakeChrome:
+            def __init__(self, *, proxy: str | None = None) -> None:
+                self.proxy = proxy
+                created.append(self)
+
+            def close(self) -> None:
+                closed.append(self)
+
+            def post(
+                self,
+                url: str,
+                *,
+                data: str,
+                headers: object,
+                timeout: float,
+            ) -> SweepHttpResponse:
+                return SweepHttpResponse(200, _compact_body(_itinerary(price=10)), url)
+
+            def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+                return SweepHttpResponse(200, "<html></html>", url)
+
+        with patch("viajante.google_flights.ChromeSweepClient", FakeChrome):
+            reset_shared_chrome_sweep_client()
+            query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+            proxied = GoogleFlightsHttpSource(proxy="http://127.0.0.1:8080")
+            proxied.fetch(query)
+            self.assertEqual(created[0].proxy, "http://127.0.0.1:8080")
+            GoogleFlightsHttpSource().fetch(query)
+            self.assertEqual(len(created), 2)
+            self.assertIsNone(created[1].proxy)
+            self.assertEqual(len(closed), 1)
             reset_shared_chrome_sweep_client()
 
 

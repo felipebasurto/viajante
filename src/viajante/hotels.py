@@ -1,4 +1,4 @@
-"""Hotel eligibility, ranking, and the Booking.com search loop."""
+"""Hotel eligibility, ranking, and the Booking.com / Google Hotels search loop."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from viajante.booking import (
 from viajante.booking import (
     build_applied_filters as build_booking_filters,
 )
+from viajante.browser import playwright_available
 from viajante.flights import DEFAULT_TOP
 from viajante.google_hotels import (
     GoogleHotelsSource,
@@ -303,6 +304,27 @@ def search_hotels(
         delay_seconds = sweep_inter_query_delay_seconds
         fetch_backend: Literal["booking", "google"] = "google"
     else:
+        if not playwright_available():
+            failure = classify_failure(ModuleNotFoundError("No module named 'playwright'"))
+            now = datetime.now(timezone.utc)
+            return HotelSearchReport(
+                searched_at=now,
+                queries=tuple(
+                    HotelQueryFailure(
+                        query=query,
+                        applied=build_booking_filters(
+                            query, html_lang=FETCH_LANGUAGE, currency=currency
+                        ),
+                        error=failure,
+                    )
+                    for query in queries
+                ),
+                locale=FETCH_LANGUAGE,
+                currency=currency,
+                provider="booking.com",
+                fetch_backend="booking",
+                fetch_ms=0,
+            )
         hotel_source = BookingHotelsSource(default_state_dir(), currency=currency)
         provider = "booking.com"
         applied_filters = build_booking_filters

@@ -117,11 +117,11 @@ corpus in `tests/bench/`. Not a network call. Record it if you like; do
 not keep on it.
 
 The bench has no flags to skip tests, subset the parse corpus, or change
-`--top`. Product defaults stay `DEFAULT_TOP` and
-`DEFAULT_BAGGAGE_BUFFER_EUR` in `src/viajante/flights.py` (bench asserts
-them in `src/viajante/bench.py`). `--prompts` is the quality battery,
-never mixed into `score_ms`. `bench.py`, `prompt_bench.py`,
-`tests/bench/`, and `tests/prompts/` are read-only to the looping agent.
+`--top`. Product defaults stay `DEFAULT_TOP` in `src/viajante/flights.py`
+and unnamed baggage buffer `0` (bench asserts them in `src/viajante/bench.py`).
+`--prompts` is the quality battery, never mixed into `score_ms`. `bench.py`,
+`prompt_bench.py`, `tests/bench/`, and `tests/prompts/` are read-only to the
+looping agent.
 
 ## Prompt battery
 
@@ -187,9 +187,6 @@ must not open `tests/prompts/holdout.jsonl` when choosing a hypothesis.
 These are product bugs. Do **not** “fix” them by deleting features or
 tests.
 
-- Compact `_price_text` / CLI tables / `typical_deal` may still print a leftover
-  `€` glyph. The unit is `report.currency`. Do not treat that glyph as
-  EUR-as-audience. Do not add an FX table to “fix” it.
 - Packaged `--trip rt` still cannot invent a return leg when the compact
   body only contains the outbound flight. Query `return_date` is not a
   second leg. Wrapped or sibling return flights in that body should parse.

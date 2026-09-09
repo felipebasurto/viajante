@@ -94,13 +94,13 @@ FORBIDDEN_KEYS = {
 
 
 def _report() -> SearchReport:
-    query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
-    url = google_flights_url(query, currency="EUR")
+    query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+    url = google_flights_url(query, currency="USD")
     offer = FlightOffer(
-        airline="Vueling",
+        airline="JetBlue",
         departure="07:15",
         arrival="08:40",
-        price_text="€39",
+        price_text="$39",
         price=39.0,
         duration="1 hr 25 min",
         duration_hours=1.4166666666666667,
@@ -114,6 +114,7 @@ def _report() -> SearchReport:
     )
     return SearchReport(
         searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
+        currency="USD",
         fetch_backend="sweep",
         fetch_ms=2410,
         queries=(
@@ -165,7 +166,7 @@ class JsonContractTests(unittest.TestCase):
 
     def test_declared_constants_are_stable(self) -> None:
         self.assertEqual(self.data["schema_version"], 1)
-        self.assertEqual(self.data["currency"], "EUR")
+        self.assertEqual(self.data["currency"], "USD")
         self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["fetch_backend"], "sweep")
         self.assertEqual(self.data["fetch_ms"], 2410)
@@ -180,7 +181,7 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(len(offer["legs"]), 1)
         self.assertEqual(offer["legs"][0]["departure"], offer["departure"])
         self.assertEqual(offer["price"], 39.0)
-        self.assertEqual(offer["price_text"], "€39")
+        self.assertEqual(offer["price_text"], "$39")
         self.assertIsInstance(offer["price"], float)
         self.assertIsInstance(offer["price_text"], str)
 
@@ -206,8 +207,8 @@ class JsonContractTests(unittest.TestCase):
 
     def test_occupancy_counts_are_extra_query_keys(self) -> None:
         query = FlightQuery(
-            "MAD",
-            "BCN",
+            "JFK",
+            "LHR",
             date(2026, 9, 1),
             adults=2,
             children=1,
@@ -223,7 +224,7 @@ class JsonContractTests(unittest.TestCase):
 
     def test_carrier_filters_are_extra_query_keys(self) -> None:
         query = FlightQuery(
-            "MAD",
+            "JFK",
             "LHR",
             date(2026, 9, 1),
             airlines=("BA", "KL"),
@@ -289,6 +290,40 @@ class JsonContractTests(unittest.TestCase):
         self.assertNotIn("cheapest", data)
         self.assertEqual(offer.to_dict("USD")["typical_deal"], "below typical 340 USD (−15%)")
         self.assertNotIn("€", offer.to_dict("USD")["typical_deal"])
+
+    def test_search_report_to_dict_uses_report_currency_not_euro_default(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 15))
+        offer = FlightOffer(
+            airline="Norse Atlantic",
+            departure="21:15",
+            arrival="09:40",
+            price_text="289 USD",
+            price=289.0,
+            duration="7 hr 25 min",
+            duration_hours=7.42,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer=0,
+            needs_bag_verify=True,
+            typical=340.0,
+            vs_typical="below",
+            vs_typical_pct=-15,
+        )
+        report = SearchReport(
+            searched_at=datetime(2026, 9, 1, 12, 0, 0),
+            queries=(
+                QuerySuccess(
+                    query=query,
+                    raw_count=1,
+                    eligible_count=1,
+                    offers=(offer,),
+                ),
+            ),
+            currency="USD",
+        )
+        deal = report.to_dict()["queries"][0]["offers"][0]["typical_deal"]
+        self.assertEqual(deal, "below typical 340 USD (−15%)")
+        self.assertNotIn("€", deal)
 
     def test_cheapest_owned_day_is_an_extra_offer_key(self) -> None:
         offer = FlightOffer(
@@ -364,7 +399,7 @@ class JsonContractTests(unittest.TestCase):
         json.loads(json.dumps(self.data, ensure_ascii=False))
 
     def test_round_trip_query_carries_return_date_and_trip_kind(self) -> None:
-        query = RoundTrip("MAD", "PRG", date(2026, 12, 3), date(2026, 12, 9))
+        query = RoundTrip("JFK", "CDG", date(2026, 12, 3), date(2026, 12, 9))
         offer = FlightOffer(
             airline="Iberia",
             departure="07:00",
@@ -392,13 +427,13 @@ class JsonContractTests(unittest.TestCase):
         self.assertNotIn("stops_compare", data)
 
     def test_stops_compare_is_an_extra_success_key(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         nonstop = StopsCompareSide.from_offer(
             FlightOffer(
-                airline="Vueling",
+                airline="JetBlue",
                 departure="07:15",
                 arrival="08:40",
-                price_text="€39",
+                price_text="$39",
                 price=39.0,
                 duration="1 hr 25 min",
                 duration_hours=1.42,
@@ -441,7 +476,7 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(data["stops_compare"]["one_stop"]["layover_city"], "OPO")
 
     def test_stops_compare_omits_an_empty_side(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1)
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         one_stop = StopsCompareSide(
             airline="Ryanair",
             price_text="€29",
@@ -464,13 +499,13 @@ class JsonContractTests(unittest.TestCase):
         self.assertNotIn("nonstop", data["stops_compare"])
 
     def test_google_flights_url_is_an_extra_key_on_query_and_offer(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1))
-        url = google_flights_url(query, currency="EUR")
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1))
+        url = google_flights_url(query, currency="USD")
         offer = FlightOffer(
-            airline="Vueling",
+            airline="JetBlue",
             departure="07:15",
             arrival="08:40",
-            price_text="€39",
+            price_text="$39",
             price=39.0,
             duration="1 hr 25 min",
             duration_hours=1.42,
@@ -479,7 +514,7 @@ class JsonContractTests(unittest.TestCase):
             baggage_buffer=0,
             needs_bag_verify=False,
             booking_token="tok",
-            google_flights_url=google_flights_url(query, currency="EUR", booking_token="tok"),
+            google_flights_url=google_flights_url(query, currency="USD", booking_token="tok"),
         )
         data = QuerySuccess(
             query=query,
@@ -497,8 +532,8 @@ class JsonContractTests(unittest.TestCase):
     def test_multi_city_carries_an_owned_google_flights_search_url(self) -> None:
         trip = MultiCity(
             (
-                FlightLeg("MAD", "BCN", date(2026, 9, 1)),
-                FlightLeg("BCN", "FCO", date(2026, 9, 3)),
+                FlightLeg("JFK", "LHR", date(2026, 9, 1)),
+                FlightLeg("LHR", "CDG", date(2026, 9, 3)),
             )
         )
         url = google_flights_url(trip)

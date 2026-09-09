@@ -120,6 +120,7 @@ def search_flights_tool(
     currency: Optional[str] = None,
     country: Optional[str] = None,
     nearby: bool = False,
+    proxy: Optional[str] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         routes,
@@ -136,7 +137,7 @@ def search_flights_tool(
     )
     trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
-    currency, buffer_eur = resolve_quote_and_buffer(
+    currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
     )
     report = _with_search_lock(
@@ -160,10 +161,11 @@ def search_flights_tool(
             require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
             exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
             include_airports=parse_via_airports(include_airports, role="include-airports"),
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
             sort=sort,
             currency=currency,
             country=country,
+            proxy=proxy,
         )
     )
     return dict(report.to_dict())
@@ -206,6 +208,7 @@ def search_dates_tool(
     country: Optional[str] = None,
     baggage_buffer: Optional[int] = None,
     sort: Optional[FlightSort] = None,
+    proxy: Optional[str] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -213,7 +216,7 @@ def search_dates_tool(
     validate_date_window(start_date, end_date)
     _reject_past((start_date,))
     kind, stay = resolve_date_trip(trip, nights)
-    currency, buffer_eur = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_dates(
             origin,
@@ -250,8 +253,9 @@ def search_dates_tool(
             max_layover_hours=max_layover,
             currency=currency,
             country=country,
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
             sort=sort,
+            proxy=proxy,
         )
     )
     return _payload_from_reports(report)
@@ -295,13 +299,14 @@ def search_flex_tool(
     max_layover: Optional[float] = None,
     currency: Optional[str] = None,
     country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
     start, _end = flex_window(around_date, flex)
     _reject_past((around_date, start), label="around")
     kind, stay = resolve_date_trip(trip, nights)
-    currency, buffer_eur = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_flex(
             origin,
@@ -317,7 +322,7 @@ def search_flex_tool(
             trip=kind,
             nights=stay,
             top=top,
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
             sort=sort,
             airlines=parse_airline_codes(airlines),
             exclude_airlines=parse_airline_codes(exclude_airlines),
@@ -341,6 +346,7 @@ def search_flex_tool(
             max_layover_hours=max_layover,
             currency=currency,
             country=country,
+            proxy=proxy,
         )
     )
     return _payload_from_reports(report)
@@ -384,6 +390,7 @@ def search_explore_tool(
     country: Optional[str] = None,
     sort: FlightSort = "price",
     baggage_buffer: Optional[int] = None,
+    proxy: Optional[str] = None,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -396,7 +403,7 @@ def search_explore_tool(
         start_date = date.fromisoformat(start)
     validate_explore_window(start_date, days)
     _reject_past((start_date,))
-    currency, buffer_eur = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_explore(
             origin,
@@ -433,7 +440,8 @@ def search_explore_tool(
             currency=currency,
             country=country,
             sort=sort,
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
+            proxy=proxy,
         )
     )
     return _payload_from_reports(report)
@@ -534,7 +542,7 @@ def search_trip_tool(
     )
     trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
-    currency, buffer_eur = resolve_quote_and_buffer(
+    currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
     )
     window = stay_window_from_trips(trips)
@@ -566,7 +574,7 @@ def search_trip_tool(
             trips,
             query,
             top=top,
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
             sort=sort,
             fetch=fetch,
             airlines=parse_airline_codes(airlines),

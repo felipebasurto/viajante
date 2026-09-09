@@ -13,7 +13,6 @@ authors = [{ name = "viajante contributors" }]
 dependencies = [
     "airportsdata>=20260315",
     "curl-cffi>=0.16.0",
-    "playwright==1.60.0",
     "selectolax>=0.3.25",
 ]
 
@@ -24,6 +23,7 @@ Issues = "https://github.com/felipebasurto/viajante/issues"
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.6,<2"]
+browser = ["playwright==1.60.0"]
 
 [project.scripts]
 viajante = "viajante.cli:main"
@@ -46,6 +46,7 @@ select = ["E", "F", "I", "B"]
 [dependency-groups]
 dev = [
     "mcp>=1.6,<2",
+    "playwright==1.60.0",
     "pre-commit>=4.3.0",
     "ruff==0.15.12",
 ]

@@ -1,0 +1,33 @@
+---
+description: Public release constraints. No implied home hub. Do not grow the private bench loop.
+alwaysApply: true
+---
+
+# Public soon
+
+This tree will be public. Humans will delete the looping-agent bench
+surface (`viajante bench`, `--prompts`, `program.md`, `bench-history.md`,
+`bench-baseline.json`, `tests/bench/`, `tests/prompts/`, Dipsig-related
+loop protocol). **Do not delete that now. Do not grow it.** No new bench
+fixtures, prompt cases, score_ms work, or loop-protocol edits unless a
+human asked for that exact file.
+
+# International, no home hub
+
+No implied origin, no implied currency, no Madrid, no euros-as-default.
+
+- Currency is `--currency` / MCP `currency`, or inferred from a **named**
+  origin airport's owned country. Unproven origin does not become EUR.
+- Hotels have no origin: currency is required.
+- Product examples, help, MCP docs, and agent replies use mixed IATA
+  (JFK, LHR, NRT, GRU, SIN, …), never MAD-as-home or EUR-as-the-unit.
+- Tests may use MAD/EUR as one owned Spain pair. That is a fixture, not
+  a product default. Do not add new product defaults, help lines, or
+  skill copy that assume Europe or Madrid.
+- Do not invent FX. Do not special-case EUR (no EUR-only buffer, glyph
+  except when the owned quote is actually EUR).
+- Internal `baggage_buffer` is a ranking add-on in the **quote** currency.
+  Do not treat the name as “this tool is euros.” Prefer `--bags` /
+  `--carry-on`. Unnamed buffer stays 0.
+
+`AGENTS.md` still wins on JSON keys, fetch pacing, and no invented fares.

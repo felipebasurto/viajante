@@ -295,7 +295,7 @@ def load_prompt_cases(root: Optional[Path] = None) -> list[PromptCase]:
 
 
 def load_holdout_cases(root: Optional[Path] = None) -> list[PromptCase]:
-    """Operator overfitting set. Not part of the weekday 90."""
+    """Operator overfitting set. Not part of the weekday corpus."""
     path = prompts_dir(root) / HOLDOUT_NAME
     cases = _load_jsonl_file(path, seen=set())
     if not MIN_HOLDOUT_CASES <= len(cases) <= MAX_HOLDOUT_CASES:

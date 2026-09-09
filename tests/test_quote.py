@@ -7,7 +7,6 @@ from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from viajante.cli import main
-from viajante.flights import DEFAULT_BAGGAGE_BUFFER_EUR
 from viajante.models import SearchReport
 from viajante.quote import (
     cash_currency_for_country,
@@ -68,8 +67,8 @@ class ResolveQuoteCurrencyTests(unittest.TestCase):
 
 
 class ResolveBaggageBufferTests(unittest.TestCase):
-    def test_unnamed_is_70_only_when_quote_is_eur(self) -> None:
-        self.assertEqual(resolve_baggage_buffer(None, "EUR"), DEFAULT_BAGGAGE_BUFFER_EUR)
+    def test_unnamed_is_zero_in_every_quote_currency(self) -> None:
+        self.assertEqual(resolve_baggage_buffer(None, "EUR"), 0)
         self.assertEqual(resolve_baggage_buffer(None, "USD"), 0)
         self.assertEqual(resolve_baggage_buffer(None, "JPY"), 0)
 
@@ -87,7 +86,7 @@ class QuoteCurrencyCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["currency"], "USD")
         self.assertIsNone(search.call_args.kwargs["country"])
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
 
     def test_flights_lhr_infers_gbp(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report("GBP")) as search:
@@ -118,7 +117,7 @@ class QuoteCurrencyCliTests(unittest.TestCase):
                 code = main(["flights", f"MAD-BCN:{FUTURE.isoformat()}", "--fetch", "sweep"])
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["currency"], "EUR")
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], DEFAULT_BAGGAGE_BUFFER_EUR)
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
 
     def test_hotels_without_currency_error_and_do_not_guess_eur(self) -> None:
         err = io.StringIO()

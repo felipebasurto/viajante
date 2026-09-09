@@ -53,15 +53,16 @@ FORBIDDEN_KEYS = {
 def _report() -> DateCalendarReport:
     return DateCalendarReport(
         searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
-        origin="MAD",
-        destination="BCN",
+        currency="USD",
+        origin="JFK",
+        destination="LHR",
         start_date=date(2026, 9, 1),
         end_date=date(2026, 9, 2),
         days=(
             DatePriceRow(
                 departure_date=date(2026, 9, 1),
                 price=39.0,
-                airline="Vueling",
+                airline="JetBlue",
                 stops_count=0,
             ),
             DatePriceRow(
@@ -95,10 +96,10 @@ class DatesJsonContractTests(unittest.TestCase):
 
     def test_declared_constants_are_stable(self) -> None:
         self.assertEqual(self.data["schema_version"], 1)
-        self.assertEqual(self.data["currency"], "EUR")
+        self.assertEqual(self.data["currency"], "USD")
         self.assertEqual(self.data["locale"], "en")
-        self.assertEqual(self.data["origin"], "MAD")
-        self.assertEqual(self.data["destination"], "BCN")
+        self.assertEqual(self.data["origin"], "JFK")
+        self.assertEqual(self.data["destination"], "LHR")
         self.assertEqual(self.data["from"], "2026-09-01")
         self.assertEqual(self.data["to"], "2026-09-02")
         self.assertEqual(self.data["trip"], "one-way")
@@ -113,8 +114,8 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertIn(self.data["fetch_backend"], DATE_FETCH_BACKENDS)
         sweep = DateCalendarReport(
             searched_at=datetime(2026, 8, 11, 10, 32, 0),
-            origin="MAD",
-            destination="BCN",
+            origin="JFK",
+            destination="LHR",
             start_date=date(2026, 9, 1),
             end_date=date(2026, 9, 1),
             days=(),
@@ -170,8 +171,8 @@ class DatesJsonContractTests(unittest.TestCase):
     def test_summary_block_uses_only_priced_days(self) -> None:
         report = DateCalendarReport(
             searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
-            origin="MAD",
-            destination="BCN",
+            origin="JFK",
+            destination="LHR",
             start_date=date(2026, 9, 1),
             end_date=date(2026, 9, 4),
             days=(
@@ -279,8 +280,8 @@ class DatesJsonContractTests(unittest.TestCase):
         )
         report = DateCalendarReport(
             searched_at=datetime(2026, 8, 11, 10, 32, 0),
-            origin="MAD",
-            destination="BCN",
+            origin="JFK",
+            destination="LHR",
             start_date=date(2026, 9, 1),
             end_date=date(2026, 9, 1),
             fetch_backend="sweep",
@@ -304,8 +305,8 @@ class DatesJsonContractTests(unittest.TestCase):
     def test_google_flights_url_is_an_extra_key_when_present(self) -> None:
         report = DateCalendarReport(
             searched_at=datetime(2026, 8, 11, 10, 32, 0),
-            origin="MAD",
-            destination="BCN",
+            origin="JFK",
+            destination="LHR",
             start_date=date(2026, 9, 1),
             end_date=date(2026, 9, 1),
             google_flights_url="https://www.google.com/travel/flights?tfs=abc",

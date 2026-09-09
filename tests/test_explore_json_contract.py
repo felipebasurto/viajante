@@ -46,7 +46,8 @@ FORBIDDEN_KEYS = {
 def _report(*, with_error: bool = False) -> ExploreReport:
     return ExploreReport(
         searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
-        origin="MAD",
+        currency="JPY",
+        origin="NRT",
         start_date=date(2026, 9, 1),
         days=7,
         destinations=(
@@ -84,9 +85,9 @@ class ExploreJsonContractTests(unittest.TestCase):
 
     def test_declared_constants_are_stable(self) -> None:
         self.assertEqual(self.data["schema_version"], 1)
-        self.assertEqual(self.data["currency"], "EUR")
+        self.assertEqual(self.data["currency"], "JPY")
         self.assertEqual(self.data["locale"], "en")
-        self.assertEqual(self.data["origin"], "MAD")
+        self.assertEqual(self.data["origin"], "NRT")
         self.assertEqual(self.data["from"], "2026-09-01")
         self.assertEqual(self.data["days"], 7)
         self.assertEqual(self.data["fetch_backend"], "explore")
@@ -149,7 +150,7 @@ class ExploreJsonContractTests(unittest.TestCase):
         self.assertNotIn("booking_token", data)
         report = ExploreReport(
             searched_at=datetime(2026, 8, 11, 10, 32, 0, tzinfo=timezone.utc),
-            origin="MAD",
+            origin="NRT",
             start_date=date(2026, 9, 1),
             days=7,
             destinations=(dest,),

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
 
 from viajante.flights import (
-    DEFAULT_BAGGAGE_BUFFER_EUR,
     DEFAULT_TOP,
     FLIGHT_SORTS,
     FlightSort,
@@ -179,7 +178,7 @@ def _rank_date_rows(
     return tuple(sorted(days, key=sort_key))
 
 
-def format_summary_line(summary: DateCalendarSummary, currency: str = "EUR") -> str:
+def format_summary_line(summary: DateCalendarSummary, currency: str) -> str:
     return (
         f"  min {format_money(summary.min_price, currency)}  "
         f"median {format_money(summary.median_price, currency)}  "
@@ -483,7 +482,7 @@ def _offers_from_cards(
     cards: Sequence[RawFlightCard],
     query: FlightQuery | RoundTrip,
     *,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: int = 0,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
     no_overnight: Optional[Sequence[str]] = None,
@@ -503,7 +502,7 @@ def _offers_from_cards(
             offer := _normalize_offer(
                 raw,
                 query.legs[0].max_stops,
-                buffer_eur=buffer_eur,
+                baggage_buffer=baggage_buffer,
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
                 depart_window=depart_window,
@@ -551,7 +550,7 @@ def _date_calendar_for_seed(
     max_duration_hours: Optional[float],
     currency: str,
     country: Optional[str],
-    buffer_eur: int,
+    baggage_buffer: int,
     sort: Optional[FlightSort],
     report_progress: Callable[[str], None],
 ) -> DateCalendarReport:
@@ -589,7 +588,7 @@ def _date_calendar_for_seed(
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
         )
         backend = "sweep"
     except Exception as exc:
@@ -653,16 +652,17 @@ def search_dates(
     nearby: bool = False,
     currency: Optional[str] = None,
     country: Optional[str] = None,
-    buffer_eur: Optional[int] = None,
+    proxy: Optional[str] = None,
+    baggage_buffer: Optional[int] = None,
     sort: Optional[FlightSort] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
     currency = resolve_quote_currency(currency, origin)
-    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
-    if buffer_eur < 0:
+    if baggage_buffer < 0:
         raise ValueError("baggage buffer must not be negative")
     if sort is not None and sort not in FLIGHT_SORTS:
         raise ValueError(
@@ -713,7 +713,7 @@ def search_dates(
             currency=currency,
         )
     report_progress = progress or (lambda _: None)
-    client = source or GoogleFlightsHttpSource(currency=currency, country=country)
+    client = source or GoogleFlightsHttpSource(currency=currency, country=country, proxy=proxy)
     reports: list[DateCalendarReport] = []
     try:
         for item in trips:
@@ -739,7 +739,7 @@ def search_dates(
                     max_duration_hours=max_duration_hours,
                     currency=currency,
                     country=country,
-                    buffer_eur=buffer_eur,
+                    baggage_buffer=baggage_buffer,
                     sort=sort,
                     report_progress=report_progress,
                 )
@@ -812,16 +812,6 @@ def _flex_report_for_seed(
     *,
     kind: DateTripKind,
     stay: Optional[int],
-    max_stops: int,
-    adults: int,
-    cabin: FlightCabin,
-    bags: Optional[int],
-    carry_on: Optional[int],
-    price_cap: Optional[int],
-    airlines: Optional[Sequence[str]],
-    exclude_airlines: Optional[Sequence[str]],
-    alliances: Optional[Sequence[str]],
-    exclude_alliances: Optional[Sequence[str]],
     parsed_via: Optional[tuple[str, ...]],
     parsed_exclude_via: Optional[tuple[str, ...]],
     parsed_no_overnight: Optional[tuple[str, ...]],
@@ -833,7 +823,7 @@ def _flex_report_for_seed(
     min_layover_hours: Optional[float],
     max_duration_hours: Optional[float],
     top: int,
-    buffer_eur: int,
+    baggage_buffer: int,
     sort: FlightSort,
     currency: str,
     country: Optional[str],
@@ -886,7 +876,7 @@ def _flex_report_for_seed(
             eligible = _offers_from_cards(
                 cards,
                 shop,
-                buffer_eur=buffer_eur,
+                baggage_buffer=baggage_buffer,
                 via=parsed_via,
                 exclude_via=parsed_exclude_via,
                 no_overnight=parsed_no_overnight,
@@ -953,7 +943,7 @@ def search_flex(
     trip: str = "one-way",
     nights: Optional[int] = None,
     top: int = DEFAULT_TOP,
-    buffer_eur: Optional[int] = None,
+    baggage_buffer: Optional[int] = None,
     sort: FlightSort = "ranked",
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
@@ -977,6 +967,7 @@ def search_flex(
     nearby: bool = False,
     currency: Optional[str] = None,
     country: Optional[str] = None,
+    proxy: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
 ) -> FlexSearchReport | tuple[FlexSearchReport, ...]:
@@ -986,11 +977,11 @@ def search_flex(
     per-day shopping sweep, no invented fare.
     """
     currency = resolve_quote_currency(currency, origin)
-    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
     if top <= 0:
         raise ValueError("top must be a positive integer")
-    if buffer_eur < 0:
+    if baggage_buffer < 0:
         raise ValueError("baggage buffer must not be negative")
     if sort not in ("ranked", "fare", "price", "duration", "departure", "arrival"):
         raise ValueError(
@@ -1044,7 +1035,7 @@ def search_flex(
             currency=currency,
         )
     report_progress = progress or (lambda _: None)
-    client = source or GoogleFlightsHttpSource(currency=currency, country=country)
+    client = source or GoogleFlightsHttpSource(currency=currency, country=country, proxy=proxy)
     reports: list[FlexSearchReport] = []
     try:
         for item in trips:
@@ -1060,16 +1051,6 @@ def search_flex(
                     end,
                     kind=kind,
                     stay=stay,
-                    max_stops=max_stops,
-                    adults=adults,
-                    cabin=cabin,
-                    bags=bags,
-                    carry_on=carry_on,
-                    price_cap=price_cap,
-                    airlines=airlines,
-                    exclude_airlines=exclude_airlines,
-                    alliances=alliances,
-                    exclude_alliances=exclude_alliances,
                     parsed_via=parsed_via,
                     parsed_exclude_via=parsed_exclude_via,
                     parsed_no_overnight=parsed_no_overnight,
@@ -1081,7 +1062,7 @@ def search_flex(
                     min_layover_hours=min_layover_hours,
                     max_duration_hours=max_duration_hours,
                     top=top,
-                    buffer_eur=buffer_eur,
+                    baggage_buffer=baggage_buffer,
                     sort=sort,
                     currency=currency,
                     country=country,
@@ -1157,12 +1138,12 @@ def _row_from_day_cards(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: int = 0,
 ) -> DatePriceRow:
     offers = _offers_from_cards(
         cards,
         query,
-        buffer_eur=buffer_eur,
+        baggage_buffer=baggage_buffer,
         via=via,
         exclude_via=exclude_via,
         no_overnight=no_overnight,
@@ -1234,7 +1215,7 @@ def _sweep_per_day(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: int = 0,
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
@@ -1271,7 +1252,7 @@ def _sweep_per_day(
                         max_layover_hours=max_layover_hours,
                         min_layover_hours=min_layover_hours,
                         max_duration_hours=max_duration_hours,
-                        buffer_eur=buffer_eur,
+                        baggage_buffer=baggage_buffer,
                     )
                 )
         return tuple(rows)
@@ -1300,7 +1281,7 @@ def _sweep_per_day(
                 max_layover_hours=max_layover_hours,
                 min_layover_hours=min_layover_hours,
                 max_duration_hours=max_duration_hours,
-                buffer_eur=buffer_eur,
+                baggage_buffer=baggage_buffer,
             )
         )
     return tuple(rows)

@@ -33,32 +33,41 @@ from viajante.models import (
 
 
 class ModelTests(unittest.TestCase):
+    def test_package_exports_search_error_types(self) -> None:
+        import viajante
+
+        self.assertIs(viajante.SearchError, SearchError)
+        self.assertIs(viajante.SearchErrorCode, SearchErrorCode)
+        self.assertIs(viajante.QueryFailure, QueryFailure)
+        self.assertIs(viajante.QuerySuccess, QuerySuccess)
+        self.assertIn("SearchErrorCode", viajante.__all__)
+
     def test_flight_query_validation(self) -> None:
-        q = FlightQuery("mad", "bcn", date(2026, 9, 1), max_stops=1)
-        self.assertEqual(q.origin, "MAD")
-        self.assertEqual(q.destination, "BCN")
+        q = FlightQuery("jfk", "lhr", date(2026, 9, 1), max_stops=1)
+        self.assertEqual(q.origin, "JFK")
+        self.assertEqual(q.destination, "LHR")
         self.assertEqual(q.adults, 1)
         self.assertEqual(q.cabin, "economy")
-        self.assertEqual(FlightQuery("MAD", "NRT", date(2026, 9, 1), max_stops=2).max_stops, 2)
+        self.assertEqual(FlightQuery("LAX", "NRT", date(2026, 9, 1), max_stops=2).max_stops, 2)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=3)
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=3)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), adults=0)
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), adults=0)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), cabin="space")  # type: ignore[arg-type]
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), cabin="space")  # type: ignore[arg-type]
         with self.assertRaises(ValueError):
-            FlightQuery("XXX", "BCN", date(2026, 9, 1))
+            FlightQuery("XXX", "LHR", date(2026, 9, 1))
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "XXX", date(2026, 9, 1))
+            FlightQuery("JFK", "XXX", date(2026, 9, 1))
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), children=-1)
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), children=-1)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), infants_on_lap=2)
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), infants_on_lap=2)
 
     def test_flight_query_occupancy_is_omitted_until_nonzero(self) -> None:
         data = FlightQuery(
-            "MAD",
-            "BCN",
+            "JFK",
+            "LHR",
             date(2026, 9, 1),
             adults=2,
             children=1,
@@ -69,7 +78,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(data["children"], 1)
         self.assertEqual(data["infants_on_lap"], 1)
         self.assertNotIn("infants_in_seat", data)
-        self.assertNotIn("children", FlightQuery("MAD", "BCN", date(2026, 9, 1)).to_dict())
+        self.assertNotIn("children", FlightQuery("JFK", "LHR", date(2026, 9, 1)).to_dict())
 
     def test_currency_and_country_codes(self) -> None:
         self.assertEqual(normalize_currency("eur"), "EUR")
@@ -88,12 +97,12 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(format_money(50.0, "JPY", width=7), "     50 JPY")
 
     def test_flight_query_legs_are_a_single_owned_leg(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=0)
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=0)
         self.assertEqual(len(query.legs), 1)
-        self.assertEqual(query.legs[0], FlightLeg("MAD", "BCN", date(2026, 9, 1), max_stops=0))
+        self.assertEqual(query.legs[0], FlightLeg("JFK", "LHR", date(2026, 9, 1), max_stops=0))
 
     def test_flight_query_to_dict_stays_one_way(self) -> None:
-        data = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=1).to_dict()
+        data = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1).to_dict()
         self.assertEqual(
             set(data),
             {
@@ -122,52 +131,52 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn("price_cap", data)
 
     def test_flight_query_bags_are_omitted_until_requested(self) -> None:
-        data = FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=1, carry_on=0).to_dict()
+        data = FlightQuery("JFK", "LHR", date(2026, 9, 1), bags=1, carry_on=0).to_dict()
         self.assertEqual(data["bags"], 1)
         self.assertEqual(data["carry_on"], 0)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), bags=-1)
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), bags=-1)
 
     def test_flight_query_price_cap_is_omitted_until_named(self) -> None:
-        data = FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=200).to_dict()
+        data = FlightQuery("JFK", "LHR", date(2026, 9, 1), price_cap=200).to_dict()
         self.assertEqual(data["price_cap"], 200)
-        unnamed = FlightQuery("MAD", "BCN", date(2026, 9, 1)).to_dict()
+        unnamed = FlightQuery("JFK", "LHR", date(2026, 9, 1)).to_dict()
         self.assertNotIn("price_cap", unnamed)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=0)
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), price_cap=0)
         with self.assertRaises(ValueError):
-            FlightQuery("MAD", "BCN", date(2026, 9, 1), price_cap=-1)
+            FlightQuery("JFK", "LHR", date(2026, 9, 1), price_cap=-1)
 
     def test_flight_leg_accepts_two_stops(self) -> None:
-        leg = FlightLeg("MAD", "NRT", date(2026, 10, 1), max_stops=2)
+        leg = FlightLeg("LAX", "NRT", date(2026, 10, 1), max_stops=2)
         self.assertEqual(leg.max_stops, 2)
         with self.assertRaises(ValueError):
-            FlightLeg("MAD", "NRT", date(2026, 10, 1), max_stops=3)
+            FlightLeg("LAX", "NRT", date(2026, 10, 1), max_stops=3)
         with self.assertRaises(ValueError):
-            FlightLeg("MAD", "MAD", date(2026, 10, 1))
+            FlightLeg("JFK", "JFK", date(2026, 10, 1))
 
     def test_round_trip_mirrors_legs_and_rejects_open_jaw(self) -> None:
-        trip = RoundTrip("MAD", "OPO", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
+        trip = RoundTrip("LAX", "NRT", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
         self.assertEqual(trip.adults, 1)
         self.assertEqual(trip.cabin, "economy")
         self.assertEqual(
             trip.legs,
             (
-                FlightLeg("MAD", "OPO", date(2026, 10, 9), max_stops=1),
-                FlightLeg("OPO", "MAD", date(2026, 10, 12), max_stops=1),
+                FlightLeg("LAX", "NRT", date(2026, 10, 9), max_stops=1),
+                FlightLeg("NRT", "LAX", date(2026, 10, 12), max_stops=1),
             ),
         )
         with self.assertRaises(ValueError):
-            RoundTrip("MAD", "OPO", date(2026, 10, 12), date(2026, 10, 9))
+            RoundTrip("LAX", "NRT", date(2026, 10, 12), date(2026, 10, 9))
         with self.assertRaises(ValueError):
-            RoundTrip("MAD", "MAD", date(2026, 10, 9), date(2026, 10, 12))
+            RoundTrip("JFK", "JFK", date(2026, 10, 9), date(2026, 10, 12))
         data = trip.to_dict()
         self.assertEqual(data["trip"], "rt")
         self.assertEqual(data["return_date"], "2026-10-12")
 
     def test_multi_city_requires_two_legs_and_non_decreasing_dates(self) -> None:
-        first = FlightLeg("MAD", "BCN", date(2026, 9, 1))
-        second = FlightLeg("BCN", "FCO", date(2026, 9, 3))
+        first = FlightLeg("JFK", "LHR", date(2026, 9, 1))
+        second = FlightLeg("LHR", "CDG", date(2026, 9, 3))
         trip = MultiCity((first, second), adults=2, cabin="business")
         self.assertEqual(trip.legs, (first, second))
         self.assertEqual(trip.adults, 2)
@@ -177,7 +186,7 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MultiCity((second, first))
         same_day = MultiCity(
-            (first, FlightLeg("BCN", "FCO", date(2026, 9, 1))),
+            (first, FlightLeg("LHR", "CDG", date(2026, 9, 1))),
         )
         self.assertEqual(same_day.legs[1].departure_date, date(2026, 9, 1))
 
@@ -198,7 +207,7 @@ class ModelTests(unittest.TestCase):
             )
 
     def test_query_result_variants(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1))
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1))
         offer = FlightOffer(
             airline="Air",
             departure="08:00",
@@ -260,7 +269,7 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn("one_stop", compare.to_dict())
 
     def test_search_report_json(self) -> None:
-        query = FlightQuery("MAD", "BCN", date(2026, 9, 1), max_stops=0)
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=0)
         report = SearchReport(
             searched_at=datetime(2026, 8, 10, 9, 20, 0),
             queries=(
@@ -294,7 +303,7 @@ class ReportTimestampTests(unittest.TestCase):
 
 
 class BaggageInvariantTests(unittest.TestCase):
-    def _offer(self, *, buffer_eur: int, needs_verify: bool) -> FlightOffer:
+    def _offer(self, *, baggage_buffer: int, needs_verify: bool) -> FlightOffer:
         return FlightOffer(
             airline="Ryanair",
             departure="08:00",
@@ -305,16 +314,16 @@ class BaggageInvariantTests(unittest.TestCase):
             duration_hours=1.0,
             stops="Nonstop",
             stops_count=0,
-            baggage_buffer=buffer_eur,
+            baggage_buffer=baggage_buffer,
             needs_bag_verify=needs_verify,
         )
 
     def test_a_buffer_cannot_be_applied_without_flagging_the_carrier(self) -> None:
         with self.assertRaises(ValueError):
-            self._offer(buffer_eur=70, needs_verify=False)
+            self._offer(baggage_buffer=70, needs_verify=False)
 
     def test_a_flagged_carrier_may_carry_no_buffer(self) -> None:
-        self.assertEqual(self._offer(buffer_eur=0, needs_verify=True).baggage_buffer, 0)
+        self.assertEqual(self._offer(baggage_buffer=0, needs_verify=True).baggage_buffer, 0)
 
     def test_parsed_bag_counts_serialise_only_when_present(self) -> None:
         known = FlightOffer(
@@ -335,13 +344,13 @@ class BaggageInvariantTests(unittest.TestCase):
         data = known.to_dict()
         self.assertEqual(data["checked_bags"], 1)
         self.assertEqual(data["carry_on"], 1)
-        omitted = self._offer(buffer_eur=0, needs_verify=True).to_dict()
+        omitted = self._offer(baggage_buffer=0, needs_verify=True).to_dict()
         self.assertNotIn("checked_bags", omitted)
         self.assertNotIn("carry_on", omitted)
 
     def test_negative_buffers_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            self._offer(buffer_eur=-1, needs_verify=True)
+            self._offer(baggage_buffer=-1, needs_verify=True)
 
 
 class HotelModelTests(unittest.TestCase):

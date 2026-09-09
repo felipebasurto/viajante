@@ -1,0 +1,53 @@
+# viajante
+
+Local Google Flights, Google Hotels, and Booking.com search. No API keys.
+Fetch locale is English. User prompts may be any language. No implied home hub.
+
+## Install (agents)
+
+```json
+{
+  "mcpServers": {
+    "viajante": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/felipebasurto/viajante.git[mcp]",
+        "viajante-mcp"
+      ]
+    }
+  }
+}
+```
+
+After PyPI: `--from viajante[mcp]`. Sweep and Google Hotels need no Chromium.
+Detail scrape and Booking.com: `pip install 'viajante[browser]' && playwright install chromium`.
+
+## Tools
+
+- search_flights: named routes and dates
+- search_dates: cheapest-per-day calendar (cheapest week). Max 31 days.
+- search_flex: ±N around one date, then one shop. Not a date matrix.
+- search_explore: dest triage from a named origin
+- search_hotels: total-stay prices. Currency required. Default source google.
+- search_trip: flights then hotels. Same currency. Default hotel source google.
+- lookup_airports: offline city or IATA lookup. Does not pick a hub.
+
+One search at a time in the MCP process.
+
+## Currency
+
+Pass `currency` (ISO 4217) or infer from a named origin airport country
+(JFK USD, LHR GBP, NRT JPY, GRU BRL). Hotels have no origin: currency is required.
+Do not invent IATA, gl, or ISO 4217. Viajante does not convert.
+
+## Bags
+
+Unnamed baggage_buffer is 0. Prefer bags / carry_on on the shopping request.
+Do not invent a bag fee.
+
+## Python
+
+```python
+from viajante import search_flights, SearchErrorCode, QueryFailure
+```

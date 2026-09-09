@@ -42,7 +42,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertNotIn("import mcp", text)
 
     def test_lookup_airports_returns_dicts(self) -> None:
-        rows = lookup_airports_tool("MAD", limit=3)
+        rows = lookup_airports_tool("NRT", limit=3)
         self.assertGreaterEqual(len(rows), 1)
         self.assertIn("iata", rows[0])
         self.assertNotIn("success", rows[0])
@@ -54,9 +54,9 @@ class McpHandlerTests(unittest.TestCase):
         self.assertTrue({"LHR", "LGW", "STN"} <= set(codes[:5]))
 
     def test_search_flights_returns_report_to_dict(self) -> None:
-        fake = _report(queries=[], currency="EUR")
+        fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
-            payload = search_flights_tool([f"MAD-BCN:{FUTURE}"], top=3)
+            payload = search_flights_tool([f"JFK-LHR:{FUTURE}"], top=3)
         search.assert_called_once()
         self.assertEqual(payload["schema_version"], 1)
         self.assertIn("queries", payload)
@@ -64,10 +64,10 @@ class McpHandlerTests(unittest.TestCase):
         self.assertNotIn("flights", payload)
 
     def test_search_flights_accepts_cli_filters_and_round_trip_alias(self) -> None:
-        fake = _report(queries=[], currency="EUR")
+        fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             search_flights_tool(
-                [f"MAD-PRG:{FUTURE}:{FUTURE_OUT}"],
+                [f"JFK-CDG:{FUTURE}:{FUTURE_OUT}"],
                 trip="round-trip",
                 airlines="IB,I2",
                 exclude_airlines="FR",
@@ -102,14 +102,26 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["require_overnight"], ("any",))
         self.assertEqual(kwargs["exclude_airports"], ("HND",))
         self.assertEqual(kwargs["include_airports"], ("NRT", "HND"))
-        self.assertEqual(kwargs["buffer_eur"], 0)
+        self.assertEqual(kwargs["baggage_buffer"], 0)
         self.assertEqual(kwargs["sort"], "duration")
 
-    def test_search_flights_accepts_clock_window_and_price_sort(self) -> None:
-        fake = _report(queries=[], currency="EUR")
+    def test_search_flights_forwards_proxy(self) -> None:
+        fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             search_flights_tool(
-                [f"MAD-BCN:{FUTURE}"],
+                [f"JFK-LHR:{FUTURE}"],
+                proxy="http://127.0.0.1:8080",
+            )
+        self.assertEqual(search.call_args.kwargs["proxy"], "http://127.0.0.1:8080")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool([f"JFK-LHR:{FUTURE}"])
+        self.assertIsNone(search.call_args.kwargs["proxy"])
+
+    def test_search_flights_accepts_clock_window_and_price_sort(self) -> None:
+        fake = _report(queries=[], currency="USD")
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            search_flights_tool(
+                [f"JFK-LHR:{FUTURE}"],
                 depart_window="06:00-20:00",
                 sort="price",
             )
@@ -118,7 +130,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["sort"], "price")
 
     def test_search_flights_nearby_expands_before_search(self) -> None:
-        fake = _report(queries=[], currency="EUR")
+        fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             search_flights_tool([f"BOS-LHR:{FUTURE}"], nearby=True)
         trips = search.call_args.args[0]
@@ -140,10 +152,10 @@ class McpHandlerTests(unittest.TestCase):
         )
 
     def test_search_flights_accepts_alliance_filters(self) -> None:
-        fake = _report(queries=[], currency="EUR")
+        fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             search_flights_tool(
-                [f"MAD-LHR:{FUTURE}"],
+                [f"LHR-JFK:{FUTURE}"],
                 alliance="oneworld",
                 exclude_alliance="star",
             )
@@ -152,28 +164,28 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["exclude_alliances"], ("star",))
 
     def test_search_flights_accepts_bags_and_carry_on(self) -> None:
-        fake = _report(queries=[], currency="EUR")
+        fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
-            search_flights_tool([f"MAD-BCN:{FUTURE}"], bags=1, carry_on=1)
+            search_flights_tool([f"NRT-SIN:{FUTURE}"], bags=1, carry_on=1)
         trip = search.call_args.args[0][0]
         self.assertEqual(trip.bags, 1)
         self.assertEqual(trip.carry_on, 1)
 
     def test_search_flights_accepts_named_price_cap(self) -> None:
-        fake = _report(queries=[], currency="EUR")
+        fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
-            search_flights_tool([f"MAD-BCN:{FUTURE}"], price_cap=200)
+            search_flights_tool([f"GRU-EZE:{FUTURE}"], price_cap=200)
         trip = search.call_args.args[0][0]
         self.assertEqual(trip.price_cap, 200)
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
-            search_flights_tool([f"MAD-BCN:{FUTURE}"])
+            search_flights_tool([f"JFK-LHR:{FUTURE}"])
         self.assertIsNone(search.call_args.args[0][0].price_cap)
 
     def test_search_flights_accepts_occupancy_and_locale_params(self) -> None:
         fake = _report(queries=[], currency="USD")
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             search_flights_tool(
-                [f"MAD-BCN:{FUTURE}"],
+                [f"JFK-LHR:{FUTURE}"],
                 adults=2,
                 children=1,
                 infants_in_seat=1,
@@ -192,13 +204,13 @@ class McpHandlerTests(unittest.TestCase):
     def test_past_flight_date_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_flights") as search:
             with self.assertRaises(ValueError):
-                search_flights_tool([f"MAD-BCN:{PAST}"])
+                search_flights_tool([f"JFK-LHR:{PAST}"])
         search.assert_not_called()
 
     def test_search_dates_does_not_pass_fetch(self) -> None:
         fake = _report(days=[])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
-            payload = search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT)
+            payload = search_dates_tool("JFK-LHR", FUTURE, FUTURE_OUT)
         kwargs = search.call_args.kwargs
         self.assertNotIn("fetch", kwargs)
         self.assertEqual(kwargs["trip"], "one-way")
@@ -225,7 +237,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
-        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertEqual(kwargs["currency"], "USD")
         self.assertIsNone(kwargs["country"])
         self.assertEqual(payload["schema_version"], 1)
         self.assertIsNone(kwargs.get("sort"))
@@ -233,26 +245,26 @@ class McpHandlerTests(unittest.TestCase):
     def test_search_dates_forwards_named_sort(self) -> None:
         fake = _report(days=[])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
-            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT, sort="duration")
+            search_dates_tool("GRU-EZE", FUTURE, FUTURE_OUT, sort="duration")
         self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
     def test_search_dates_unnamed_buffer_uses_the_default(self) -> None:
         fake = _report(days=[])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
-            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT)
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], 70)
+            search_dates_tool("JFK-LHR", FUTURE, FUTURE_OUT)
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
 
     def test_search_dates_forwards_named_buffer(self) -> None:
         fake = _report(days=[])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
-            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT, baggage_buffer=0)
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+            search_dates_tool("JFK-LHR", FUTURE, FUTURE_OUT, baggage_buffer=0)
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
 
     def test_search_dates_forwards_named_occupancy(self) -> None:
         fake = _report(days=[])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
             search_dates_tool(
-                "MAD-BCN",
+                "JFK-LHR",
                 FUTURE,
                 FUTURE_OUT,
                 adults=2,
@@ -278,7 +290,7 @@ class McpHandlerTests(unittest.TestCase):
         fake = _report(days=[])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
             search_dates_tool(
-                "MAD-BCN",
+                "JFK-LHR",
                 FUTURE,
                 FUTURE_OUT,
                 bags=1,
@@ -328,7 +340,7 @@ class McpHandlerTests(unittest.TestCase):
             search_dates_tool("BOS-LHR", FUTURE, FUTURE_OUT, nearby=True)
         self.assertTrue(search.call_args.kwargs["nearby"])
         with patch("viajante.mcp_handlers.search_dates", return_value=fake) as search:
-            search_dates_tool("MAD-BCN", FUTURE, FUTURE_OUT)
+            search_dates_tool("JFK-LHR", FUTURE, FUTURE_OUT)
         self.assertFalse(search.call_args.kwargs["nearby"])
 
     def test_search_dates_nearby_tuple_wraps_queries(self) -> None:
@@ -361,7 +373,7 @@ class McpHandlerTests(unittest.TestCase):
     def test_past_date_window_fails_before_search(self) -> None:
         with patch("viajante.mcp_handlers.search_dates") as search:
             with self.assertRaises(ValueError):
-                search_dates_tool("MAD-BCN", PAST, FUTURE)
+                search_dates_tool("JFK-LHR", PAST, FUTURE)
         search.assert_not_called()
 
     def test_flight_failure_payload_carries_no_price_keys(self) -> None:
@@ -376,7 +388,7 @@ class McpHandlerTests(unittest.TestCase):
             SearchReport,
         )
 
-        query = FlightQuery("MAD", "BCN", _date.fromisoformat(FUTURE))
+        query = FlightQuery("JFK", "LHR", _date.fromisoformat(FUTURE))
         report = SearchReport(
             searched_at=datetime(2026, 8, 11, 10, 32, 0),
             queries=(
@@ -385,10 +397,10 @@ class McpHandlerTests(unittest.TestCase):
                     error=SearchError(SearchErrorCode.BLOCKED, "blocked"),
                 ),
             ),
-            currency="EUR",
+            currency="USD",
         )
         with patch("viajante.mcp_handlers.search_flights", return_value=report):
-            payload = search_flights_tool([f"MAD-BCN:{FUTURE}"])
+            payload = search_flights_tool([f"JFK-LHR:{FUTURE}"])
         text = str(payload)
         self.assertNotIn("flight_fare", text)
         self.assertNotIn("hotel_stay", text)
@@ -442,7 +454,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
         self.assertEqual(kwargs["currency"], "USD")
-        self.assertEqual(kwargs["buffer_eur"], 0)
+        self.assertEqual(kwargs["baggage_buffer"], 0)
         self.assertIsNone(kwargs["country"])
 
     def test_search_flex_forwards_named_occupancy(self) -> None:
@@ -519,7 +531,7 @@ class McpHandlerTests(unittest.TestCase):
             search_flex_tool("BOS-LHR", FUTURE, 3, nearby=True)
         self.assertTrue(search.call_args.kwargs["nearby"])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
-            search_flex_tool("MAD-BCN", FUTURE, 3)
+            search_flex_tool("SYD-AKL", FUTURE, 3)
         self.assertFalse(search.call_args.kwargs["nearby"])
 
     def test_search_flex_past_around_fails_before_search(self) -> None:
@@ -532,7 +544,7 @@ class McpHandlerTests(unittest.TestCase):
         fake = _report(destinations=[])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             payload = search_explore_tool(
-                "MAD",
+                "GRU",
                 FUTURE,
                 adults=2,
                 cabin="business",
@@ -563,7 +575,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["children"], 0)
         self.assertEqual(search.call_args.kwargs["infants_in_seat"], 0)
         self.assertEqual(search.call_args.kwargs["infants_on_lap"], 0)
-        self.assertEqual(search.call_args.kwargs["currency"], "EUR")
+        self.assertEqual(search.call_args.kwargs["currency"], "BRL")
         self.assertIsNone(search.call_args.kwargs["country"])
         self.assertEqual(search.call_args.kwargs["sort"], "price")
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
@@ -573,21 +585,21 @@ class McpHandlerTests(unittest.TestCase):
     def test_search_explore_unnamed_buffer_uses_the_default(self) -> None:
         fake = _report(destinations=[])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
-            search_explore_tool("MAD", FUTURE)
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], 70)
+            search_explore_tool("NRT", FUTURE)
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
 
     def test_search_explore_forwards_named_buffer(self) -> None:
         fake = _report(destinations=[])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
-            search_explore_tool("MAD", FUTURE, baggage_buffer=0, sort="ranked")
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+            search_explore_tool("NRT", FUTURE, baggage_buffer=0, sort="ranked")
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
         self.assertEqual(search.call_args.kwargs["sort"], "ranked")
 
     def test_search_explore_forwards_named_occupancy(self) -> None:
         fake = _report(destinations=[])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool(
-                "MAD",
+                "SYD",
                 FUTURE,
                 adults=2,
                 children=1,
@@ -612,7 +624,7 @@ class McpHandlerTests(unittest.TestCase):
         fake = _report(destinations=[])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
             search_explore_tool(
-                "MAD",
+                "SIN",
                 FUTURE,
                 bags=1,
                 carry_on=1,
@@ -663,13 +675,13 @@ class McpHandlerTests(unittest.TestCase):
             search_explore_tool("LHR", FUTURE, nearby=True)
         self.assertTrue(search.call_args.kwargs["nearby"])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
-            search_explore_tool("MAD", FUTURE)
+            search_explore_tool("NRT", FUTURE)
         self.assertFalse(search.call_args.kwargs["nearby"])
 
     def test_search_explore_forwards_named_sort(self) -> None:
         fake = _report(destinations=[])
         with patch("viajante.mcp_handlers.search_explore", return_value=fake) as search:
-            search_explore_tool("MAD", FUTURE, sort="duration")
+            search_explore_tool("NRT", FUTURE, sort="duration")
         self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
     def test_search_hotels_defaults_to_google(self) -> None:
@@ -711,7 +723,7 @@ class McpHandlerTests(unittest.TestCase):
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["hotel_source"], "google")
         self.assertEqual(kwargs["currency"], "SGD")
-        self.assertEqual(kwargs["buffer_eur"], 0)
+        self.assertEqual(kwargs["baggage_buffer"], 0)
         trip = search.call_args.args[0][0]
         self.assertEqual(type(trip).__name__, "RoundTrip")
         self.assertEqual(trip.adults, 2)
@@ -847,13 +859,13 @@ class McpHandlerTests(unittest.TestCase):
             return _report(queries=[])
 
         with patch("viajante.mcp_handlers.search_flights", fake):
-            worker = threading.Thread(target=lambda: search_flights_tool([f"MAD-BCN:{FUTURE}"]))
+            worker = threading.Thread(target=lambda: search_flights_tool([f"JFK-LHR:{FUTURE}"]))
             worker.start()
             self.assertTrue(started.wait(2))
             with self.assertRaises(ValueError) as ctx:
-                search_flights_tool([f"MAD-BCN:{FUTURE_OUT}"])
+                search_flights_tool([f"JFK-LHR:{FUTURE_OUT}"])
             self.assertIn("already running", str(ctx.exception))
-            rows = lookup_airports_tool("MAD", limit=1)
+            rows = lookup_airports_tool("NRT", limit=1)
             self.assertGreaterEqual(len(rows), 1)
             release.set()
             worker.join(2)
@@ -861,8 +873,9 @@ class McpHandlerTests(unittest.TestCase):
 
 
 class _FakeFastMCP:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, **kwargs: object) -> None:
         self.name = name
+        self.instructions = kwargs.get("instructions")
         self.tools: list[str] = []
 
     def tool(self, *_args: object, **_kwargs: object):
@@ -897,6 +910,7 @@ class McpServerImportTests(unittest.TestCase):
         for name in _sdk_module_names():
             self.assertNotIn(name, sys.modules)
         self.assertIn("viajante-mcp", help_text)
+        self.assertIn("uvx", help_text)
         self.assertIn("search_flights", help_text)
         self.assertIn("search_flex", help_text)
         self.assertIn("search_trip", help_text)
@@ -926,6 +940,10 @@ class McpServerImportTests(unittest.TestCase):
         server = build_server()
         self.assertIsInstance(server, _FakeFastMCP)
         self.assertEqual(server.name, "viajante")
+        self.assertIsInstance(server.instructions, str)
+        assert isinstance(server.instructions, str)
+        self.assertIn("search_dates is the cheapest week", server.instructions)
+        self.assertIn("uvx", server.instructions)
         self.assertEqual(
             server.tools,
             [

@@ -19,6 +19,14 @@ def _sync_playwright():
     return sync_playwright()
 
 
+def playwright_available() -> bool:
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class BrowserSessionConfig:
     state_filename: str

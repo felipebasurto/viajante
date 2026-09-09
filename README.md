@@ -15,23 +15,28 @@ Give flight and accommodation superpowers to **Cursor**, **Claude Desktop**, **A
 
 ### 1. Configure the MCP Server
 
-Add `viajante` to your agent's MCP configuration (e.g. `claude_desktop_config.json` or `.cursor/mcp.json`):
+No clone. No local path. Sweep flights and Google Hotels need no Chromium.
 
 ```json
 {
   "mcpServers": {
     "viajante": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "--directory", "/path/to/viajante",
-        "run",
-        "--extra", "mcp",
+        "--from",
+        "git+https://github.com/felipebasurto/viajante.git[mcp]",
         "viajante-mcp"
       ]
     }
   }
 }
 ```
+
+After the package is on PyPI, the same block can use `"viajante[mcp]"` as `--from`.
+
+Checkout contributors can still run `uv sync --extra mcp` and point `command` at `viajante-mcp` on PATH.
+
+For Booking.com or `--fetch detail`, install the browser extra and Chromium: `pip install 'viajante[browser]' && playwright install chromium`.
 
 ### 2. What the Agent Can Do
 
@@ -53,8 +58,8 @@ Once connected, your agent automatically gains 7 purpose-built tools:
   ➡️ Agent calls `search_dates(origin="BOS", destination="LHR", from_date="2026-11-01", to_date="2026-11-30", nights=7)`.
 - *"I want to take a trip from JFK around September 15 for 5 nights, flexible by 3 days. Show me the best option."*  
   ➡️ Agent calls `search_flex(routes=["JFK-LHR:2026-09-15"], flex=3, nights=5)`.
-- *"Where can I fly cheaply from Madrid next month for a week?"*  
-  ➡️ Agent calls `search_explore(origin="MAD", start_date="2026-10-01", days=7)`.
+- *"Where can I fly cheaply from Tokyo next month for a week?"*  
+  ➡️ Agent calls `search_explore(origin="NRT", start_date="2026-10-01", days=7)`.
 - *"Find flights from SFO to Tokyo Oct 12–19 and a highly rated hotel with free cancellation."*  
   ➡️ Agent calls `search_trip(routes=["SFO-NRT:2026-10-12:2026-10-19"], trip="rt", hotel_location="Tokyo")`.
 
@@ -62,20 +67,30 @@ Once connected, your agent automatically gains 7 purpose-built tools:
 
 ## Installation
 
-Requires Python 3.10+ and [`uv`](https://docs.astral.sh/uv/).
+Requires Python 3.10+ and [`uv`](https://docs.astral.sh/uv/). Agents: use the `uvx` MCP block above. No Chromium for sweep or Google Hotels.
 
 ```bash
-# Clone the repository
+# Library + CLI (sweep, Google Hotels, dates, flex, explore)
+pip install viajante
+# or: uv add viajante
+
+# MCP stdio server
+pip install 'viajante[mcp]'
+
+# Playwright detail + Booking.com only
+pip install 'viajante[browser]'
+playwright install chromium
+```
+
+Checkout:
+
+```bash
 git clone https://github.com/felipebasurto/viajante.git
 cd viajante
-
-# Sync dependencies
 uv sync
-
-# Optional: install MCP support for AI agents
 uv sync --extra mcp
-
-# Optional: install Chromium (only required for detailed Playwright scraping & Booking.com)
+# Chromium only if you need detail or Booking:
+uv sync --extra browser
 uv run playwright install chromium
 ```
 

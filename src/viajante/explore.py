@@ -12,7 +12,6 @@ from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
 from viajante.flights import (
-    DEFAULT_BAGGAGE_BUFFER_EUR,
     FLIGHT_SORTS,
     FlightSort,
     _calendar_summary_from_source,
@@ -225,7 +224,7 @@ def _explore_for_origin(
     currency: str,
     country: Optional[str],
     sort: FlightSort,
-    buffer_eur: int,
+    baggage_buffer: int,
     report_progress: Callable[[str], None],
 ) -> ExploreReport:
     nearby = f" ({nearby_label})" if nearby_label else ""
@@ -294,7 +293,7 @@ def _explore_for_origin(
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
             sort=sort,
         )
         price = cheapest.price if cheapest is not None else None
@@ -376,8 +375,9 @@ def search_explore(
     nearby: bool = False,
     currency: Optional[str] = None,
     country: Optional[str] = None,
+    proxy: Optional[str] = None,
     sort: FlightSort = "price",
-    buffer_eur: Optional[int] = None,
+    baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
 ) -> ExploreReport | tuple[ExploreReport, ...]:
@@ -409,8 +409,8 @@ def search_explore(
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
     currency = resolve_quote_currency(currency, origin)
-    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
-    if buffer_eur < 0:
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
+    if baggage_buffer < 0:
         raise ValueError("baggage buffer must not be negative")
     report_progress = progress or (lambda _: None)
     drop_unpriced = _named_shop_filters(
@@ -444,7 +444,7 @@ def search_explore(
             fetch_ms=0,
             currency=currency,
         )
-    client = source or GoogleFlightsHttpSource(currency=currency, country=country)
+    client = source or GoogleFlightsHttpSource(currency=currency, country=country, proxy=proxy)
     reports: list[ExploreReport] = []
     try:
         for code, label in origins:
@@ -486,7 +486,7 @@ def search_explore(
                     currency=currency,
                     country=country,
                     sort=sort,
-                    buffer_eur=buffer_eur,
+                    baggage_buffer=baggage_buffer,
                     report_progress=report_progress,
                 )
             )
@@ -536,7 +536,7 @@ def _cheapest_shop(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: int = 0,
     sort: FlightSort = "price",
 ) -> tuple[Optional[FlightOffer], Optional[StopsCompare], FlightQuery]:
     airline_codes = tuple(airlines) if airlines is not None else None
@@ -572,7 +572,7 @@ def _cheapest_shop(
             offer := _normalize_offer(
                 raw,
                 max_stops,
-                buffer_eur=buffer_eur,
+                baggage_buffer=baggage_buffer,
                 airlines=query.airlines,
                 exclude_airlines=query.exclude_airlines,
                 depart_window=depart_window,

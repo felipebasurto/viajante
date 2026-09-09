@@ -153,11 +153,11 @@ def owned_trip_total(
     stay = _owned_hotel_stay(hotels, flight_queries)
     if fare is None or stay is None:
         return None
-    stay_eur, nights = stay
+    stay_amount, nights = stay
     return TripTotal(
         flight_fare=fare,
-        hotel_stay=stay_eur,
-        total=fare + stay_eur,
+        hotel_stay=stay_amount,
+        total=fare + stay_amount,
         nights=nights,
     )
 
@@ -186,7 +186,7 @@ def search_trip(
     hotel_query: HotelQuery,
     *,
     top: int = DEFAULT_TOP,
-    buffer_eur: Optional[int] = None,
+    baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
     fetch: str = "auto",
@@ -217,7 +217,7 @@ def search_trip(
     if not trips:
         raise ValueError("at least one query is required")
     currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
-    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     flights = search_flights(
         _overlay_trip_shop_filters(
             trips,
@@ -226,7 +226,7 @@ def search_trip(
             price_cap=price_cap,
         ),
         top=top,
-        buffer_eur=buffer_eur,
+        baggage_buffer=baggage_buffer,
         progress=progress,
         sort=sort,
         fetch=fetch,  # type: ignore[arg-type]
@@ -275,7 +275,7 @@ def write_trip_report_atomic(report: TripSearchReport, destination: Path) -> Non
     write_json_atomic(report.to_dict(), destination)
 
 
-def format_trip_total(total: TripTotal, currency: str = "EUR") -> str:
+def format_trip_total(total: TripTotal, currency: str) -> str:
     nights_label = "night" if total.nights == 1 else "nights"
     return (
         f"Trip total: {format_money(total.flight_fare, currency)} fare + "

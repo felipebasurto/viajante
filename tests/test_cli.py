@@ -41,9 +41,9 @@ from viajante.models import (
 
 FUTURE_DATE = date.today() + timedelta(days=30)
 PAST_DATE = date.today() - timedelta(days=1)
-ROUTE = f"MAD-BCN:{FUTURE_DATE.isoformat()}"
+ROUTE = f"JFK-LHR:{FUTURE_DATE.isoformat()}"
 
-QUERY = FlightQuery("MAD", "BCN", FUTURE_DATE, max_stops=1)
+QUERY = FlightQuery("JFK", "LHR", FUTURE_DATE, max_stops=1)
 SEARCHED_AT = datetime(2026, 8, 10, 9, 0, 0)
 
 
@@ -74,7 +74,7 @@ def _offer(
         airline=airline,
         departure=departure,
         arrival=arrival,
-        price_text=f"€{price:.0f}",
+        price_text=f"{price:.0f} USD",
         price=price,
         duration=duration,
         duration_hours=duration_hours,
@@ -98,7 +98,7 @@ def _offer(
 def _report(
     *offers: FlightOffer,
     stops_compare: Optional[StopsCompare] = None,
-    currency: str = "EUR",
+    currency: str = "USD",
 ) -> SearchReport:
     shown = offers or (_offer(),)
     return SearchReport(
@@ -206,7 +206,7 @@ class CliTests(unittest.TestCase):
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
                 main(["flights", ROUTE, "--baggage-buffer", "0"])
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
 
     def test_adults_and_cabin_reach_parsed_queries(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
@@ -248,6 +248,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["currency"], "USD")
         self.assertEqual(search.call_args.kwargs["country"], "US")
+
+    def test_proxy_reaches_search(self) -> None:
+        with patch("viajante.cli.search_flights", return_value=_report()) as search:
+            with patch("viajante.cli._print_report"):
+                code = main(["flights", ROUTE, "--proxy", "http://127.0.0.1:8080"])
+        self.assertEqual(code, 0)
+        self.assertEqual(search.call_args.kwargs["proxy"], "http://127.0.0.1:8080")
 
     def test_lap_infants_over_adults_is_rejected_before_searching(self) -> None:
         with patch("viajante.cli.search_flights") as search:
@@ -367,14 +374,14 @@ class CliTests(unittest.TestCase):
 
     def test_past_dates_are_rejected_before_starting_chromium(self) -> None:
         with patch("viajante.cli.search_flights") as search:
-            code = main(["flights", f"MAD-BCN:{PAST_DATE.isoformat()}"])
+            code = main(["flights", f"JFK-LHR:{PAST_DATE.isoformat()}"])
             self.assertEqual(code, 1)
             search.assert_not_called()
 
     def test_today_is_accepted(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                main(["flights", f"MAD-BCN:{date.today().isoformat()}"])
+                main(["flights", f"JFK-LHR:{date.today().isoformat()}"])
             search.assert_called_once()
 
 
@@ -401,8 +408,8 @@ class ReportRenderingTests(unittest.TestCase):
     def test_ranking_note_shows_the_effective_total(self) -> None:
         low_cost = _offer(airline="Ryanair", price=50.0, baggage_buffer=70, needs_bag_verify=True)
         output = _rendered(_report(low_cost))
-        self.assertIn("50 €", output)
-        self.assertIn("120 € ranked", output)
+        self.assertIn("50 USD", output)
+        self.assertIn("120 USD ranked", output)
         self.assertNotIn("(+70 bag", output)
 
     def test_disabled_buffer_still_flags_the_carrier(self) -> None:
@@ -422,7 +429,7 @@ class ReportRenderingTests(unittest.TestCase):
                 )
             )
         )
-        self.assertIn("below typical 340 € (−15%)", with_typical)
+        self.assertIn("below typical 340 USD (−15%)", with_typical)
         silent = _rendered(_report(_offer(price=289.0)))
         self.assertNotIn("typical", silent)
 
@@ -439,8 +446,8 @@ class ReportRenderingTests(unittest.TestCase):
                 )
             )
         )
-        self.assertIn("below typical 340 € (−15%)", output)
-        self.assertIn("cheapest 2026-09-16 300 €", output)
+        self.assertIn("below typical 340 USD (−15%)", output)
+        self.assertIn("cheapest 2026-09-16 300 USD", output)
 
     def test_non_eur_currency_does_not_print_euro_glyph(self) -> None:
         output = _rendered(
@@ -549,10 +556,10 @@ class ReportRenderingTests(unittest.TestCase):
         )
         output = _rendered(_report(_offer(airline="Iberia", price=88.0), stops_compare=compare))
         self.assertIn("Cheapest nonstop:", output)
-        self.assertIn("88 €", output)
+        self.assertIn("88 USD", output)
         self.assertIn("Iberia", output)
         self.assertIn("Cheapest 1-stop:", output)
-        self.assertIn("49 €", output)
+        self.assertIn("49 USD", output)
         self.assertIn("Ryanair", output)
         self.assertIn("OPO", output)
         self.assertNotIn("no nonstop", output)
@@ -583,7 +590,7 @@ class ReportRenderingTests(unittest.TestCase):
         )
         self.assertIn("Cheapest nonstop:  no nonstop", output)
         self.assertIn("Cheapest 1-stop:", output)
-        self.assertIn("49 €", output)
+        self.assertIn("49 USD", output)
 
     def test_stops_compare_omits_one_stop_line_when_only_nonstop(self) -> None:
         compare = StopsCompare(nonstop=StopsCompareSide.from_offer(_offer()))
@@ -744,7 +751,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("18h", output)
 
     def test_round_trip_header_and_return_clocks(self) -> None:
-        trip = RoundTrip("MAD", "PRG", date(2026, 12, 3), date(2026, 12, 9))
+        trip = RoundTrip("JFK", "CDG", date(2026, 12, 3), date(2026, 12, 9))
         offer = _offer(departure="07:00", arrival="09:30")
         object.__setattr__(
             offer,
@@ -817,8 +824,8 @@ class ReportRenderingTests(unittest.TestCase):
 
     def test_trip_rt_and_multi_reject_bad_grammar(self) -> None:
         cases = (
-            ["flights", "--trip", "rt", "MAD-BCN:2026-09-01"],
-            ["flights", "--trip", "multi", "MAD-BCN:2026-09-01"],
+            ["flights", "--trip", "rt", "JFK-LHR:2026-09-01"],
+            ["flights", "--trip", "multi", "JFK-LHR:2026-09-01"],
         )
         for argv in cases:
             with self.subTest(argv=argv):
@@ -838,7 +845,7 @@ class ReportRenderingTests(unittest.TestCase):
                         "flights",
                         "--trip",
                         "round-trip",
-                        "MAD-OPO:2026-10-09:2026-10-12",
+                        "LAX-NRT:2026-10-09:2026-10-12",
                         "--fetch",
                         "sweep",
                     ]
@@ -850,7 +857,7 @@ class ReportRenderingTests(unittest.TestCase):
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
                 code = main(
-                    ["flights", "--trip", "rt", "MAD-OPO:2026-10-09:2026-10-12", "--fetch", "sweep"]
+                    ["flights", "--trip", "rt", "LAX-NRT:2026-10-09:2026-10-12", "--fetch", "sweep"]
                 )
         self.assertEqual(code, 0)
         trips = search.call_args.args[0]
@@ -860,29 +867,30 @@ class ReportRenderingTests(unittest.TestCase):
     def test_trip_one_way_keeps_rt_sugar(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", "--trip", "one-way", "MAD-OPO:2026-10-09:2026-10-12"])
+                code = main(["flights", "--trip", "one-way", "LAX-NRT:2026-10-09:2026-10-12"])
         self.assertEqual(code, 0)
         self.assertEqual(len(search.call_args.args[0]), 2)
 
     def test_rt_sugar_builds_return_leg(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", "MAD-OPO:2026-10-09:2026-10-12"])
+                code = main(["flights", "LAX-NRT:2026-10-09:2026-10-12"])
         self.assertEqual(code, 0)
         queries = search.call_args.args[0]
         self.assertEqual(len(queries), 2)
-        self.assertEqual(queries[0].origin, "MAD")
-        self.assertEqual(queries[0].destination, "OPO")
+        self.assertEqual(queries[0].origin, "LAX")
+        self.assertEqual(queries[0].destination, "NRT")
         self.assertEqual(queries[0].departure_date, date(2026, 10, 9))
-        self.assertEqual(queries[1].origin, "OPO")
-        self.assertEqual(queries[1].destination, "MAD")
+        self.assertEqual(queries[1].origin, "NRT")
+        self.assertEqual(queries[1].destination, "LAX")
         self.assertEqual(queries[1].departure_date, date(2026, 10, 12))
 
     def test_best_pair_line_uses_sort_key(self) -> None:
-        outbound = FlightQuery("MAD", "OPO", date(2026, 10, 9), max_stops=1)
-        inbound = FlightQuery("OPO", "MAD", date(2026, 10, 12), max_stops=1)
+        outbound = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=1)
+        inbound = FlightQuery("NRT", "LAX", date(2026, 10, 12), max_stops=1)
         report = SearchReport(
             searched_at=SEARCHED_AT,
+            currency="USD",
             queries=(
                 QuerySuccess(
                     query=outbound,
@@ -907,13 +915,13 @@ class ReportRenderingTests(unittest.TestCase):
         )
         ranked = _rendered(report, sort="ranked")
         self.assertIn("Best pair (ranked):", ranked)
-        self.assertIn("MAD->OPO 145 € ranked", ranked)
-        self.assertIn("OPO->MAD 80 € ranked", ranked)
-        self.assertIn("= 225 €", ranked)
+        self.assertIn("LAX->NRT 145 USD ranked", ranked)
+        self.assertIn("NRT->LAX 80 USD ranked", ranked)
+        self.assertIn("= 225 USD", ranked)
         fare = _rendered(report, sort="fare")
         self.assertIn("Best pair (fare):", fare)
-        self.assertIn("MAD->OPO 75 € fare", fare)
-        self.assertIn("= 155 €", fare)
+        self.assertIn("LAX->NRT 75 USD fare", fare)
+        self.assertIn("= 155 USD", fare)
 
     def test_flights_help_preserves_examples_epilog(self) -> None:
         buffer = io.StringIO()
@@ -928,6 +936,7 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("--sort", help_text)
         self.assertIn("--fetch", help_text)
         self.assertIn("--fetch sweep", help_text)
+        self.assertIn("--proxy", help_text)
         self.assertIn("--max-layover", help_text)
         self.assertIn("--min-layover", help_text)
         self.assertIn("--via", help_text)
@@ -1019,6 +1028,8 @@ class PublicApiTests(unittest.TestCase):
         for name in (
             "FlightQuery",
             "SearchReport",
+            "get_flights",
+            "plan_prompt",
             "search_flights",
             "HotelQuery",
             "HotelSearchReport",
@@ -1030,6 +1041,10 @@ class PublicApiTests(unittest.TestCase):
             "search_flex",
             "search_explore",
             "lookup_airports",
+            "SearchError",
+            "SearchErrorCode",
+            "QueryFailure",
+            "QuerySuccess",
         ):
             self.assertTrue(hasattr(viajante, name), msg=name)
         self.assertEqual(
@@ -1045,11 +1060,17 @@ class PublicApiTests(unittest.TestCase):
                 "HotelSearchReport",
                 "MultiCity",
                 "PropertyTypeEvidence",
+                "QueryFailure",
+                "QuerySuccess",
                 "RoundTrip",
+                "SearchError",
+                "SearchErrorCode",
                 "SearchReport",
                 "Trip",
                 "TripSearchReport",
+                "get_flights",
                 "lookup_airports",
+                "plan_prompt",
                 "search_dates",
                 "search_explore",
                 "search_flex",
@@ -1414,6 +1435,7 @@ class HotelCliTests(unittest.TestCase):
         self.assertIn("entire home", help_text)
         self.assertIn("unknown", help_text)
         self.assertIn("compare-cancellation", help_text)
+        self.assertNotIn("--proxy", buffer.getvalue())
 
     def test_default_filter_gloss_and_booking_chips(self) -> None:
         report = _sample_hotel_report(offers=(_sample_hotel_offer(),))
@@ -1664,6 +1686,7 @@ class TripCliTests(unittest.TestCase):
     def test_trip_prints_owned_fare_stay_and_sum(self) -> None:
         flights = SearchReport(
             searched_at=SEARCHED_AT,
+            currency="SGD",
             fetch_backend="sweep",
             fetch_ms=10,
             queries=(
@@ -1678,7 +1701,7 @@ class TripCliTests(unittest.TestCase):
         stay = HotelOffer(
             title="Southbank Stay",
             address="Melbourne",
-            total_price_text="246 €",
+            total_price_text="246 SGD",
             total_price=246.0,
             rating="8.9",
             rating_score=8.9,
@@ -1693,6 +1716,7 @@ class TripCliTests(unittest.TestCase):
         )
         hotels = HotelSearchReport(
             searched_at=SEARCHED_AT,
+            currency="SGD",
             fetch_backend="google",
             fetch_ms=8,
             provider="google-hotels",
@@ -1708,6 +1732,7 @@ class TripCliTests(unittest.TestCase):
         )
         report = TripSearchReport(
             searched_at=SEARCHED_AT,
+            currency="SGD",
             flights=flights,
             hotels=hotels,
             trip_total=TripTotal(
@@ -1736,10 +1761,10 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         search.assert_called_once()
         output = buffer.getvalue()
-        self.assertIn("412 € fare", output)
-        self.assertIn("246 € stay", output)
+        self.assertIn("412 SGD fare", output)
+        self.assertIn("246 SGD stay", output)
         self.assertIn("total stay", output)
-        self.assertIn("= 658 €", output)
+        self.assertIn("= 658 SGD", output)
         trips = search.call_args.args[0]
         hotel_query = search.call_args.args[1]
         self.assertEqual(trips[0].adults, 2)

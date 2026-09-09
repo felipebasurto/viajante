@@ -50,7 +50,7 @@ SWEEP_RETRY_LIMIT = 1
 SWEEP_RETRY_BACKOFF_SECONDS = 0.05
 # Browser-like HTTP/2 stream cap. Dates fallback is at most 31 days.
 _SWEEP_STREAMS = 8
-# Current Linux Chrome; do not spoof a stale Chrome/macOS UA.
+# urllib / tests only. Production sweep uses impersonate="chrome", not this string.
 HTTP_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
@@ -245,8 +245,8 @@ def _gzip():
 
 
 def _stdlib_urllib():
-    # Live urllib fallback only: opener tests and card parse must not pay for
-    # urllib.request / ssl (curl_cffi is the production sweep client).
+    # urllib path for fetch_search_html without a sweep client. Tests inject opener=
+    # or client=. Production sweep uses curl_cffi impersonate="chrome".
     import ssl
     import urllib.error
     import urllib.request
@@ -307,10 +307,17 @@ class SweepPost:
     headers: Mapping[str, str]
 
 
+def _normalize_proxy(proxy: Optional[str]) -> Optional[str]:
+    if proxy is None:
+        return None
+    text = proxy.strip()
+    return text or None
+
+
 class ChromeSweepClient:
     """Process-wide curl_cffi AsyncSession: Chrome TLS, HTTP/2 multiplex, keep-alive."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, proxy: Optional[str] = None) -> None:
         import asyncio
 
         from curl_cffi import CurlHttpVersion
@@ -321,18 +328,22 @@ class ChromeSweepClient:
         self._session: Any = None
         self._error: Optional[BaseException] = None
         ready = threading.Event()
+        session_kw: dict[str, Any] = {
+            "impersonate": "chrome",
+            "max_clients": _SWEEP_STREAMS,
+            "timeout": HTTP_TIMEOUT_SECONDS,
+            "allow_redirects": True,
+            "loop": self._loop,
+            "http_version": CurlHttpVersion.V2TLS,
+        }
+        proxy = _normalize_proxy(proxy)
+        if proxy is not None:
+            session_kw["proxy"] = proxy
 
         def _run() -> None:
             asyncio.set_event_loop(self._loop)
             try:
-                self._session = curl_requests.AsyncSession(
-                    impersonate="chrome",
-                    max_clients=_SWEEP_STREAMS,
-                    timeout=HTTP_TIMEOUT_SECONDS,
-                    allow_redirects=True,
-                    loop=self._loop,
-                    http_version=CurlHttpVersion.V2TLS,
-                )
+                self._session = curl_requests.AsyncSession(**session_kw)
             except BaseException as exc:
                 self._error = exc
                 ready.set()
@@ -450,21 +461,29 @@ class ChromeSweepClient:
 
 _SHARED_CLIENT_LOCK = threading.Lock()
 _SHARED_CLIENT: Optional[ChromeSweepClient] = None
+_SHARED_CLIENT_PROXY: Optional[str] = None
 
 
-def shared_chrome_sweep_client() -> ChromeSweepClient:
-    global _SHARED_CLIENT
+def shared_chrome_sweep_client(*, proxy: Optional[str] = None) -> ChromeSweepClient:
+    global _SHARED_CLIENT, _SHARED_CLIENT_PROXY
+    wanted = _normalize_proxy(proxy)
     with _SHARED_CLIENT_LOCK:
-        if _SHARED_CLIENT is None:
-            _SHARED_CLIENT = ChromeSweepClient()
-        return _SHARED_CLIENT
+        if _SHARED_CLIENT is not None and _SHARED_CLIENT_PROXY == wanted:
+            return _SHARED_CLIENT
+        old = _SHARED_CLIENT
+        _SHARED_CLIENT = ChromeSweepClient(proxy=wanted)
+        _SHARED_CLIENT_PROXY = wanted
+    if old is not None:
+        old.close()
+    return _SHARED_CLIENT
 
 
 def reset_shared_chrome_sweep_client() -> None:
-    global _SHARED_CLIENT
+    global _SHARED_CLIENT, _SHARED_CLIENT_PROXY
     with _SHARED_CLIENT_LOCK:
         client = _SHARED_CLIENT
         _SHARED_CLIENT = None
+        _SHARED_CLIENT_PROXY = None
     if client is not None:
         client.close()
 
@@ -650,6 +669,7 @@ class GoogleFlightsHttpSource:
         client: Optional[SweepHttpClient] = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
         sleep: Optional[Callable[[float], None]] = None,
+        proxy: Optional[str] = None,
     ) -> None:
         self._html_lang = html_lang
         self._currency = currency
@@ -658,6 +678,7 @@ class GoogleFlightsHttpSource:
         self._opener = opener
         self._timeout = timeout
         self._sleep = time.sleep if sleep is None else sleep
+        self._proxy = _normalize_proxy(proxy)
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency, country=country)
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
@@ -791,7 +812,7 @@ class GoogleFlightsHttpSource:
             return self._injected_client
         if self._opener is not None:
             return _OpenerSweepClient(self._opener)
-        return shared_chrome_sweep_client()
+        return shared_chrome_sweep_client(proxy=self._proxy)
 
     def _retry_sweep(self, fn: Callable[[], Any]) -> Any:
         try:
@@ -888,7 +909,7 @@ class GoogleFlightsHttpSource:
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")
         try:
-            return parse_shopping_body(response.text)
+            return parse_shopping_body(response.text, currency=self._currency)
         except EmptyShoppingResults as exc:
             raise NoFlightsFound() from exc
         except ShoppingRejected as exc:

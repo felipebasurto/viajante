@@ -104,7 +104,7 @@ def _overnight_card(
     outbound_dep: str | None = "08:00",
     hours: float | None = 10.0,
     price: str = "€28",
-    origin: str = "MAD",
+    origin: str = "JFK",
     dest: str = "OPO",
 ) -> RawFlightCard:
     return _card(
@@ -208,12 +208,12 @@ class ExploreParseTests(unittest.TestCase):
             parse_explore_body("not explore")
 
     def test_explore_inner_clears_the_destination(self) -> None:
-        inner = build_explore_inner("MAD", date(2026, 9, 1))
-        self.assertEqual(inner[3][13][0][0], [[["MAD", 0]]])
+        inner = build_explore_inner("NRT", date(2026, 9, 1))
+        self.assertEqual(inner[3][13][0][0], [[["NRT", 0]]])
         self.assertEqual(inner[3][13][0][1], [])
         self.assertEqual(inner[3][6], [1, 0, 0, 0])
         named = build_explore_inner(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             adults=2,
             children=1,
@@ -253,8 +253,8 @@ class ExploreSearchTests(unittest.TestCase):
                 ),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
-        self.assertEqual(report.origin, "MAD")
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
+        self.assertEqual(report.origin, "NRT")
         self.assertEqual(report.destinations[0].iata, "OPO")
         self.assertEqual(report.destinations[0].price, 28.0)
         self.assertEqual(report.destinations[1].iata, "LIS")
@@ -295,11 +295,11 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, price_cap=200, source=source
+            "NRT", date(2026, 9, 1), days=7, top=3, price_cap=200, source=source
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
         self.assertEqual(report.destinations[0].price, 28.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS", "FCO"])
         self.assertIsNone(unnamed.destinations[2].price)
 
@@ -359,13 +359,13 @@ class ExploreSearchTests(unittest.TestCase):
             price="€70",
         )
         filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap=200)
-        self.assertIsNotNone(_normalize_offer(silent, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(too_few, 1, buffer_eur=0, **filters))
-        self.assertIsNotNone(_normalize_offer(enough, 1, buffer_eur=0, **filters))
-        self.assertIsNotNone(_normalize_offer(via_lis, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(via_dxb, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(ryanair, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(over_cap, 1, buffer_eur=0, **filters))
+        self.assertIsNotNone(_normalize_offer(silent, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(too_few, 1, baggage_buffer=0, **filters))
+        self.assertIsNotNone(_normalize_offer(enough, 1, baggage_buffer=0, **filters))
+        self.assertIsNotNone(_normalize_offer(via_lis, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(via_dxb, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(ryanair, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(over_cap, 1, baggage_buffer=0, **filters))
         source = FakeExploreSource(
             (
                 CompactExplorePlace("OPO", "Porto", "Portugal"),
@@ -380,7 +380,7 @@ class ExploreSearchTests(unittest.TestCase):
                 "BCN": (extra,),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source, **filters)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source, **filters)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "LIS"])
         self.assertEqual(report.destinations[0].price, 40.0)
         self.assertEqual(report.destinations[1].price, 80.0)
@@ -391,7 +391,7 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(source.fetched_queries[0].carry_on, 1)
         self.assertEqual(source.fetched_queries[0].airlines, ("IB",))
         self.assertEqual(source.fetched_queries[0].price_cap, 200)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -411,9 +411,9 @@ class ExploreSearchTests(unittest.TestCase):
             price="€70",
         )
         filters = dict(exclude_via=("LIS",), exclude_airlines=("FR",))
-        self.assertIsNotNone(_normalize_offer(keep, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(drop_via, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(drop_airline, 1, buffer_eur=0, **filters))
+        self.assertIsNotNone(_normalize_offer(keep, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(drop_via, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(drop_airline, 1, baggage_buffer=0, **filters))
         source = FakeExploreSource(
             (
                 CompactExplorePlace("BCN", "Barcelona", "Spain"),
@@ -424,10 +424,10 @@ class ExploreSearchTests(unittest.TestCase):
                 "FCO": (drop_via, drop_airline),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source, **filters)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source, **filters)
         self.assertEqual([row.iata for row in report.destinations], ["BCN"])
         self.assertEqual(report.destinations[0].price, 100.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"BCN", "FCO"})
         self.assertEqual(by_iata["FCO"], 70.0)
@@ -438,9 +438,9 @@ class ExploreSearchTests(unittest.TestCase):
         evening = _card(departure="21:00", price="€28")
         silent = _card(departure=None, price="€40")
         window = parse_depart_window("7-12")
-        self.assertIsNotNone(_normalize_offer(morning, 1, buffer_eur=0, depart_window=window))
-        self.assertIsNone(_normalize_offer(evening, 1, buffer_eur=0, depart_window=window))
-        self.assertIsNone(_normalize_offer(silent, 1, buffer_eur=0, depart_window=window))
+        self.assertIsNotNone(_normalize_offer(morning, 1, baggage_buffer=0, depart_window=window))
+        self.assertIsNone(_normalize_offer(evening, 1, baggage_buffer=0, depart_window=window))
+        self.assertIsNone(_normalize_offer(silent, 1, baggage_buffer=0, depart_window=window))
         source = FakeExploreSource(
             (
                 CompactExplorePlace("OPO", "Porto", "Portugal"),
@@ -454,11 +454,11 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, source=source, depart_window=window
+            "NRT", date(2026, 9, 1), days=7, top=3, source=source, depart_window=window
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
         self.assertEqual(report.destinations[0].price, 90.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -470,9 +470,9 @@ class ExploreSearchTests(unittest.TestCase):
         late = _card(arrival="23:00", price="€28")
         silent = _card(arrival=None, price="€40")
         bound = parse_named_clock("10:00", role="arrive-before")
-        self.assertIsNotNone(_normalize_offer(early, 1, buffer_eur=0, arrive_before=bound))
-        self.assertIsNone(_normalize_offer(late, 1, buffer_eur=0, arrive_before=bound))
-        self.assertIsNone(_normalize_offer(silent, 1, buffer_eur=0, arrive_before=bound))
+        self.assertIsNotNone(_normalize_offer(early, 1, baggage_buffer=0, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(late, 1, baggage_buffer=0, arrive_before=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, baggage_buffer=0, arrive_before=bound))
         source = FakeExploreSource(
             (
                 CompactExplorePlace("OPO", "Porto", "Portugal"),
@@ -486,11 +486,11 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, source=source, arrive_before=bound
+            "NRT", date(2026, 9, 1), days=7, top=3, source=source, arrive_before=bound
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
         self.assertEqual(report.destinations[0].price, 90.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -502,9 +502,9 @@ class ExploreSearchTests(unittest.TestCase):
         early = _card(departure="08:00", price="€28")
         silent = _card(departure=None, price="€40")
         bound = parse_named_clock("18:00", role="depart-after")
-        self.assertIsNotNone(_normalize_offer(late, 1, buffer_eur=0, depart_after=bound))
-        self.assertIsNone(_normalize_offer(early, 1, buffer_eur=0, depart_after=bound))
-        self.assertIsNone(_normalize_offer(silent, 1, buffer_eur=0, depart_after=bound))
+        self.assertIsNotNone(_normalize_offer(late, 1, baggage_buffer=0, depart_after=bound))
+        self.assertIsNone(_normalize_offer(early, 1, baggage_buffer=0, depart_after=bound))
+        self.assertIsNone(_normalize_offer(silent, 1, baggage_buffer=0, depart_after=bound))
         source = FakeExploreSource(
             (
                 CompactExplorePlace("OPO", "Porto", "Portugal"),
@@ -518,11 +518,11 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, source=source, depart_after=bound
+            "NRT", date(2026, 9, 1), days=7, top=3, source=source, depart_after=bound
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
         self.assertEqual(report.destinations[0].price, 90.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -548,11 +548,11 @@ class ExploreSearchTests(unittest.TestCase):
         silent = _card(stops="1 stop", layover_hours=None, duration="4 hr", price="€40")
         long_elapsed = _card(stops="Nonstop", duration="12 hr", price="€35")
         filters = dict(max_layover_hours=3.0, min_layover_hours=1.0, max_duration_hours=5.0)
-        self.assertIsNotNone(_normalize_offer(nonstop, 1, buffer_eur=0, **filters))
-        self.assertIsNotNone(_normalize_offer(short_hop, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(overnight, 1, buffer_eur=0, **filters))
-        self.assertIsNotNone(_normalize_offer(silent, 1, buffer_eur=0, **filters))
-        self.assertIsNone(_normalize_offer(long_elapsed, 1, buffer_eur=0, **filters))
+        self.assertIsNotNone(_normalize_offer(nonstop, 1, baggage_buffer=0, **filters))
+        self.assertIsNotNone(_normalize_offer(short_hop, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(overnight, 1, baggage_buffer=0, **filters))
+        self.assertIsNotNone(_normalize_offer(silent, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(long_elapsed, 1, baggage_buffer=0, **filters))
         source = FakeExploreSource(
             (
                 CompactExplorePlace("OPO", "Porto", "Portugal"),
@@ -565,11 +565,11 @@ class ExploreSearchTests(unittest.TestCase):
                 "FCO": (overnight, long_elapsed),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source, **filters)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source, **filters)
         self.assertEqual([row.iata for row in report.destinations], ["LIS", "OPO"])
         self.assertEqual(report.destinations[0].price, 40.0)
         self.assertEqual(report.destinations[1].price, 90.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -608,12 +608,12 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, source=source, no_overnight=("IST",)
+            "NRT", date(2026, 9, 1), days=7, top=3, source=source, no_overnight=("IST",)
         )
         self.assertEqual([row.iata for row in report.destinations], ["FCO", "OPO"])
         self.assertEqual(report.destinations[0].price, 70.0)
         self.assertEqual(report.destinations[1].price, 90.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -647,7 +647,7 @@ class ExploreSearchTests(unittest.TestCase):
             prices={"OPO": (overnight,), "LIS": (daytime,), "FCO": (unknown,)},
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, source=source, require_overnight=("IST",)
+            "NRT", date(2026, 9, 1), days=7, top=3, source=source, require_overnight=("IST",)
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO"])
         self.assertEqual(report.destinations[0].price, 80.0)
@@ -677,7 +677,7 @@ class ExploreSearchTests(unittest.TestCase):
             prices={"OPO": (overnight,), "LIS": (daytime,)},
         )
         report = search_explore(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             days=7,
             top=2,
@@ -696,7 +696,7 @@ class ExploreSearchTests(unittest.TestCase):
             prices={},
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=2, source=source, no_overnight=("any",)
+            "NRT", date(2026, 9, 1), days=7, top=2, source=source, no_overnight=("any",)
         )
         self.assertEqual([row.iata for row in report.destinations], [])
 
@@ -712,7 +712,7 @@ class ExploreSearchTests(unittest.TestCase):
             prices={"OPO": (ryanair,), "LIS": (iberia, ryanair), "FCO": (iberia,)},
         )
         report = search_explore(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             days=7,
             top=3,
@@ -720,7 +720,7 @@ class ExploreSearchTests(unittest.TestCase):
             alliances=("star",),
             exclude_alliances=("oneworld",),
         )
-        self.assertEqual(source.explore_origins, ["MAD"])
+        self.assertEqual(source.explore_origins, ["NRT"])
         self.assertEqual(
             [query.destination for query in source.fetched_queries], ["OPO", "LIS", "FCO"]
         )
@@ -736,7 +736,7 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(by_iata["OPO"], 28.0)
         self.assertEqual(by_iata["LIS"], 28.0)
         self.assertEqual(by_iata["FCO"], 61.0)
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         self.assertEqual({row.iata for row in unnamed.destinations}, {"OPO", "LIS", "FCO"})
         self.assertIsNone(source.fetched_queries[-1].alliances)
         self.assertIsNone(source.fetched_queries[-1].exclude_alliances)
@@ -752,7 +752,7 @@ class ExploreSearchTests(unittest.TestCase):
             prices={"OPO": (ryanair,), "LIS": (iberia,)},
         )
         report = search_explore(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             days=7,
             top=2,
@@ -762,7 +762,7 @@ class ExploreSearchTests(unittest.TestCase):
             infants_in_seat=1,
             infants_on_lap=1,
         )
-        self.assertEqual(source.explore_origins, ["MAD"])
+        self.assertEqual(source.explore_origins, ["NRT"])
         self.assertEqual(source.explore_occupancy, [(2, 1, 1, 1)])
         shop = source.fetched_queries[0]
         self.assertEqual(shop.adults, 2)
@@ -771,7 +771,7 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(shop.infants_on_lap, 1)
         self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
         self.assertEqual({row.iata for row in report.destinations}, {"OPO", "LIS"})
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual(source.explore_occupancy[-1], (1, 0, 0, 0))
         unnamed_shop = source.fetched_queries[-1]
         self.assertEqual(unnamed_shop.children, 0)
@@ -791,17 +791,27 @@ class ExploreSearchTests(unittest.TestCase):
                 currency="usd",
                 country="us",
             )
-        ctor.assert_called_once_with(currency="USD", country="US")
+        ctor.assert_called_once_with(currency="USD", country="US", proxy=None)
         self.assertEqual(report.currency, "USD")
 
     def test_unnamed_currency_follows_origin_country_usd(self) -> None:
         source = FakeExploreSource((CompactExplorePlace("OPO", "Porto", "Portugal"),))
         with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source) as ctor:
             report = search_explore("JFK", date(2026, 9, 1), days=7, top=1)
-        ctor.assert_called_once_with(currency="USD", country=None)
+        ctor.assert_called_once_with(currency="USD", country=None, proxy=None)
         self.assertEqual(report.currency, "USD")
 
-    def test_unknown_origin_is_rejected(self) -> None:
+    def test_named_proxy_reaches_http_source(self) -> None:
+        source = FakeExploreSource((CompactExplorePlace("OPO", "Porto", "Portugal"),))
+        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source) as ctor:
+            search_explore(
+                "JFK",
+                date(2026, 9, 1),
+                days=7,
+                top=1,
+                proxy="http://127.0.0.1:8080",
+            )
+        ctor.assert_called_once_with(currency="USD", country=None, proxy="http://127.0.0.1:8080")
         with self.assertRaises(ValueError):
             search_explore("XXX", date(2026, 9, 1))
 
@@ -823,13 +833,13 @@ class ExploreSortTests(unittest.TestCase):
                 "LIS": (_card(price="€50", duration="5 hr", departure="07:00", arrival="12:00"),),
             },
         )
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS", "FCO"])
         self.assertEqual(unnamed.destinations[0].price, 40.0)
         self.assertEqual(unnamed.destinations[0].duration_hours, 8.0)
         self.assertNotEqual(unnamed.destinations[0].duration_hours, 1.0)
         ranked = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, sort="duration", source=source
+            "NRT", date(2026, 9, 1), days=7, top=3, sort="duration", source=source
         )
         self.assertEqual([row.iata for row in ranked.destinations], ["FCO", "LIS", "OPO"])
         self.assertEqual([row.duration_hours for row in ranked.destinations], [2.0, 5.0, 8.0])
@@ -847,11 +857,11 @@ class ExploreSortTests(unittest.TestCase):
                 "OPO": (_card(price="€40", duration="8 hr"),),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "FCO"])
-        priced = search_explore("MAD", date(2026, 9, 1), days=7, top=2, sort="price", source=source)
+        priced = search_explore("NRT", date(2026, 9, 1), days=7, top=2, sort="price", source=source)
         self.assertEqual([row.iata for row in priced.destinations], ["OPO", "FCO"])
-        fare = search_explore("MAD", date(2026, 9, 1), days=7, top=2, sort="fare", source=source)
+        fare = search_explore("NRT", date(2026, 9, 1), days=7, top=2, sort="fare", source=source)
         self.assertEqual([row.iata for row in fare.destinations], ["OPO", "FCO"])
 
     def test_missing_duration_is_not_given_made_up_hours(self) -> None:
@@ -874,7 +884,7 @@ class ExploreSortTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=3, sort="duration", source=source
+            "NRT", date(2026, 9, 1), days=7, top=3, sort="duration", source=source
         )
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "LIS", "FCO"])
         by_iata = {row.iata: row for row in report.destinations}
@@ -898,10 +908,10 @@ class ExploreSortTests(unittest.TestCase):
                 "LIS": (_card(price="€80", duration="2 hr", departure="07:00", arrival="09:00"),),
             },
         )
-        unnamed = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS"])
         ranked = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=2, sort="departure", source=source
+            "NRT", date(2026, 9, 1), days=7, top=2, sort="departure", source=source
         )
         self.assertEqual([row.iata for row in ranked.destinations], ["LIS", "OPO"])
         self.assertEqual(ranked.destinations[0].departure, "07:00")
@@ -909,7 +919,7 @@ class ExploreSortTests(unittest.TestCase):
 
     def test_unknown_sort_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            search_explore("MAD", date(2026, 9, 1), sort="fastest")  # type: ignore[arg-type]
+            search_explore("NRT", date(2026, 9, 1), sort="fastest")  # type: ignore[arg-type]
 
 
 class ExploreCliTests(unittest.TestCase):
@@ -938,12 +948,12 @@ class ExploreCliTests(unittest.TestCase):
         with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main(["explore", "MAD", "--from", "2026-09-01", "--days", "7"])
+                code = main(["explore", "NRT", "--from", "2026-09-01", "--days", "7"])
         self.assertEqual(code, 0)
         output = buffer.getvalue()
         self.assertIn("OPO", output)
         self.assertIn("Porto", output)
-        self.assertIn("28 €", output)
+        self.assertIn("28 JPY", output)
 
     def test_explore_header_does_not_call_days_a_window(self) -> None:
         report = ExploreReport(
@@ -1003,7 +1013,7 @@ class ExploreCliTests(unittest.TestCase):
             code = main(
                 [
                     "explore",
-                    "MAD",
+                    "NRT",
                     "--from",
                     "2026-09-01",
                     "--bags",
@@ -1076,7 +1086,7 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli._print_explore_report"),
         ):
             search.return_value = SimpleNamespace(error=None, destinations=())
-            code = main(["explore", "MAD", "--from", "2026-09-01"])
+            code = main(["explore", "NRT", "--from", "2026-09-01"])
         self.assertEqual(code, 0)
         kwargs = search.call_args.kwargs
         self.assertIsNone(kwargs["bags"])
@@ -1103,10 +1113,10 @@ class ExploreCliTests(unittest.TestCase):
         self.assertEqual(kwargs["children"], 0)
         self.assertEqual(kwargs["infants_in_seat"], 0)
         self.assertEqual(kwargs["infants_on_lap"], 0)
-        self.assertEqual(kwargs["currency"], "EUR")
+        self.assertEqual(kwargs["currency"], "JPY")
         self.assertIsNone(kwargs["country"])
         self.assertEqual(kwargs["sort"], "price")
-        self.assertEqual(kwargs["buffer_eur"], 70)
+        self.assertEqual(kwargs["baggage_buffer"], 0)
 
     def test_explore_forwards_named_sort_duration(self) -> None:
         with (
@@ -1114,7 +1124,7 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli._print_explore_report"),
         ):
             search.return_value = SimpleNamespace(error=None, destinations=())
-            code = main(["explore", "MAD", "--from", "2026-09-01", "--sort", "duration"])
+            code = main(["explore", "NRT", "--from", "2026-09-01", "--sort", "duration"])
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["sort"], "duration")
 
@@ -1135,7 +1145,7 @@ class ExploreCliTests(unittest.TestCase):
                 code = main(
                     [
                         "explore",
-                        "MAD",
+                        "NRT",
                         "--from",
                         "2026-09-01",
                         "--days",
@@ -1159,7 +1169,7 @@ class ExploreCliTests(unittest.TestCase):
             code = main(
                 [
                     "explore",
-                    "MAD",
+                    "NRT",
                     "--from",
                     "2026-09-01",
                     "--adults",
@@ -1564,7 +1574,7 @@ class TypicalExploreDestTests(unittest.TestCase):
                 "FCO": (_card(price="€90"),),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=3, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "LIS", "FCO"])
         mix = typical_from_daily_prices([row.price for row in report.destinations])
         self.assertEqual(mix, 61.0)
@@ -1584,7 +1594,7 @@ class TypicalExploreDestTests(unittest.TestCase):
             ),
             prices={"OPO": (_card(price="€28"),)},
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual([row.iata for row in report.destinations], ["OPO", "FCO"])
         self.assertEqual(report.destinations[0].price, 28.0)
         self.assertIsNone(report.destinations[0].typical)
@@ -1603,10 +1613,10 @@ class TypicalExploreDestTests(unittest.TestCase):
             prices={"OPO": (_card(price="€80"),)},
             calendars={"OPO": days},
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=source)
         dest = report.destinations[0]
         self.assertEqual(dest.price, 80.0)
-        shop = FlightQuery("MAD", "OPO", date(2026, 9, 1))
+        shop = FlightQuery("NRT", "OPO", date(2026, 9, 1))
         summary = _calendar_summary_from_source(source, shop, {})
         assert summary is not None
         self.assertEqual(summary.median_price, typical_from_daily_prices((100.0, 120.0, 80.0)))
@@ -1631,7 +1641,7 @@ class TypicalExploreDestTests(unittest.TestCase):
                 )
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=thin)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=thin)
         self.assertEqual(report.destinations[0].price, 80.0)
         self.assertIsNone(report.destinations[0].typical)
         self.assertNotIn("typical", report.destinations[0].to_dict())
@@ -1640,7 +1650,7 @@ class TypicalExploreDestTests(unittest.TestCase):
             prices={"LIS": (_card(price="€61"),)},
             calendars={"LIS": CompactParseMiss("no wrb.fr calendar payload")},
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=missed)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=missed)
         self.assertEqual(report.destinations[0].price, 61.0)
         self.assertIsNone(report.destinations[0].typical)
         self.assertNotIn("typical", report.destinations[0].to_dict())
@@ -1663,7 +1673,7 @@ class TypicalExploreDestTests(unittest.TestCase):
                 )
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         by_iata = {row.iata: row for row in report.destinations}
         self.assertEqual(by_iata["OPO"].typical, 100.0)
         self.assertEqual(by_iata["OPO"].vs_typical, "below")
@@ -1686,12 +1696,12 @@ class TypicalExploreDestTests(unittest.TestCase):
         with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main(["explore", "MAD", "--from", "2026-09-01", "--days", "7"])
+                code = main(["explore", "NRT", "--from", "2026-09-01", "--days", "7"])
         self.assertEqual(code, 0)
         output = buffer.getvalue()
         self.assertIn("OPO", output)
-        self.assertIn("80 €", output)
-        self.assertIn("below typical 100 € (−20%)", output)
+        self.assertIn("80 JPY", output)
+        self.assertIn("below typical 100 JPY (−20%)", output)
 
 
 class StopsCompareExploreShopTests(unittest.TestCase):
@@ -1712,7 +1722,7 @@ class StopsCompareExploreShopTests(unittest.TestCase):
                 ),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=source)
         dest = report.destinations[0]
         self.assertEqual(dest.price, 49.0)
         compare = dest.stops_compare
@@ -1736,7 +1746,7 @@ class StopsCompareExploreShopTests(unittest.TestCase):
                 "OPO": (_card(airline="Ryanair", price="€28", stops="Nonstop"),),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         by_iata = {row.iata: row for row in report.destinations}
         self.assertEqual(by_iata["OPO"].price, 28.0)
         assert by_iata["OPO"].stops_compare is not None
@@ -1769,7 +1779,7 @@ class StopsCompareExploreShopTests(unittest.TestCase):
                 ),
             },
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=only_one)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=only_one)
         compare = report.destinations[0].stops_compare
         assert compare is not None
         self.assertIsNone(compare.nonstop)
@@ -1789,7 +1799,7 @@ class StopsCompareExploreShopTests(unittest.TestCase):
             },
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=1, max_stops=2, source=two_stop
+            "NRT", date(2026, 9, 1), days=7, top=1, max_stops=2, source=two_stop
         )
         dest = report.destinations[0]
         self.assertEqual(dest.price, 314.0)
@@ -1809,12 +1819,12 @@ class StopsCompareExploreShopTests(unittest.TestCase):
         with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main(["explore", "MAD", "--from", "2026-09-01", "--days", "7"])
+                code = main(["explore", "NRT", "--from", "2026-09-01", "--days", "7"])
         self.assertEqual(code, 0)
         output = buffer.getvalue()
         self.assertIn("Cheapest nonstop:", output)
         self.assertIn("Cheapest 1-stop:", output)
-        self.assertIn("49 €", output)
+        self.assertIn("49 JPY", output)
 
 
 class GoogleFlightsUrlShopParityTests(unittest.TestCase):
@@ -1823,9 +1833,9 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
             (CompactExplorePlace("OPO", "Porto", "Portugal"),),
             prices={"OPO": (_card(booking_token="tok"),)},
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
-        shop = FlightQuery("MAD", "OPO", date(2026, 9, 1), max_stops=1)
-        expected = google_flights_url(shop, currency="EUR")
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=source)
+        shop = FlightQuery("NRT", "OPO", date(2026, 9, 1), max_stops=1)
+        expected = google_flights_url(shop, currency="JPY")
         dest = report.destinations[0]
         self.assertEqual(dest.google_flights_url, expected)
         self.assertEqual(dest.to_dict()["google_flights_url"], expected)
@@ -1846,7 +1856,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
             ),
             prices={"OPO": (_card(airline="Ryanair", price="€28", stops="Nonstop"),)},
         )
-        report = search_explore("MAD", date(2026, 9, 1), days=7, top=2, source=source)
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         by_iata = {row.iata: row for row in report.destinations}
         self.assertIsNotNone(by_iata["OPO"].google_flights_url)
         self.assertNotIn("booking_token=", by_iata["OPO"].google_flights_url or "")
@@ -1859,7 +1869,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
             prices={"OPO": (_card(),)},
         )
         with patch("viajante.explore.google_flights_url", return_value=None):
-            report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, source=source)
+            report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=source)
         self.assertIsNone(report.google_flights_url)
         self.assertNotIn("google_flights_url", report.to_dict())
         self.assertIsNone(report.destinations[0].google_flights_url)
@@ -1873,7 +1883,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main(["explore", "MAD", "--from", "2026-09-01", "--days", "7"])
+                code = main(["explore", "NRT", "--from", "2026-09-01", "--days", "7"])
         self.assertEqual(code, 0)
         output = buffer.getvalue()
         self.assertIn("https://www.google.com/travel/flights", output)
@@ -1892,32 +1902,32 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             "LIS": (_card(airline="Iberia", price="€90"),),
         }
         by_fare = search_explore(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             days=7,
             top=2,
             source=FakeExploreSource(places, prices),
-            buffer_eur=70,
+            baggage_buffer=70,
         )
         self.assertEqual([row.iata for row in by_fare.destinations], ["OPO", "LIS"])
         self.assertEqual(by_fare.destinations[0].price, 40.0)
         ranked_off = search_explore(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             days=7,
             top=2,
             sort="ranked",
-            buffer_eur=0,
+            baggage_buffer=0,
             source=FakeExploreSource(places, prices),
         )
         self.assertEqual([row.iata for row in ranked_off.destinations], ["OPO", "LIS"])
         ranked = search_explore(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             days=7,
             top=2,
             sort="ranked",
-            buffer_eur=70,
+            baggage_buffer=70,
             source=FakeExploreSource(places, prices),
         )
         self.assertEqual([row.iata for row in ranked.destinations], ["LIS", "OPO"])
@@ -1926,7 +1936,7 @@ class ExploreBaggageBufferTests(unittest.TestCase):
         self.assertEqual(ranked.destinations[1].baggage_buffer, 70)
         self.assertNotEqual(ranked.destinations[1].price, 110.0)
 
-    def test_unnamed_sort_ignores_buffer_and_unnamed_buffer_uses_default(self) -> None:
+    def test_unnamed_sort_ignores_buffer_and_unnamed_buffer_is_zero(self) -> None:
         places = (
             CompactExplorePlace("OPO", "Porto", "Portugal"),
             CompactExplorePlace("LIS", "Lisbon", "Portugal"),
@@ -1936,18 +1946,18 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             "LIS": (_card(airline="Iberia", price="€90"),),
         }
         unnamed = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=2, source=FakeExploreSource(places, prices)
+            "NRT", date(2026, 9, 1), days=7, top=2, source=FakeExploreSource(places, prices)
         )
         self.assertEqual([row.iata for row in unnamed.destinations], ["OPO", "LIS"])
         default_ranked = search_explore(
-            "MAD",
+            "NRT",
             date(2026, 9, 1),
             days=7,
             top=2,
             sort="ranked",
             source=FakeExploreSource(places, prices),
         )
-        self.assertEqual([row.iata for row in default_ranked.destinations], ["LIS", "OPO"])
+        self.assertEqual([row.iata for row in default_ranked.destinations], ["OPO", "LIS"])
 
     def test_catalog_only_dest_omits_buffer_stamp(self) -> None:
         source = FakeExploreSource(
@@ -1958,11 +1968,11 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             prices={"OPO": (_card(airline="Ryanair", price="€40"),)},
         )
         report = search_explore(
-            "MAD", date(2026, 9, 1), days=7, top=2, sort="ranked", source=source
+            "NRT", date(2026, 9, 1), days=7, top=2, sort="ranked", source=source
         )
         by_iata = {row.iata: row for row in report.destinations}
         self.assertEqual(by_iata["OPO"].price, 40.0)
-        self.assertEqual(by_iata["OPO"].baggage_buffer, 70)
+        self.assertEqual(by_iata["OPO"].baggage_buffer, 0)
         self.assertIsNone(by_iata["FCO"].price)
         self.assertIsNone(by_iata["FCO"].baggage_buffer)
         self.assertNotIn("baggage_buffer", by_iata["FCO"].to_dict())
@@ -1977,7 +1987,7 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             code = main(
                 [
                     "explore",
-                    "MAD",
+                    "NRT",
                     "--from",
                     "2026-09-01",
                     "--sort",
@@ -1987,7 +1997,7 @@ class ExploreBaggageBufferTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(code, 0)
-        self.assertEqual(search.call_args.kwargs["buffer_eur"], 0)
+        self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
         self.assertEqual(search.call_args.kwargs["sort"], "ranked")
 
 

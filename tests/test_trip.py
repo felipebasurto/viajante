@@ -172,7 +172,7 @@ def _search_trip_cards(
             (_sin_mel(),),
             HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10)),
             fetch="sweep",
-            buffer_eur=0,
+            baggage_buffer=0,
             **filters,  # type: ignore[arg-type]
         )
     return report, source
@@ -217,7 +217,7 @@ class TripJoinTests(unittest.TestCase):
         self.assertEqual(total.nights, 4)
         self.assertEqual(total.hotel_price_basis, "total_stay")
         self.assertEqual(hotels.price_basis, "total_stay")
-        self.assertIn("total stay", format_trip_total(total))
+        self.assertIn("total stay", format_trip_total(total, "EUR"))
 
     def test_two_one_ways_sum_each_cheapest_fare(self) -> None:
         out = FlightQuery("DUB", "JFK", date(2026, 10, 9), adults=2)
@@ -507,7 +507,7 @@ class TripShopFilterTests(unittest.TestCase):
         )
         cards = (silent, too_few, enough, via_dxb, ryanair, over_cap)
         filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap=200)
-        expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
+        expected = [_normalize_offer(card, 1, baggage_buffer=0, **filters) for card in cards]
         kept = [offer.price for offer in expected if offer is not None]
         report, source = _search_trip_cards(*cards, **filters)
         result = report.flights.queries[0]
@@ -554,7 +554,7 @@ class TripShopFilterTests(unittest.TestCase):
             depart_after=parse_named_clock("18:00", role="depart-after"),
         )
         expected = [
-            _normalize_offer(card, 1, buffer_eur=0, **filters)
+            _normalize_offer(card, 1, baggage_buffer=0, **filters)
             for card in (on_time, late_arrive, early_depart, silent)
         ]
         kept = [offer.price for offer in expected if offer is not None]
@@ -607,7 +607,7 @@ class TripShopFilterTests(unittest.TestCase):
         )
         cards = (keep, drop_via, drop_airline)
         filters = dict(exclude_via=("LIS",), exclude_airlines=("FR",))
-        expected = [_normalize_offer(card, 1, buffer_eur=0, **filters) for card in cards]
+        expected = [_normalize_offer(card, 1, baggage_buffer=0, **filters) for card in cards]
         kept = [offer.price for offer in expected if offer is not None]
         report, _source = _search_trip_cards(*cards, **filters)
         result = report.flights.queries[0]
@@ -691,7 +691,7 @@ class NearbyTripTests(unittest.TestCase):
                 expanded,
                 HotelQuery("London", date(2026, 9, 18), date(2026, 9, 22)),
                 fetch="sweep",
-                buffer_eur=0,
+                baggage_buffer=0,
             )
         fetched = {query.destination for query in source.fetched_queries}
         self.assertEqual(fetched, dests)

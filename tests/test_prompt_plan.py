@@ -51,7 +51,7 @@ class PromptPlanSmokeTests(unittest.TestCase):
         from datetime import timedelta
 
         future = (date.today() + timedelta(days=30)).isoformat()
-        plan = _plan_prompt(f"Fly MAD to BCN nonstop via IST on {future}", today=date.today())
+        plan = _plan_prompt(f"Fly JFK to LHR nonstop via IST on {future}", today=date.today())
         self.assertEqual(plan.max_stops, 0)
         self.assertEqual(plan.via_airports, ("IST",))
         self.assertIn("Nonstop max 0 stops cannot also be via IST", plan.notes)
@@ -467,16 +467,16 @@ class PromptPlanHardTests(unittest.TestCase):
         self.assertEqual(list(plan.include_airlines), [])
 
     def test_oneworld_and_not_star_alliance(self) -> None:
-        oneworld = plan_prompt("MAD-JFK on 2026-09-15 oneworld")
+        oneworld = plan_prompt("LHR-JFK on 2026-09-15 oneworld")
         self.assertEqual(list(oneworld.alliance), ["oneworld"])
-        not_star = plan_prompt("MAD-FRA on 2026-09-15 not star alliance")
+        not_star = plan_prompt("JFK-FRA on 2026-09-15 not star alliance")
         self.assertEqual(list(not_star.exclude_alliance), ["star"])
         self.assertEqual(list(not_star.alliance), [])
 
     def test_named_airline_and_flags(self) -> None:
-        named = plan_prompt("MAD-LHR on 2026-09-15 british airways only")
+        named = plan_prompt("JFK-LHR on 2026-09-15 british airways only")
         self.assertEqual(list(named.include_airlines), ["BA"])
-        flagged = plan_prompt("MAD-AMS on 2026-09-15 --airlines BA,KL --exclude-alliance star")
+        flagged = plan_prompt("JFK-AMS on 2026-09-15 --airlines BA,KL --exclude-alliance star")
         self.assertEqual(list(flagged.include_airlines), ["BA", "KL"])
         self.assertEqual(list(flagged.exclude_alliance), ["star"])
 
@@ -486,34 +486,34 @@ class PromptPlanHardTests(unittest.TestCase):
         self.assertEqual(list(plan.exclude_airlines), [])
 
     def test_single_code_only_sets_include_airlines(self) -> None:
-        plan = plan_prompt("MAD-LHR on 2026-09-15 BA only")
+        plan = plan_prompt("JFK-LHR on 2026-09-15 BA only")
         self.assertEqual(list(plan.include_airlines), ["BA"])
         self.assertEqual(list(plan.exclude_airlines), [])
 
     def test_code_or_named_airline(self) -> None:
-        plan = plan_prompt("MAD-LHR on 2026-09-15 BA or Iberia")
+        plan = plan_prompt("JFK-LHR on 2026-09-15 BA or Iberia")
         self.assertEqual(list(plan.include_airlines), ["IB", "BA"])
-        slash = plan_prompt("MAD-LHR on 2026-09-15 BA/IB only")
+        slash = plan_prompt("JFK-LHR on 2026-09-15 BA/IB only")
         self.assertEqual(list(slash.include_airlines), ["BA", "IB"])
 
     def test_no_code_sets_exclude_airlines(self) -> None:
-        plan = plan_prompt("MAD-BCN on 2026-09-01, no FR")
+        plan = plan_prompt("JFK-LHR on 2026-09-01, no FR")
         self.assertEqual(list(plan.exclude_airlines), ["FR"])
         self.assertEqual(list(plan.include_airlines), [])
 
     def test_do_not_use_named_airline_is_exclude(self) -> None:
-        plan = plan_prompt("MAD-BCN on 2026-09-01, don't use Ryanair")
+        plan = plan_prompt("JFK-LHR on 2026-09-01, don't use Ryanair")
         self.assertIn("FR", plan.exclude_airlines)
         self.assertNotIn("FR", plan.include_airlines)
-        spanish = plan_prompt("MAD-BCN el 2026-09-01, sin Ryanair")
+        spanish = plan_prompt("JFK-LHR el 2026-09-01, sin Ryanair")
         self.assertIn("FR", spanish.exclude_airlines)
         self.assertNotIn("FR", spanish.include_airlines)
 
     def test_star_alliance_only_does_not_invent_airline_code(self) -> None:
-        plan = plan_prompt("MAD-JFK on 2026-09-15, Star Alliance only")
+        plan = plan_prompt("LHR-JFK on 2026-09-15, Star Alliance only")
         self.assertEqual(list(plan.alliance), ["star"])
         self.assertEqual(list(plan.include_airlines), [])
-        sky = plan_prompt("MAD-JFK on 2026-09-15, only skyteam")
+        sky = plan_prompt("LHR-JFK on 2026-09-15, only skyteam")
         self.assertEqual(list(sky.alliance), ["skyteam"])
         self.assertEqual(list(sky.include_airlines), [])
 
@@ -791,7 +791,7 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertEqual(arrive.sort, "arrival")
 
     def test_depart_window_and_sort_flags(self) -> None:
-        plan = plan_prompt("MAD-BCN on 2026-09-01 --depart-window 6-20 --sort arrival")
+        plan = plan_prompt("JFK-LHR on 2026-09-01 --depart-window 6-20 --sort arrival")
         self.assertEqual(plan.depart_window, "6-20")
         self.assertEqual(plan.sort, "arrival")
 
@@ -926,9 +926,9 @@ class PromptPlanBrutalTests(unittest.TestCase):
         self.assertIsNone(family.children)
 
     def test_i18n_children_keep_english_iata(self) -> None:
-        spanish = plan_prompt("Vuelos MAD-BCN el 2026-09-01, 2 adultos y 1 niño")
-        self.assertEqual(spanish.origin, "MAD")
-        self.assertEqual(spanish.destination, "BCN")
+        spanish = plan_prompt("Vuelos JFK-LHR el 2026-09-01, 2 adultos y 1 niño")
+        self.assertEqual(spanish.origin, "JFK")
+        self.assertEqual(spanish.destination, "LHR")
         self.assertEqual(spanish.adults, 2)
         self.assertEqual(spanish.children, 1)
         self.assertEqual(spanish.locale, "en")
@@ -2624,11 +2624,11 @@ class PromptPlanFamilyNearbyTests(unittest.TestCase):
         unnamed = plan_prompt("Price calendar BOS-LHR from 2026-09-01 to 2026-09-14")
         self.assertEqual(unnamed.intent, "dates")
         self.assertFalse(unnamed.nearby)
-        mad = plan_prompt("Price calendar MAD-BCN from 2026-09-01 to 2026-09-14 --nearby")
+        mad = plan_prompt("Price calendar JFK-LHR from 2026-09-01 to 2026-09-14 --nearby")
         self.assertEqual(mad.intent, "dates")
         self.assertTrue(mad.nearby)
-        self.assertEqual(mad.origin, "MAD")
-        self.assertEqual(mad.destination, "BCN")
+        self.assertEqual(mad.origin, "JFK")
+        self.assertEqual(mad.destination, "LHR")
         self.assertEqual(mad.destinations, ())
         self.assertEqual(mad.route_specs, ())
 
@@ -2646,11 +2646,11 @@ class PromptPlanFamilyNearbyTests(unittest.TestCase):
         unnamed = plan_prompt("BOS-LHR around 12 Sep 2026, flex 3 days, 7 nights")
         self.assertEqual(unnamed.intent, "flex")
         self.assertFalse(unnamed.nearby)
-        mad = plan_prompt("MAD-BCN around 12 Sep 2026, flex 3 days --nearby")
+        mad = plan_prompt("JFK-LHR around 12 Sep 2026, flex 3 days --nearby")
         self.assertEqual(mad.intent, "flex")
         self.assertTrue(mad.nearby)
-        self.assertEqual(mad.origin, "MAD")
-        self.assertEqual(mad.destination, "BCN")
+        self.assertEqual(mad.origin, "JFK")
+        self.assertEqual(mad.destination, "LHR")
         self.assertEqual(mad.destinations, ())
         self.assertEqual(mad.route_specs, ())
 
@@ -2712,19 +2712,19 @@ class PromptPlanFamilyNearbyTests(unittest.TestCase):
         self.assertTrue(unnamed.search_trip)
         self.assertFalse(unnamed.nearby)
         mad = plan_prompt(
-            "Packaged round-trip MAD-BCN on 2026-09-18 returning 2026-09-22, "
+            "Packaged round-trip JFK-LHR on 2026-09-18 returning 2026-09-22, "
             "--trip rt --nearby, hotel in Barcelona those nights, 2 adults, 1 room. "
             "Print the owned trip total when both searches succeed. Omit the sum if "
             "either side misses. Do not invent a fare or a stay."
         )
         self.assertTrue(mad.search_trip)
         self.assertTrue(mad.nearby)
-        self.assertEqual(mad.origin, "MAD")
-        self.assertEqual(mad.destination, "BCN")
+        self.assertEqual(mad.origin, "JFK")
+        self.assertEqual(mad.destination, "LHR")
         self.assertEqual(mad.destinations, ())
         kept = plan_to_trips(mad)
-        self.assertEqual(kept.origin, "MAD")
-        self.assertEqual(kept.destination, "BCN")
+        self.assertEqual(kept.origin, "JFK")
+        self.assertEqual(kept.destination, "LHR")
 
 
 if __name__ == "__main__":

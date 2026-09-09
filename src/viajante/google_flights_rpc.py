@@ -368,7 +368,7 @@ SHOPPING_POST_HEADERS = {
 }
 
 
-def parse_shopping_body(text: str) -> tuple[RawFlightCard, ...]:
+def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
             "Google Flights rejected this route or date (unknown airport or invalid query)."
@@ -387,7 +387,9 @@ def parse_shopping_body(text: str) -> tuple[RawFlightCard, ...]:
         if _has_itinerary_slots(data):
             raise EmptyShoppingResults()
         raise CompactParseMiss("no itinerary groups in shopping payload")
-    cards = tuple(card for item in items if (card := _itinerary_to_card(item)) is not None)
+    cards = tuple(
+        card for item in items if (card := _itinerary_to_card(item, currency=currency)) is not None
+    )
     if not cards:
         raise CompactParseMiss("itineraries had no priced offers")
     return cards
@@ -528,13 +530,13 @@ def _looks_like_itinerary(item: object) -> bool:
     return bool(_itinerary_journeys(item))
 
 
-def _itinerary_to_card(item: list[Any]) -> Optional[RawFlightCard]:
+def _itinerary_to_card(item: list[Any], *, currency: str = "EUR") -> Optional[RawFlightCard]:
     journeys = _itinerary_journeys(item)
     if not journeys:
         return None
     flight = journeys[0]
     airlines = [name for name in flight[1] if isinstance(name, str)]
-    price = _price_text(item[1] if len(item) > 1 else None)
+    price = _price_text(item[1] if len(item) > 1 else None, currency=currency)
     if price is None:
         return None
     layover_city, layover_hours = _layover_from_flight(flight)
@@ -645,7 +647,7 @@ def _bags_from_fare(block: object) -> tuple[Optional[int], Optional[int]]:
     return None, None
 
 
-def _price_text(block: object) -> Optional[str]:
+def _price_text(block: object, *, currency: str = "EUR") -> Optional[str]:
     if not isinstance(block, list) or not block:
         return None
     first = block[0]
@@ -655,8 +657,13 @@ def _price_text(block: object) -> Optional[str]:
     if isinstance(amount, bool) or not isinstance(amount, (int, float)):
         return None
     if float(amount).is_integer():
-        return f"€{int(amount)}"
-    return f"€{amount}"
+        amount_text = str(int(amount))
+    else:
+        amount_text = str(amount)
+    code = currency.strip().upper()
+    if code == "EUR":
+        return f"€{amount_text}"
+    return f"{amount_text} {code}"
 
 
 def _clock_from_leg(legs: object, index: int, field: int) -> Optional[str]:

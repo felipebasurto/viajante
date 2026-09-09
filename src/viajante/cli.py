@@ -116,7 +116,7 @@ Examples:
 DATES_EXAMPLES = """\
 Examples:
   viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
-  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --fetch sweep
+  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14
   viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
   viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14 --nearby
   viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --depart-window 7-12
@@ -335,7 +335,7 @@ def _format_compare_side(side: StopsCompareSide, currency: str) -> str:
     )
 
 
-def format_stops_compare(compare: StopsCompare, currency: str = "EUR") -> str:
+def format_stops_compare(compare: StopsCompare, currency: str) -> str:
     lines: list[str] = []
     if compare.nonstop is not None:
         lines.append(f"  Cheapest nonstop:  {_format_compare_side(compare.nonstop, currency)}")
@@ -346,7 +346,7 @@ def format_stops_compare(compare: StopsCompare, currency: str = "EUR") -> str:
     return "\n".join(lines)
 
 
-def _format_typical_deal(row: object, currency: str = "EUR") -> str:
+def _format_typical_deal(row: object, currency: str) -> str:
     deal = getattr(row, "typical_deal", None)
     if not callable(deal):
         return ""
@@ -515,14 +515,12 @@ def _print_google_flights_url(url: Optional[str], *, indent: str = "    ") -> No
 
 def _print_report(report, *, sort: FlightSort = "ranked") -> None:
     any_success = False
-    country = getattr(report, "country", None)
     currency = report.currency
     for result in report.queries:
         print(_query_header(result.query))
         query_url = _google_flights_url_for(
             result.query,
             currency=currency,
-            country=country,
             stored=getattr(result, "google_flights_url", None),
         )
         if isinstance(result, QuerySuccess):
@@ -547,7 +545,6 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                         _google_flights_url_for(
                             result.query,
                             currency=currency,
-                            country=country,
                             booking_token=offer.booking_token,
                             stored=offer.google_flights_url,
                         )
@@ -793,7 +790,7 @@ def _run_flights(args: argparse.Namespace) -> int:
     report = search_flights(
         queries,
         top=args.top,
-        buffer_eur=args.baggage_buffer,
+        baggage_buffer=args.baggage_buffer,
         progress=lambda line: print(line, file=sys.stderr),
         sort=args.sort,
         fetch=args.fetch,
@@ -823,6 +820,7 @@ def _run_flights(args: argparse.Namespace) -> int:
         ),
         currency=args.currency,
         country=args.country,
+        proxy=getattr(args, "proxy", None) or None,
     )
     _print_report(report, sort=args.sort)
 
@@ -957,7 +955,7 @@ def _run_trip(args: argparse.Namespace) -> int:
         trips,
         hotel_query,
         top=args.top,
-        buffer_eur=args.baggage_buffer,
+        baggage_buffer=args.baggage_buffer,
         progress=lambda line: print(line, file=sys.stderr),
         sort=args.sort,
         fetch=args.fetch,
@@ -1152,6 +1150,17 @@ def _add_occupancy_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_proxy_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--proxy",
+        default=None,
+        metavar="URL",
+        help=(
+            "HTTP(S) proxy for sweep fetch (curl_cffi Chrome TLS). Detail/Playwright is unchanged."
+        ),
+    )
+
+
 def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--currency",
@@ -1176,8 +1185,9 @@ def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
 
 def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -> None:
     help_text = (
-        "Ranking add-on in the quote currency. Unnamed is 70 only when the quote is "
-        "EUR; otherwise 0. Named value is used as-is. Viajante does not convert the 70."
+        "Ranking add-on in the quote currency. Unnamed is 0. Named value is used "
+        "as-is. Prefer --bags / --carry-on so Google prices the bag. Viajante does "
+        "not invent a bag fee."
     )
     if extra:
         help_text = f"{help_text} {extra}"
@@ -1205,6 +1215,7 @@ def _market_from_args(args: argparse.Namespace, origin: Optional[str] = None) ->
     return {
         "currency": args.currency,
         "country": args.country,
+        "proxy": getattr(args, "proxy", None) or None,
     }
 
 
@@ -1493,7 +1504,7 @@ def _run_dates(args: argparse.Namespace) -> int:
         trip=trip,
         nights=nights,
         nearby=nearby,
-        buffer_eur=args.baggage_buffer,
+        baggage_buffer=args.baggage_buffer,
         sort=args.sort,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
@@ -1635,7 +1646,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         trip=trip,
         nights=nights,
         top=args.top,
-        buffer_eur=args.baggage_buffer,
+        baggage_buffer=args.baggage_buffer,
         sort=args.sort,
         nearby=nearby,
         progress=lambda line: print(line, file=sys.stderr),
@@ -1704,7 +1715,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         max_stops=args.max_stops,
         nearby=nearby,
         sort=args.sort,
-        buffer_eur=args.baggage_buffer,
+        baggage_buffer=args.baggage_buffer,
         exclude_regions=exclude_regions,
         progress=lambda line: print(line, file=sys.stderr),
         **shop,
@@ -1788,6 +1799,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cabin class (default economy)",
     )
     _add_currency_country_flags(flights)
+    _add_proxy_flag(flights)
     flights.add_argument(
         "--bags",
         type=int,
@@ -2250,6 +2262,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cabin class (default economy)",
     )
     _add_currency_country_flags(dates)
+    _add_proxy_flag(dates)
     _add_owned_shop_filters(dates)
     _add_nearby_flag(dates)
     _add_baggage_buffer_flag(dates)
@@ -2336,6 +2349,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cabin class (default economy)",
     )
     _add_currency_country_flags(flex)
+    _add_proxy_flag(flex)
     flex.add_argument(
         "--top",
         type=int,
@@ -2418,6 +2432,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cabin class (default economy)",
     )
     _add_currency_country_flags(explore)
+    _add_proxy_flag(explore)
     _add_owned_shop_filters(explore)
     explore.add_argument(
         "--exclude-regions",
@@ -2479,7 +2494,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "With --prompts, load only tests/prompts/holdout.jsonl. "
-            "Not part of the weekday 90. Operator overfitting check."
+            "Not part of the weekday corpus. Operator overfitting check."
         ),
     )
     bench.add_argument(

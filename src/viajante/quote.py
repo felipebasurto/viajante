@@ -16,9 +16,6 @@ from typing import Optional
 from viajante.airports import get_airport
 from viajante.models import normalize_currency
 
-# Same figure as flights.DEFAULT_BAGGAGE_BUFFER_EUR. EUR-only unnamed default.
-# Not an FX amount. Do not convert this 70 into another currency.
-
 CURRENCY_REQUIRED = (
     "Cannot prove a quote currency from the origin airport's country. "
     "Pass --currency / currency with an ISO 4217 code "
@@ -338,15 +335,13 @@ def resolve_quote_and_buffer(
 
 
 def resolve_baggage_buffer(named: Optional[int], currency: str) -> int:
-    """Ranking add-on in the quote currency. No FX on the EUR 70 default.
+    """Ranking add-on in the quote currency. Unnamed is 0. No invented bag fee.
 
-    Unnamed is 70 only when the quote is EUR. Otherwise unnamed is 0.
-    A named value is used as-is in the same currency Google was asked for.
+    ``currency`` is the owned quote. A named value is used as-is in that unit.
+    Compare with bags via ``--bags`` / ``--carry-on`` on the shopping request.
     """
     if named is not None:
         if named < 0:
             raise ValueError("baggage buffer must not be negative")
         return named
-    if currency == "EUR":
-        return 70
     return 0

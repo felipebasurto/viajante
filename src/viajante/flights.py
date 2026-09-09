@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import get_airport, is_known_iata, same_city_iata
+from viajante.browser import playwright_available
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
     GoogleFlightsBlocked,
@@ -64,7 +65,6 @@ from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_qu
 from viajante.storage import default_state_dir, write_json_atomic
 from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
-DEFAULT_BAGGAGE_BUFFER_EUR = 70
 DEFAULT_TOP = 8
 
 UNKNOWN_DURATION_SORTS_LAST = float("inf")
@@ -109,6 +109,14 @@ _CLOCK_TOKEN = re.compile(
     r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$",
     re.IGNORECASE,
 )
+_ROUTE_SPEC_RE = re.compile(r"^[A-Za-z]{3}-[A-Za-z]{3}:")
+_GET_FLIGHTS_INTENT_FN = {
+    "dates": "search_dates",
+    "flex": "search_flex",
+    "explore": "search_explore",
+    "hotels": "search_hotels",
+    "airports": "lookup_airports",
+}
 FetchMode = Literal["auto", "sweep", "detail"]
 TripKind = Literal["one-way", "rt", "multi"]
 FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | MultiCity
@@ -146,9 +154,16 @@ def normalize_trip_kind(trip: str) -> TripKind:
         raise ValueError("trip must be 'one-way', 'rt', or 'multi'") from None
 
 
-def resolve_fetch_mode(fetch: FetchMode, query_count: int) -> Literal["sweep", "detail"]:
+def resolve_fetch_mode(
+    fetch: FetchMode,
+    query_count: int,
+    *,
+    browser_available: bool = True,
+) -> Literal["sweep", "detail"]:
     if fetch == "auto":
-        return "sweep" if query_count >= SWEEP_BATCH_THRESHOLD else "detail"
+        if not browser_available or query_count >= SWEEP_BATCH_THRESHOLD:
+            return "sweep"
+        return "detail"
     if fetch in ("sweep", "detail"):
         return fetch
     raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
@@ -166,10 +181,6 @@ def _needs_detail_fallback(result: QueryResult) -> bool:
     if result.error.code == SearchErrorCode.FETCH_FAILED:
         return True
     return False
-
-
-def sweep_needs_fallback(report: SearchReport) -> bool:
-    return any(_needs_detail_fallback(result) for result in report.queries)
 
 
 def classify_failure(exc: BaseException) -> SearchError:
@@ -470,6 +481,42 @@ def plan_unit_count(plan: FlightPlan) -> int:
     if isinstance(plan, (RoundTrip, MultiCity)):
         return 1
     return len(plan)
+
+
+def _as_trip_tuple(plan: FlightPlan | Trip | Sequence[Trip]) -> Tuple[Trip, ...]:
+    if isinstance(plan, (FlightQuery, RoundTrip, MultiCity)):
+        return (plan,)
+    return tuple(plan)
+
+
+def _is_route_spec(text: str) -> bool:
+    return _ROUTE_SPEC_RE.match(text.strip()) is not None
+
+
+def _search_kwargs_from_plan(plan: Any) -> dict[str, Any]:
+    return {
+        "via": plan.via_airports or None,
+        "exclude_via": plan.exclude_via or None,
+        "no_overnight": plan.no_overnight or None,
+        "require_overnight": plan.require_overnight or None,
+        "exclude_airports": plan.exclude_airports or None,
+        "include_airports": plan.include_airports or None,
+        "airlines": plan.include_airlines or None,
+        "exclude_airlines": plan.exclude_airlines or None,
+        "alliances": plan.alliance or None,
+        "exclude_alliances": plan.exclude_alliance or None,
+        "depart_window": parse_depart_window(plan.depart_window),
+        "arrive_before": parse_named_clock(plan.arrive_before, role="arrive-before"),
+        "depart_after": parse_named_clock(plan.depart_after, role="depart-after"),
+        "max_layover_hours": plan.max_layover,
+        "min_layover_hours": plan.min_layover,
+        "max_duration_hours": plan.max_duration,
+        "sort": plan.sort or "ranked",
+        "fetch": plan.fetch or "auto",
+        "currency": plan.currency,
+        "country": plan.country,
+        "baggage_buffer": plan.baggage_buffer,
+    }
 
 
 def parse_flight_plan(
@@ -825,16 +872,6 @@ def parse_overnight_lists(
         else None
     )
     return parsed_no, parsed_require
-
-
-def parse_exclude_airports(text: Optional[str]) -> Optional[Tuple[str, ...]]:
-    """Parse comma-separated IATA codes for ``--exclude-airports``."""
-    return parse_via_airports(text, role="exclude-airports")
-
-
-def parse_include_airports(text: Optional[str]) -> Optional[Tuple[str, ...]]:
-    """Parse comma-separated IATA codes for ``--include-airports``."""
-    return parse_via_airports(text, role="include-airports")
 
 
 def _named_iata(codes: Optional[Sequence[str]]) -> frozenset[str]:
@@ -1211,14 +1248,6 @@ def _passes_depart_after(clock_text: Optional[str], bound: Optional[int]) -> boo
     return minutes >= bound
 
 
-def baggage_buffer(
-    airline_text: str,
-    *,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
-) -> int:
-    return buffer_eur if is_low_cost(airline_text) else 0
-
-
 def _eligible_stops(stops: Optional[str], max_stops: int) -> bool:
     count = parse_stops_count(stops)
     if count is not None:
@@ -1243,7 +1272,7 @@ def _bag_evidence(
     raw: RawFlightCard,
     airline_text: str,
     *,
-    buffer_eur: int,
+    baggage_buffer: int,
     requested: bool,
 ) -> tuple[int, bool]:
     knows = raw.checked_bags is not None or raw.carry_on is not None
@@ -1252,14 +1281,14 @@ def _bag_evidence(
     needs_verify = is_low_cost(airline_text)
     if requested:
         return 0, needs_verify
-    return (buffer_eur if needs_verify else 0), needs_verify
+    return (baggage_buffer if needs_verify else 0), needs_verify
 
 
 def _normalize_offer(
     raw: RawFlightCard,
     max_stops: int,
     *,
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: int = 0,
     max_layover_hours: Optional[float] = None,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
@@ -1323,7 +1352,9 @@ def _normalize_offer(
         return None
     airline = raw.airline or ""
     requested = bags is not None or carry_on is not None
-    buffer, needs_verify = _bag_evidence(raw, airline, buffer_eur=buffer_eur, requested=requested)
+    buffer, needs_verify = _bag_evidence(
+        raw, airline, baggage_buffer=baggage_buffer, requested=requested
+    )
     legs = tuple(
         RawJourneyLeg(
             departure=normalize_clock(leg.departure) or leg.departure,
@@ -1602,7 +1633,7 @@ def _run_search(
     sleep: Callable[[float], None],
     random_gen: random.Random,
     now: Callable[[], datetime],
-    buffer_eur: int = DEFAULT_BAGGAGE_BUFFER_EUR,
+    baggage_buffer: int = 0,
     progress: Optional[Callable[[str], None]] = None,
     locale: str = "en",
     currency: str = "EUR",
@@ -1636,7 +1667,7 @@ def _run_search(
                 offer := _normalize_offer(
                     raw,
                     _trip_max_stops(trip),
-                    buffer_eur=buffer_eur,
+                    baggage_buffer=baggage_buffer,
                     max_layover_hours=max_layover_hours,
                     min_layover_hours=min_layover_hours,
                     max_duration_hours=max_duration_hours,
@@ -1797,7 +1828,7 @@ def _search_with_source(
     *,
     source: _FlightSource,
     top: int,
-    buffer_eur: int,
+    baggage_buffer: int,
     progress: Optional[Callable[[str], None]],
     sort: FlightSort,
     inter_query_delay: Callable[[random.Random], float],
@@ -1823,7 +1854,7 @@ def _search_with_source(
             sleep=time.sleep,
             random_gen=random.Random(),
             now=lambda: datetime.now(timezone.utc),
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
             progress=progress,
             locale=source.config.html_lang,
             currency=source.config.currency,
@@ -1847,11 +1878,22 @@ def _search_with_source(
         source.close()
 
 
-def search_flights(
-    queries: Sequence[Trip],
+def get_flights(
+    query: str | Sequence[str] | Trip | Sequence[Trip],
     *,
+    trip: str = "one-way",
+    max_stops: int = 1,
+    adults: int = 1,
+    cabin: FlightCabin = "economy",
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+    nearby: bool = False,
     top: int = DEFAULT_TOP,
-    buffer_eur: Optional[int] = None,
+    baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
     fetch: FetchMode = "auto",
@@ -1873,13 +1915,129 @@ def search_flights(
     include_airports: Optional[Sequence[str]] = None,
     currency: Optional[str] = None,
     country: Optional[str] = None,
+    proxy: Optional[str] = None,
+) -> SearchReport:
+    """One-shot flight search: route spec, trips, or a natural-language prompt.
+
+    A string that looks like ``ORIGIN-DEST:DATE`` (or a sequence of those) is
+    parsed like the CLI. Any other string goes through ``plan_prompt``. Non-flight
+    intents raise ``ValueError`` naming the matching public function. Does not
+    run hotels when the plan has ``search_trip``.
+    """
+    search_kw: dict[str, Any] = {
+        "top": top,
+        "baggage_buffer": baggage_buffer,
+        "progress": progress,
+        "sort": sort,
+        "fetch": fetch,
+        "max_layover_hours": max_layover_hours,
+        "min_layover_hours": min_layover_hours,
+        "max_duration_hours": max_duration_hours,
+        "airlines": airlines,
+        "exclude_airlines": exclude_airlines,
+        "alliances": alliances,
+        "exclude_alliances": exclude_alliances,
+        "depart_window": depart_window,
+        "arrive_before": arrive_before,
+        "depart_after": depart_after,
+        "via": via,
+        "exclude_via": exclude_via,
+        "no_overnight": no_overnight,
+        "require_overnight": require_overnight,
+        "exclude_airports": exclude_airports,
+        "include_airports": include_airports,
+        "currency": currency,
+        "country": country,
+        "proxy": proxy,
+    }
+    if isinstance(query, str) and not _is_route_spec(query):
+        from viajante.prompt_plan import plan_prompt, plan_to_trips
+
+        plan = plan_prompt(query)
+        if plan.intent != "flights":
+            if plan.intent == "refuse" or plan.refuse:
+                reasons = ", ".join(plan.refuse) if plan.refuse else "refused"
+                raise ValueError(f"get_flights cannot search this prompt: {reasons}")
+            hint = _GET_FLIGHTS_INTENT_FN.get(plan.intent)
+            if hint is None:
+                raise ValueError(f"get_flights is for flight offers; got {plan.intent!r} intent")
+            raise ValueError(
+                f"get_flights is for flight offers; use {hint} for {plan.intent} intent"
+            )
+        parsed = plan_to_trips(replace(plan, nearby=False))
+        trips = expand_nearby_trips(_as_trip_tuple(parsed), nearby=bool(nearby or plan.nearby))
+        plan_kw = _search_kwargs_from_plan(plan)
+        for key, value in plan_kw.items():
+            if search_kw.get(key) is None and value is not None:
+                search_kw[key] = value
+        if sort == "ranked" and plan.sort:
+            search_kw["sort"] = plan.sort
+        if fetch == "auto" and plan.fetch:
+            search_kw["fetch"] = plan.fetch
+        return search_flights(trips, **search_kw)
+    if isinstance(query, str):
+        specs: Sequence[str] = (query.strip(),)
+    elif isinstance(query, (FlightQuery, RoundTrip, MultiCity)):
+        trips = expand_nearby_trips((query,), nearby=nearby)
+        return search_flights(trips, **search_kw)
+    else:
+        items = tuple(query)
+        if items and isinstance(items[0], str):
+            specs = items  # type: ignore[assignment]
+        else:
+            trips = expand_nearby_trips(_as_trip_tuple(items), nearby=nearby)  # type: ignore[arg-type]
+            return search_flights(trips, **search_kw)
+    parsed_plan = parse_flight_plan(
+        specs,
+        trip=trip,
+        max_stops=max_stops,
+        adults=adults,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+        price_cap=price_cap,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
+    )
+    trips = expand_nearby_trips(_as_trip_tuple(parsed_plan), nearby=nearby)
+    return search_flights(trips, **search_kw)
+
+
+def search_flights(
+    queries: Sequence[Trip],
+    *,
+    top: int = DEFAULT_TOP,
+    baggage_buffer: Optional[int] = None,
+    progress: Optional[Callable[[str], None]] = None,
+    sort: FlightSort = "ranked",
+    fetch: FetchMode = "auto",
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
+    airlines: Optional[Sequence[str]] = None,
+    exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
+    exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> SearchReport:
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
         raise ValueError("top must be positive")
     currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
-    buffer_eur = resolve_baggage_buffer(buffer_eur, currency)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     validate_layover_hours(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
@@ -1913,7 +2071,7 @@ def search_flights(
         alliances=alliances,
         exclude_alliances=exclude_alliances,
     )
-    planned = resolve_fetch_mode(fetch, len(trips))
+    planned = resolve_fetch_mode(fetch, len(trips), browser_available=playwright_available())
     if fetch == "auto" and any(
         trip.airlines or trip.exclude_airlines or trip.alliances or trip.exclude_alliances
         for trip in trips
@@ -1931,7 +2089,9 @@ def search_flights(
         return 0.0
 
     if planned == "sweep":
-        source: _FlightSource = GoogleFlightsHttpSource(currency=currency, country=country)
+        source: _FlightSource = GoogleFlightsHttpSource(
+            currency=currency, country=country, proxy=proxy
+        )
         delay = sweep_inter_query_delay_seconds
         backoff = _zero_backoff
     else:
@@ -1950,7 +2110,7 @@ def search_flights(
             trips_to_search,
             source=source,
             top=top,
-            buffer_eur=buffer_eur,
+            baggage_buffer=baggage_buffer,
             progress=progress,
             sort=sort,
             inter_query_delay=inter_query_delay,
@@ -1978,7 +2138,7 @@ def search_flights(
         retry_backoff=backoff,
     )
     backend: FetchBackend = planned
-    if planned == "sweep":
+    if planned == "sweep" and playwright_available():
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
         ]

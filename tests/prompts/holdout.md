@@ -1,6 +1,6 @@
 # Holdout prompts
 
-Operator overfitting check. Not in the weekday 90.
+Operator overfitting check. Not in the weekday corpus.
 
 `viajante bench --prompts` loads smoke → savage via `manifest.json`. This
 file is **not** listed there. After a quality PR, the operator runs:

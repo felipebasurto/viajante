@@ -25,8 +25,6 @@ AIRLINE_CODE_ALIASES = {
     "W6": ("wizz", "wizz air"),
 }
 
-ALLIANCE_CANONICAL = frozenset({"oneworld", "skyteam", "star"})
-
 ALLIANCE_SHOPPING_CODE = {
     "oneworld": "*O",
     "skyteam": "*S",

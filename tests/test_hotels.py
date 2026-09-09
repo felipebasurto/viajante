@@ -711,6 +711,20 @@ class HotelOrchestrationTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source)
 
+    def test_booking_without_playwright_is_browser_unavailable(self) -> None:
+        with (
+            patch("viajante.hotels.playwright_available", return_value=False),
+            patch("viajante.hotels.BookingHotelsSource") as source,
+        ):
+            report = search_hotels((query(),), currency="EUR", source="booking")
+        source.assert_not_called()
+        self.assertEqual(len(report.queries), 1)
+        result = report.queries[0]
+        self.assertIsInstance(result, HotelQueryFailure)
+        assert isinstance(result, HotelQueryFailure)
+        self.assertEqual(result.error.code, SearchErrorCode.BROWSER_UNAVAILABLE)
+        self.assertIn("viajante[browser]", result.error.message)
+
 
 if __name__ == "__main__":
     unittest.main()

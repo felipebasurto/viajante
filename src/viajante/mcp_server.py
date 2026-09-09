@@ -20,12 +20,17 @@ from viajante.mcp_handlers import (
 _HELP = """\
 viajante-mcp is the stdio MCP server for local flight and hotel search.
 
-Install:  uv sync --extra mcp
-Run:      viajante-mcp
+Install:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp
+Checkout: uv sync --extra mcp && viajante-mcp
+Browser:  pip install 'viajante[browser]' && playwright install chromium
+          (only for --fetch detail and Booking.com)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_trip, lookup_airports.
 No auth. One search at a time in this process.
+
+search_dates is the cheapest week. search_flex is ±N around a named date.
+Do not brute-force a date matrix. search_explore is dest triage from an origin.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -33,15 +38,16 @@ does not convert. The calling agent may convert for the user. If country,
 destination, or currency is not proven (a city with several airports,
 Europe, unnamed origin, two possible currencies), do not pick: ask or
 error. Unknown cannot prove include. Do not invent IATA, gl, or ISO 4217
-from vibe. Unnamed baggage_buffer is 70 only when the quote is EUR;
-otherwise 0.
+from vibe. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
+shopping request so Google prices the bag. Do not invent a bag fee.
+Fetch locale is English. User prompts may be any language.
 """
 
 
 def build_server():
     from mcp.server.fastmcp import FastMCP
 
-    server = FastMCP("viajante")
+    server = FastMCP("viajante", instructions=_HELP)
 
     @server.tool()
     def search_flights(
@@ -79,15 +85,17 @@ def build_server():
         currency: str | None = None,
         country: str | None = None,
         nearby: bool = False,
+        proxy: str | None = None,
     ) -> dict:
-        """Search Google Flights.
+        """Search Google Flights for named routes and dates.
 
+        Use search_dates for the cheapest week and search_flex for ±N days.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
         convert for the user. Unproven country, dest, or currency (city with
         several airports, Europe, unnamed origin, two currencies) must not be
-        guessed. Unnamed baggage_buffer is 70 only when the quote is EUR;
-        otherwise 0.
+        guessed. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
+        shopping request. Do not invent a bag fee.
         """
         return dict(
             search_flights_tool(
@@ -125,6 +133,7 @@ def build_server():
                 currency=currency,
                 country=country,
                 nearby=nearby,
+                proxy=proxy,
             )
         )
 
@@ -165,13 +174,14 @@ def build_server():
         country: str | None = None,
         baggage_buffer: int | None = None,
         sort: str | None = None,
+        proxy: str | None = None,
     ) -> dict:
-        """Cheapest-per-day calendar.
+        """Cheapest-per-day calendar for a named route (up to 31 days).
 
+        Use this for the cheapest week. Use search_flex for ±N around one date.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 70 only when the quote
-        is EUR; otherwise 0.
+        convert for the user. Unnamed baggage_buffer is 0.
         """
         return dict(
             search_dates_tool(
@@ -210,6 +220,7 @@ def build_server():
                 country=country,
                 baggage_buffer=baggage_buffer,
                 sort=sort,  # type: ignore[arg-type]
+                proxy=proxy,
             )
         )
 
@@ -251,13 +262,14 @@ def build_server():
         max_layover: float | None = None,
         currency: str | None = None,
         country: str | None = None,
+        proxy: str | None = None,
     ) -> dict:
-        """Flex window, then one shopping search.
+        """Flex window (±N), then one shopping search on the cheapest day.
 
+        Use search_dates for a cheapest-week calendar. Do not brute-force a date matrix.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 70 only when the quote
-        is EUR; otherwise 0.
+        convert for the user. Unnamed baggage_buffer is 0.
         """
         return dict(
             search_flex_tool(
@@ -297,6 +309,7 @@ def build_server():
                 max_layover=max_layover,
                 currency=currency,
                 country=country,
+                proxy=proxy,
             )
         )
 
@@ -338,13 +351,13 @@ def build_server():
         country: str | None = None,
         sort: str = "price",
         baggage_buffer: int | None = None,
+        proxy: str | None = None,
     ) -> dict:
         """Destinations from one origin, then a priced shortlist.
 
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 70 only when the quote
-        is EUR; otherwise 0.
+        convert for the user. Unnamed baggage_buffer is 0.
         """
         return dict(
             search_explore_tool(
@@ -384,6 +397,7 @@ def build_server():
                 country=country,
                 sort=sort,  # type: ignore[arg-type]
                 baggage_buffer=baggage_buffer,
+                proxy=proxy,
             )
         )
 
@@ -467,8 +481,8 @@ def build_server():
         """Flights then hotel. Currency follows the flight origin or an explicit code.
 
         If unknown, ask. Viajante does not convert. The calling agent may convert
-        for the user. Unnamed baggage_buffer is 70 only when the quote is EUR;
-        otherwise 0. The same currency is passed to hotels.
+        for the user. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
+        shopping request. The same currency is passed to hotels.
         """
         return dict(
             search_trip_tool(

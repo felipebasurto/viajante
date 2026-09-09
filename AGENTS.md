@@ -13,7 +13,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 - `tfs` bytes, cabin, or occupancy in the Google Flights URL: `src/viajante/tfs.py`
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
-- Routes, LCC buffer, nearby expand, or flight ranking: `src/viajante/flights.py`
+- Routes, LCC buffer, nearby expand, flight ranking, or `get_flights`: `src/viajante/flights.py`
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
 - Google Hotels HTTP shortlist: `src/viajante/google_hotels.py`, `src/viajante/google_hotels_rpc.py`
@@ -22,7 +22,8 @@ the agent contract: where to edit, traps, and what must not be invented.
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
 - Stdio MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
-- Low-cost carrier list (partial): `src/viajante/carriers.py`
+- Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
+- Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Graded prompt battery (quality contract): `src/viajante/prompt_plan.py`, `src/viajante/prompt_bench.py`
 - Loop protocol: `program.md` (humans edit this to steer)
@@ -45,6 +46,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 
 CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `trip`, `bench`.
 MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`.
+Library: `get_flights` (route spec, trips, or NL via `plan_prompt`), plus the `search_*` functions. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
@@ -65,13 +67,15 @@ or exchange rate.
 > “complete” the skill into a second CLI contract.
 
 Successful flights, dates, flex, and explore may carry owned `google_flights_url`
-(`booking_token` wins when present on a shop offer; omit if encode cannot run),
-`typical` / `vs_typical` / `vs_typical_pct` / `typical_deal`, and
-`stops_compare`. Stamp rules live with the search loops (`flights.py`, `dates.py`,
-`explore.py`, `typical.py`). Compact calendar cells and Explore catalog places
-are not offers: they may carry a query URL; they do not grow a token, buffer
-stamp, overnight/via filter, or `stops_compare`. Never invent a dest typical from
-the explore catalog mix or from other dests.
+(`booking_token` wins when present on a shop offer; omit if encode cannot run)
+and `stops_compare`. Flights offers, dates priced rows, and shopped explore dests
+may carry `typical` / `vs_typical` / `vs_typical_pct` / `typical_deal`. A flex
+report stamps `typical` / `vs_typical` only at report level. Flex offers and day
+rows use the full triple. Stamp rules live with the search loops (`flights.py`,
+`dates.py`, `explore.py`, `typical.py`). Compact calendar cells and Explore
+catalog places are not offers: they may carry a query URL; they do not grow a
+token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
+dest typical from the explore catalog mix or from other dests.
 
 `--nearby` is opt-in same-city IATA (default off; open-jaw not rewritten; no
 invented codes). `--exclude-airports` / `--include-airports` are named owned
@@ -89,11 +93,11 @@ currencies differ. Nearby alternatives take the cheapest owned fare in that
 city group, not a sum.
 
 `--baggage-buffer` / MCP `baggage_buffer` is a ranking add-on in the same quote
-currency (`DEFAULT_BAGGAGE_BUFFER_EUR` in `src/viajante/flights.py` is **70
-only when the quote is EUR**; unnamed is 0 otherwise; 70 is **not** a fare and
-is not FX-converted). `0` ranks on fare alone. Compact date-grid cells and
-Explore catalog places omit the stamp. Dates sweep-fallback / shopped day rows
-pick the day's winner by fare+buffer. Explore dest ranking applies it only when
+currency. **Unnamed is 0.** Named `N` is used as-is (not FX-converted). Compare
+bags with `--bags N` / `--carry-on` on the shopping request so Google prices
+them. Do not invent a bag fee. Compact date-grid cells and Explore catalog
+places omit the stamp. Dates sweep-fallback / shopped day rows pick the day's
+winner by fare+buffer. Explore dest ranking applies a named buffer only when
 `--sort ranked`.
 
 ## Invariants
@@ -101,15 +105,18 @@ pick the day's winner by fare+buffer. Explore dest ranking applies it only when
 - Validate CLI input before starting Chromium. Reject departure dates in the past.
 - Two flight fetch modes, one public contract. Sweep: one Chrome TLS session
   (`curl_cffi`), HTTP/2 multiplex, owned shopping RPC, HTML fallback if compact
-  parse misses. Detail: Playwright. `--fetch {auto,sweep,detail}`: auto uses
-  sweep for 3+ flight queries and detail for 1–2. Sweep empty or `blocked` may
-  fall back to detail once (`fetch_backend: sweep_then_detail`); do not re-run
-  successful sweep legs. Shopping `ErrorResponse` and owned markup drift fail
-  without Chromium. Do not silently mix backends unless that fallback fired.
+  parse misses. Detail: Playwright (`viajante[browser]`). `--fetch {auto,sweep,detail}`:
+  auto uses sweep for 3+ flight queries and detail for 1–2 when Playwright is
+  importable. Auto without Playwright stays on sweep. Sweep empty or `blocked` may
+  fall back to detail once (`fetch_backend: sweep_then_detail`) only when Playwright
+  is installed; do not re-run successful sweep legs. Shopping `ErrorResponse` and
+  owned markup drift fail without Chromium. Do not silently mix backends unless
+  that fallback fired.
 - Sweep inter-query delay is 0. No Playwright/Chromium required for sweep. One
-  lazy Chromium per process, only when detail runs. Flights block images, media,
-  and fonts. Booking blocks images and media (fonts stay). Use Playwright's
-  Chromium UA for detail; do not spoof a stale Chrome/macOS UA.
+  lazy Chromium per process, only when detail runs. Install Chromium with
+  `pip install 'viajante[browser]' && playwright install chromium`. Flights block
+  images, media, and fonts. Booking blocks images and media (fonts stay). Use
+  Playwright's Chromium UA for detail; do not spoof a stale Chrome/macOS UA.
 - Detail delays: 4.5s + up to 1.5s jitter between queries; 3 attempts with 8s
   exponential backoff + jitter; browser reset after each failed attempt. No flags
   to shorten detail delays or parallelize requests. Progress goes to stderr.
@@ -172,7 +179,9 @@ pick the day's winner by fare+buffer. Explore dest ranking applies it only when
   observed card evidence distinct. `--source booking` (CLI default) is Playwright
   evidence; `--source google` is the HTTP shortlist. MCP hotel search defaults to
   Google. Booking ratings are 0–10; Google Hotels ratings are 0–5. Drop
-  non-property titles such as `closed`.
+  non-property titles such as `closed`. Google Hotels HTTP uses the hotel search
+  loop's 3 attempts with 8s backoff (same pace as Booking Playwright), not the
+  flight-sweep 50 ms once-retry.
 - Free cancellation is required by default. Only an explicit caller or CLI
   opt-out may include non-refundable stays. If `oos=1` is applied and the card
   does not mention cancellation, print `filter applied; card silent` — do not
@@ -227,8 +236,9 @@ Pin owned seams, not upstream HTML rewriting. A renamed or dropped JSON key is a
 breaking change. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is
 installed (`mcp>=1.6,<2`).
 
-Stdio MCP: `uv sync --extra mcp` then `viajante-mcp`. No Streamable HTTP. Keep
-the one-search process lock.
+Stdio MCP: `uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp`,
+or checkout `uv sync --extra mcp` then `viajante-mcp`. No Streamable HTTP. Keep
+the one-search process lock. Playwright is extra `viajante[browser]`.
 
 ## Trip-planning search strategy
 

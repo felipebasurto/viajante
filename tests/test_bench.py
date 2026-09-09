@@ -12,9 +12,9 @@ from unittest.mock import patch
 from viajante.bench import (
     LIVE_ENV,
     MIN_PARSED_CARDS,
-    REQUIRED_BAGGAGE_BUFFER_EUR,
     REQUIRED_FIXTURE_NAMES,
     REQUIRED_FLIGHT_TOP,
+    REQUIRED_UNNAMED_BAGGAGE_BUFFER,
     BenchIntegrityError,
     BenchReport,
     check_product_defaults,
@@ -26,7 +26,8 @@ from viajante.bench import (
     validate_corpus,
 )
 from viajante.cli import main
-from viajante.flights import DEFAULT_BAGGAGE_BUFFER_EUR, DEFAULT_TOP
+from viajante.flights import DEFAULT_TOP
+from viajante.quote import resolve_baggage_buffer
 
 
 def _copy_corpus(tmp: Path) -> Path:
@@ -80,7 +81,7 @@ class BenchCorpusTests(unittest.TestCase):
     def test_product_defaults_stay_pinned(self) -> None:
         check_product_defaults()
         self.assertEqual(DEFAULT_TOP, REQUIRED_FLIGHT_TOP)
-        self.assertEqual(DEFAULT_BAGGAGE_BUFFER_EUR, REQUIRED_BAGGAGE_BUFFER_EUR)
+        self.assertEqual(resolve_baggage_buffer(None, "EUR"), REQUIRED_UNNAMED_BAGGAGE_BUFFER)
 
     def test_committed_baseline_has_a_real_score(self) -> None:
         path = repo_root() / "bench-baseline.json"
