@@ -1001,6 +1001,13 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("viajante-mcp", server["args"])
         self.assertIn("mcp", server["args"])
 
+    def test_skill_does_not_bake_calendar_dates(self) -> None:
+        skill = Path(".cursor/skills/viajante/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("[mcp.md](mcp.md)", skill)
+        self.assertNotRegex(skill, r"20\d{2}-\d{2}-\d{2}")
+        mcp = Path(".cursor/skills/viajante/mcp.md").read_text(encoding="utf-8")
+        self.assertIn("viajante-mcp", mcp)
+
 
 if __name__ == "__main__":
     unittest.main()
