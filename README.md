@@ -506,3 +506,5 @@ uv run viajante bench --prompts
 ## Disclaimer
 
 This is an unofficial, open-source project and is not affiliated with Google, Booking.com, or any airline. Please review the [Google Terms of Service](https://policies.google.com/terms) and [Booking.com Terms](https://www.booking.com/content/terms.html) before using this tool.
+
+<!-- mcp-name: io.github.felipebasurto/viajante -->
