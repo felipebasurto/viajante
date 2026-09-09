@@ -21,7 +21,7 @@ Paste this into Cursor Settings → MCP, Claude Desktop, or any `mcpServers` cli
 }
 ```
 
-That is the install. Reload MCP. The agent gets `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`.
+Reload MCP. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`.
 
 PyPI is unpublished. Do not use `--from viajante[mcp]` until `pypi.org/pypi/viajante/json` returns 200.
 

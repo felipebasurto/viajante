@@ -1918,7 +1918,7 @@ def overlay_trip_fields(
                 extra["legs"] = tuple(replace(leg, max_stops=max_stops) for leg in item.legs)
             else:
                 extra["max_stops"] = max_stops
-        out.append(replace(item, **extra) if extra else item)
+        out.append(replace(item, **extra))
     return tuple(out)
 
 

@@ -162,12 +162,6 @@ def owned_trip_total(
     )
 
 
-_FAMILY_HOTEL_OCCUPANCY = (
-    "search_trip cannot combine child or infant occupancy with hotels; "
-    "hotel occupancy is adults-only. Use search_flights, then search_hotels."
-)
-
-
 def search_trip(
     trips: Sequence[Trip],
     hotel_query: HotelQuery,
@@ -204,7 +198,10 @@ def search_trip(
     if not trips:
         raise ValueError("at least one query is required")
     if any(item.children or item.infants_in_seat or item.infants_on_lap for item in trips):
-        raise ValueError(_FAMILY_HOTEL_OCCUPANCY)
+        raise ValueError(
+            "search_trip cannot combine child or infant occupancy with hotels; "
+            "hotel occupancy is adults-only. Use search_flights, then search_hotels."
+        )
     currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     flights = search_flights(

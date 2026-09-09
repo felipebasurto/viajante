@@ -378,11 +378,7 @@ You can also use Viajante directly as a typed Python library:
 from datetime import date
 from viajante import FlightQuery, get_flights, plan_prompt, search_flights, search_hotels, HotelQuery
 
-# Route spec, trips, or a natural-language prompt (plan_prompt is also exported)
-flight_report = get_flights("JFK-LHR:2026-10-15", fetch="sweep", top=5, proxy=None)
-# Named occupancy/cabin/bags/max_stops/price_cap overlay the prompt or Trip.
-# Sweep --proxy / MCP proxy covers flights, dates, flex, and explore (not hotels).
-
+flight_report = get_flights("JFK-LHR:2026-10-15", fetch="sweep", top=5)
 plan = plan_prompt("Flights JFK-LHR on 2026-10-15")
 
 flight_report = search_flights(

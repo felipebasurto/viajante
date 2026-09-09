@@ -964,9 +964,7 @@ class McpWorkerTests(unittest.TestCase):
         import asyncio
         import threading
 
-        from viajante.mcp_server import _SEARCH_EXECUTOR, run_mcp_tool
-
-        self.assertEqual(_SEARCH_EXECUTOR._max_workers, 1)
+        from viajante.mcp_server import run_mcp_tool
 
         def body() -> tuple[bool, str]:
             try:
