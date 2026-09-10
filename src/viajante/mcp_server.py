@@ -38,6 +38,10 @@ No auth. One search at a time in this process.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
+search_dates is HTTP-calendar only and has no fetch parameter. If it returns
+blocked, stop that request: a separate browser's consent or prices are not MCP
+evidence. fetch=detail applies only to search_flights and needs the browser
+extra plus Chromium in the MCP environment.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -102,6 +106,8 @@ def build_server():
         """Search Google Flights for named routes and dates.
 
         Use search_dates for the cheapest week and search_flex for ±N days.
+        Each routes entry is ORIGIN-DEST:YYYY-MM-DD. fetch=detail requires the
+        browser extra and Chromium in the MCP environment.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
         convert for the user. Unproven country, dest, or currency (city with
@@ -192,6 +198,9 @@ def build_server():
         """Cheapest-per-day calendar for a named route (up to 31 days).
 
         Use this for the cheapest week. Use search_flex for ±N around one date.
+        route is ORIGIN-DEST and start/end are ISO dates. This HTTP calendar
+        has no fetch mode; if blocked, do not use a separate browser as MCP
+        recovery or evidence.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
         convert for the user. Unnamed baggage_buffer is 0.

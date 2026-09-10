@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import io
 import json
 import sys
@@ -878,10 +879,12 @@ class _FakeFastMCP:
         self.name = name
         self.instructions = kwargs.get("instructions")
         self.tools: list[str] = []
+        self.tool_functions: list[Any] = []
 
     def tool(self, *_args: object, **_kwargs: object):
         def deco(fn: Any) -> Any:
             self.tools.append(fn.__name__)
+            self.tool_functions.append(fn)
             return fn
 
         return deco
@@ -944,6 +947,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIsInstance(server.instructions, str)
         assert isinstance(server.instructions, str)
         self.assertIn("search_dates is the cheapest week", server.instructions)
+        self.assertIn("search_dates is HTTP-calendar only", server.instructions)
         self.assertIn("uvx", server.instructions)
         self.assertEqual(
             server.tools,
@@ -957,6 +961,9 @@ class McpServerImportTests(unittest.TestCase):
                 "lookup_airports",
             ],
         )
+        tools = dict(zip(server.tools, server.tool_functions, strict=True))
+        self.assertIn("fetch", inspect.signature(tools["search_flights"]).parameters)
+        self.assertNotIn("fetch", inspect.signature(tools["search_dates"]).parameters)
 
 
 class McpWorkerTests(unittest.TestCase):
