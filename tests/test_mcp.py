@@ -14,11 +14,14 @@ from unittest.mock import MagicMock, patch
 
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.mcp_handlers import (
+    compare_awards_tool,
     lookup_airports_tool,
+    lookup_transfers_tool,
     search_dates_tool,
     search_explore_tool,
     search_flex_tool,
     search_flights_tool,
+    search_hidden_city_tool,
     search_hotels_tool,
     search_trip_tool,
 )
@@ -851,6 +854,36 @@ class McpHandlerTests(unittest.TestCase):
                 search_hotels_tool("Prague", FUTURE, FUTURE_OUT, min_rating=8.5, source="google")
         search.assert_not_called()
 
+    def test_search_hidden_city_returns_report(self) -> None:
+        fake = _report(source="skiplagged", offers=[], currency="USD")
+        with patch("viajante.mcp_handlers.search_hidden_city", return_value=fake) as search:
+            payload = search_hidden_city_tool("JFK-LHR", FUTURE)
+        search.assert_called_once()
+        self.assertEqual(payload["source"], "skiplagged")
+        self.assertNotIn("success", payload)
+
+    def test_compare_awards_is_local_math(self) -> None:
+        payload = compare_awards_tool(
+            {
+                "origin": "JFK",
+                "destination": "LHR",
+                "departure_date": FUTURE,
+                "program": "aeroplan",
+                "points": 70000,
+                "evidence": "user_supplied",
+            },
+            cash_price=1200,
+            currency="USD",
+            balances=[{"program": "MR", "balance": 90000}],
+        )
+        self.assertIn("cpp_cents", payload)
+        self.assertEqual(payload["award"]["evidence"], "user_supplied")
+        self.assertTrue(payload["transfer_paths"][0]["covers"])
+
+    def test_lookup_transfers_does_not_invent_partners(self) -> None:
+        payload = lookup_transfers_tool("not-a-program", 50000)
+        self.assertEqual(payload["transfer_paths"], [])
+
     def test_overlapping_search_is_rejected(self) -> None:
         started = threading.Event()
         release = threading.Event()
@@ -918,6 +951,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIn("search_flights", help_text)
         self.assertIn("search_flex", help_text)
         self.assertIn("search_trip", help_text)
+        self.assertIn("search_hidden_city", help_text)
         self.assertIn("stdio", help_text)
 
     def test_build_server_registers_tools_without_sdk(self) -> None:
@@ -959,6 +993,9 @@ class McpServerImportTests(unittest.TestCase):
                 "search_hotels",
                 "search_trip",
                 "lookup_airports",
+                "search_hidden_city",
+                "compare_awards",
+                "lookup_transfers",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))
