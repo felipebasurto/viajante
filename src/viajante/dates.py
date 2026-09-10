@@ -851,9 +851,13 @@ def _flex_report_for_seed(
     try:
         compact = client.fetch_calendar(seed, start, end)
         days = _rows_from_calendar(start, end, compact, nights=stay)
-    except CompactParseMiss:
+    except CompactParseMiss as exc:
         report_progress("calendar miss; no fare")
         days = ()
+        error = SearchError(
+            code=SearchErrorCode.MARKUP_DRIFT,
+            message=str(exc) or "calendar miss; no fare",
+        )
     except Exception as exc:
         error = classify_failure(exc)
         days = _error_rows(start, end, error, nights=stay)

@@ -988,6 +988,37 @@ class McpWorkerTests(unittest.TestCase):
         self.assertFalse(loop_running)
         self.assertTrue(name.startswith("viajante-mcp"))
 
+    def test_second_search_fails_before_queueing(self) -> None:
+        import asyncio
+
+        from viajante.mcp_server import run_lookup_tool, run_mcp_tool
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def body() -> str:
+            started.set()
+            self.assertTrue(release.wait(2))
+            return "ok"
+
+        async def main() -> None:
+            first = asyncio.create_task(run_mcp_tool(body))
+            for _ in range(50):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.02)
+            self.assertTrue(started.is_set())
+            with self.assertRaises(ValueError) as ctx:
+                await run_mcp_tool(body)
+            self.assertIn("already running", str(ctx.exception))
+            rows = await run_lookup_tool(lookup_airports_tool, "NRT", limit=1)
+            self.assertGreaterEqual(len(rows), 1)
+            self.assertEqual(rows[0]["iata"], "NRT")
+            release.set()
+            self.assertEqual(await first, "ok")
+
+        asyncio.run(main())
+
 
 class ReadmeContractTests(unittest.TestCase):
     def test_mcp_examples_use_real_tool_arguments(self) -> None:

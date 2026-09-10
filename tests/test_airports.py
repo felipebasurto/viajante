@@ -44,6 +44,21 @@ class AirportLookupTests(unittest.TestCase):
         rows = lookup_airports("barcelona")
         self.assertIn("BCN", {row.iata for row in rows})
 
+    def test_lisboa_finds_lisbon_not_only_huambo(self) -> None:
+        codes = [row.iata for row in lookup_airports("Lisboa")]
+        self.assertIn("LIS", codes)
+        self.assertEqual(codes[0], "LIS")
+
+    def test_ciudad_de_mexico_finds_mex(self) -> None:
+        codes = {row.iata for row in lookup_airports("Ciudad de México")}
+        self.assertIn("MEX", codes)
+
+    def test_sapporo_includes_new_chitose_ahead_of_okadama(self) -> None:
+        codes = [row.iata for row in lookup_airports("Sapporo")]
+        self.assertIn("CTS", codes)
+        self.assertIn("OKD", codes)
+        self.assertLess(codes.index("CTS"), codes.index("OKD"))
+
     def test_xxx_is_not_an_airport(self) -> None:
         self.assertFalse(is_known_iata("XXX"))
         self.assertIsNone(get_airport("XXX"))

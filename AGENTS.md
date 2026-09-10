@@ -58,7 +58,8 @@ If country, destination, or currency is not proven (a city with several
 airports, “Europe”, unnamed origin, two possible currencies), ask or error.
 Unknown cannot prove include. Do not invent IATA, `gl`, or ISO 4217 from vibe.
 Viajante does not convert; the MCP caller does FX.
-Optional `gl`, omit when unset; do not default `gl` to a home hub.
+Optional `gl` / MCP `country` is Google origin-market geolocation; omit when
+unset; do not default `gl` to a home hub; do not pass a destination ISO.
 Never invent a fare, typical, token, via list, bag count, dest, price cap,
 or exchange rate.
 
@@ -87,7 +88,9 @@ dest. `--via` / `--exclude-via` / `--no-overnight` / `--require-overnight` filte
 on owned layover city+clock; unknown cannot prove include or exclude.
 `--arrive-before` / `--depart-after` are named HH:MM on owned clocks. Named
 `--price-cap` is a local post-filter of owned amounts in the quote currency
-(shopping index 7 stays `None`). Flex is calendar then one shop (miss = empty).
+(shopping index 7 stays `None`). Flex is calendar then one shop. A calendar
+`CompactParseMiss` stamps `error` `markup_drift` with empty `days` and no shop;
+an empty priced window has day rows and no error.
 Trip total is omitted if either side misses, dates do not overlap, or
 currencies differ. `search_trip` / `viajante trip` reject child or infant
 occupancy (hotel occupancy is adults-only). Nearby alternatives take the
@@ -104,6 +107,8 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 ## Invariants
 
 - Validate CLI input before starting Chromium. Reject departure dates in the past.
+  Compute ISO dates from today; roll a named season to the next legal year.
+  Do not send a past `start`.
 - Two flight fetch modes, one public contract. Sweep: one Chrome TLS session
   (`curl_cffi`), HTTP/2 multiplex, owned shopping RPC, HTML fallback if compact
   parse misses. Detail: Playwright (`viajante[browser]`). `--fetch {auto,sweep,detail}`:
@@ -125,8 +130,10 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
   jobs. `no_results`, `rejected`, `blocked`, `markup_drift`, and
-  `browser_unavailable` do not get a Playwright second attempt. Booking
-  card-wait timeouts fail immediately. Do not hammer Booking after a challenge.
+  `browser_unavailable` do not get a Playwright second attempt. A calendar
+  `blocked` (including a short unknown HTML shell) stops that calendar; no
+  flex, shop, or browser recovery. Booking card-wait timeouts fail immediately.
+  Do not hammer Booking after a challenge.
   `rejected` and `markup_drift` do not fall back to detail.
 - Every offer keeps raw text beside parsed fields. Sweep and detail clocks are
   24-hour `HH:MM`. Omit typical / cheapest keys when the compact calendar misses,
@@ -148,7 +155,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   fill index 10; leave both unset so that slot stays `None`. A non-zero buffer
   implies `needs_bag_verify` while bag counts are unknown. Never invent a bag fee
   or bag count. Callers must verify baggage on Google Flights before booking.
-- `max_stops` is 0, 1, or 2. Default trip kind is one-way.
+- `max_stops` is 0, 1, or 2. The product cannot require 3+ stops. If the user
+  needs 3+, say so and search with 2, or refuse; do not invent a fare.
+  Default trip kind is one-way.
   `ORIGIN-DEST:OUT:BACK` without `--trip` is two one-ways. `--trip rt` / `multi`
   POST one package. `--sort ranked` (default on flights) selects `--top` by
   fare+buffer (`DEFAULT_TOP` in `flights.py`). Explore unnamed sort stays
@@ -240,9 +249,16 @@ installed (`mcp>=1.6,<2`).
 
 Stdio MCP: `uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp`,
 or checkout `uv sync --extra mcp` then `viajante-mcp`. No Streamable HTTP. Keep
-the one-search process lock. Playwright is extra `viajante[browser]`.
+the one-search process lock: a second search raises
+`a viajante search is already running in this process` immediately.
+`MCP error -32001: Request timed out` is not that lock; do not retry timeouts
+as lock-busy. `lookup_airports` may run during a search. Playwright is extra
+`viajante[browser]`.
 
 ## Trip-planning search strategy
+
+A named route and date is flights only; do not add hotels or `search_trip`
+unless the user asked for a stay.
 
 When helping pick destinations (not a single named route/date), follow
 `.cursor/skills/viajante/SKILL.md` → **Destination triage**: shortlist by vibe

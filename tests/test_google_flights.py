@@ -431,8 +431,16 @@ class OwnedCardParserTests(unittest.TestCase):
             parse_flight_cards('<div jsname="IWWDBc"><ul class="Rk10dc"></ul></div>')
 
     def test_unknown_markup_raises_markup_error(self) -> None:
+        html = "<div>" + ("completely unrelated page " * 20) + "</div>"
         with self.assertRaises(GoogleFlightsMarkupError):
-            parse_flight_cards("<div>completely unrelated page</div>")
+            parse_flight_cards(html)
+
+    def test_short_unknown_shell_is_blocked(self) -> None:
+        html = "x" * 89
+        with self.assertRaises(GoogleFlightsBlocked) as ctx:
+            parse_flight_cards(html)
+        self.assertIn("short unknown shell", str(ctx.exception))
+        self.assertIn("89", str(ctx.exception))
 
 
 def _http_page(inner: str) -> str:
@@ -466,8 +474,9 @@ class HttpSweepParseTests(unittest.TestCase):
             parse_http_flight_cards(_http_page(build_empty_page()))
 
     def test_http_unknown_shell_is_markup_error(self) -> None:
+        inner = "<div>" + ("completely unrelated page " * 20) + "</div>"
         with self.assertRaises(GoogleFlightsMarkupError):
-            parse_http_flight_cards(_http_page("<div>completely unrelated page</div>"))
+            parse_http_flight_cards(_http_page(inner))
 
     def test_consent_and_sorry_urls_are_blocks(self) -> None:
         self.assertTrue(looks_blocked("<html></html>", "https://consent.google.com/ml"))
@@ -1119,12 +1128,12 @@ class HttpSweepRetryTests(unittest.TestCase):
         self.assertEqual(len(client.gets), 1)
         self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
 
-    def test_drift_twice_is_still_markup_error_after_one_retry(self) -> None:
+    def test_short_shell_twice_is_blocked_after_one_retry(self) -> None:
         sleeps: list[float] = []
         tiny = _http_page("<div>loading</div>")
         client = _FakeSweepClient(post_text="not shopping", get_text=tiny)
         source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
-        with self.assertRaises(GoogleFlightsMarkupError):
+        with self.assertRaises(GoogleFlightsBlocked):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(len(client.gets), 2)

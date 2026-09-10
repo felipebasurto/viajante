@@ -15,7 +15,7 @@ Flags: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/via
 
 ## Dates
 
-CLI rejects dates in the past. Compute ISO dates from **today**. Never copy a calendar date from this skill, README, or old chat. Grammar: `ORIGIN-DEST:YYYY-MM-DD`. Two dates on one spec without `--trip` are two one-ways. `--trip rt` is one package. `--flex` is required. Explore needs `--from` or `--month`.
+CLI rejects dates in the past. Compute ISO dates from **today**. Roll a named season to the next legal year if that month is already past. Never copy a calendar date from this skill, README, or old chat. Grammar: `ORIGIN-DEST:YYYY-MM-DD`. Two dates on one spec without `--trip` are two one-ways. `--trip rt` is one package. `--flex` is required. Explore needs `--from` or `--month`. `max_stops` is 0, 1, or 2; cannot require 3+. If the user needs 3+, say so and search with 2, or refuse — do not invent a fare.
 
 Fuzzy timing (for example, “late October / early November”) is not an ISO window. Propose the computed `start` and `end`, then wait for the user's confirmation before searching. For `search_flights`, every `routes` entry is exactly `ORIGIN-DEST:YYYY-MM-DD`; for `search_dates`, `route` is `ORIGIN-DEST` and `start` / `end` are separate ISO dates. Do not replace the colon with whitespace.
 
@@ -47,9 +47,9 @@ Free-cancellation filter is on by default. A silent card is not proof of free ca
 
 ## Fetch
 
-`--fetch auto`: sweep for 3+ flight queries; detail for 1–2 when Playwright is installed. Sweep empty or `blocked` may fall back to detail once. `markup_drift` does not. Sweep needs no Chromium. Detail and Booking sleep ~4.5–6s between queries. Never shorten that or parallelize. One MCP search at a time.
+`--fetch auto`: sweep for 3+ flight queries; detail for 1–2 when Playwright is installed. Sweep empty or `blocked` may fall back to detail once. `markup_drift` does not. Sweep needs no Chromium. Detail and Booking sleep ~4.5–6s between queries. Never shorten that or parallelize. One MCP search at a time. A second search while one is running raises `a viajante search is already running in this process` immediately. That is not `MCP error -32001: Request timed out`; do not treat timeouts as lock-busy or retry them in a long wait loop. `lookup_airports` may run during a search.
 
-`search_dates` is an HTTP calendar and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment.
+`search_dates` is an HTTP calendar and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment. Optional MCP `country` is Google `gl` (origin market). Omit when unset. Do not pass a destination ISO.
 
 Unnamed `baggage_buffer` is 0. Prefer `bags` / `carry_on` on the request. Do not invent a bag fee.
 
@@ -76,9 +76,12 @@ After Booking, 1–3 finalists may get a browser second opinion (same dates, occ
 |-----------|--------|
 | `no_results` | Stop. Do not retry. |
 | `rejected` | Stop. Check IATA with `lookup_airports`. |
-| `blocked` | Wait 30–60 minutes. Do not start a new batch. |
+| `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
 | `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
-| `markup_drift` | Stop. Do not retry the same parse. |
+| Flex `markup_drift` with empty `days` | Compact calendar miss, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
+| `markup_drift` (other) | Stop. Do not retry the same parse. |
+| Process busy (`already running`) | Wait for that search to finish. Do not start another search in this process. |
+| MCP timeout `-32001` | Not the process lock. Do not 8×60s-retry it as lock-busy. |
 | no eligible offers/stays, exit 0 | Widen filters or dates. Not a fetch failure. |
 | `browser_unavailable` | For `search_flights` detail or Booking only: install browser extra **in the MCP env**, then Chromium. See [mcp.md](mcp.md). |
 | `fetch_failed` / exit 2 | Wait 30–60 minutes. Retry failed queries only. |

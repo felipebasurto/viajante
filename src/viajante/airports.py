@@ -72,8 +72,17 @@ _MAJOR_IATA = frozenset(
         "PVG",
         "SIN",
         "SYD",
+        "CTS",
     }
 )
+_QUERY_REWRITE = {
+    "lisboa": "lisbon",
+    "ciudad de méxico": "mexico city",
+    "ciudad de mexico": "mexico city",
+}
+_QUERY_EXTRA_IATA = {
+    "sapporo": ("CTS",),
+}
 _MINOR_NAME_MARKERS = (
     "airfield",
     "air field",
@@ -348,6 +357,8 @@ def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
     needle = " ".join(query.split()).casefold()
     if not needle:
         raise ValueError("airport query must not be blank")
+    extra_codes = _QUERY_EXTRA_IATA.get(needle, ())
+    needle = _QUERY_REWRITE.get(needle, needle)
     rows, by_code, by_city = _lookup_indexes()
     if len(needle) == 3 and needle.isalpha():
         exact = by_code.get(needle.upper())
@@ -357,6 +368,9 @@ def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
     if len(city_hits) >= limit:
         return tuple(city_hits[:limit])
     taken = {airport.iata for airport in city_hits}
+    extra_hits = [by_code[code] for code in extra_codes if code in by_code and code not in taken]
+    taken.update(airport.iata for airport in extra_hits)
+    extra_hits.sort(key=_lookup_rank)
     other_hits = [
         airport
         for airport, city_folded, name_folded, iata_folded in rows
@@ -364,7 +378,7 @@ def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
         and (needle in city_folded or needle in name_folded or needle == iata_folded)
     ]
     other_hits.sort(key=_lookup_rank)
-    return tuple((city_hits + other_hits)[:limit])
+    return tuple((extra_hits + city_hits + other_hits)[:limit])
 
 
 def _lookup_rank(airport: Airport) -> tuple[int, int, str, str]:

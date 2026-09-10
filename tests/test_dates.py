@@ -1335,6 +1335,9 @@ class FlexSearchTests(unittest.TestCase):
         self.assertEqual(source.fetch_calls, 0)
         self.assertEqual(report.fetch_backend, "calendar")
         self.assertEqual(report.days, ())
+        assert report.error is not None
+        self.assertEqual(report.error.code, SearchErrorCode.MARKUP_DRIFT)
+        self.assertIn("wrb.fr", report.error.message)
         self.assertTrue(source.closed)
 
     def test_empty_window_does_not_invent(self) -> None:
@@ -1352,6 +1355,7 @@ class FlexSearchTests(unittest.TestCase):
         self.assertEqual(source.fetch_calls, 0)
         self.assertEqual(len(report.days), 7)
         self.assertTrue(all(row.status == "empty" for row in report.days))
+        self.assertIsNone(report.error)
 
     def test_thin_grid_omits_typical(self) -> None:
         source = FakeCalendarSource(

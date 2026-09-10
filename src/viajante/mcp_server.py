@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Callable, Optional, Sequence, TypeVar
@@ -21,7 +22,9 @@ from viajante.mcp_handlers import (
 )
 
 _T = TypeVar("_T")
+_SEARCH_BUSY = threading.Lock()
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viajante-mcp")
+_SEARCH_BUSY_MESSAGE = "a viajante search is already running in this process"
 
 _HELP = """\
 viajante-mcp is the stdio MCP server for local flight and hotel search.
@@ -34,14 +37,18 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_trip, lookup_airports.
-No auth. One search at a time in this process.
+No auth. One search at a time in this process. A second search while one is
+running raises "a viajante search is already running in this process" immediately.
+That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
+or retry them 8×60s. lookup_airports may run during a search.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
 search_dates is HTTP-calendar only and has no fetch parameter. If it returns
 blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
-extra plus Chromium in the MCP environment.
+extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
+product cannot require 3+ stops.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -49,15 +56,29 @@ does not convert. The calling agent may convert for the user. If country,
 destination, or currency is not proven (a city with several airports,
 Europe, unnamed origin, two possible currencies), do not pick: ask or
 error. Unknown cannot prove include. Do not invent IATA, gl, or ISO 4217
-from vibe. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
-shopping request so Google prices the bag. Do not invent a bag fee.
-Fetch locale is English. User prompts may be any language.
+from vibe. Optional country is Google gl (origin market); omit when unset;
+do not pass a destination ISO. Unnamed baggage_buffer is 0. Prefer bags /
+carry_on on the shopping request so Google prices the bag. Do not invent a
+bag fee. Fetch locale is English. User prompts may be any language.
+Compute ISO dates from today; do not send a past start.
 """
 
 
 async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
+    """Run a search on the one-worker pool. Fail immediately if a search is in flight."""
+    if not _SEARCH_BUSY.acquire(blocking=False):
+        raise ValueError(_SEARCH_BUSY_MESSAGE)
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_SEARCH_EXECUTOR, partial(fn, *args, **kwargs))
+    try:
+        return await loop.run_in_executor(_SEARCH_EXECUTOR, partial(fn, *args, **kwargs))
+    finally:
+        _SEARCH_BUSY.release()
+
+
+async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
+    """Airport lookup stays off the search worker so it can run during a search."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
 
 
 def build_server():
@@ -112,8 +133,9 @@ def build_server():
         If unknown, ask. Viajante does not convert. The calling agent may
         convert for the user. Unproven country, dest, or currency (city with
         several airports, Europe, unnamed origin, two currencies) must not be
-        guessed. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
-        shopping request. Do not invent a bag fee.
+        guessed. Optional country is Google gl (origin market); omit when
+        unset. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
+        shopping request. Do not invent a bag fee. max_stops is 0, 1, or 2.
         """
         return dict(
             await run_mcp_tool(
@@ -200,10 +222,12 @@ def build_server():
         Use this for the cheapest week. Use search_flex for ±N around one date.
         route is ORIGIN-DEST and start/end are ISO dates. This HTTP calendar
         has no fetch mode; if blocked, do not use a separate browser as MCP
-        recovery or evidence.
+        recovery or evidence. Stop that calendar; do not follow with flex or
+        search_flights.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 0.
+        convert for the user. Optional country is Google gl (origin market);
+        omit when unset. Unnamed baggage_buffer is 0.
         """
         return dict(
             await run_mcp_tool(
@@ -292,7 +316,10 @@ def build_server():
         Use search_dates for a cheapest-week calendar. Do not brute-force a date matrix.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 0.
+        convert for the user. Unnamed baggage_buffer is 0. Optional country is
+        Google gl (origin market); omit when unset. A flex calendar miss
+        (error markup_drift, empty days) is not no_results: do not invent a
+        cheapest week; a named-date search_flights is allowed.
         """
         return dict(
             await run_mcp_tool(
@@ -381,7 +408,8 @@ def build_server():
 
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 0.
+        convert for the user. Unnamed baggage_buffer is 0. Optional country is
+        Google gl (origin market); omit when unset.
         """
         return dict(
             await run_mcp_tool(
@@ -508,7 +536,8 @@ def build_server():
 
         If unknown, ask. Viajante does not convert. The calling agent may convert
         for the user. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
-        shopping request. The same currency is passed to hotels.
+        shopping request. The same currency is passed to hotels. Optional
+        country is Google gl (origin market); omit when unset.
         """
         return dict(
             await run_mcp_tool(
@@ -556,7 +585,7 @@ def build_server():
 
     @server.tool()
     async def lookup_airports(query: str, limit: int = 20) -> list:
-        return await run_mcp_tool(lookup_airports_tool, query, limit=limit)
+        return await run_lookup_tool(lookup_airports_tool, query, limit=limit)
 
     return server
 

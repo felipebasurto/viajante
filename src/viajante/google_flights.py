@@ -71,6 +71,9 @@ BLOCK_BODY_MARKERS = (
     "our systems have detected unusual traffic",
     "unusual traffic from your computer network",
 )
+# Tiny unknown shells are a block, not a results-page parse.
+_SHORT_SHELL_CHARS = 200
+_SHORT_SHELL_MARK = "short unknown shell"
 
 RESULTS_SELECTOR = ".eQ35Ce"
 EMPTY_STATE_SELECTOR = "div.QEk4oc.BgYkof"
@@ -616,6 +619,10 @@ def _is_retriable_sweep_failure(exc: BaseException) -> bool:
         return True
     if isinstance(exc, GoogleFlightsBlocked):
         status = exc.status
+        # Short unknown shells: once-retry like former markup drift. Consent
+        # walls are also Blocked with status None and must not retry.
+        if status is None:
+            return _SHORT_SHELL_MARK in str(exc)
         return isinstance(status, int) and status >= 500
     return False
 
@@ -707,13 +714,17 @@ def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     if cards:
         return tuple(cards)
     # Empty result lists and grounded empty-state copy both mean no flights.
-    # Unknown shells without either signal are markup drift.
+    # Unknown shells without either signal are markup drift, except a tiny
+    # shell which is a block, not a parse of a results page.
     if _has_empty_state(parser) or parser.css_first("ul.Rk10dc") is not None:
         observed = EMPTY_STATE_TEXT if _has_empty_state(parser) else ""
         raise NoFlightsFound(observed)
-    raise GoogleFlightsMarkupError(
-        f"no results grid and no empty state in {len(html)} chars of main HTML"
-    )
+    n = len(html)
+    if n < _SHORT_SHELL_CHARS:
+        raise GoogleFlightsBlocked(
+            f"Google Flights returned a {_SHORT_SHELL_MARK} ({n} chars of main HTML)"
+        )
+    raise GoogleFlightsMarkupError(f"no results grid and no empty state in {n} chars of main HTML")
 
 
 class GoogleFlightsHttpSource:
