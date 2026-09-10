@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 from selectolax.lexbor import LexborHTMLParser
 
@@ -237,6 +237,36 @@ def looks_blocked(html: str, final_url: str = "") -> bool:
     return any(marker in lowered for marker in BLOCK_BODY_MARKERS)
 
 
+def _is_consent_interstitial(url: str) -> bool:
+    lowered = url.casefold()
+    return "consent.google" in lowered and "/sorry/" not in lowered
+
+
+def _consent_reject_form(html: str, final_url: str) -> Optional[tuple[str, dict[str, str]]]:
+    """Reject-all (or Accept-all) fields from a consent.google interstitial."""
+    if not _is_consent_interstitial(final_url):
+        return None
+    reject: Optional[tuple[str, dict[str, str]]] = None
+    accept: Optional[tuple[str, dict[str, str]]] = None
+    for form in LexborHTMLParser(html).css("form"):
+        action = urljoin(final_url, form.attributes.get("action") or "")
+        if not action:
+            continue
+        data: dict[str, str] = {}
+        for inp in form.css("input"):
+            name = inp.attributes.get("name")
+            if name:
+                data[name] = inp.attributes.get("value") or ""
+        if not data:
+            continue
+        pair = (action, data)
+        if data.get("set_eom") == "true" and data.get("set_sc") != "true":
+            reject = pair
+        elif data.get("set_sc") == "true":
+            accept = pair
+    return reject or accept
+
+
 def _gzip():
     # Live/deflate bodies only: unittest HTML fixtures are already decoded.
     import gzip
@@ -327,6 +357,8 @@ class ChromeSweepClient:
         self._loop = asyncio.new_event_loop()
         self._session: Any = None
         self._error: Optional[BaseException] = None
+        self._consent_ok = False
+        self._consent_lock: Any = None
         ready = threading.Event()
         session_kw: dict[str, Any] = {
             "impersonate": "chrome",
@@ -344,6 +376,7 @@ class ChromeSweepClient:
             asyncio.set_event_loop(self._loop)
             try:
                 self._session = curl_requests.AsyncSession(**session_kw)
+                self._consent_lock = asyncio.Lock()
             except BaseException as exc:
                 self._error = exc
                 ready.set()
@@ -369,9 +402,34 @@ class ChromeSweepClient:
         future = self._asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=max(timeout + 5.0, 10.0))
 
-    async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
-        response = await self._session.get(url, timeout=timeout, allow_redirects=True)
+    async def _dismiss_consent(self, response: Any, timeout: float) -> bool:
+        async with self._consent_lock:
+            if self._consent_ok:
+                return True
+            parsed = _consent_reject_form(response.text, str(response.url))
+            if parsed is None:
+                return False
+            action, fields = parsed
+            save = await self._session.post(
+                action, data=fields, timeout=timeout, allow_redirects=True
+            )
+            # ponytail: SOCS is process-lifetime; 429 reset builds a new client.
+            self._consent_ok = not _is_consent_interstitial(str(save.url))
+            return self._consent_ok
+
+    async def _exchange(self, send: Any, timeout: float) -> SweepHttpResponse:
+        response = await send()
+        if _is_consent_interstitial(str(response.url)) and await self._dismiss_consent(
+            response, timeout
+        ):
+            response = await send()
         return _as_sweep_response(response)
+
+    async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
+        return await self._exchange(
+            lambda: self._session.get(url, timeout=timeout, allow_redirects=True),
+            timeout,
+        )
 
     async def _apost(
         self,
@@ -380,14 +438,16 @@ class ChromeSweepClient:
         headers: Mapping[str, str],
         timeout: float,
     ) -> SweepHttpResponse:
-        response = await self._session.post(
-            url,
-            data=data,
-            headers=dict(headers),
-            timeout=timeout,
-            allow_redirects=True,
+        return await self._exchange(
+            lambda: self._session.post(
+                url,
+                data=data,
+                headers=dict(headers),
+                timeout=timeout,
+                allow_redirects=True,
+            ),
+            timeout,
         )
-        return _as_sweep_response(response)
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
         return self._submit(self._aget(url, timeout), timeout=timeout)

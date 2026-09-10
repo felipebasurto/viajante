@@ -20,6 +20,8 @@ from viajante.google_flights import (
     GoogleFlightsRejected,
     NoFlightsFound,
     SweepHttpResponse,
+    _consent_reject_form,
+    _is_consent_interstitial,
     build_itinerary_url,
     build_search_params,
     build_search_url,
@@ -472,6 +474,33 @@ class HttpSweepParseTests(unittest.TestCase):
         self.assertTrue(looks_blocked("<html></html>", "https://www.google.com/sorry/index"))
         self.assertTrue(looks_blocked("Our systems have detected unusual traffic", ""))
         self.assertFalse(looks_blocked(_http_page(build_results_page(build_card())), ""))
+
+    def test_consent_reject_form_prefers_set_eom(self) -> None:
+        html = """
+        <form action="/save">
+          <input name="continue" value="https://www.google.com/travel/flights">
+          <input name="escs" value="tok">
+          <input name="set_sc" value="true">
+          <input name="set_eom" value="false">
+        </form>
+        <form action="/save">
+          <input name="continue" value="https://www.google.com/travel/flights">
+          <input name="escs" value="tok">
+          <input name="set_eom" value="true">
+        </form>
+        """
+        url = "https://consent.google.com/m?continue=https://www.google.com/travel/flights"
+        parsed = _consent_reject_form(html, url)
+        self.assertIsNotNone(parsed)
+        action, data = parsed
+        self.assertEqual(action, "https://consent.google.com/save")
+        self.assertEqual(data["set_eom"], "true")
+        self.assertNotIn("set_sc", data)
+
+    def test_consent_reject_form_skips_sorry(self) -> None:
+        html = '<form action="/save"><input name="set_eom" value="true"></form>'
+        self.assertFalse(_is_consent_interstitial("https://www.google.com/sorry/index"))
+        self.assertIsNone(_consent_reject_form(html, "https://www.google.com/sorry/index"))
 
     def test_http_source_uses_fixture_body_not_the_network(self) -> None:
         html = _http_page(build_results_page(build_card(price="€131", airline="Iberia")))
