@@ -7,12 +7,12 @@
     "url": "https://github.com/felipebasurto/viajante",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "1.1.2",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "viajante",
-      "version": "1.0.0",
+      "version": "1.1.2",
       "transport": {
         "type": "stdio"
       }
