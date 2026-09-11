@@ -19,15 +19,29 @@ prices, itinerary details, source text, and links where available.
 · [Contributing](https://github.com/felipebasurto/viajante/blob/main/CONTRIBUTING.md)
 · [Report an issue](https://github.com/felipebasurto/viajante/issues)
 
-## Quick start
+## Install
 
-Requires **Python 3.10 or later**. Install from PyPI, or run through npx (still
-needs [`uv`](https://docs.astral.sh/uv/) and Python 3.10+):
+Requires **Python 3.10 or later**.
+
+PyPI:
 
 ```bash
 pip install viajante
+```
+
+npx (needs [`uv`](https://docs.astral.sh/uv/) and Python 3.10+ on PATH):
+
+```bash
 npx -y -p @viajante/mcp viajante airports JFK
 ```
+
+No install (same `uv` + Python 3.10+):
+
+```bash
+uvx --from viajante viajante airports JFK
+```
+
+## Quick start
 
 Search for a one-way flight or a hotel stay:
 
