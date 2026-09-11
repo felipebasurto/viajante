@@ -48,9 +48,24 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+      - name: npm CLI for trusted publishing
+        run: npm install -g npm@^11.5.1
       - name: Publish npx shim
         working-directory: npm
-        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version already on npm; skip"
+            exit 0
+          fi
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            npm publish --access public
+          else
+            npm publish --access public --provenance
+          fi
 
   mcp-registry:
     needs: pypi

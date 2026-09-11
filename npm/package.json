@@ -4,9 +4,9 @@
   "description": "npx front door for viajante (Python flight and hotel search). Runs uvx against PyPI.",
   "license": "MIT",
   "bin": {
-    "mcp": "./bin/cli.js",
-    "viajante": "./bin/cli.js",
-    "viajante-mcp": "./bin/cli.js"
+    "mcp": "bin/cli.js",
+    "viajante": "bin/cli.js",
+    "viajante-mcp": "bin/cli.js"
   },
   "files": [
     "bin",
