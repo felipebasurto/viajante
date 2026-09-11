@@ -3,7 +3,7 @@
 Flight and hotel search for the terminal, Python, and AI assistants.
 
 [![PyPI](https://img.shields.io/pypi/v/viajante.svg)](https://pypi.org/project/viajante/)
-[![npm](https://img.shields.io/npm/v/viajante.svg)](https://www.npmjs.com/package/viajante)
+[![npm](https://img.shields.io/npm/v/@viajante/mcp.svg)](https://www.npmjs.com/package/@viajante/mcp)
 [![Tests](https://github.com/felipebasurto/viajante/actions/workflows/test.yml/badge.svg)](https://github.com/felipebasurto/viajante/actions/workflows/test.yml)
 
 Viajante searches Google Flights, Google Hotels, and Booking.com. Use it to
@@ -26,7 +26,7 @@ needs [`uv`](https://docs.astral.sh/uv/) and Python 3.10+):
 
 ```bash
 pip install viajante
-npx -y viajante airports JFK
+npx -y -p @viajante/mcp viajante airports JFK
 ```
 
 Search for a one-way flight or a hotel stay:
@@ -54,7 +54,7 @@ Add this entry to your assistant's MCP configuration:
   "mcpServers": {
     "viajante": {
       "command": "npx",
-      "args": ["-y", "viajante-mcp"]
+      "args": ["-y", "@viajante/mcp"]
     }
   }
 }

@@ -5,7 +5,8 @@ const { spawn } = require("node:child_process");
 const { basename } = require("node:path");
 const { version } = require("../package.json");
 
-const mcp = basename(process.argv[1] || "").includes("mcp");
+const name = basename(process.argv[1] || "");
+const mcp = name !== "viajante";
 const spec = mcp ? `viajante[mcp]==${version}` : `viajante==${version}`;
 const bin = mcp ? "viajante-mcp" : "viajante";
 const child = spawn("uvx", ["--from", spec, bin, ...process.argv.slice(2)], {

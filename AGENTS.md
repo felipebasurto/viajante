@@ -249,7 +249,7 @@ Pin owned seams, not upstream HTML rewriting. A renamed or dropped JSON key is a
 breaking change. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is
 installed (`mcp>=1.6,<2`).
 
-Stdio MCP: `npx -y viajante-mcp`, or
+Stdio MCP: `npx -y @viajante/mcp`, or
 `uvx --from 'viajante[mcp]' viajante-mcp`, or checkout `uv sync --extra mcp`
 then `viajante-mcp`. No Streamable HTTP. Keep
 the one-search process lock: a second search raises

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- npm package `viajante`: `npx -y viajante` and `npx -y viajante-mcp` exec `uvx` against the matching PyPI version. Requires Python 3.10+ and uv.
+- npm package `@viajante/mcp`: `npx -y @viajante/mcp` execs `uvx` against the matching PyPI version. Requires Python 3.10+ and uv.
 
 ## [1.2.0] - 2026-09-11
 
