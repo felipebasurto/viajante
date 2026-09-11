@@ -1,6 +1,6 @@
 ---
 name: viajante
-description: Search live Google Flights and hotel prices locally with the viajante CLI or MCP (search_flights, search_dates, search_flex, search_explore, search_hotels, search_trip, lookup_airports). Use when the user asks about flights, hotels, trip totals, cheapest week, flexible dates, destination triage, or how to configure viajante MCP. No API keys. Never invent fares.
+description: Search live Google Flights and hotel prices locally with the viajante CLI or MCP (search_flights, search_dates, search_flex, search_explore, search_hotels, search_trip, lookup_airports, search_hidden_city, compare_awards, lookup_transfers). Use when the user asks about flights, hotels, trip totals, cheapest week, flexible dates, destination triage, hidden-city/Skiplagged, award points math, or how to configure viajante MCP. No API keys. Never invent fares.
 ---
 
 # viajante
@@ -30,6 +30,9 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Dest triage from a named origin | `search_explore` (`origin`, `start` or `month`) | `viajante explore` |
 | Stay only | `search_hotels` (`location`, `check_in`, `check_out`, `currency`; default source google) | `viajante hotels` (CLI default source Booking) |
 | Flights then hotel | `search_trip` (`routes`, `location`) | `viajante trip` |
+| Hidden-city / Skiplagged (opt-in) | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
+| Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
+| Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
 
 Do not brute-force a date matrix when dates/flex/explore exist. `search_trip` rejects children/infants (hotel occupancy is adults-only). Omit `trip_total` if either side misses, dates miss, or currencies differ.
 
@@ -78,6 +81,7 @@ After Booking, 1–3 finalists may get a browser second opinion (same dates, occ
 | `rejected` | Stop. Check IATA with `lookup_airports`. |
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
 | `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
+| `search_hidden_city` `blocked` / fetch failed | Stop. Do not treat a Google Flights tab as Skiplagged evidence. Wait 30–60 minutes. |
 | Flex `markup_drift` with empty `days` | Compact calendar miss, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
 | `markup_drift` (other) | Stop. Do not retry the same parse. |
 | Process busy (`already running`) | Wait for that search to finish. Do not start another search in this process. |

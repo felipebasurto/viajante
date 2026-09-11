@@ -12,11 +12,14 @@ from typing import Callable, Optional, Sequence, TypeVar
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
 from viajante.mcp_handlers import (
+    compare_awards_tool,
     lookup_airports_tool,
+    lookup_transfers_tool,
     search_dates_tool,
     search_explore_tool,
     search_flex_tool,
     search_flights_tool,
+    search_hidden_city_tool,
     search_hotels_tool,
     search_trip_tool,
 )
@@ -36,11 +39,13 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
           (only for --fetch detail and Booking.com; extras must match the MCP env)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
-search_hotels, search_trip, lookup_airports.
+search_hotels, search_trip, lookup_airports, search_hidden_city,
+compare_awards, lookup_transfers.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
-or retry them 8×60s. lookup_airports may run during a search.
+or retry them 8×60s. lookup_airports, compare_awards, and lookup_transfers may
+run during a search.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
@@ -49,6 +54,9 @@ blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
 product cannot require 3+ stops.
+search_hidden_city is opt-in Skiplagged. It does not mix Google Flights evidence.
+compare_awards is local points math from a named offer; it does not invent seats.
+lookup_transfers is a local partner table, not live award inventory.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -586,6 +594,73 @@ def build_server():
     @server.tool()
     async def lookup_airports(query: str, limit: int = 20) -> list:
         return await run_lookup_tool(lookup_airports_tool, query, limit=limit)
+
+    @server.tool()
+    async def search_hidden_city(
+        route: str,
+        departure: str,
+        return_date: str | None = None,
+        adults: int = 1,
+        top: int = DEFAULT_TOP,
+        currency: str | None = None,
+    ) -> dict:
+        """Search Skiplagged for a named route. Opt-in. Does not mix Google Flights.
+
+        route is ORIGIN-DEST. Hidden-city tickets can violate airline contracts.
+        Confirm the fare on the booking link. Viajante does not book.
+        Currency is an optional keep-filter of owned card ISO 4217; unnamed
+        keeps each card's currency. Does not infer from origin or convert.
+        """
+        return dict(
+            await run_mcp_tool(
+                search_hidden_city_tool,
+                route,
+                departure,
+                return_date=return_date,
+                adults=adults,
+                top=top,
+                currency=currency,
+            )
+        )
+
+    @server.tool()
+    async def compare_awards(
+        offer: dict,
+        cash_price: float | None = None,
+        currency: str | None = None,
+        balances: list | None = None,
+    ) -> dict:
+        """Compare a named award offer to cash locally. Does not invent seats.
+
+        offer must include origin, destination, departure_date, program, points,
+        and evidence. confirmed evidence needs a named source. Unnamed cash_price
+        omits cpp_cents. Do not treat estimated or user_supplied as live inventory.
+        """
+        return dict(
+            await run_lookup_tool(
+                compare_awards_tool,
+                offer,
+                cash_price=cash_price,
+                currency=currency,
+                balances=balances,
+            )
+        )
+
+    @server.tool()
+    async def lookup_transfers(
+        program: str,
+        points: int,
+        balances: list | None = None,
+    ) -> dict:
+        """Local card-to-program transfer table. Not live award availability."""
+        return dict(
+            await run_lookup_tool(
+                lookup_transfers_tool,
+                program,
+                points,
+                balances=balances,
+            )
+        )
 
     return server
 

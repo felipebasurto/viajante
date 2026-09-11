@@ -23,7 +23,7 @@ Paste this into Cursor Settings → MCP, Claude Desktop, or any `mcpServers` cli
 }
 ```
 
-Reload MCP. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`.
+Reload MCP. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`, `search_hidden_city` (Skiplagged, opt-in), `compare_awards`, `lookup_transfers`.
 
 PyPI is unpublished. Do not use `--from viajante[mcp]` until `pypi.org/pypi/viajante/json` returns 200.
 

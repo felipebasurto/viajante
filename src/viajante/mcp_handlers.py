@@ -31,12 +31,19 @@ from viajante.flights import (
 )
 from viajante.hotels import HotelSourceName, search_hotels
 from viajante.models import FlightCabin, HotelQuery, MultiCity, RoundTrip, Trip
+from viajante.points import (
+    award_offer_from_mapping,
+    compare_award,
+    parse_balances,
+    transfer_paths,
+)
 from viajante.quote import (
     HOTEL_CURRENCY_REQUIRED,
     first_origin_iata,
     resolve_quote_and_buffer,
     resolve_quote_currency,
 )
+from viajante.skiplagged import search_hidden_city
 from viajante.trip import search_trip, stay_window_from_trips
 
 _SEARCH_LOCK = threading.Lock()
@@ -598,3 +605,65 @@ def search_trip_tool(
         )
     )
     return dict(report.to_dict())
+
+
+def search_hidden_city_tool(
+    route: str,
+    departure: str,
+    *,
+    return_date: Optional[str] = None,
+    adults: int = 1,
+    top: int = DEFAULT_TOP,
+    currency: Optional[str] = None,
+) -> Mapping[str, object]:
+    """Skiplagged MCP search. Opt-in. Does not mix Google Flights results."""
+    origin, destination = parse_route_pair(route)
+    departure_date = date.fromisoformat(departure)
+    back = date.fromisoformat(return_date) if return_date else None
+    _reject_past((departure_date,))
+    report = _with_search_lock(
+        lambda: search_hidden_city(
+            origin,
+            destination,
+            departure_date,
+            return_date=back,
+            adults=adults,
+            top=top,
+            currency=currency,
+        )
+    )
+    return dict(report.to_dict())
+
+
+def compare_awards_tool(
+    offer: Mapping[str, object],
+    *,
+    cash_price: Optional[float] = None,
+    currency: Optional[str] = None,
+    balances: Optional[Sequence[Mapping[str, object]]] = None,
+) -> Mapping[str, object]:
+    """Local award vs cash math. Does not search live award inventory."""
+    award = award_offer_from_mapping(offer)
+    parsed_balances = parse_balances(balances or ())
+    report = compare_award(
+        award,
+        cash_price=cash_price,
+        currency=currency,
+        balances=parsed_balances,
+    )
+    return dict(report.to_dict())
+
+
+def lookup_transfers_tool(
+    program: str,
+    points: int,
+    *,
+    balances: Optional[Sequence[Mapping[str, object]]] = None,
+) -> Mapping[str, object]:
+    parsed = parse_balances(balances or ())
+    paths = transfer_paths(program, points, parsed)
+    return {
+        "program": program.strip().casefold(),
+        "points": points,
+        "transfer_paths": [path.to_dict() for path in paths],
+    }

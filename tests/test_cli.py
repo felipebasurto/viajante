@@ -975,6 +975,9 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("flex", help_text)
         self.assertIn("explore", help_text)
         self.assertIn("airports", help_text)
+        self.assertIn("hidden-city", help_text)
+        self.assertIn("awards", help_text)
+        self.assertIn("points", help_text)
         self.assertIn("bench", help_text)
         self.assertIn("Examples:", help_text)
         self.assertIn("viajante flights JFK-LHR", help_text)
@@ -1041,6 +1044,8 @@ class PublicApiTests(unittest.TestCase):
             "search_flex",
             "search_explore",
             "lookup_airports",
+            "search_hidden_city",
+            "compare_award",
             "SearchError",
             "SearchErrorCode",
             "QueryFailure",
@@ -1050,15 +1055,19 @@ class PublicApiTests(unittest.TestCase):
         self.assertEqual(
             set(viajante.__all__),
             {
+                "AwardCompareReport",
+                "AwardOffer",
                 "CancellationEvidence",
                 "DateCalendarReport",
                 "ExploreReport",
                 "FlexSearchReport",
                 "FlightLeg",
                 "FlightQuery",
+                "HiddenCityReport",
                 "HotelQuery",
                 "HotelSearchReport",
                 "MultiCity",
+                "PointsBalance",
                 "PropertyTypeEvidence",
                 "QueryFailure",
                 "QuerySuccess",
@@ -1068,15 +1077,19 @@ class PublicApiTests(unittest.TestCase):
                 "SearchReport",
                 "Trip",
                 "TripSearchReport",
+                "compare_award",
                 "get_flights",
+                "load_award_offer",
                 "lookup_airports",
                 "plan_prompt",
                 "search_dates",
                 "search_explore",
                 "search_flex",
                 "search_flights",
+                "search_hidden_city",
                 "search_hotels",
                 "search_trip",
+                "transfer_paths",
             },
         )
 

@@ -63,6 +63,7 @@ from viajante.models import (
     FlexSearchReport,
     FlightOffer,
     FlightQuery,
+    HiddenCityReport,
     HotelOffer,
     HotelQuery,
     HotelQueryFailure,
@@ -79,6 +80,14 @@ from viajante.models import (
     format_money,
     normalize_country,
 )
+from viajante.points import (
+    cents_per_point,
+    compare_award,
+    load_award_offer,
+    load_balances,
+    transfer_paths,
+    write_award_compare_atomic,
+)
 from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
 from viajante.quote import (
     HOTEL_CURRENCY_REQUIRED,
@@ -86,6 +95,7 @@ from viajante.quote import (
     resolve_baggage_buffer,
     resolve_quote_currency,
 )
+from viajante.skiplagged import search_hidden_city, write_hidden_city_report_atomic
 from viajante.trip import (
     format_trip_total,
     search_trip,
@@ -178,6 +188,25 @@ Examples:
   viajante trip LAX-NRT:2026-10-12:2026-10-20 --hotel Tokyo --trip rt --source google
   viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --bags 1 --via DXB
   viajante trip BOS-LHR:2026-09-18:2026-09-22 --hotel London --trip rt --nearby
+"""
+
+HIDDEN_CITY_EXAMPLES = """\
+Examples:
+  viajante hidden-city JFK-LHR:2026-11-15
+  viajante hidden-city NRT-SIN:2026-11-03 --return 2026-11-10
+  viajante hidden-city GRU-EZE:2026-11-20 --save results/hidden.json
+"""
+
+AWARDS_EXAMPLES = """\
+Examples:
+  viajante awards --offer award.json --cash 1200 --currency USD
+  viajante awards --offer award.json --balances balances.json --cash 1800 --currency GBP
+"""
+
+POINTS_EXAMPLES = """\
+Examples:
+  viajante points --cash 1200 --points 70000 --taxes 186 --currency USD
+  viajante points --program aeroplan --points 70000 --balances balances.json
 """
 
 
@@ -1738,6 +1767,184 @@ def _run_airports(args: argparse.Namespace) -> int:
     return _print_airports(args.query)
 
 
+def _print_hidden_city_report(report: HiddenCityReport) -> None:
+    back = f" / {report.return_date.isoformat()}" if report.return_date else ""
+    print(
+        f"\n=== {report.origin} -> {report.destination}  "
+        f"{report.departure_date.isoformat()}{back} (skiplagged) ==="
+    )
+    for line in report.warnings:
+        print(f"note: {line}", file=sys.stderr)
+    if report.error is not None:
+        print(f"error: {report.error.code.value}: {report.error.message}", file=sys.stderr)
+    if not report.offers:
+        print("No priced Skiplagged itineraries.")
+        return
+    print(f"{'price':>12}  {'hidden':<7}  airline")
+    for offer in report.offers:
+        flag = "yes" if offer.hidden_city else "no"
+        airline = offer.airline or "?"
+        extra = f"  {offer.layover_city}" if offer.layover_city else ""
+        print(f"{format_money(offer.price, offer.currency, width=10)}  {flag:<7}  {airline}{extra}")
+        if offer.booking_url:
+            print(f"    {offer.booking_url}")
+
+
+def _hidden_city_route(
+    args: argparse.Namespace,
+) -> tuple[str, str, date, Optional[date]]:
+    spec = args.route
+    try:
+        _pair, dates_part = spec.split(":", 1)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid route: {spec!r}. Expected ORIGIN-DESTINATION:DATE or "
+            "ORIGIN-DESTINATION:OUT:BACK"
+        ) from exc
+    if "," in dates_part:
+        raise ValueError("hidden-city takes one DATE or ORIGIN-DESTINATION:OUT:BACK")
+    kind = "rt" if ":" in dates_part else "one-way"
+    plan = parse_flight_plan([spec], trip=kind, max_stops=1, adults=args.adults)
+    if isinstance(plan, RoundTrip):
+        origin, destination, departure, back = (
+            plan.origin,
+            plan.destination,
+            plan.departure_date,
+            plan.return_date,
+        )
+    else:
+        trips = _as_trips(plan)
+        if len(trips) != 1:
+            raise ValueError("hidden-city takes one DATE or ORIGIN-DESTINATION:OUT:BACK")
+        query = trips[0]
+        origin, destination, departure, back = (
+            query.origin,
+            query.destination,
+            query.departure_date,
+            None,
+        )
+    if args.return_date:
+        named_back = _parse_iso_date(args.return_date, "--return")
+        if back is not None and back != named_back:
+            raise ValueError("return date in the route and --return must match")
+        back = named_back
+    return origin, destination, departure, back
+
+
+def _run_hidden_city(args: argparse.Namespace) -> int:
+    try:
+        if args.top <= 0:
+            raise ValueError("--top must be a positive integer")
+        if args.adults < 1:
+            raise ValueError("--adults must be at least 1")
+        origin, dest, departure, back = _hidden_city_route(args)
+        today = date.today()
+        if departure < today:
+            raise ValueError(f"departure date is in the past: {departure.isoformat()}")
+        if back is not None and back < departure:
+            raise ValueError("return date must not be before departure")
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    report = search_hidden_city(
+        origin,
+        dest,
+        departure,
+        return_date=back,
+        adults=args.adults,
+        top=args.top,
+        currency=args.currency,
+    )
+    _print_hidden_city_report(report)
+    if args.save:
+        destination = Path(args.save)
+        write_hidden_city_report_atomic(report, destination)
+        print(f"\nSaved {destination}")
+    if report.error is not None and not report.offers:
+        return 2
+    return 0
+
+
+def _run_awards(args: argparse.Namespace) -> int:
+    try:
+        award = load_award_offer(Path(args.offer))
+        balances = load_balances(Path(args.balances)) if args.balances else ()
+        currency = args.currency
+        if args.cash is not None:
+            if args.cash <= 0:
+                raise ValueError("--cash must be positive")
+        report = compare_award(
+            award,
+            cash_price=args.cash,
+            currency=currency,
+            balances=balances,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"\n=== {report.award.origin} -> {report.award.destination}  "
+        f"{report.award.departure_date.isoformat()} ({report.award.program}) ==="
+    )
+    print(
+        f"points {report.award.points}  evidence {report.award.evidence}  "
+        f"cabin {report.award.cabin}"
+    )
+    if report.cpp_cents is not None and report.currency:
+        print(
+            f"cpp {report.cpp_cents:.2f} cents  "
+            f"cash {format_money(report.cash_price or 0, report.currency)}"
+        )
+    for path in report.transfer_paths:
+        cover = "covers" if path.covers else "short"
+        print(
+            f"  {path.currency} -> {path.program}  {path.effective_points} "
+            f"({cover}, table {path.last_verified.isoformat()})"
+        )
+    for step in report.playbook:
+        print(f"{step.kind}: {step.title}")
+        print(f"  {step.body}")
+    if args.save:
+        destination = Path(args.save)
+        write_award_compare_atomic(report, destination)
+        print(f"\nSaved {destination}")
+    return 0
+
+
+def _run_points(args: argparse.Namespace) -> int:
+    try:
+        if args.points is None or args.points <= 0:
+            raise ValueError("--points must be positive")
+        if args.cash is None and not args.program and not args.balances:
+            raise ValueError("name --cash, --program, or --balances")
+        if args.cash is not None:
+            if args.cash <= 0:
+                raise ValueError("--cash must be positive")
+            currency = resolve_quote_currency(args.currency, None)
+            cpp = cents_per_point(args.cash, args.points, taxes=args.taxes)
+            print(f"cpp {cpp:.2f} cents  cash {format_money(args.cash, currency)}")
+        if args.program:
+            balances = load_balances(Path(args.balances)) if args.balances else ()
+            for path in transfer_paths(args.program, args.points, balances):
+                cover = "covers" if path.covers else "short"
+                print(
+                    f"{path.currency} -> {path.program}  {path.effective_points} "
+                    f"({cover}, table {path.last_verified.isoformat()})"
+                )
+        elif args.balances and args.cash is None:
+            raise ValueError("--balances needs --program")
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 _PARSER: Optional[argparse.ArgumentParser] = None
 
 
@@ -2465,6 +2672,125 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write JSON report atomically to FILE",
     )
 
+    hidden = sub.add_parser(
+        "hidden-city",
+        help="Skiplagged search (opt-in; not Google Flights)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=HIDDEN_CITY_EXAMPLES,
+    )
+    hidden.add_argument(
+        "route",
+        help="ORIGIN-DESTINATION:DATE or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
+    )
+    hidden.add_argument(
+        "--return",
+        dest="return_date",
+        default=None,
+        metavar="DATE",
+        help="Return date YYYY-MM-DD",
+    )
+    hidden.add_argument(
+        "--adults",
+        type=int,
+        default=1,
+        help="Number of adults (default 1)",
+    )
+    hidden.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP,
+        help=f"Cheapest priced offers to keep (fare order, default {DEFAULT_TOP})",
+    )
+    hidden.add_argument(
+        "--currency",
+        default=None,
+        help="ISO 4217 code to keep. Unnamed uses each card's owned currency; not origin cash",
+    )
+    hidden.add_argument(
+        "--save",
+        default=None,
+        metavar="FILE",
+        help="Write JSON report atomically to FILE",
+    )
+
+    awards = sub.add_parser(
+        "awards",
+        help="Compare a named award offer to cash (local; no live seats)",
+        description="Compare a named award offer to cash. Local math; no live seats.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=AWARDS_EXAMPLES,
+    )
+    awards.add_argument(
+        "--offer",
+        required=True,
+        metavar="FILE",
+        help="JSON award offer (origin, destination, departure_date, program, points, evidence)",
+    )
+    awards.add_argument(
+        "--cash",
+        type=float,
+        default=None,
+        help="Owned cash fare in the quote currency (omits CPP when unnamed)",
+    )
+    awards.add_argument(
+        "--currency",
+        default=None,
+        help="ISO 4217 code for cash (or inferred from the offer origin)",
+    )
+    awards.add_argument(
+        "--balances",
+        default=None,
+        metavar="FILE",
+        help="JSON {balances:[{program,balance},...]} of named card currencies",
+    )
+    awards.add_argument(
+        "--save",
+        default=None,
+        metavar="FILE",
+        help="Write JSON report atomically to FILE",
+    )
+
+    points = sub.add_parser(
+        "points",
+        help="Local cents-per-point and transfer-table lookup",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=POINTS_EXAMPLES,
+    )
+    points.add_argument(
+        "--cash",
+        type=float,
+        default=None,
+        help="Owned cash fare (requires --currency)",
+    )
+    points.add_argument(
+        "--points",
+        type=int,
+        default=None,
+        help="Award points for the named program or CPP math",
+    )
+    points.add_argument(
+        "--taxes",
+        type=float,
+        default=None,
+        help="Award cash outlay in the same currency as --cash",
+    )
+    points.add_argument(
+        "--currency",
+        default=None,
+        help="ISO 4217 code for --cash (required when --cash is named)",
+    )
+    points.add_argument(
+        "--program",
+        default=None,
+        help="Loyalty program code for the local transfer table (e.g. aeroplan)",
+    )
+    points.add_argument(
+        "--balances",
+        default=None,
+        metavar="FILE",
+        help="JSON {balances:[{program,balance},...]} of named card currencies",
+    )
+
     airports = sub.add_parser(
         "airports",
         help="Offline IATA airport lookup",
@@ -2538,6 +2864,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_explore(args)
     if args.cmd == "airports":
         return _run_airports(args)
+    if args.cmd == "hidden-city":
+        return _run_hidden_city(args)
+    if args.cmd == "awards":
+        return _run_awards(args)
+    if args.cmd == "points":
+        return _run_points(args)
     if args.cmd == "bench":
         sweep_kw = {"timeit_sweep": True} if args.timeit_sweep else {}
         if args.holdout:
