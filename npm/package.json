@@ -1,0 +1,32 @@
+{
+  "name": "viajante",
+  "version": "1.2.1",
+  "description": "npx front door for viajante (Python flight and hotel search). Runs uvx against PyPI.",
+  "license": "MIT",
+  "bin": {
+    "viajante": "./bin/cli.js",
+    "viajante-mcp": "./bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felipebasurto/viajante.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/felipebasurto/viajante#readme",
+  "bugs": {
+    "url": "https://github.com/felipebasurto/viajante/issues"
+  },
+  "keywords": [
+    "mcp",
+    "flights",
+    "hotels",
+    "viajante"
+  ]
+}
