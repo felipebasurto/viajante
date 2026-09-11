@@ -385,9 +385,7 @@ class HiddenCitySearchTests(unittest.TestCase):
         self.assertEqual(report.currency, "EUR")
 
     def test_usd_keep_still_returns_usd_cards(self) -> None:
-        rpc = self._rpc_flights(
-            [{"price": {"amount": 154, "currency": "USD"}, "airline": "Delta"}]
-        )
+        rpc = self._rpc_flights([{"price": {"amount": 154, "currency": "USD"}, "airline": "Delta"}])
         report = search_hidden_city("JFK", "MIA", FUTURE, currency="USD", rpc=rpc)
         self.assertEqual(len(report.offers), 1)
         self.assertIsNone(report.error)

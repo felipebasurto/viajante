@@ -577,9 +577,7 @@ def search_hidden_city(
             return_date=return_date,
         )
         offers = tuple(
-            offer
-            for offer in owned
-            if named_currency is None or offer.currency == named_currency
+            offer for offer in owned if named_currency is None or offer.currency == named_currency
         )
         offers = tuple(sorted(offers, key=lambda offer: offer.price))[:top]
         if not offers:
@@ -596,9 +594,7 @@ def search_hidden_city(
             else:
                 error = SearchError(
                     code=SearchErrorCode.NO_RESULTS,
-                    message=(
-                        "Skiplagged returned no priced itineraries for this route and date."
-                    ),
+                    message="Skiplagged returned no priced itineraries for this route and date.",
                 )
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     report_currency = (
