@@ -616,7 +616,10 @@ def search_hidden_city_tool(
     top: int = DEFAULT_TOP,
     currency: Optional[str] = None,
 ) -> Mapping[str, object]:
-    """Skiplagged MCP search. Opt-in. Does not mix Google Flights results."""
+    """Skiplagged MCP search. Opt-in. Does not mix Google Flights results.
+
+    Named currency is a keep. Skiplagged cards are USD; omit or pass USD.
+    """
     origin, destination = parse_route_pair(route)
     departure_date = date.fromisoformat(departure)
     back = date.fromisoformat(return_date) if return_date else None

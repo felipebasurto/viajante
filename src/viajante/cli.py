@@ -2708,7 +2708,10 @@ def _build_parser() -> argparse.ArgumentParser:
     hidden.add_argument(
         "--currency",
         default=None,
-        help="ISO 4217 code to keep. Unnamed uses each card's owned currency; not origin cash",
+        help=(
+            "ISO 4217 keep of owned card currency. Skiplagged cards are USD; "
+            "omit or pass USD. Other codes are currency_mismatch (no FX)"
+        ),
     )
     hidden.add_argument(
         "--save",

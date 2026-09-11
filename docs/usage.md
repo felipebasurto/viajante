@@ -215,6 +215,7 @@ parsed fields. The report types and JSON fields are defined in
 | Error code | Meaning |
 | --- | --- |
 | `no_results` | The search returned no results. |
+| `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
 | `rejected` | The provider rejected the request. |
 | `blocked` | The provider blocked access or presented a challenge. |
 | `markup_drift` | The response could not be read in the expected format. |

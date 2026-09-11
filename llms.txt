@@ -53,6 +53,7 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 - search_hotels: total-stay prices. Currency required. Default source google.
 - search_trip: flights then hotels. Same currency. Default hotel source google.
 - lookup_airports: offline city or IATA lookup. Does not pick a hub.
+- search_hidden_city: Skiplagged, opt-in. Cards are USD; omit currency or pass USD. Do not copy a Google/origin EUR keep.
 
 One search at a time in the MCP process.
 
@@ -60,6 +61,7 @@ One search at a time in the MCP process.
 
 Pass `currency` (ISO 4217) or infer from a named origin airport country
 (JFK USD, LHR GBP, NRT JPY, GRU BRL). Hotels have no origin: currency is required.
+Skiplagged hidden-city keep is USD/omit; other keeps are `currency_mismatch` (no FX).
 Do not invent IATA, gl, or ISO 4217. Viajante does not convert.
 
 ## Bags

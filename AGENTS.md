@@ -48,7 +48,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 
 CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
 MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hidden_city`, `compare_awards`, `lookup_transfers`.
-Library: `get_flights` (route spec, trips, or NL via `plan_prompt`), plus the `search_*` functions. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. `compare_award` / `lookup_transfers` are local and do not invent seats.
+Library: `get_flights` (route spec, trips, or NL via `plan_prompt`), plus the `search_*` functions. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award` / `lookup_transfers` are local and do not invent seats.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
@@ -266,8 +266,9 @@ a common hub or leisure trunk or the Google payload suggests a through-fare,
 call `search_hidden_city` once with the same named route and date. Sequential
 (process lock). Do not mix Skiplagged and Google payloads. Skip when `bags`
 were named, and skip explore, dates, flex, and multi-city. Do not invent a
-beyond city. Lead with `hidden_city: true` rows; confirm on `booking_url`
-(do not scrape Skiplagged).
+beyond city. Omit hidden-city `currency` (Skiplagged cards are USD); do not
+copy a Google/origin EUR keep. Lead with `hidden_city: true` rows; confirm on
+`booking_url` (do not scrape Skiplagged).
 
 When helping pick destinations (not a single named route/date), follow
 `.cursor/skills/viajante/SKILL.md` → **Destination triage**: shortlist by vibe

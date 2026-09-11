@@ -534,7 +534,11 @@ def search_hidden_city(
     currency: Optional[str] = None,
     rpc: Optional[RpcPost] = None,
 ) -> HiddenCityReport:
-    """Search Skiplagged via its public MCP. Opt-in. Does not mix Google results."""
+    """Search Skiplagged via its public MCP. Opt-in. Does not mix Google results.
+
+    Named currency is a keep of owned card ISO 4217. Skiplagged cards are USD.
+    A keep that matches no owned card is currency_mismatch, not no_results.
+    """
     if top <= 0:
         raise ValueError("top must be positive")
     if adults < 1:
@@ -558,33 +562,56 @@ def search_hidden_city(
     if return_date is not None:
         arguments["returnDate"] = return_date.isoformat()
     offers: tuple[HiddenCityOffer, ...] = ()
+    owned: tuple[HiddenCityOffer, ...] = ()
     error: Optional[SearchError] = None
     try:
         result = _call_mcp(arguments, rpc=rpc or _rpc_post)
     except Exception as exc:
         error = _classify(exc)
     else:
-        offers = parse_skiplagged_offers(
+        owned = parse_skiplagged_offers(
             result,
             origin=origin,
             destination=destination,
             departure_date=departure_date,
-            currency=named_currency,
             return_date=return_date,
+        )
+        offers = tuple(
+            offer
+            for offer in owned
+            if named_currency is None or offer.currency == named_currency
         )
         offers = tuple(sorted(offers, key=lambda offer: offer.price))[:top]
         if not offers:
-            error = SearchError(
-                code=SearchErrorCode.NO_RESULTS,
-                message="Skiplagged returned no priced itineraries for this route and date.",
-            )
+            if owned and named_currency:
+                seen = ", ".join(sorted({offer.currency for offer in owned}))
+                error = SearchError(
+                    code=SearchErrorCode.CURRENCY_MISMATCH,
+                    message=(
+                        f"Skiplagged priced this route in {seen}; "
+                        f"no rows matched requested keep {named_currency}. "
+                        "Viajante does not convert."
+                    ),
+                )
+            else:
+                error = SearchError(
+                    code=SearchErrorCode.NO_RESULTS,
+                    message=(
+                        "Skiplagged returned no priced itineraries for this route and date."
+                    ),
+                )
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
+    report_currency = (
+        _report_currency(None, owned)
+        if error is not None and error.code == SearchErrorCode.CURRENCY_MISMATCH
+        else _report_currency(named_currency, offers)
+    )
     return HiddenCityReport(
         searched_at=_utc_now(),
         origin=origin,
         destination=destination,
         departure_date=departure_date,
-        currency=_report_currency(named_currency, offers),
+        currency=report_currency,
         offers=offers,
         error=error,
         return_date=return_date,
