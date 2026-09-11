@@ -339,9 +339,7 @@ class HiddenCitySearchTests(unittest.TestCase):
                         "jsonrpc": "2.0",
                         "id": 2,
                         "result": {
-                            "structuredContent": {
-                                "flights": [{"price": 90, "currency": "USD"}]
-                            }
+                            "structuredContent": {"flights": [{"price": 90, "currency": "USD"}]}
                         },
                     }
                 ),
@@ -433,9 +431,7 @@ class HiddenCityCliTests(unittest.TestCase):
             patch("viajante.cli.search_hidden_city") as search,
             patch("sys.stderr", err),
         ):
-            code = main(
-                ["hidden-city", f"JFK-LHR:{FUTURE.isoformat()},{later.isoformat()}"]
-            )
+            code = main(["hidden-city", f"JFK-LHR:{FUTURE.isoformat()},{later.isoformat()}"])
         self.assertEqual(code, 1)
         search.assert_not_called()
         self.assertIn("OUT:BACK", err.getvalue())
