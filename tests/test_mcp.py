@@ -880,6 +880,21 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(payload["award"]["evidence"], "user_supplied")
         self.assertTrue(payload["transfer_paths"][0]["covers"])
 
+    def test_compare_awards_infers_origin_currency(self) -> None:
+        payload = compare_awards_tool(
+            {
+                "origin": "JFK",
+                "destination": "LHR",
+                "departure_date": FUTURE,
+                "program": "aeroplan",
+                "points": 70000,
+                "evidence": "user_supplied",
+            },
+            cash_price=1200,
+        )
+        self.assertEqual(payload["currency"], "USD")
+        self.assertIn("cpp_cents", payload)
+
     def test_lookup_transfers_does_not_invent_partners(self) -> None:
         payload = lookup_transfers_tool("not-a-program", 50000)
         self.assertEqual(payload["transfer_paths"], [])

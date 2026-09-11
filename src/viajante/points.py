@@ -15,6 +15,7 @@ from viajante.models import (
     TransferPath,
     normalize_currency,
 )
+from viajante.quote import resolve_quote_currency
 from viajante.storage import write_json_atomic
 
 # Public 1:1 card-to-program partners. Ratios are not live availability.
@@ -245,9 +246,12 @@ def compare_award(
     currency: Optional[str] = None,
     balances: Sequence[PointsBalance] = (),
 ) -> AwardCompareReport:
-    quote = normalize_currency(currency) if currency else award.currency
-    if cash_price is not None and quote is None:
-        raise ValueError("cash_price needs a named currency")
+    if cash_price is not None:
+        quote = resolve_quote_currency(currency, award.origin)
+    elif currency:
+        quote = normalize_currency(currency)
+    else:
+        quote = award.currency
     cpp = None
     if cash_price is not None:
         cpp = cents_per_point(cash_price, award.points, taxes=award.taxes)

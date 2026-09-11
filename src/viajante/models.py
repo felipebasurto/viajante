@@ -1594,8 +1594,8 @@ class HiddenCityReport:
     origin: str
     destination: str
     departure_date: date
-    currency: str
-    offers: Tuple[HiddenCityOffer, ...]
+    currency: Optional[str] = None
+    offers: Tuple[HiddenCityOffer, ...] = ()
     error: Optional[SearchError] = None
     return_date: Optional[date] = None
     fetch_ms: Optional[int] = None
@@ -1609,7 +1609,11 @@ class HiddenCityReport:
         destination = _normalize_iata(self.destination, role="destination")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
-        object.__setattr__(self, "currency", normalize_currency(self.currency))
+        object.__setattr__(
+            self,
+            "currency",
+            normalize_currency(self.currency) if self.currency else None,
+        )
         if self.searched_at.tzinfo is not None:
             object.__setattr__(
                 self,
@@ -1622,7 +1626,6 @@ class HiddenCityReport:
             "schema_version": self.schema_version,
             "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "source": self.source,
-            "currency": self.currency,
             "locale": self.locale,
             "origin": self.origin,
             "destination": self.destination,
@@ -1630,6 +1633,8 @@ class HiddenCityReport:
             "offers": [offer.to_dict() for offer in self.offers],
             "warnings": list(self.warnings),
         }
+        if self.currency:
+            payload["currency"] = self.currency
         if self.return_date is not None:
             payload["return_date"] = self.return_date.isoformat()
         if self.fetch_ms is not None:

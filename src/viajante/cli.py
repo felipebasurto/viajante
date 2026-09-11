@@ -1790,35 +1790,70 @@ def _print_hidden_city_report(report: HiddenCityReport) -> None:
             print(f"    {offer.booking_url}")
 
 
+def _hidden_city_route(
+    args: argparse.Namespace,
+) -> tuple[str, str, date, Optional[date]]:
+    spec = args.route
+    try:
+        _pair, dates_part = spec.split(":", 1)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid route: {spec!r}. Expected ORIGIN-DESTINATION:DATE or "
+            "ORIGIN-DESTINATION:OUT:BACK"
+        ) from exc
+    if "," in dates_part:
+        raise ValueError("hidden-city takes one DATE or ORIGIN-DESTINATION:OUT:BACK")
+    kind = "rt" if ":" in dates_part else "one-way"
+    plan = parse_flight_plan([spec], trip=kind, max_stops=1, adults=args.adults)
+    if isinstance(plan, RoundTrip):
+        origin, destination, departure, back = (
+            plan.origin,
+            plan.destination,
+            plan.departure_date,
+            plan.return_date,
+        )
+    else:
+        trips = _as_trips(plan)
+        if len(trips) != 1:
+            raise ValueError("hidden-city takes one DATE or ORIGIN-DESTINATION:OUT:BACK")
+        query = trips[0]
+        origin, destination, departure, back = (
+            query.origin,
+            query.destination,
+            query.departure_date,
+            None,
+        )
+    if args.return_date:
+        named_back = _parse_iso_date(args.return_date, "--return")
+        if back is not None and back != named_back:
+            raise ValueError("return date in the route and --return must match")
+        back = named_back
+    return origin, destination, departure, back
+
+
 def _run_hidden_city(args: argparse.Namespace) -> int:
     try:
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
         if args.adults < 1:
             raise ValueError("--adults must be at least 1")
-        plan = parse_flight_plan([args.route], trip="one-way", max_stops=1, adults=args.adults)
-        trips = _as_trips(plan)
-        query = trips[0]
+        origin, dest, departure, back = _hidden_city_route(args)
         today = date.today()
-        if query.departure_date < today:
-            raise ValueError(f"departure date is in the past: {query.departure_date.isoformat()}")
-        back = None
-        if args.return_date:
-            back = _parse_iso_date(args.return_date, "--return")
-            if back < query.departure_date:
-                raise ValueError("return date must not be before departure")
-        currency = resolve_quote_currency(args.currency, query.origin)
+        if departure < today:
+            raise ValueError(f"departure date is in the past: {departure.isoformat()}")
+        if back is not None and back < departure:
+            raise ValueError("return date must not be before departure")
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     report = search_hidden_city(
-        query.origin,
-        query.destination,
-        query.departure_date,
+        origin,
+        dest,
+        departure,
         return_date=back,
         adults=args.adults,
         top=args.top,
-        currency=currency,
+        currency=args.currency,
     )
     _print_hidden_city_report(report)
     if args.save:
@@ -1838,7 +1873,6 @@ def _run_awards(args: argparse.Namespace) -> int:
         if args.cash is not None:
             if args.cash <= 0:
                 raise ValueError("--cash must be positive")
-            currency = resolve_quote_currency(currency, award.origin)
         report = compare_award(
             award,
             cash_price=args.cash,
@@ -2646,7 +2680,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     hidden.add_argument(
         "route",
-        help="ORIGIN-DESTINATION:DATE (IATA codes)",
+        help="ORIGIN-DESTINATION:DATE or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
     )
     hidden.add_argument(
         "--return",
@@ -2665,12 +2699,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--top",
         type=int,
         default=DEFAULT_TOP,
-        help=f"Maximum offers to keep (default {DEFAULT_TOP})",
+        help=f"Cheapest priced offers to keep (fare order, default {DEFAULT_TOP})",
     )
     hidden.add_argument(
         "--currency",
         default=None,
-        help="ISO 4217 code, or inferred from the origin airport country",
+        help="ISO 4217 code to keep. Unnamed uses each card's owned currency; not origin cash",
     )
     hidden.add_argument(
         "--save",

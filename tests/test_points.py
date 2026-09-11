@@ -123,6 +123,19 @@ class CompareAwardTests(unittest.TestCase):
         self.assertEqual(report.cpp_cents, cents_per_point(900, 50000, taxes=80))
         self.assertEqual(report.currency, "GBP")
 
+    def test_named_cash_infers_origin_currency(self) -> None:
+        award = AwardOffer(
+            origin="JFK",
+            destination="LHR",
+            departure_date=date(2026, 11, 15),
+            program="aeroplan",
+            points=70000,
+            evidence="user_supplied",
+        )
+        report = compare_award(award, cash_price=1200)
+        self.assertEqual(report.currency, "USD")
+        self.assertEqual(report.cpp_cents, cents_per_point(1200, 70000))
+
     def test_file_round_trip(self) -> None:
         payload = {
             "origin": "SIN",

@@ -135,6 +135,61 @@ class SkiplaggedParseTests(unittest.TestCase):
         self.assertEqual(offers[0].stops_count, 0)
         self.assertIn("skiplagged.com", offers[0].booking_url or "")
 
+    def test_missing_card_currency_is_skipped(self) -> None:
+        offers = parse_skiplagged_offers(
+            [{"price": 89, "origin": "LHR", "destination": "JFK"}],
+            origin="LHR",
+            destination="JFK",
+            departure_date=FUTURE,
+            currency="GBP",
+        )
+        self.assertEqual(offers, ())
+
+    def test_dollar_glyph_is_not_origin_cash(self) -> None:
+        offers = parse_skiplagged_offers(
+            [{"price": "$412", "airline": "Delta"}],
+            origin="LHR",
+            destination="JFK",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(offers, ())
+
+    def test_brand_token_is_not_hidden_city(self) -> None:
+        offers = parse_skiplagged_offers(
+            [
+                {
+                    "price": 350,
+                    "currency": "USD",
+                    "attributes": ["skiplagged", "nonstop"],
+                    "skiplagged": True,
+                }
+            ],
+            origin="JFK",
+            destination="MIA",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(len(offers), 1)
+        self.assertFalse(offers[0].hidden_city)
+
+    def test_one_bad_row_does_not_drop_priced_neighbors(self) -> None:
+        class Boom(dict):
+            def get(self, key, default=None):  # noqa: ANN001
+                if key == "airline":
+                    raise TypeError("boom")
+                return super().get(key, default)
+
+        offers = parse_skiplagged_offers(
+            [
+                Boom({"price": 80, "currency": "USD"}),
+                {"price": 120, "currency": "USD", "airline": "Delta"},
+            ],
+            origin="JFK",
+            destination="MIA",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(len(offers), 1)
+        self.assertEqual(offers[0].price, 120)
+
 
 class HiddenCitySearchTests(unittest.TestCase):
     def test_rpc_failure_does_not_invent_fares(self) -> None:
@@ -148,6 +203,8 @@ class HiddenCitySearchTests(unittest.TestCase):
         self.assertEqual(report.error.code, SearchErrorCode.FETCH_FAILED)
         self.assertEqual(report.source, "skiplagged")
         self.assertEqual(report.warnings, HIDDEN_CITY_WARNINGS)
+        self.assertIsNone(report.currency)
+        self.assertNotIn("currency", report.to_dict())
 
     def test_empty_priced_rows_are_no_results(self) -> None:
         def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
@@ -162,6 +219,7 @@ class HiddenCitySearchTests(unittest.TestCase):
         self.assertEqual(report.offers, ())
         assert report.error is not None
         self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
+        self.assertIsNone(report.currency)
 
     def test_success_parses_offers(self) -> None:
         def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
@@ -195,6 +253,105 @@ class HiddenCitySearchTests(unittest.TestCase):
         self.assertEqual(len(report.offers), 1)
         self.assertIsNone(report.error)
         self.assertEqual(report.offers[0].price, 350)
+        self.assertEqual(report.currency, "USD")
+
+    def test_does_not_stamp_origin_cash_on_skiplagged_amounts(self) -> None:
+        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+            if payload.get("method") == "initialize":
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+                return 200, {"mcp-session-id": "s1"}, body
+            return (
+                200,
+                {},
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {
+                            "structuredContent": {
+                                "flights": [
+                                    {
+                                        "price": {"amount": 154, "currency": "USD"},
+                                        "airline": "ANA",
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                ),
+            )
+
+        report = search_hidden_city("NRT", "SIN", FUTURE, rpc=rpc)
+        self.assertEqual(len(report.offers), 1)
+        self.assertEqual(report.offers[0].currency, "USD")
+        self.assertEqual(report.currency, "USD")
+        self.assertNotEqual(report.currency, "JPY")
+
+    def test_top_is_a_fare_cut(self) -> None:
+        captured: list[dict] = []
+
+        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+            if payload.get("method") == "initialize":
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+                return 200, {"mcp-session-id": "s1"}, body
+            if payload.get("method") == "tools/call":
+                captured.append(payload["params"]["arguments"])
+            return (
+                200,
+                {},
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {
+                            "structuredContent": {
+                                "flights": [
+                                    {"price": 500, "currency": "USD"},
+                                    {"price": 80, "currency": "USD"},
+                                    {"price": 120, "currency": "USD"},
+                                ]
+                            }
+                        },
+                    }
+                ),
+            )
+
+        report = search_hidden_city("JFK", "MIA", FUTURE, top=2, rpc=rpc)
+        self.assertEqual([offer.price for offer in report.offers], [80, 120])
+        self.assertEqual(captured[0]["limit"], 2)
+        self.assertEqual(captured[0]["sort"], "price")
+
+    def test_reuses_mcp_session(self) -> None:
+        methods: list[str] = []
+
+        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+            methods.append(str(payload.get("method")))
+            if payload.get("method") == "initialize":
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+                return 200, {"mcp-session-id": "s1"}, body
+            if payload.get("method") == "notifications/initialized":
+                return 202, {}, ""
+            return (
+                200,
+                {},
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {
+                            "structuredContent": {
+                                "flights": [{"price": 90, "currency": "USD"}]
+                            }
+                        },
+                    }
+                ),
+            )
+
+        search_hidden_city("JFK", "MIA", FUTURE, rpc=rpc)
+        search_hidden_city("JFK", "MIA", FUTURE, rpc=rpc)
+        self.assertEqual(methods.count("initialize"), 1)
+        self.assertEqual(methods.count("notifications/initialized"), 1)
+        self.assertEqual(methods.count("tools/call"), 2)
 
     def test_past_departure_is_rejected_before_rpc(self) -> None:
         past = date.today() - timedelta(days=1)
@@ -251,6 +408,37 @@ class HiddenCityCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("350", buffer.getvalue())
         self.assertIn("Hidden-city", err.getvalue())
+
+    def test_out_back_sugar_is_a_round_trip(self) -> None:
+        back = FUTURE + timedelta(days=5)
+        report = HiddenCityReport(
+            searched_at=datetime(2026, 9, 10, 12, 0, 0),
+            origin="JFK",
+            destination="MIA",
+            departure_date=FUTURE,
+            currency="USD",
+            offers=(),
+            return_date=back,
+        )
+        with patch("viajante.cli.search_hidden_city", return_value=report) as search:
+            code = main(["hidden-city", f"JFK-MIA:{FUTURE.isoformat()}:{back.isoformat()}"])
+        self.assertEqual(code, 0)
+        search.assert_called_once()
+        self.assertEqual(search.call_args.kwargs["return_date"], back)
+
+    def test_comma_dates_are_rejected(self) -> None:
+        later = FUTURE + timedelta(days=1)
+        err = io.StringIO()
+        with (
+            patch("viajante.cli.search_hidden_city") as search,
+            patch("sys.stderr", err),
+        ):
+            code = main(
+                ["hidden-city", f"JFK-LHR:{FUTURE.isoformat()},{later.isoformat()}"]
+            )
+        self.assertEqual(code, 1)
+        search.assert_not_called()
+        self.assertIn("OUT:BACK", err.getvalue())
 
 
 if __name__ == "__main__":

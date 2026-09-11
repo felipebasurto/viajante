@@ -608,7 +608,8 @@ def build_server():
 
         route is ORIGIN-DEST. Hidden-city tickets can violate airline contracts.
         Confirm the fare on the booking link. Viajante does not book.
-        Currency is currency or inferred from a named origin's owned country.
+        Currency is an optional keep-filter of owned card ISO 4217; unnamed
+        keeps each card's currency. Does not infer from origin or convert.
         """
         return dict(
             await run_mcp_tool(

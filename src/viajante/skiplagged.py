@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -22,13 +23,15 @@ from viajante.models import (
     SearchErrorCode,
     normalize_currency,
 )
-from viajante.quote import resolve_quote_currency
+from viajante.parsers import parse_price
 from viajante.storage import write_json_atomic
 
 SKIPLAGGED_MCP_URL = "https://mcp.skiplagged.com/mcp"
 SKIPLAGGED_FLIGHTS_TOOL = "sk_flights_search"
 _PROTOCOL = "2025-03-26"
 _TIMEOUT_SECONDS = 30
+_SESSION_LOCK = threading.Lock()
+_SESSION_IDS: dict[tuple[object, str], str] = {}
 RpcPost = Callable[[str, dict[str, Any], Mapping[str, str]], tuple[int, Mapping[str, str], str]]
 
 
@@ -96,12 +99,7 @@ def _rpc_result(payload: Any) -> Any:
     return payload["result"]
 
 
-def _call_mcp(
-    arguments: Mapping[str, Any],
-    *,
-    rpc: RpcPost,
-    url: str = SKIPLAGGED_MCP_URL,
-) -> Any:
+def _handshake(rpc: RpcPost, url: str) -> str:
     init_payload = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -116,14 +114,51 @@ def _call_mcp(
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     _rpc_result(_sse_json(body))
-    session_id = headers.get("mcp-session-id") or headers.get("Mcp-Session-Id")
+    session_id = headers.get("mcp-session-id") or headers.get("Mcp-Session-Id") or ""
+    notify = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    headers = _headers(session_id=session_id or None)
+    status, _notify_headers, _notify_body = rpc(url, notify, headers)
+    if status >= 400:
+        raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
+    return session_id
+
+
+def _session_id(rpc: RpcPost, url: str) -> str:
+    key = (rpc, url)
+    with _SESSION_LOCK:
+        cached = _SESSION_IDS.get(key)
+        if cached is not None:
+            return cached
+        session_id = _handshake(rpc, url)
+        _SESSION_IDS[key] = session_id
+        return session_id
+
+
+def _drop_session(rpc: RpcPost, url: str) -> None:
+    with _SESSION_LOCK:
+        _SESSION_IDS.pop((rpc, url), None)
+
+
+def _call_mcp(
+    arguments: Mapping[str, Any],
+    *,
+    rpc: RpcPost,
+    url: str = SKIPLAGGED_MCP_URL,
+) -> Any:
+    session_id = _session_id(rpc, url)
     call_payload = {
         "jsonrpc": "2.0",
         "id": 2,
         "method": "tools/call",
         "params": {"name": SKIPLAGGED_FLIGHTS_TOOL, "arguments": dict(arguments)},
     }
-    status, _call_headers, body = rpc(url, call_payload, _headers(session_id=session_id))
+    status, _call_headers, body = rpc(url, call_payload, _headers(session_id=session_id or None))
+    if status in {400, 404} and session_id:
+        _drop_session(rpc, url)
+        session_id = _session_id(rpc, url)
+        status, _call_headers, body = rpc(
+            url, call_payload, _headers(session_id=session_id or None)
+        )
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP search failed ({status}).")
     return _rpc_result(_sse_json(body))
@@ -188,9 +223,10 @@ def _numberish(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
+        parsed = parse_price(value)
+        if parsed is not None:
+            return parsed
         text = value.strip().replace(",", "")
-        if text[:1] in {"$", "€"}:
-            text = text[1:].strip()
         try:
             return float(text)
         except ValueError:
@@ -201,6 +237,23 @@ def _numberish(value: Any) -> Optional[float]:
             if nested is not None:
                 return nested
     return None
+
+
+def _iso_currency(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return normalize_currency(value)
+    except ValueError:
+        return None
+
+
+def _owned_currency(row: Mapping[str, Any], price_value: Any) -> Optional[str]:
+    price_obj = row.get("price") if not isinstance(price_value, dict) else price_value
+    nested = None
+    if isinstance(price_obj, dict):
+        nested = price_obj.get("currency") or price_obj.get("curr")
+    return _iso_currency(_first_str(row, "currency", "curr")) or _iso_currency(nested)
 
 
 def _first_number(row: Mapping[str, Any], *keys: str) -> Optional[float]:
@@ -230,7 +283,7 @@ def _hidden_from_attributes(row: Mapping[str, Any]) -> Optional[bool]:
     if not isinstance(attrs, list):
         return None
     tokens = {str(item).strip().casefold() for item in attrs}
-    if tokens & {"hidden-city", "hidden_city", "hidden city", "skiplagging", "skiplagged"}:
+    if tokens & {"hidden-city", "hidden_city", "hidden city", "skiplagging"}:
         return True
     if "standard" in tokens:
         return False
@@ -279,86 +332,105 @@ def parse_skiplagged_offers(
     origin: str,
     destination: str,
     departure_date: date,
-    currency: str,
+    currency: Optional[str] = None,
     return_date: Optional[date] = None,
 ) -> tuple[HiddenCityOffer, ...]:
-    """Normalize a Skiplagged MCP tool result. Never invents a fare."""
+    """Normalize a Skiplagged MCP tool result. Never invents a fare or FX pairing."""
+    wanted = normalize_currency(currency) if currency else None
     offers: list[HiddenCityOffer] = []
     for row in _tool_rows(result):
-        mapped = _as_mapping(row)
-        if mapped is None:
-            continue
-        price = _first_number(mapped, "price", "fare", "total", "amount", "totalPrice")
-        if price is None or price <= 0:
-            continue
-        price_obj = mapped.get("price")
-        nested_currency = price_obj.get("currency") if isinstance(price_obj, dict) else None
-        row_currency = _first_str(mapped, "currency", "curr") or (
-            nested_currency if isinstance(nested_currency, str) else None
-        )
-        if row_currency:
-            try:
-                offer_currency = normalize_currency(row_currency)
-            except ValueError:
-                continue
-        else:
-            offer_currency = currency
-        row_origin = (
-            _iata_or_none(_first_str(mapped, "origin", "from", "originAirport"))
-            or _nested_iata(mapped, "departure")
-            or origin
-        )
-        row_dest = (
-            _iata_or_none(_first_str(mapped, "destination", "to", "destinationAirport"))
-            or _nested_iata(mapped, "arrival")
-            or destination
-        )
-        ticketed = _iata_or_none(
-            _first_str(mapped, "ticketed_destination", "ticketedDestination", "finalDestination")
-        )
-        layover = _first_str(mapped, "layover_city", "layoverCity", "layover", "via")
-        layover_iata = _iata_or_none(layover)
-        hidden = _bool_flag(
-            mapped,
-            "hidden_city",
-            "hiddenCity",
-            "is_hidden_city",
-            "isHiddenCity",
-            "skiplagged",
-        )
-        if hidden is None:
-            hidden = _hidden_from_attributes(mapped)
-        if hidden is None:
-            hidden = bool(ticketed and ticketed != row_dest)
-        url = _first_str(
-            mapped,
-            "booking_url",
-            "bookingUrl",
-            "deepLink",
-            "url",
-            "link",
-            "flightURL",
-        )
-        offers.append(
-            HiddenCityOffer(
-                origin=row_origin,
-                destination=row_dest,
+        try:
+            offer = _offer_from_row(
+                row,
+                origin=origin,
+                destination=destination,
                 departure_date=departure_date,
-                price=price,
-                currency=offer_currency,
-                evidence="confirmed",
-                source=HIDDEN_CITY_SOURCE,
-                airline=_first_str(mapped, "airline", "airlines", "carrier", "airlineName"),
-                duration=_first_str(mapped, "duration", "durationText", "time"),
-                stops_count=_stops_count(mapped),
-                layover_city=layover_iata or layover,
-                ticketed_destination=ticketed,
-                hidden_city=bool(hidden),
                 return_date=return_date,
-                booking_url=url,
             )
-        )
+        except (TypeError, ValueError, AttributeError, KeyError):
+            continue
+        if offer is None:
+            continue
+        if wanted and offer.currency != wanted:
+            continue
+        offers.append(offer)
     return tuple(offers)
+
+
+def _offer_from_row(
+    row: Any,
+    *,
+    origin: str,
+    destination: str,
+    departure_date: date,
+    return_date: Optional[date],
+) -> Optional[HiddenCityOffer]:
+    mapped = _as_mapping(row)
+    if mapped is None:
+        return None
+    price_value = None
+    for key in ("price", "fare", "total", "amount", "totalPrice"):
+        if key in mapped:
+            price_value = mapped.get(key)
+            break
+    price = _first_number(mapped, "price", "fare", "total", "amount", "totalPrice")
+    if price is None or price <= 0:
+        return None
+    offer_currency = _owned_currency(mapped, price_value)
+    if offer_currency is None:
+        return None
+    row_origin = (
+        _iata_or_none(_first_str(mapped, "origin", "from", "originAirport"))
+        or _nested_iata(mapped, "departure")
+        or origin
+    )
+    row_dest = (
+        _iata_or_none(_first_str(mapped, "destination", "to", "destinationAirport"))
+        or _nested_iata(mapped, "arrival")
+        or destination
+    )
+    ticketed = _iata_or_none(
+        _first_str(mapped, "ticketed_destination", "ticketedDestination", "finalDestination")
+    )
+    layover = _first_str(mapped, "layover_city", "layoverCity", "layover", "via")
+    layover_iata = _iata_or_none(layover)
+    hidden = _bool_flag(
+        mapped,
+        "hidden_city",
+        "hiddenCity",
+        "is_hidden_city",
+        "isHiddenCity",
+    )
+    if hidden is None:
+        hidden = _hidden_from_attributes(mapped)
+    if hidden is None:
+        hidden = bool(ticketed and ticketed != row_dest)
+    url = _first_str(
+        mapped,
+        "booking_url",
+        "bookingUrl",
+        "deepLink",
+        "url",
+        "link",
+        "flightURL",
+    )
+    return HiddenCityOffer(
+        origin=row_origin,
+        destination=row_dest,
+        departure_date=departure_date,
+        price=price,
+        currency=offer_currency,
+        evidence="confirmed",
+        source=HIDDEN_CITY_SOURCE,
+        airline=_first_str(mapped, "airline", "airlines", "carrier", "airlineName"),
+        duration=_first_str(mapped, "duration", "durationText", "time"),
+        stops_count=_stops_count(mapped),
+        layover_city=layover_iata or layover,
+        ticketed_destination=ticketed,
+        hidden_city=bool(hidden),
+        return_date=return_date,
+        booking_url=url,
+    )
 
 
 def _classify(exc: BaseException) -> SearchError:
@@ -377,6 +449,18 @@ def _classify(exc: BaseException) -> SearchError:
         code=SearchErrorCode.FETCH_FAILED,
         message="Skiplagged MCP request failed.",
     )
+
+
+def _report_currency(
+    named: Optional[str],
+    offers: tuple[HiddenCityOffer, ...],
+) -> Optional[str]:
+    if named:
+        return named
+    owned = {offer.currency for offer in offers}
+    if len(owned) == 1:
+        return next(iter(owned))
+    return None
 
 
 def search_hidden_city(
@@ -401,44 +485,47 @@ def search_hidden_city(
     if return_date is not None and return_date < departure_date:
         raise ValueError("return date must not be before departure")
     FlightQuery(origin, destination, departure_date, adults=adults)
-    currency = resolve_quote_currency(currency, origin.strip().upper())
+    named_currency = normalize_currency(currency) if currency else None
     started = time.perf_counter()
     arguments: dict[str, Any] = {
         "origin": origin.strip().upper(),
         "destination": destination.strip().upper(),
         "departureDate": departure_date.isoformat(),
         "limit": top,
+        "sort": "price",
         "adults": adults,
     }
     if return_date is not None:
         arguments["returnDate"] = return_date.isoformat()
+    offers: tuple[HiddenCityOffer, ...] = ()
+    error: Optional[SearchError] = None
     try:
         result = _call_mcp(arguments, rpc=rpc or _rpc_post)
+    except Exception as exc:
+        error = _classify(exc)
+    else:
         offers = parse_skiplagged_offers(
             result,
             origin=origin,
             destination=destination,
             departure_date=departure_date,
-            currency=currency,
+            currency=named_currency,
             return_date=return_date,
         )
-        error = None
+        offers = tuple(sorted(offers, key=lambda offer: offer.price))[:top]
         if not offers:
             error = SearchError(
                 code=SearchErrorCode.NO_RESULTS,
                 message="Skiplagged returned no priced itineraries for this route and date.",
             )
-    except Exception as exc:
-        offers = ()
-        error = _classify(exc)
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return HiddenCityReport(
         searched_at=_utc_now(),
         origin=origin,
         destination=destination,
         departure_date=departure_date,
-        currency=currency,
-        offers=offers[:top],
+        currency=_report_currency(named_currency, offers),
+        offers=offers,
         error=error,
         return_date=return_date,
         fetch_ms=fetch_ms,
