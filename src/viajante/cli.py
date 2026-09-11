@@ -1784,7 +1784,11 @@ def _print_hidden_city_report(report: HiddenCityReport) -> None:
     for offer in report.offers:
         flag = "yes" if offer.hidden_city else "no"
         airline = offer.airline or "?"
-        extra = f"  {offer.layover_city}" if offer.layover_city else ""
+        extra = ""
+        if offer.ticketed_destination:
+            extra += f"  ticketed {offer.ticketed_destination}"
+        if offer.layover_city:
+            extra += f"  via {offer.layover_city}"
         print(f"{format_money(offer.price, offer.currency, width=10)}  {flag:<7}  {airline}{extra}")
         if offer.booking_url:
             print(f"    {offer.booking_url}")

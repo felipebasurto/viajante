@@ -25,6 +25,8 @@ Paste this into Cursor Settings → MCP, Claude Desktop, or any `mcpServers` cli
 
 Reload MCP. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`, `search_hidden_city` (Skiplagged, opt-in), `compare_awards`, `lookup_transfers`.
 
+After `main` moves, `uvx` can cache an old tool list (missing `search_hidden_city`). Reload the MCP client, refresh with `uvx --refresh --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp`, or point the client at a local `viajante-mcp`.
+
 PyPI is unpublished. Do not use `--from viajante[mcp]` until `pypi.org/pypi/viajante/json` returns 200.
 
 ## Booking.com or `fetch=detail`

@@ -54,7 +54,9 @@ blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
 product cannot require 3+ stops.
-search_hidden_city is opt-in Skiplagged. It does not mix Google Flights evidence.
+search_hidden_city is Skiplagged, not Google. After a named-route
+search_flights on a hub or leisure trunk, the caller may run it once
+sequentially. Do not mix evidence. Skip when bags were named.
 compare_awards is local points math from a named offer; it does not invent seats.
 lookup_transfers is a local partner table, not live award inventory.
 
@@ -144,6 +146,9 @@ def build_server():
         guessed. Optional country is Google gl (origin market); omit when
         unset. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
         shopping request. Do not invent a bag fee. max_stops is 0, 1, or 2.
+        After a named hub or leisure trunk returns, the caller may run
+        search_hidden_city once with the same route and date. Sequential; do
+        not mix payloads. Skip if bags were named.
         """
         return dict(
             await run_mcp_tool(
@@ -606,10 +611,15 @@ def build_server():
     ) -> dict:
         """Search Skiplagged for a named route. Opt-in. Does not mix Google Flights.
 
-        route is ORIGIN-DEST. Hidden-city tickets can violate airline contracts.
-        Confirm the fare on the booking link. Viajante does not book.
-        Currency is an optional keep-filter of owned card ISO 4217; unnamed
-        keeps each card's currency. Does not infer from origin or convert.
+        route is ORIGIN-DEST. After search_flights on a named common route
+        (hub or leisure trunk, or Google looking like a through-fare), call
+        this once with the same route and date. Sequential. Skip explore,
+        dates, flex, multi-city, unproven dests, and named bags. Hidden-city
+        tickets can violate airline contracts. Lead with hidden_city true
+        rows; confirm the fare on booking_url (do not scrape). Viajante does
+        not book. Currency is an optional keep-filter of owned card ISO 4217;
+        unnamed keeps each card's currency. Does not infer from origin or
+        convert.
         """
         return dict(
             await run_mcp_tool(

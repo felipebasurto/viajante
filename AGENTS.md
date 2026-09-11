@@ -260,7 +260,13 @@ as lock-busy. `lookup_airports` may run during a search. Playwright is extra
 ## Trip-planning search strategy
 
 A named route and date is flights only; do not add hotels or `search_trip`
-unless the user asked for a stay.
+unless the user asked for a stay. After that `search_flights`, if the route is
+a common hub or leisure trunk or the Google payload suggests a through-fare,
+call `search_hidden_city` once with the same named route and date. Sequential
+(process lock). Do not mix Skiplagged and Google payloads. Skip when `bags`
+were named, and skip explore, dates, flex, and multi-city. Do not invent a
+beyond city. Lead with `hidden_city: true` rows; confirm on `booking_url`
+(do not scrape Skiplagged).
 
 When helping pick destinations (not a single named route/date), follow
 `.cursor/skills/viajante/SKILL.md` → **Destination triage**: shortlist by vibe

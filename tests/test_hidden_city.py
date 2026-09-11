@@ -171,6 +171,88 @@ class SkiplaggedParseTests(unittest.TestCase):
         self.assertEqual(len(offers), 1)
         self.assertFalse(offers[0].hidden_city)
 
+    def test_trip_hash_tilde_is_hidden_city(self) -> None:
+        offers = parse_skiplagged_offers(
+            [
+                {
+                    "price": 234,
+                    "currency": "USD",
+                    "airline": "American Airlines",
+                    "url": "https://skiplagged.com/flights/JFK/MIA/2026-11-15#trip=AA475~",
+                }
+            ],
+            origin="JFK",
+            destination="MIA",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(len(offers), 1)
+        self.assertTrue(offers[0].hidden_city)
+        self.assertIsNone(offers[0].ticketed_destination)
+        self.assertIsNone(offers[0].layover_city)
+
+    def test_round_trip_tilde_overrides_false_flag(self) -> None:
+        offers = parse_skiplagged_offers(
+            [
+                {
+                    "price": 480,
+                    "currency": "USD",
+                    "airline": "Swiss",
+                    "hidden_city": False,
+                    "url": (
+                        "https://skiplagged.com/flights/LHR/JFK/2026-11-18/2026-11-25"
+                        "#trip=LX339-LX16,BA116~"
+                    ),
+                }
+            ],
+            origin="LHR",
+            destination="JFK",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(len(offers), 1)
+        self.assertTrue(offers[0].hidden_city)
+
+    def test_nested_legs_stamp_ticketed_and_layover(self) -> None:
+        offers = parse_skiplagged_offers(
+            [
+                {
+                    "price": 89,
+                    "currency": "USD",
+                    "origin": "JFK",
+                    "destination": "BOS",
+                    "legs": [
+                        {"origin": "JFK", "destination": "BOS"},
+                        {"origin": "BOS", "destination": "LHR"},
+                    ],
+                }
+            ],
+            origin="JFK",
+            destination="BOS",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(len(offers), 1)
+        self.assertTrue(offers[0].hidden_city)
+        self.assertEqual(offers[0].ticketed_destination, "LHR")
+        self.assertEqual(offers[0].layover_city, "BOS")
+
+    def test_hidden_city_airport_key(self) -> None:
+        offers = parse_skiplagged_offers(
+            [
+                {
+                    "price": 120,
+                    "currency": "USD",
+                    "destination": "MIA",
+                    "hiddenCityAirport": "PTY",
+                }
+            ],
+            origin="JFK",
+            destination="MIA",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(len(offers), 1)
+        self.assertTrue(offers[0].hidden_city)
+        self.assertEqual(offers[0].ticketed_destination, "PTY")
+        self.assertEqual(offers[0].layover_city, "MIA")
+
     def test_one_bad_row_does_not_drop_priced_neighbors(self) -> None:
         class Boom(dict):
             def get(self, key, default=None):  # noqa: ANN001
@@ -406,6 +488,42 @@ class HiddenCityCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("350", buffer.getvalue())
         self.assertIn("Hidden-city", err.getvalue())
+
+    def test_cli_prints_ticketed_and_layover(self) -> None:
+        report = HiddenCityReport(
+            searched_at=datetime(2026, 9, 10, 12, 0, 0),
+            origin="JFK",
+            destination="BOS",
+            departure_date=FUTURE,
+            currency="USD",
+            offers=(
+                HiddenCityOffer(
+                    origin="JFK",
+                    destination="BOS",
+                    departure_date=FUTURE,
+                    price=89,
+                    currency="USD",
+                    evidence="confirmed",
+                    airline="JetBlue",
+                    layover_city="BOS",
+                    ticketed_destination="LHR",
+                    hidden_city=True,
+                ),
+            ),
+        )
+        buffer = io.StringIO()
+        err = io.StringIO()
+        with (
+            patch("viajante.cli.search_hidden_city", return_value=report),
+            patch("sys.stdout", buffer),
+            patch("sys.stderr", err),
+        ):
+            code = main(["hidden-city", f"JFK-BOS:{FUTURE.isoformat()}"])
+        self.assertEqual(code, 0)
+        printed = buffer.getvalue()
+        self.assertIn("ticketed LHR", printed)
+        self.assertIn("via BOS", printed)
+        self.assertIn("yes", printed)
 
     def test_out_back_sugar_is_a_round_trip(self) -> None:
         back = FUTURE + timedelta(days=5)

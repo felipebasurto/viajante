@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
@@ -326,6 +327,42 @@ def _stops_count(row: Mapping[str, Any]) -> Optional[int]:
     return count
 
 
+def _leg_arrival_iata(item: Any) -> Optional[str]:
+    if isinstance(item, str):
+        return _iata_or_none(item)
+    mapped = _as_mapping(item)
+    if mapped is None:
+        return None
+    return _iata_or_none(
+        _first_str(mapped, "destination", "to", "arrivalAirport", "airport", "iata", "code")
+    ) or _nested_iata(mapped, "arrival", "destination")
+
+
+def _ticketed_from_legs(row: Mapping[str, Any], dest: str) -> Optional[str]:
+    for key in ("segments", "legs", "flights"):
+        items = row.get(key)
+        if not isinstance(items, list) or not items:
+            continue
+        arrivals: list[str] = []
+        for item in items:
+            code = _leg_arrival_iata(item)
+            if code:
+                arrivals.append(code)
+        if arrivals and arrivals[-1] != dest:
+            return arrivals[-1]
+    return None
+
+
+def _trip_hash_is_hidden(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    fragment = unquote(urlparse(url).fragment)
+    for part in fragment.split("&"):
+        if part.casefold().startswith("trip="):
+            return "~" in part.split("=", 1)[1]
+    return False
+
+
 def parse_skiplagged_offers(
     result: Any,
     *,
@@ -389,11 +426,39 @@ def _offer_from_row(
         or _nested_iata(mapped, "arrival")
         or destination
     )
-    ticketed = _iata_or_none(
-        _first_str(mapped, "ticketed_destination", "ticketedDestination", "finalDestination")
+    ticketed = (
+        _iata_or_none(
+            _first_str(
+                mapped,
+                "ticketed_destination",
+                "ticketedDestination",
+                "finalDestination",
+                "ticketedTo",
+                "hiddenCityAirport",
+                "overfly",
+            )
+        )
+        or _nested_iata(
+            mapped,
+            "ticketed_destination",
+            "ticketedTo",
+            "hiddenCityAirport",
+            "overfly",
+            "ticketed",
+        )
+        or _ticketed_from_legs(mapped, row_dest)
     )
     layover = _first_str(mapped, "layover_city", "layoverCity", "layover", "via")
     layover_iata = _iata_or_none(layover)
+    url = _first_str(
+        mapped,
+        "booking_url",
+        "bookingUrl",
+        "deepLink",
+        "url",
+        "link",
+        "flightURL",
+    )
     hidden = _bool_flag(
         mapped,
         "hidden_city",
@@ -405,15 +470,10 @@ def _offer_from_row(
         hidden = _hidden_from_attributes(mapped)
     if hidden is None:
         hidden = bool(ticketed and ticketed != row_dest)
-    url = _first_str(
-        mapped,
-        "booking_url",
-        "bookingUrl",
-        "deepLink",
-        "url",
-        "link",
-        "flightURL",
-    )
+    if _trip_hash_is_hidden(url):
+        hidden = True
+    if ticketed and ticketed != row_dest and layover_iata is None and not layover:
+        layover_iata = row_dest
     return HiddenCityOffer(
         origin=row_origin,
         destination=row_dest,
