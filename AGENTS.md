@@ -249,8 +249,9 @@ Pin owned seams, not upstream HTML rewriting. A renamed or dropped JSON key is a
 breaking change. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is
 installed (`mcp>=1.6,<2`).
 
-Stdio MCP: `uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp`,
-or checkout `uv sync --extra mcp` then `viajante-mcp`. No Streamable HTTP. Keep
+Stdio MCP: `npx -y viajante-mcp`, or
+`uvx --from 'viajante[mcp]' viajante-mcp`, or checkout `uv sync --extra mcp`
+then `viajante-mcp`. No Streamable HTTP. Keep
 the one-search process lock: a second search raises
 `a viajante search is already running in this process` immediately.
 `MCP error -32001: Request timed out` is not that lock; do not retry timeouts

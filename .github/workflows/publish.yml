@@ -36,6 +36,22 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv publish
 
+  npm:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Publish npx shim
+        working-directory: npm
+        run: npm publish --access public --provenance
+
   mcp-registry:
     needs: pypi
     runs-on: ubuntu-latest

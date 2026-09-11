@@ -3,6 +3,7 @@
 Flight and hotel search for the terminal, Python, and AI assistants.
 
 [![PyPI](https://img.shields.io/pypi/v/viajante.svg)](https://pypi.org/project/viajante/)
+[![npm](https://img.shields.io/npm/v/viajante.svg)](https://www.npmjs.com/package/viajante)
 [![Tests](https://github.com/felipebasurto/viajante/actions/workflows/test.yml/badge.svg)](https://github.com/felipebasurto/viajante/actions/workflows/test.yml)
 
 Viajante searches Google Flights, Google Hotels, and Booking.com. Use it to
@@ -20,10 +21,12 @@ prices, itinerary details, source text, and links where available.
 
 ## Quick start
 
-Requires **Python 3.10 or later**. Install from PyPI:
+Requires **Python 3.10 or later**. Install from PyPI, or run through npx (still
+needs [`uv`](https://docs.astral.sh/uv/) and Python 3.10+):
 
 ```bash
 pip install viajante
+npx -y viajante airports JFK
 ```
 
 Search for a one-way flight or a hotel stay:
@@ -42,9 +45,22 @@ mode for Google Flights require the optional
 
 ## Connect an AI assistant
 
-Viajante provides a local MCP server over stdio. With
-[`uv`](https://docs.astral.sh/uv/getting-started/installation/) installed, add
-this entry to your assistant's MCP configuration:
+Viajante provides a local MCP server over stdio. Requires
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.10+.
+Add this entry to your assistant's MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "viajante": {
+      "command": "npx",
+      "args": ["-y", "viajante-mcp"]
+    }
+  }
+}
+```
+
+Native Python (no Node):
 
 ```json
 {
@@ -58,7 +74,7 @@ this entry to your assistant's MCP configuration:
 ```
 
 This configuration supports Google Flights and Google Hotels without Chromium.
-Your assistant must be able to find `uvx` on its PATH. If you use an existing
+npx still needs `uvx` (and Python 3.10+) on PATH. If you use an existing
 Python environment instead, install `pip install 'viajante[mcp]'` and configure
 the client to run that environment's `viajante-mcp` executable.
 
