@@ -30,11 +30,15 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Dest triage from a named origin | `search_explore` (`origin`, `start` or `month`) | `viajante explore` |
 | Stay only | `search_hotels` (`location`, `check_in`, `check_out`, `currency`; default source google) | `viajante hotels` (CLI default source Booking) |
 | Flights then hotel | `search_trip` (`routes`, `location`) | `viajante trip` |
-| Hidden-city / Skiplagged (opt-in) | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
+| Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
 
 Do not brute-force a date matrix when dates/flex/explore exist. `search_trip` rejects children/infants (hotel occupancy is adults-only). Omit `trip_total` if either side misses, dates miss, or currencies differ.
+
+## Hidden-city
+
+After a named-route `search_flights` (one origin, one dest, ISO date), if the dest is a hub or leisure trunk (JFK-MIA, LHR-JFK, LAX-CUN, …) or Google looks like a through-fare might undercut (`typical_deal` poor, odd one-stops), call `search_hidden_city` once with the same route and date. Sequential (process lock). Do not mix the two JSON payloads. Lead with `hidden_city: true` rows and the owned warnings. Print owned `ticketed_destination` / `layover_city` when present. Do not treat a hidden fare as a cheaper legal fare until the human opens `booking_url` (do not scrape Skiplagged). Skip explore, dates, flex calendars, multi-city, unproven dests, and any search that named `bags` / a checked bag. `no_results` / `blocked`: stop that Skiplagged leg; do not fill from Google.
 
 ## Hotels: ask once
 
