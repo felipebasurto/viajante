@@ -22,15 +22,16 @@ class NpmShimTests(unittest.TestCase):
         pkg = json.loads((NPM / "package.json").read_text(encoding="utf-8"))
         server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
         version = _pyproject_version()
-        self.assertEqual(pkg["name"], "viajante")
+        self.assertEqual(pkg["name"], "@viajante/mcp")
         self.assertEqual(pkg["version"], version)
         self.assertEqual(server["version"], version)
-        self.assertEqual(pkg["bin"]["viajante"], "./bin/cli.js")
-        self.assertEqual(pkg["bin"]["viajante-mcp"], "./bin/cli.js")
+        self.assertEqual(pkg["bin"]["mcp"], "bin/cli.js")
+        self.assertEqual(pkg["bin"]["viajante"], "bin/cli.js")
+        self.assertEqual(pkg["bin"]["viajante-mcp"], "bin/cli.js")
         self.assertTrue((NPM / "bin" / "cli.js").is_file())
         npm_pkg = next(row for row in server["packages"] if row["registryType"] == "npm")
         pypi_pkg = next(row for row in server["packages"] if row["registryType"] == "pypi")
-        self.assertEqual(npm_pkg["identifier"], "viajante")
+        self.assertEqual(npm_pkg["identifier"], "@viajante/mcp")
         self.assertEqual(npm_pkg["version"], version)
         self.assertEqual(pypi_pkg["version"], version)
 
@@ -39,6 +40,7 @@ class NpmShimTests(unittest.TestCase):
         self.assertIn("viajante[mcp]==${version}", text)
         self.assertIn("viajante==${version}", text)
         self.assertIn('spawn("uvx"', text)
+        self.assertIn('name !== "viajante"', text)
         self.assertNotIn("src/viajante", text)
 
 
