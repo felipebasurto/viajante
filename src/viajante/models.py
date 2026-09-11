@@ -738,6 +738,7 @@ class SearchErrorCode(str, Enum):
     MARKUP_DRIFT = "markup_drift"
     FETCH_FAILED = "fetch_failed"
     BROWSER_UNAVAILABLE = "browser_unavailable"
+    CURRENCY_MISMATCH = "currency_mismatch"
 
 
 @dataclass(frozen=True)

@@ -38,7 +38,7 @@ Do not brute-force a date matrix when dates/flex/explore exist. `search_trip` re
 
 ## Hidden-city
 
-After a named-route `search_flights` (one origin, one dest, ISO date), if the dest is a hub or leisure trunk (JFK-MIA, LHR-JFK, LAX-CUN, …) or Google looks like a through-fare might undercut (`typical_deal` poor, odd one-stops), call `search_hidden_city` once with the same route and date. Sequential (process lock). Do not mix the two JSON payloads. Lead with `hidden_city: true` rows and the owned warnings. Print owned `ticketed_destination` / `layover_city` when present. Do not treat a hidden fare as a cheaper legal fare until the human opens `booking_url` (do not scrape Skiplagged). Skip explore, dates, flex calendars, multi-city, unproven dests, and any search that named `bags` / a checked bag. `no_results` / `blocked`: stop that Skiplagged leg; do not fill from Google.
+After a named-route `search_flights` (one origin, one dest, ISO date), if the dest is a hub or leisure trunk (JFK-MIA, LHR-JFK, LAX-CUN, …) or Google looks like a through-fare might undercut (`typical_deal` poor, odd one-stops), call `search_hidden_city` once with the same route and date. Sequential (process lock). Do not mix the two JSON payloads. Lead with `hidden_city: true` rows and the owned warnings. Print owned `ticketed_destination` / `layover_city` when present. Do not treat a hidden fare as a cheaper legal fare until the human opens `booking_url` (do not scrape Skiplagged). Skip explore, dates, flex calendars, multi-city, unproven dests, and any search that named `bags` / a checked bag. Omit hidden-city `currency` (Skiplagged cards are USD); do not copy a Google/origin EUR keep. `no_results` / `blocked`: stop that Skiplagged leg; do not fill from Google. `currency_mismatch`: omit currency or pass the owned card code in the error (usually USD) and retry once. Do not treat that as an empty market.
 
 ## Hotels: ask once
 
@@ -82,6 +82,7 @@ After Booking, 1–3 finalists may get a browser second opinion (same dates, occ
 | Situation | Action |
 |-----------|--------|
 | `no_results` | Stop. Do not retry. |
+| `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
 | `rejected` | Stop. Check IATA with `lookup_airports`. |
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
 | `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |

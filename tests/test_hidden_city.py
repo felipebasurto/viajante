@@ -253,6 +253,37 @@ class SkiplaggedParseTests(unittest.TestCase):
         self.assertEqual(offers[0].ticketed_destination, "PTY")
         self.assertEqual(offers[0].layover_city, "MIA")
 
+    def test_eur_keep_drops_usd_flight_cards(self) -> None:
+        payload = {
+            "structuredContent": {
+                "flights": [
+                    {
+                        "type": "FlightCard",
+                        "airlines": "Iberia",
+                        "price": {"amount": 622, "currency": "USD"},
+                        "deepLink": "https://skiplagged.com/flights/MAD/MIA/2026-10-15",
+                    }
+                ]
+            }
+        }
+        kept = parse_skiplagged_offers(
+            payload,
+            origin="MAD",
+            destination="MIA",
+            departure_date=FUTURE,
+            currency="EUR",
+        )
+        raw = parse_skiplagged_offers(
+            payload,
+            origin="MAD",
+            destination="MIA",
+            departure_date=FUTURE,
+        )
+        self.assertEqual(kept, ())
+        self.assertEqual(len(raw), 1)
+        self.assertEqual(raw[0].currency, "USD")
+        self.assertEqual(raw[0].price, 622)
+
     def test_one_bad_row_does_not_drop_priced_neighbors(self) -> None:
         class Boom(dict):
             def get(self, key, default=None):  # noqa: ANN001
@@ -288,6 +319,25 @@ class HiddenCitySearchTests(unittest.TestCase):
         self.assertIsNone(report.currency)
         self.assertNotIn("currency", report.to_dict())
 
+    def _rpc_flights(self, flights: list[dict]) -> object:
+        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+            if payload.get("method") == "initialize":
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+                return 200, {"mcp-session-id": "s1"}, body
+            return (
+                200,
+                {},
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {"structuredContent": {"flights": flights}},
+                    }
+                ),
+            )
+
+        return rpc
+
     def test_empty_priced_rows_are_no_results(self) -> None:
         def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
             method = payload.get("method")
@@ -302,6 +352,45 @@ class HiddenCitySearchTests(unittest.TestCase):
         assert report.error is not None
         self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
         self.assertIsNone(report.currency)
+
+    def test_usd_cards_with_eur_keep_are_currency_mismatch(self) -> None:
+        rpc = self._rpc_flights(
+            [
+                {
+                    "type": "FlightCard",
+                    "airlines": "Iberia",
+                    "price": {"amount": 622, "currency": "USD"},
+                    "deepLink": "https://skiplagged.com/flights/MAD/MIA/2026-10-15",
+                }
+            ]
+        )
+        report = search_hidden_city("MAD", "MIA", FUTURE, currency="EUR", rpc=rpc)
+        self.assertEqual(report.offers, ())
+        assert report.error is not None
+        self.assertEqual(report.error.code, SearchErrorCode.CURRENCY_MISMATCH)
+        self.assertNotEqual(report.error.code, SearchErrorCode.NO_RESULTS)
+        self.assertEqual(report.currency, "USD")
+        self.assertIn("USD", report.error.message)
+        self.assertIn("EUR", report.error.message)
+        self.assertIn("does not convert", report.error.message)
+        self.assertEqual(report.to_dict()["error"]["code"], "currency_mismatch")
+        self.assertEqual(report.to_dict()["currency"], "USD")
+
+    def test_empty_rows_with_eur_keep_stay_no_results(self) -> None:
+        rpc = self._rpc_flights([])
+        report = search_hidden_city("MAD", "MIA", FUTURE, currency="EUR", rpc=rpc)
+        self.assertEqual(report.offers, ())
+        assert report.error is not None
+        self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
+        self.assertEqual(report.currency, "EUR")
+
+    def test_usd_keep_still_returns_usd_cards(self) -> None:
+        rpc = self._rpc_flights([{"price": {"amount": 154, "currency": "USD"}, "airline": "Delta"}])
+        report = search_hidden_city("JFK", "MIA", FUTURE, currency="USD", rpc=rpc)
+        self.assertEqual(len(report.offers), 1)
+        self.assertIsNone(report.error)
+        self.assertEqual(report.offers[0].currency, "USD")
+        self.assertEqual(report.currency, "USD")
 
     def test_success_parses_offers(self) -> None:
         def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
@@ -457,6 +546,8 @@ class HiddenCityCliTests(unittest.TestCase):
         self.assertIn("JFK-LHR", help_text)
         self.assertIn("NRT-SIN", help_text)
         self.assertIn("GRU-EZE", help_text)
+        self.assertIn("USD", help_text)
+        self.assertIn("currency_mismatch", help_text)
 
     def test_cli_prints_mocked_offers(self) -> None:
         report = HiddenCityReport(
