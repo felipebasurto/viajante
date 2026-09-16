@@ -288,9 +288,7 @@ class CalendarParseTests(unittest.TestCase):
         """LHR-BKK RT nights=14 bags=1: calendar is Graph+stay, shopping is Results."""
         trip = calendar_trip("LHR", "BKK", date(2026, 11, 6), nights=14, bags=1)
         start, end = date(2026, 11, 6), date(2026, 11, 30)
-        cal_url, _body = build_calendar_request(
-            trip, start, end, currency="GBP", country="GB"
-        )
+        cal_url, _body = build_calendar_request(trip, start, end, currency="GBP", country="GB")
         shop_url, _shop_body = build_shopping_request(trip, currency="GBP", country="GB")
         inner = build_calendar_inner(trip, start, end)
         shop = build_shopping_inner(trip)
