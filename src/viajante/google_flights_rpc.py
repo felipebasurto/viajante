@@ -30,6 +30,10 @@ CALENDAR_GRID_URL = (
     "https://www.google.com/_/FlightsFrontendUi/data/"
     "travel.frontend.flights.FlightsFrontendService/GetCalendarGrid"
 )
+CALENDAR_GRAPH_URL = (
+    "https://www.google.com/_/FlightsFrontendUi/data/"
+    "travel.frontend.flights.FlightsFrontendService/GetCalendarGraph"
+)
 EXPLORE_DESTINATIONS_URL = (
     "https://www.google.com/_/FlightsFrontendUi/data/"
     "travel.frontend.flights.FlightsFrontendService/GetExploreDestinations"
@@ -288,8 +292,20 @@ def build_calendar_inner(
     start: date,
     end: date,
 ) -> list[Any]:
+    """One-way stays on GetCalendarGrid: `[None, constraints, [start, end]]`.
+
+    Packaged RT is GetCalendarGraph: `[window, None, [nights, nights]]` plus a
+    trailing itinerary `1`. Grid with only an outbound window is the one-way
+    shape; Google ErrorResponse-rejects that for RT. A 31-day Grid return
+    window is 31×31 cells (cap 200), so dates/typical cannot use Grid for RT.
+    """
     constraints = build_search_constraints(trip)
-    return [None, constraints, [start.isoformat(), end.isoformat()]]
+    window = [start.isoformat(), end.isoformat()]
+    if not isinstance(trip, RoundTrip):
+        return [None, constraints, window]
+    constraints.append(1)
+    nights = (trip.return_date - trip.departure_date).days
+    return [None, constraints, window, None, [nights, nights]]
 
 
 def build_calendar_request(
@@ -301,7 +317,8 @@ def build_calendar_request(
     currency: str = "EUR",
     country: Optional[str] = None,
 ) -> tuple[str, str]:
-    url = f"{CALENDAR_GRID_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
+    base = CALENDAR_GRAPH_URL if isinstance(trip, RoundTrip) else CALENDAR_GRID_URL
+    url = f"{base}?{urlencode(_rpc_params(html_lang, currency, country))}"
     return url, _rpc_body(build_calendar_inner(trip, start, end))
 
 
