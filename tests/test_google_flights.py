@@ -1970,7 +1970,7 @@ class _MuxFakeSweepClient:
         self.post_many_calls = 0
 
     def _response(self, url: str) -> SweepHttpResponse:
-        if "GetCalendarGrid" in url:
+        if "GetCalendar" in url:
             return SweepHttpResponse(200, self.calendar_text, url)
         return SweepHttpResponse(200, self.shop_text, url)
 

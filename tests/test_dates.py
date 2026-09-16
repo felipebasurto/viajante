@@ -32,7 +32,9 @@ from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactParseMiss,
     build_calendar_inner,
+    build_calendar_request,
     build_shopping_inner,
+    build_shopping_request,
     parse_calendar_body,
 )
 from viajante.models import (
@@ -268,8 +270,11 @@ class CalendarParseTests(unittest.TestCase):
         )
         inner = build_calendar_inner(trip, date(2026, 11, 1), date(2026, 11, 30))
         self.assertEqual(inner[2], ["2026-11-01", "2026-11-30"])
+        self.assertIsNone(inner[3])
+        self.assertEqual(inner[4], [5, 5])
         self.assertEqual(inner[1][2], 1)
         self.assertEqual(inner[1][5], 3)
+        self.assertEqual(inner[1][-1], 1)
         segments = inner[1][13]
         self.assertEqual(len(segments), 2)
         self.assertEqual(segments[0][6], "2026-11-01")
@@ -278,6 +283,38 @@ class CalendarParseTests(unittest.TestCase):
         self.assertEqual(segments[0][1], [[["LHR", 0]]])
         self.assertEqual(segments[1][0], [[["LHR", 0]]])
         self.assertEqual(segments[1][1], [[["BOS", 0]]])
+
+    def test_rt_calendar_request_is_graph_stay_not_one_way_grid(self) -> None:
+        """LHR-BKK RT nights=14 bags=1: calendar is Graph+stay, shopping is Results."""
+        trip = calendar_trip("LHR", "BKK", date(2026, 11, 6), nights=14, bags=1)
+        start, end = date(2026, 11, 6), date(2026, 11, 30)
+        cal_url, _body = build_calendar_request(
+            trip, start, end, currency="GBP", country="GB"
+        )
+        shop_url, _shop_body = build_shopping_request(trip, currency="GBP", country="GB")
+        inner = build_calendar_inner(trip, start, end)
+        shop = build_shopping_inner(trip)
+        self.assertIn("GetCalendarGraph", cal_url)
+        self.assertNotIn("GetCalendarGrid", cal_url)
+        self.assertIn("GetShoppingResults", shop_url)
+        self.assertIn("curr=GBP", cal_url)
+        self.assertIn("gl=GB", cal_url)
+        self.assertEqual(inner[2], ["2026-11-06", "2026-11-30"])
+        self.assertIsNone(inner[3])
+        self.assertEqual(inner[4], [14, 14])
+        self.assertEqual(inner[1][2], shop[1][2])
+        self.assertEqual(inner[1][10], [1, 0])
+        self.assertEqual(inner[1][10], shop[1][10])
+        self.assertEqual(inner[1][13], shop[1][13])
+        self.assertEqual(len(inner[1]), len(shop[1]) + 1)
+        self.assertEqual(inner[1][-1], 1)
+        ow = FlightQuery("LHR", "BKK", date(2026, 11, 6), bags=1)
+        ow_url, _ = build_calendar_request(ow, start, end, currency="GBP", country="GB")
+        ow_inner = build_calendar_inner(ow, start, end)
+        self.assertIn("GetCalendarGrid", ow_url)
+        self.assertNotIn("GetCalendarGraph", ow_url)
+        self.assertEqual(len(ow_inner), 3)
+        self.assertEqual(ow_inner[1][10], [1, 0])
 
 
 class DateSearchTests(unittest.TestCase):
