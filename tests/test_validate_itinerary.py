@@ -68,7 +68,7 @@ def _row(
         "evidence": {
             "evidence_id": evidence_id,
             "source": "google_flights",
-            "query": query,
+            "query": dict(query),
             "retrieved_at": "2026-09-17T10:00:00Z",
             "fetch_backend": "sweep",
             "query_url": "https://example.test/search",
