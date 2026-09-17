@@ -725,16 +725,12 @@ def _offer_completeness(
     )
     return EvidenceCompleteness(
         segment_airports=known(
-            bool(segments)
-            and all(segment.origin and segment.destination for segment in segments)
+            bool(segments) and all(segment.origin and segment.destination for segment in segments)
         ),
         segment_operators=known(bool(segments) and all(segment.airline for segment in segments)),
-        flight_numbers=known(
-            bool(segments) and all(segment.flight_number for segment in segments)
-        ),
+        flight_numbers=known(bool(segments) and all(segment.flight_number for segment in segments)),
         segment_clocks=known(
-            bool(segments)
-            and all(segment.departure and segment.arrival for segment in segments)
+            bool(segments) and all(segment.departure and segment.arrival for segment in segments)
         ),
         layovers=known(layovers_known),
         baggage=known(checked_bags is not None or carry_on is not None),

@@ -114,9 +114,7 @@ def _journey_legs(offer: Mapping[str, object]) -> Optional[tuple[Mapping[str, ob
     value = offer.get("legs")
     if value is None:
         return None
-    return tuple(
-        _mapping(item, role="offer.legs[]") for item in _items(value, role="offer.legs")
-    )
+    return tuple(_mapping(item, role="offer.legs[]") for item in _items(value, role="offer.legs"))
 
 
 def _segments(offer: Mapping[str, object]) -> Optional[tuple[Mapping[str, object], ...]]:
@@ -189,7 +187,7 @@ def _query_binding_check(
 def _route_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
-    for (left, _), (right, _) in zip(selected, selected[1:]):
+    for (left, _), (right, _) in zip(selected, selected[1:], strict=False):
         destination = left.get("destination")
         origin = right.get("origin")
         if not isinstance(destination, str) or not isinstance(origin, str):
@@ -293,7 +291,7 @@ def _segment_airport_check(
 ) -> ConstraintCheck:
     if segments is None:
         return _status("no_airport_changes", "unknown", "segment airports are missing")
-    for left, right in zip(segments, segments[1:]):
+    for left, right in zip(segments, segments[1:], strict=False):
         destination = left.get("destination")
         origin = right.get("origin")
         if not isinstance(destination, str) or not isinstance(origin, str):
@@ -326,7 +324,7 @@ def _operator_check(
                 "a segment operator is missing",
             )
         operators.append(airline.strip().casefold())
-    for left, right in zip(operators, operators[1:]):
+    for left, right in zip(operators, operators[1:], strict=False):
         if left == right:
             return _status(
                 "no_consecutive_same_operator",
@@ -350,18 +348,14 @@ def _overnight_check(
         for journey in journeys:
             raw = journey.get("segments")
             if raw is None:
-                return _status(
-                    "no_overnight", "unknown", "individual segment clocks are missing"
-                )
+                return _status("no_overnight", "unknown", "individual segment clocks are missing")
             segments = tuple(
                 _mapping(item, role="offer.legs[].segments[]")
                 for item in _items(raw, role="offer.legs[].segments")
             )
             if not segments:
-                return _status(
-                    "no_overnight", "unknown", "individual segment clocks are missing"
-                )
-            for inbound, outbound in zip(segments, segments[1:]):
+                return _status("no_overnight", "unknown", "individual segment clocks are missing")
+            for inbound, outbound in zip(segments, segments[1:], strict=False):
                 arrival = inbound.get("arrival")
                 departure = outbound.get("departure")
                 overnight = _overnight_from_owned_clocks(
@@ -370,13 +364,9 @@ def _overnight_check(
                     None,
                 )
                 if overnight is None:
-                    return _status(
-                        "no_overnight", "unknown", "a connection night is not provable"
-                    )
+                    return _status("no_overnight", "unknown", "a connection night is not provable")
                 if overnight:
-                    return _status(
-                        "no_overnight", "fail", "an owned connection crosses a night"
-                    )
+                    return _status("no_overnight", "fail", "an owned connection crosses a night")
     return _status("no_overnight", "pass", "owned connections do not cross a night")
 
 
@@ -570,9 +560,7 @@ def validate_itinerary(
         scenario["no_airport_changes"], role="no_airport_changes"
     ):
         checks.append(_segment_airport_check(segments))
-    if "no_overnight" in scenario and _boolean(
-        scenario["no_overnight"], role="no_overnight"
-    ):
+    if "no_overnight" in scenario and _boolean(scenario["no_overnight"], role="no_overnight"):
         checks.append(_overnight_check(selected))
 
     if "max_stops" in scenario:
