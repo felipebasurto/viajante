@@ -956,9 +956,58 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(result.google_flights_url, expected_query)
         self.assertEqual(result.offers[0].google_flights_url, expected_offer)
         self.assertIn("booking_token=tok", result.offers[0].google_flights_url or "")
+        evidence = result.offers[0].evidence
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertEqual(evidence.query, query.to_dict())
+        self.assertEqual(evidence.fetch_backend, "sweep")
+        self.assertEqual(evidence.query_url, expected_query)
+        self.assertEqual(evidence.offer_url, expected_offer)
+        self.assertEqual(evidence.url_kind, "booking")
+        self.assertTrue(evidence.evidence_id.startswith("gf_"))
         payload = report.to_dict()
         self.assertEqual(payload["queries"][0]["query"]["google_flights_url"], expected_query)
         self.assertEqual(payload["queries"][0]["offers"][0]["google_flights_url"], expected_offer)
+        self.assertEqual(payload["coverage"]["attempted"], 1)
+        self.assertTrue(payload["coverage"]["complete"])
+
+    def test_offer_completeness_does_not_invent_segments(self) -> None:
+        aggregate = _normalize_offer(card(), 1)
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.completeness.segment_airports, "unknown")
+        self.assertEqual(aggregate.completeness.segment_operators, "unknown")
+        self.assertEqual(aggregate.completeness.segment_clocks, "unknown")
+
+        detailed = _normalize_offer(
+            card(
+                legs=(
+                    RawJourneyLeg(
+                        departure="08:00",
+                        arrival="12:00",
+                        segments=(
+                            RawSegment(
+                                origin="JFK",
+                                destination="LHR",
+                                departure="08:00",
+                                arrival="12:00",
+                                airline="BA",
+                                flight_number="BA178",
+                            ),
+                        ),
+                    ),
+                ),
+                checked_bags=1,
+            ),
+            1,
+        )
+        self.assertIsNotNone(detailed)
+        assert detailed is not None
+        self.assertEqual(detailed.completeness.segment_airports, "known")
+        self.assertEqual(detailed.completeness.segment_operators, "known")
+        self.assertEqual(detailed.completeness.flight_numbers, "known")
+        self.assertEqual(detailed.completeness.segment_clocks, "known")
+        self.assertEqual(detailed.completeness.baggage, "known")
 
     def test_search_closes_source(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
@@ -1032,6 +1081,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.fetch_backend, "sweep_then_detail")
         self.assertIsInstance(report.queries[0], QuerySuccess)
         self.assertEqual(report.queries[0].offers[0].airline, "Iberia")
+        self.assertEqual(report.queries[0].offers[0].evidence.fetch_backend, "detail")
         self.assertTrue(any("falling back to detail" in line for line in lines))
         self.assertTrue(sweep.closed)
         self.assertTrue(detail.closed)
