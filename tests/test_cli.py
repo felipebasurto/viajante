@@ -168,7 +168,7 @@ class CliTests(unittest.TestCase):
                     self.assertTrue(out.exists())
                     self.assertFalse(out.with_suffix(".json.tmp").exists())
                     data = json.loads(out.read_text(encoding="utf-8"))
-                    self.assertEqual(data["schema_version"], 1)
+                    self.assertEqual(data["schema_version"], 2)
 
     def test_failed_search_returns_nonzero(self) -> None:
         report = SearchReport(
@@ -1680,7 +1680,7 @@ class HotelCliTests(unittest.TestCase):
                     writer.assert_called_once()
                     self.assertTrue(out.exists())
                     data = json.loads(out.read_text(encoding="utf-8"))
-                    self.assertEqual(data["schema_version"], 1)
+                    self.assertEqual(data["schema_version"], 2)
                     self.assertEqual(data["price_basis"], "total_stay")
 
 

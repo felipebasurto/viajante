@@ -31,6 +31,7 @@ REPORT_KEYS = {
     "vs_typical",
     "fetch_backend",
     "fetch_ms",
+    "coverage",
     "days",
     "offers",
 }
@@ -121,7 +122,7 @@ class FlexJsonContractTests(unittest.TestCase):
         self.assertIsNone(data["vs_typical"])
 
     def test_declared_constants_are_stable(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+        self.assertEqual(self.data["schema_version"], 2)
         self.assertEqual(self.data["currency"], "EUR")
         self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["origin"], "BOS")

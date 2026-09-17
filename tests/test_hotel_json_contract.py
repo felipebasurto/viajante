@@ -139,7 +139,7 @@ class HotelJsonContractTests(unittest.TestCase):
         self.assertEqual(set(failure["error"]), ERROR_KEYS)
 
     def test_declared_constants_are_stable(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+        self.assertEqual(self.data["schema_version"], 2)
         self.assertEqual(self.data["provider"], "booking.com")
         self.assertEqual(self.data["currency"], "EUR")
         self.assertEqual(self.data["locale"], "en")
@@ -164,8 +164,8 @@ class HotelJsonContractTests(unittest.TestCase):
     def test_error_codes_serialise_as_their_string_values(self) -> None:
         self.assertEqual(self.data["queries"][1]["error"]["code"], "fetch_failed")
 
-    def test_schema_version_stays_1(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+    def test_schema_version_is_2(self) -> None:
+        self.assertEqual(self.data["schema_version"], 2)
 
     def test_forbidden_keys_are_absent(self) -> None:
         blob = json.dumps(self.data)
@@ -188,7 +188,7 @@ class HotelJsonContractTests(unittest.TestCase):
         self.assertNotEqual(data["provider"], "booking.com")
         self.assertEqual(data["locale"], "en")
         self.assertEqual(data["price_basis"], "total_stay")
-        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["schema_version"], 2)
 
 
 if __name__ == "__main__":

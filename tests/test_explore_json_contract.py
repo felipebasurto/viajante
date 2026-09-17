@@ -23,6 +23,7 @@ REPORT_KEYS = {
     "days",
     "fetch_backend",
     "fetch_ms",
+    "coverage",
     "destinations",
 }
 REPORT_ERROR_KEYS = REPORT_KEYS | {"error"}
@@ -84,7 +85,7 @@ class ExploreJsonContractTests(unittest.TestCase):
         self.assertEqual(set(self.data["destinations"][0]), DESTINATION_KEYS)
 
     def test_declared_constants_are_stable(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+        self.assertEqual(self.data["schema_version"], 2)
         self.assertEqual(self.data["currency"], "JPY")
         self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["origin"], "NRT")
@@ -93,8 +94,8 @@ class ExploreJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["fetch_backend"], "explore")
         self.assertEqual(self.data["fetch_ms"], 800)
 
-    def test_schema_version_stays_1(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+    def test_schema_version_is_2(self) -> None:
+        self.assertEqual(self.data["schema_version"], 2)
 
     def test_fetch_backend_is_in_the_closed_set(self) -> None:
         self.assertIn(self.data["fetch_backend"], EXPLORE_FETCH_BACKENDS)

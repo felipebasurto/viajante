@@ -538,6 +538,209 @@ class RawJourneyLeg:
         }
 
 
+EvidenceKnowledge = Literal["known", "unknown"]
+UrlEvidenceKind = Literal["booking", "query", "none"]
+ConstraintStatus = Literal["pass", "fail", "unknown"]
+
+
+@dataclass(frozen=True)
+class EvidenceCompleteness:
+    """Facts an agent may safely derive from one owned offer."""
+
+    segment_airports: EvidenceKnowledge = "unknown"
+    segment_operators: EvidenceKnowledge = "unknown"
+    flight_numbers: EvidenceKnowledge = "unknown"
+    segment_clocks: EvidenceKnowledge = "unknown"
+    layovers: EvidenceKnowledge = "unknown"
+    baggage: EvidenceKnowledge = "unknown"
+
+    def to_dict(self) -> Mapping[str, str]:
+        return {
+            "segment_airports": self.segment_airports,
+            "segment_operators": self.segment_operators,
+            "flight_numbers": self.flight_numbers,
+            "segment_clocks": self.segment_clocks,
+            "layovers": self.layovers,
+            "baggage": self.baggage,
+        }
+
+
+@dataclass(frozen=True)
+class OfferEvidence:
+    """Immutable provenance copied with an offer when it leaves its report."""
+
+    evidence_id: str
+    query: Mapping[str, object]
+    retrieved_at: datetime
+    fetch_backend: Optional[str]
+    query_url: Optional[str]
+    offer_url: Optional[str]
+    url_kind: UrlEvidenceKind
+    source: Literal["google_flights"] = "google_flights"
+
+    def __post_init__(self) -> None:
+        if not self.evidence_id.strip():
+            raise ValueError("evidence_id is required")
+        if self.url_kind == "booking" and not self.offer_url:
+            raise ValueError("booking URL evidence needs an offer_url")
+        if self.url_kind == "query" and not self.query_url:
+            raise ValueError("query URL evidence needs a query_url")
+        if self.url_kind == "none" and (self.query_url or self.offer_url):
+            raise ValueError("none URL evidence cannot carry a URL")
+
+    def to_dict(self) -> Mapping[str, object]:
+        retrieved_at = self.retrieved_at
+        if retrieved_at.tzinfo is not None:
+            retrieved_at = retrieved_at.astimezone(timezone.utc).replace(tzinfo=None)
+        return {
+            "evidence_id": self.evidence_id,
+            "source": self.source,
+            "query": dict(self.query),
+            "retrieved_at": retrieved_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "fetch_backend": self.fetch_backend,
+            "query_url": self.query_url,
+            "offer_url": self.offer_url,
+            "url_kind": self.url_kind,
+        }
+
+
+@dataclass(frozen=True)
+class SearchCoverage:
+    """Completion within one declared finite scope, never a global proof."""
+
+    scope: Mapping[str, object]
+    attempted: int
+    succeeded: int
+    empty: int
+    failed: int
+    complete: bool
+
+    def __post_init__(self) -> None:
+        counts = (self.attempted, self.succeeded, self.empty, self.failed)
+        if any(value < 0 for value in counts):
+            raise ValueError("coverage counts must not be negative")
+        if self.succeeded + self.empty + self.failed != self.attempted:
+            raise ValueError("coverage outcomes must equal attempted")
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "scope": dict(self.scope),
+            "attempted": self.attempted,
+            "succeeded": self.succeeded,
+            "empty": self.empty,
+            "failed": self.failed,
+            "complete": self.complete,
+        }
+
+
+@dataclass(frozen=True)
+class ConstraintCheck:
+    constraint: str
+    status: ConstraintStatus
+    detail: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.constraint.strip():
+            raise ValueError("constraint name is required")
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "constraint": self.constraint,
+            "status": self.status,
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class ItineraryValidationReport:
+    validated_at: datetime
+    scenario: Mapping[str, object]
+    checks: Tuple[ConstraintCheck, ...]
+    legs: Tuple[Mapping[str, object], ...]
+    feasible: Optional[bool]
+    currency: Optional[str]
+    fare_total: Optional[float]
+    ranked_total: Optional[float]
+    offer_row_count: int
+    journey_leg_count: int
+    segment_count: Optional[int]
+    trip_span_days: Optional[int]
+    violations: Tuple[str, ...] = ()
+    unknown: Tuple[str, ...] = ()
+    relaxations: Tuple[Mapping[str, object], ...] = ()
+    schema_version: int = field(init=False, default=2)
+
+    def __post_init__(self) -> None:
+        if min(self.offer_row_count, self.journey_leg_count) < 0:
+            raise ValueError("itinerary counts must not be negative")
+        if self.segment_count is not None and self.segment_count < 0:
+            raise ValueError("segment_count must not be negative")
+        if self.trip_span_days is not None and self.trip_span_days < 0:
+            raise ValueError("trip_span_days must not be negative")
+        statuses = {check.status for check in self.checks}
+        expected = False if "fail" in statuses else None if "unknown" in statuses else True
+        if self.feasible is not expected:
+            raise ValueError("feasible must aggregate check statuses")
+
+    def to_dict(self) -> Mapping[str, object]:
+        validated_at = self.validated_at
+        if validated_at.tzinfo is not None:
+            validated_at = validated_at.astimezone(timezone.utc).replace(tzinfo=None)
+        return {
+            "schema_version": self.schema_version,
+            "validated_at": validated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "scenario": dict(self.scenario),
+            "relaxations": [dict(item) for item in self.relaxations],
+            "feasible": self.feasible,
+            "currency": self.currency,
+            "fare_total": self.fare_total,
+            "ranked_total": self.ranked_total,
+            "offer_row_count": self.offer_row_count,
+            "journey_leg_count": self.journey_leg_count,
+            "segment_count": self.segment_count,
+            "trip_span_days": self.trip_span_days,
+            "violations": list(self.violations),
+            "unknown": list(self.unknown),
+            "checks": [check.to_dict() for check in self.checks],
+            "legs": [dict(leg) for leg in self.legs],
+        }
+
+
+def _offer_completeness(
+    legs: Sequence[RawJourneyLeg],
+    *,
+    stops_count: Optional[int],
+    checked_bags: Optional[int],
+    carry_on: Optional[int],
+) -> EvidenceCompleteness:
+    segments = tuple(segment for leg in legs for segment in leg.segments)
+
+    def known(predicate: bool) -> EvidenceKnowledge:
+        return "known" if predicate else "unknown"
+
+    layovers_known = stops_count == 0 or (
+        stops_count is not None
+        and stops_count > 0
+        and sum(len(leg.layovers) for leg in legs) >= stops_count
+    )
+    return EvidenceCompleteness(
+        segment_airports=known(
+            bool(segments)
+            and all(segment.origin and segment.destination for segment in segments)
+        ),
+        segment_operators=known(bool(segments) and all(segment.airline for segment in segments)),
+        flight_numbers=known(
+            bool(segments) and all(segment.flight_number for segment in segments)
+        ),
+        segment_clocks=known(
+            bool(segments)
+            and all(segment.departure and segment.arrival for segment in segments)
+        ),
+        layovers=known(layovers_known),
+        baggage=known(checked_bags is not None or carry_on is not None),
+    )
+
+
 @dataclass(frozen=True)
 class FlightOffer:
     airline: Optional[str]
@@ -564,6 +767,8 @@ class FlightOffer:
     cheapest: Optional[float] = None
     checked_bags: Optional[int] = None
     carry_on: Optional[int] = None
+    evidence: Optional[OfferEvidence] = None
+    completeness: Optional[EvidenceCompleteness] = None
 
     def __post_init__(self) -> None:
         if self.price <= 0:
@@ -610,6 +815,17 @@ class FlightOffer:
                     ),
                 ),
             )
+        if self.completeness is None:
+            object.__setattr__(
+                self,
+                "completeness",
+                _offer_completeness(
+                    self.legs,
+                    stops_count=self.stops_count,
+                    checked_bags=self.checked_bags,
+                    carry_on=self.carry_on,
+                ),
+            )
 
     def typical_deal(self, currency: str = "EUR") -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
@@ -638,6 +854,8 @@ class FlightOffer:
             "baggage_buffer": self.baggage_buffer,
             "needs_bag_verify": self.needs_bag_verify,
             "legs": [leg.to_dict() for leg in self.legs],
+            "evidence": self.evidence.to_dict() if self.evidence else None,
+            "completeness": self.completeness.to_dict() if self.completeness else None,
         }
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
@@ -805,6 +1023,23 @@ QueryResult = Union[QuerySuccess, QueryFailure]
 FetchBackend = Literal["sweep", "detail", "sweep_then_detail"]
 
 
+def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
+    succeeded = sum(isinstance(result, QuerySuccess) for result in results)
+    empty = sum(
+        isinstance(result, QueryFailure) and result.error.code == SearchErrorCode.NO_RESULTS
+        for result in results
+    )
+    failed = len(results) - succeeded - empty
+    return SearchCoverage(
+        scope={"kind": "submitted_queries", "size": len(results)},
+        attempted=len(results),
+        succeeded=succeeded,
+        empty=empty,
+        failed=failed,
+        complete=True,
+    )
+
+
 @dataclass(frozen=True)
 class SearchReport:
     searched_at: datetime
@@ -813,7 +1048,8 @@ class SearchReport:
     currency: str = "EUR"
     fetch_backend: Optional[FetchBackend] = None
     fetch_ms: Optional[int] = None
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.searched_at.tzinfo is not None:
@@ -822,6 +1058,8 @@ class SearchReport:
                 "searched_at",
                 self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
             )
+        if self.coverage is None:
+            object.__setattr__(self, "coverage", _query_coverage(self.queries))
 
     def to_dict(self) -> Mapping[str, object]:
         return {
@@ -831,6 +1069,7 @@ class SearchReport:
             "locale": self.locale,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "queries": [
                 result.to_dict(currency=self.currency)
                 if isinstance(result, QuerySuccess)
@@ -984,7 +1223,8 @@ class DateCalendarReport:
     google_flights_url: Optional[str] = None
     nearby_label: Optional[str] = None
     summary: Optional[DateCalendarSummary] = field(init=False, default=None)
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.searched_at.tzinfo is not None:
@@ -1006,6 +1246,27 @@ class DateCalendarReport:
             "days",
             tuple(_stamp_date_row_typical(row, typical) for row in self.days),
         )
+        if self.coverage is None:
+            succeeded = sum(row.status == "ok" and row.price is not None for row in self.days)
+            empty = sum(row.status == "empty" for row in self.days)
+            failed = len(self.days) - succeeded - empty
+            expected = (self.end_date - self.start_date).days + 1
+            object.__setattr__(
+                self,
+                "coverage",
+                SearchCoverage(
+                    scope={
+                        "kind": "date_window",
+                        "from": self.start_date.isoformat(),
+                        "to": self.end_date.isoformat(),
+                    },
+                    attempted=len(self.days),
+                    succeeded=succeeded,
+                    empty=empty,
+                    failed=failed,
+                    complete=len({row.departure_date for row in self.days}) == expected,
+                ),
+            )
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -1020,6 +1281,7 @@ class DateCalendarReport:
             "trip": self.trip,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "days": [row.to_dict(self.currency) for row in self.days],
         }
         if self.nights is not None:
@@ -1061,7 +1323,8 @@ class FlexSearchReport:
     google_flights_url: Optional[str] = None
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.flex_days < 1:
@@ -1080,6 +1343,28 @@ class FlexSearchReport:
             )
         label = self.nearby_label.strip() if self.nearby_label else None
         object.__setattr__(self, "nearby_label", label or None)
+        if self.coverage is None:
+            succeeded = sum(row.status == "ok" and row.price is not None for row in self.days)
+            empty = sum(row.status == "empty" for row in self.days)
+            failed = len(self.days) - succeeded - empty
+            expected = (self.end_date - self.start_date).days + 1
+            object.__setattr__(
+                self,
+                "coverage",
+                SearchCoverage(
+                    scope={
+                        "kind": "flex_window",
+                        "around": self.around.isoformat(),
+                        "from": self.start_date.isoformat(),
+                        "to": self.end_date.isoformat(),
+                    },
+                    attempted=len(self.days),
+                    succeeded=succeeded,
+                    empty=empty,
+                    failed=failed,
+                    complete=len({row.departure_date for row in self.days}) == expected,
+                ),
+            )
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -1099,6 +1384,7 @@ class FlexSearchReport:
             "vs_typical": self.vs_typical,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "days": [row.to_dict(self.currency) for row in self.days],
             "offers": [offer.to_dict(self.currency) for offer in self.offers],
         }
@@ -1184,7 +1470,8 @@ class ExploreReport:
     google_flights_url: Optional[str] = None
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.searched_at.tzinfo is not None:
@@ -1195,6 +1482,26 @@ class ExploreReport:
             )
         label = self.nearby_label.strip() if self.nearby_label else None
         object.__setattr__(self, "nearby_label", label or None)
+        if self.coverage is None:
+            succeeded = sum(row.price is not None for row in self.destinations)
+            empty = len(self.destinations) - succeeded
+            object.__setattr__(
+                self,
+                "coverage",
+                SearchCoverage(
+                    scope={
+                        "kind": "explore_shortlist",
+                        "origin": self.origin,
+                        "from": self.start_date.isoformat(),
+                        "days": self.days,
+                    },
+                    attempted=len(self.destinations),
+                    succeeded=succeeded,
+                    empty=empty,
+                    failed=0,
+                    complete=False,
+                ),
+            )
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -1207,6 +1514,7 @@ class ExploreReport:
             "days": self.days,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "destinations": [row.to_dict(self.currency) for row in self.destinations],
         }
         if self.google_flights_url:
@@ -1408,7 +1716,7 @@ class HotelSearchReport:
     queries: Tuple[HotelQueryResult, ...]
     locale: str = FETCH_LANGUAGE
     currency: str = "EUR"
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
     provider: HotelProvider = "booking.com"
     price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
     fetch_backend: Optional[HotelFetchBackend] = None
@@ -1477,7 +1785,7 @@ class TripSearchReport:
     locale: str = FETCH_LANGUAGE
     currency: str = "EUR"
     fetch_ms: Optional[int] = None
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.searched_at.tzinfo is not None:
@@ -1603,7 +1911,7 @@ class HiddenCityReport:
     warnings: Tuple[str, ...] = HIDDEN_CITY_WARNINGS
     source: str = HIDDEN_CITY_SOURCE
     locale: str = FETCH_LANGUAGE
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -1792,7 +2100,7 @@ class AwardCompareReport:
     currency: Optional[str] = None
     cpp_cents: Optional[float] = None
     locale: str = FETCH_LANGUAGE
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.cash_price is not None:

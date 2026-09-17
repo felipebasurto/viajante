@@ -25,6 +25,7 @@ REPORT_KEYS = {
     "trip",
     "fetch_backend",
     "fetch_ms",
+    "coverage",
     "days",
 }
 RT_REPORT_KEYS = REPORT_KEYS | {"nights"}
@@ -95,7 +96,7 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(set(failed["error"]), ERROR_KEYS)
 
     def test_declared_constants_are_stable(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+        self.assertEqual(self.data["schema_version"], 2)
         self.assertEqual(self.data["currency"], "USD")
         self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["origin"], "JFK")
@@ -107,8 +108,8 @@ class DatesJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["fetch_backend"], "calendar")
         self.assertEqual(self.data["fetch_ms"], 1200)
 
-    def test_schema_version_stays_1(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+    def test_schema_version_is_2(self) -> None:
+        self.assertEqual(self.data["schema_version"], 2)
 
     def test_fetch_backend_is_in_the_closed_set(self) -> None:
         self.assertIn(self.data["fetch_backend"], DATE_FETCH_BACKENDS)

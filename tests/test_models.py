@@ -283,7 +283,7 @@ class ModelTests(unittest.TestCase):
             ),
         )
         data = report.to_dict()
-        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["schema_version"], 2)
         self.assertEqual(data["currency"], "EUR")
         self.assertEqual(data["locale"], "en")
         self.assertEqual(data["queries"][0]["status"], "error")
@@ -572,7 +572,7 @@ class HotelModelTests(unittest.TestCase):
             ),
         )
         data = report.to_dict()
-        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["schema_version"], 2)
         self.assertEqual(data["provider"], "booking.com")
         self.assertEqual(data["currency"], "EUR")
         self.assertEqual(data["locale"], "en")

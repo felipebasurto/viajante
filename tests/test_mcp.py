@@ -34,7 +34,7 @@ PAST = (date.today() - timedelta(days=1)).isoformat()
 def _report(**payload: object) -> MagicMock:
     report = MagicMock()
     report.to_dict.return_value = {
-        "schema_version": 1,
+        "schema_version": 2,
         **payload,
     }
     return report
@@ -63,7 +63,7 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             payload = search_flights_tool([f"JFK-LHR:{FUTURE}"], top=3)
         search.assert_called_once()
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertIn("queries", payload)
         self.assertNotIn("success", payload)
         self.assertNotIn("flights", payload)
@@ -244,7 +244,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["infants_on_lap"], 0)
         self.assertEqual(kwargs["currency"], "USD")
         self.assertIsNone(kwargs["country"])
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertIsNone(kwargs.get("sort"))
 
     def test_search_dates_forwards_named_sort(self) -> None:
@@ -559,7 +559,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["adults"], 2)
         self.assertEqual(search.call_args.kwargs["cabin"], "business")
         self.assertEqual(search.call_args.kwargs["max_stops"], 0)
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertNotIn("success", payload)
         self.assertIsNone(search.call_args.kwargs["bags"])
         self.assertIsNone(search.call_args.kwargs["via"])
@@ -720,7 +720,7 @@ class McpHandlerTests(unittest.TestCase):
                 rooms=1,
             )
         search.assert_called_once()
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertIn("flights", payload)
         self.assertIn("hotels", payload)
         self.assertEqual(payload["hotels"]["price_basis"], "total_stay")
