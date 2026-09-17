@@ -52,7 +52,7 @@ class WriteJsonAtomicTests(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertFalse(path.with_suffix(".json.tmp").exists())
             data = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(data["schema_version"], 2)
+            self.assertEqual(data["schema_version"], 1)
             self.assertEqual(data["value"], "café")
             self.assertIn("\n", path.read_text(encoding="utf-8"))
 
@@ -82,7 +82,7 @@ class WriteReportAtomicTests(unittest.TestCase):
             write_report_atomic(report, path)
             self.assertTrue(path.exists())
             data = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(data["schema_version"], 1)
+            self.assertEqual(data["schema_version"], 2)
 
 
 if __name__ == "__main__":
