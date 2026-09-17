@@ -1,6 +1,6 @@
 ---
 name: viajante
-description: Search live Google Flights and hotel prices locally with the viajante CLI or MCP (search_flights, search_dates, search_flex, search_explore, search_hotels, search_trip, lookup_airports, search_hidden_city, compare_awards, lookup_transfers). Use when the user asks about flights, hotels, trip totals, cheapest week, flexible dates, destination triage, hidden-city/Skiplagged, award points math, or how to configure viajante MCP. No API keys. Never invent fares.
+description: Search live Google Flights and hotel prices locally with the viajante CLI or MCP (search_flights, search_dates, search_flex, search_explore, search_hotels, search_trip, lookup_airports, search_hidden_city, compare_awards, lookup_transfers, validate_itinerary). Use when the user asks about flights, hotels, trip totals, cheapest week, flexible dates, destination triage, hidden-city/Skiplagged, award points math, itinerary validation, or how to configure viajante MCP. No API keys. Never invent fares.
 ---
 
 # viajante
@@ -33,6 +33,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
+| Validate selected flight offers (local) | `validate_itinerary` (`legs`, `constraints`) | — |
 
 Do not brute-force a date matrix when dates/flex/explore exist. `search_trip` rejects children/infants (hotel occupancy is adults-only). Omit `trip_total` if either side misses, dates miss, or currencies differ.
 
@@ -77,13 +78,38 @@ Only values returned by a Viajante payload are search evidence. Do not use a man
 
 After Booking, 1–3 finalists may get a browser second opinion (same dates, occupancy, visible total). Do not write those into `--save` JSON.
 
+## Itinerary assembly: PASS / FAIL / UNKNOWN
+
+Preserve each selected offer's exact `query`, `price`, `price_text`, currency, occupancy,
+bag request, and `evidence`. Never move a fare to another date, infer the reverse fare,
+or invent a routing, operator, flight number, bag inclusion, or missing leg.
+
+Do not use `blocked`, `rejected`, `markup_drift`, `fetch_failed`, or estimated rows in a
+verified itinerary. `needs_bag_verify` means baggage is **UNKNOWN**, not included. An
+empty `segments` array makes segment count, connection airports, per-segment clocks,
+operators, and overnight checks **UNKNOWN**. A comparative rule such as “unless it
+saves N” is **UNKNOWN** without two owned comparison candidates.
+
+Call `validate_itinerary` before saying an assembled itinerary is compliant:
+
+- **PASS**: the validator has owned evidence for the named constraint and it satisfies it.
+- **FAIL**: owned evidence contradicts the constraint; do not present the candidate as feasible.
+- **UNKNOWN**: required evidence is missing; stop at that leg and name the missing query or field.
+
+Include the owned `google_flights_url` when claiming query evidence. A query URL
+reproduces the request, not guaranteed live fare availability. Words such as
+“optimal”, “only”, “unavoidable”, and “exhaustive” require a declared finite search
+scope whose `coverage.complete` is true. Otherwise say “not found in the tested scope.”
+Relaxed dates or constraints are a separate scenario and never make the original
+scenario compliant.
+
 ## Recovery
 
 | Situation | Action |
 |-----------|--------|
 | `no_results` | Stop. Do not retry. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
-| `rejected` | Stop. Check IATA with `lookup_airports`. |
+| `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
 | `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
 | `search_hidden_city` `blocked` / fetch failed | Stop. Do not treat a Google Flights tab as Skiplagged evidence. Wait 30–60 minutes. |

@@ -64,7 +64,8 @@ currency_mismatch (owned quote stamped), not no_results. No FX.
 compare_awards is local points math from a named offer; it does not invent seats.
 lookup_transfers is a local partner table, not live award inventory.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
-owned v2 offer evidence and never fills missing segment, baggage, or fare facts.
+owned v2 offer evidence; unknown evidence never becomes pass. It never fills
+missing segment, baggage, or fare facts.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante

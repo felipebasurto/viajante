@@ -40,6 +40,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
+- Offline evidence-bound itinerary validation: `src/viajante/validate.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
 
 `google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
@@ -47,8 +48,8 @@ the agent contract: where to edit, traps, and what must not be invented.
 ## Public contract
 
 CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hidden_city`, `compare_awards`, `lookup_transfers`.
-Library: `get_flights` (route spec, trips, or NL via `plan_prompt`), plus the `search_*` functions. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award` / `lookup_transfers` are local and do not invent seats.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`.
+Library: `get_flights` (route spec, trips, or NL via `plan_prompt`), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, and `validate_itinerary` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
@@ -79,6 +80,14 @@ rows use the full triple. Stamp rules live with the search loops (`flights.py`,
 catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
+
+Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.
+The URL evidence reproduces a query, not guaranteed current fare availability.
+Empty segments cannot prove segment count, operators, clocks, airport changes,
+or overnight constraints. Run `validate_itinerary` before calling an assembled
+route compliant. A fail is infeasible; unknown never becomes pass. Relaxed
+constraints are a separate scenario. Search `coverage` is bounded to its named
+scope and is not proof over unsearched routes, dates, gateways, or permutations.
 
 `--nearby` is opt-in same-city IATA (default off; open-jaw not rewritten; no
 invented codes). `--exclude-airports` / `--include-airports` are named owned
