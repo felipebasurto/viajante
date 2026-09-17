@@ -388,7 +388,7 @@ SHOPPING_POST_HEADERS = {
 def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
+            "Google Flights rejected this query; the provider did not identify the cause."
         )
     payload = _first_wrb_data(text)
     if payload is None:
@@ -892,7 +892,7 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
 def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
+            "Google Flights rejected this query; the provider did not identify the cause."
         )
     payload = _first_wrb_data(text)
     if payload is None:
@@ -916,7 +916,7 @@ def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
 def parse_explore_body(text: str) -> tuple[CompactExplorePlace, ...]:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this origin or date (unknown airport or invalid query)."
+            "Google Flights rejected this query; the provider did not identify the cause."
         )
     payload = _first_wrb_data(text)
     if payload is None:

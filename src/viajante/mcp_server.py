@@ -22,6 +22,7 @@ from viajante.mcp_handlers import (
     search_hidden_city_tool,
     search_hotels_tool,
     search_trip_tool,
+    validate_itinerary_tool,
 )
 
 _T = TypeVar("_T")
@@ -40,12 +41,12 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_trip, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers.
+compare_awards, lookup_transfers, validate_itinerary.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
-or retry them 8×60s. lookup_airports, compare_awards, and lookup_transfers may
-run during a search.
+or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers, and
+validate_itinerary may run during a search.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
@@ -62,6 +63,9 @@ Google/origin EUR keep. A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
 compare_awards is local points math from a named offer; it does not invent seats.
 lookup_transfers is a local partner table, not live award inventory.
+validate_itinerary is local and offline. It returns pass, fail, or unknown from
+owned v2 offer evidence; unknown evidence never becomes pass. It never fills
+missing segment, baggage, or fare facts.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -675,6 +679,26 @@ def build_server():
                 program,
                 points,
                 balances=balances,
+            )
+        )
+
+    @server.tool()
+    async def validate_itinerary(
+        legs: list[dict],
+        constraints: dict,
+        currency: str | None = None,
+    ) -> dict:
+        """Validate selected v2 flight offers locally without fetching.
+
+        Each leg must preserve its exact query and one selected offer. The
+        result is tri-state: unknown evidence never becomes pass.
+        """
+        return dict(
+            await run_lookup_tool(
+                validate_itinerary_tool,
+                legs,
+                constraints,
+                currency=currency,
             )
         )
 

@@ -16,6 +16,7 @@ from viajante.flights import (
     _clock_minutes,
     _normalize_offer,
     _rank_offers,
+    _stamp_offer_evidence,
     classify_failure,
     compare_nonstop_vs_one_stop,
     drop_excluded_airport_trips,
@@ -38,6 +39,7 @@ from viajante.models import (
     FlightCabin,
     FlightOffer,
     FlightQuery,
+    QuerySuccess,
     RoundTrip,
     SearchError,
     SearchErrorCode,
@@ -312,8 +314,9 @@ def _stamp_offer_urls(
     *,
     currency: str,
     country: Optional[str],
+    retrieved_at: datetime,
 ) -> Tuple[FlightOffer, ...]:
-    return tuple(
+    stamped = tuple(
         replace(
             offer,
             google_flights_url=_stamp_trip_google_flights_url(
@@ -325,6 +328,20 @@ def _stamp_offer_urls(
         )
         for offer in offers
     )
+    query_url = _stamp_trip_google_flights_url(trip, currency=currency, country=country)
+    result = _stamp_offer_evidence(
+        QuerySuccess(
+            query=trip,
+            raw_count=len(stamped),
+            eligible_count=len(stamped),
+            offers=stamped,
+            google_flights_url=query_url,
+        ),
+        retrieved_at=retrieved_at,
+        fetch_backend="sweep",
+        currency=currency,
+    )
+    return result.offers
 
 
 def calendar_trip(
@@ -901,11 +918,18 @@ def _flex_report_for_seed(
     fare = min((offer.price for offer in offers), default=None)
     label = vs_typical(fare, typical) if fare is not None else None
     url_trip = shop or _day_trip(seed, chosen or around, stay)
+    searched_at = datetime.now(timezone.utc)
     if offers:
-        offers = _stamp_offer_urls(url_trip, offers, currency=currency, country=country)
+        offers = _stamp_offer_urls(
+            url_trip,
+            offers,
+            currency=currency,
+            country=country,
+            retrieved_at=searched_at,
+        )
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return FlexSearchReport(
-        searched_at=datetime.now(timezone.utc),
+        searched_at=searched_at,
         origin=seed.origin,
         destination=seed.destination,
         around=around,
@@ -1191,7 +1215,7 @@ def _row_from_day_error(
     returning: Optional[date],
 ) -> DatePriceRow:
     error = classify_failure(exc)
-    if error.code in {SearchErrorCode.NO_RESULTS, SearchErrorCode.REJECTED}:
+    if error.code == SearchErrorCode.NO_RESULTS:
         return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
     return DatePriceRow(
         departure_date=cursor,

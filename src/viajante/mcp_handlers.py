@@ -45,6 +45,7 @@ from viajante.quote import (
 )
 from viajante.skiplagged import search_hidden_city
 from viajante.trip import search_trip, stay_window_from_trips
+from viajante.validate import validate_itinerary
 
 _SEARCH_LOCK = threading.Lock()
 
@@ -670,3 +671,12 @@ def lookup_transfers_tool(
         "points": points,
         "transfer_paths": [path.to_dict() for path in paths],
     }
+
+
+def validate_itinerary_tool(
+    legs: Sequence[Mapping[str, object]],
+    constraints: Mapping[str, object],
+    *,
+    currency: Optional[str] = None,
+) -> Mapping[str, object]:
+    return dict(validate_itinerary(legs, constraints, currency=currency).to_dict())

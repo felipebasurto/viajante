@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import re
 import time
@@ -31,6 +33,7 @@ from viajante.models import (
     FlightOffer,
     FlightQuery,
     MultiCity,
+    OfferEvidence,
     QueryFailure,
     QueryResult,
     QuerySuccess,
@@ -102,7 +105,7 @@ LOW_COST_NAMES = [
 ]
 
 NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
-REJECTED_MESSAGE = "Google Flights rejected this route or date (unknown airport or invalid query)."
+REJECTED_MESSAGE = "Google Flights rejected this query; the provider did not identify the cause."
 
 FlightSort = Literal["ranked", "fare", "price", "duration", "departure", "arrival"]
 _CLOCK_TOKEN = re.compile(
@@ -1602,6 +1605,79 @@ def _stamp_google_flights_urls(
     return replace(result, google_flights_url=query_url)
 
 
+def _stamp_offer_evidence(
+    result: QueryResult,
+    *,
+    retrieved_at: datetime,
+    fetch_backend: Optional[FetchBackend],
+    currency: str,
+) -> QueryResult:
+    if not isinstance(result, QuerySuccess):
+        return result
+    query = result.query.to_dict()
+    offers: list[FlightOffer] = []
+    for offer in result.offers:
+        offer_data = dict(offer.to_dict(currency))
+        offer_data.pop("evidence", None)
+        canonical = json.dumps(
+            {"query": query, "currency": currency, "offer": offer_data},
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        query_url = result.google_flights_url
+        offer_url = offer.google_flights_url
+        if offer.booking_token and offer_url:
+            url_kind = "booking"
+        elif query_url:
+            url_kind = "query"
+        else:
+            url_kind = "none"
+        offers.append(
+            replace(
+                offer,
+                evidence=OfferEvidence(
+                    evidence_id=f"gf_{hashlib.sha256(canonical).hexdigest()[:24]}",
+                    query=query,
+                    currency=currency,
+                    retrieved_at=retrieved_at,
+                    fetch_backend=fetch_backend,
+                    query_url=query_url,
+                    offer_url=offer_url,
+                    url_kind=url_kind,
+                ),
+            )
+        )
+    return replace(result, offers=tuple(offers))
+
+
+def _report_with_evidence(
+    results: Sequence[QueryResult],
+    *,
+    searched_at: datetime,
+    locale: str,
+    currency: str,
+    fetch_backend: Optional[FetchBackend],
+    fetch_ms: Optional[int],
+) -> SearchReport:
+    return SearchReport(
+        searched_at=searched_at,
+        queries=tuple(
+            _stamp_offer_evidence(
+                result,
+                retrieved_at=searched_at,
+                fetch_backend=fetch_backend,
+                currency=currency,
+            )
+            for result in results
+        ),
+        locale=locale,
+        currency=currency,
+        fetch_backend=fetch_backend,
+        fetch_ms=fetch_ms,
+    )
+
+
 def _stamp_typical(
     trip: Trip,
     offers: Tuple[FlightOffer, ...],
@@ -1799,9 +1875,10 @@ def _run_search(
                     )
                     continue
                 results.append(_search_one(trip, start_attempt=1))
-            return SearchReport(
-                searched_at=now(),
-                queries=tuple(results),
+            searched_at = now()
+            return _report_with_evidence(
+                results,
+                searched_at=searched_at,
                 locale=locale,
                 currency=currency,
                 fetch_backend=fetch_backend,
@@ -1813,9 +1890,10 @@ def _run_search(
         results.append(_search_one(trip))
         if index + 1 < len(trips):
             sleep(inter_query_delay(random_gen))
-    return SearchReport(
-        searched_at=now(),
-        queries=tuple(results),
+    searched_at = now()
+    return _report_with_evidence(
+        results,
+        searched_at=searched_at,
         locale=locale,
         currency=currency,
         fetch_backend=fetch_backend,
@@ -1832,6 +1910,7 @@ def _search_with_source(
     progress: Optional[Callable[[str], None]],
     sort: FlightSort,
     inter_query_delay: Callable[[random.Random], float],
+    fetch_backend: FetchBackend,
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
@@ -1858,6 +1937,7 @@ def _search_with_source(
             progress=progress,
             locale=source.config.html_lang,
             currency=source.config.currency,
+            fetch_backend=fetch_backend,
             sort=sort,
             inter_query_delay=inter_query_delay,
             max_layover_hours=max_layover_hours,
@@ -2166,6 +2246,7 @@ def search_flights(
         *,
         source: _FlightSource,
         inter_query_delay: Callable[[random.Random], float],
+        fetch_backend: FetchBackend,
         retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
     ) -> SearchReport:
         return _search_with_source(
@@ -2176,6 +2257,7 @@ def search_flights(
             progress=progress,
             sort=sort,
             inter_query_delay=inter_query_delay,
+            fetch_backend=fetch_backend,
             max_layover_hours=max_layover_hours,
             min_layover_hours=min_layover_hours,
             max_duration_hours=max_duration_hours,
@@ -2197,6 +2279,7 @@ def search_flights(
         trips,
         source=source,
         inter_query_delay=delay,
+        fetch_backend=planned,
         retry_backoff=backoff,
     )
     backend: FetchBackend = planned
@@ -2211,6 +2294,7 @@ def search_flights(
                 retry_trips,
                 source=GoogleFlightsSource(default_state_dir(), currency=currency, country=country),
                 inter_query_delay=inter_query_delay_seconds,
+                fetch_backend="detail",
             )
             merged = list(report.queries)
             for index, detail_result in zip(retry_indexes, detail_report.queries, strict=True):

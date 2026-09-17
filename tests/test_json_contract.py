@@ -29,6 +29,7 @@ REPORT_KEYS = {
     "locale",
     "fetch_backend",
     "fetch_ms",
+    "coverage",
     "queries",
 }
 QUERY_KEYS = {
@@ -63,6 +64,8 @@ OFFER_KEYS = {
     "baggage_buffer",
     "needs_bag_verify",
     "legs",
+    "evidence",
+    "completeness",
 }
 ERROR_KEYS = {"code", "message"}
 STOPS_COMPARE_SIDE_KEYS = {
@@ -165,7 +168,7 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(set(failure["error"]), ERROR_KEYS)
 
     def test_declared_constants_are_stable(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+        self.assertEqual(self.data["schema_version"], 2)
         self.assertEqual(self.data["currency"], "USD")
         self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["fetch_backend"], "sweep")
@@ -384,8 +387,8 @@ class JsonContractTests(unittest.TestCase):
     def test_error_codes_serialise_as_their_string_values(self) -> None:
         self.assertEqual(self.data["queries"][1]["error"]["code"], "no_results")
 
-    def test_schema_version_stays_1(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+    def test_schema_version_is_2(self) -> None:
+        self.assertEqual(self.data["schema_version"], 2)
 
     def test_fetch_backend_is_in_the_closed_set(self) -> None:
         self.assertIn(self.data["fetch_backend"], FLIGHT_FETCH_BACKENDS)

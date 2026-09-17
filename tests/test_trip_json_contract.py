@@ -159,8 +159,8 @@ class TripJsonContractTests(unittest.TestCase):
         self.assertEqual(set(data), REPORT_KEYS_WITHOUT_TOTAL)
         self.assertNotIn("trip_total", data)
 
-    def test_schema_version_stays_1(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+    def test_schema_version_is_2(self) -> None:
+        self.assertEqual(self.data["schema_version"], 2)
         self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["currency"], "EUR")
 

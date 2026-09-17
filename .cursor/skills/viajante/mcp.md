@@ -2,7 +2,7 @@
 
 Stdio process. No API keys. No Streamable HTTP. One search at a time.
 
-A second search while one is running raises `a viajante search is already running in this process` immediately. That busy error is not `MCP error -32001: Request timed out`. Do not treat timeouts as lock-busy. `lookup_airports` may run during a search. Optional `country` is Google `gl` (origin market); omit when unset; do not pass a destination ISO. `max_stops` is 0, 1, or 2. If a calendar returns `blocked`, stop that request.
+A second search while one is running raises `a viajante search is already running in this process` immediately. That busy error is not `MCP error -32001: Request timed out`. Do not treat timeouts as lock-busy. `lookup_airports` and the offline `validate_itinerary` may run during a search. Optional `country` is Google `gl` (origin market); omit when unset; do not pass a destination ISO. `max_stops` is 0, 1, or 2. If a calendar returns `blocked`, stop that request.
 
 Paste this into Cursor Settings → MCP, Claude Desktop, or any `mcpServers` client. Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.10+. No clone.
 
@@ -34,7 +34,7 @@ Native Python:
 }
 ```
 
-Reload MCP. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`, `search_hidden_city` (Skiplagged, opt-in; USD/omit currency), `compare_awards`, `lookup_transfers`.
+Reload MCP. Tools: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google), `search_trip`, `lookup_airports`, `search_hidden_city` (Skiplagged, opt-in; USD/omit currency), `compare_awards`, `lookup_transfers`, `validate_itinerary` (offline tri-state validation).
 
 After a new release, `uvx` / `npx` can cache an old tool list. Reload the MCP client, `uvx --refresh --from viajante[mcp] viajante-mcp`, `npx -y @viajante/mcp@latest`, or point the client at a local `viajante-mcp`.
 

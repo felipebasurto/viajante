@@ -121,7 +121,7 @@ class GoogleFlightsBlocked(RuntimeError):
 
 
 class GoogleFlightsRejected(RuntimeError):
-    """Shopping RPC rejected the query (unknown airport or invalid request)."""
+    """Shopping RPC rejected the query without an owned cause."""
 
 
 def build_search_params(
