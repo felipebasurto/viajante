@@ -14,6 +14,7 @@ from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
     MAX_FLEX_DAYS,
     _rank_date_rows,
+    _row_from_day_error,
     calendar_trip,
     cheapest_priced_day,
     flex_window,
@@ -343,6 +344,15 @@ class DateSearchTests(unittest.TestCase):
         self.assertIsNone(report.days[0].typical)
         self.assertIsNone(report.days[0].vs_typical)
         self.assertNotIn("typical", report.days[0].to_dict())
+
+    def test_rejected_day_is_an_error_not_empty_inventory(self) -> None:
+        row = _row_from_day_error(
+            date(2026, 9, 1),
+            GoogleFlightsRejected("provider rejection"),
+            None,
+        )
+        self.assertEqual(row.status, "error")
+        self.assertEqual(row.error.code, SearchErrorCode.REJECTED)
 
     def test_calendar_miss_falls_back_to_per_day_sweep(self) -> None:
         source = FakeCalendarSource(

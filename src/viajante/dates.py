@@ -1215,7 +1215,7 @@ def _row_from_day_error(
     returning: Optional[date],
 ) -> DatePriceRow:
     error = classify_failure(exc)
-    if error.code in {SearchErrorCode.NO_RESULTS, SearchErrorCode.REJECTED}:
+    if error.code == SearchErrorCode.NO_RESULTS:
         return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
     return DatePriceRow(
         departure_date=cursor,

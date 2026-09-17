@@ -105,7 +105,7 @@ LOW_COST_NAMES = [
 ]
 
 NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
-REJECTED_MESSAGE = "Google Flights rejected this route or date (unknown airport or invalid query)."
+REJECTED_MESSAGE = "Google Flights rejected this query; the provider did not identify the cause."
 
 FlightSort = Literal["ranked", "fare", "price", "duration", "departure", "arrival"]
 _CLOCK_TOKEN = re.compile(

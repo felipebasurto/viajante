@@ -1934,8 +1934,12 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(cards[0].departure, "21:00")
 
     def test_shopping_error_response_is_rejected_not_a_compact_miss(self) -> None:
-        with self.assertRaises(ShoppingRejected):
+        with self.assertRaises(ShoppingRejected) as ctx:
             parse_shopping_body(_error_response_body())
+        message = str(ctx.exception).lower()
+        self.assertIn("did not identify the cause", message)
+        self.assertNotIn("unknown airport", message)
+        self.assertNotIn("invalid query", message)
 
     def test_source_does_not_download_html_after_shopping_reject(self) -> None:
         client = _FakeSweepClient(post_text=_error_response_body())

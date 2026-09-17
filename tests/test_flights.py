@@ -217,6 +217,8 @@ class FailureClassificationTests(unittest.TestCase):
         error = classify_failure(GoogleFlightsRejected("unknown airport"))
         self.assertEqual(error.code, SearchErrorCode.REJECTED)
         self.assertIn("rejected", error.message.casefold())
+        self.assertIn("did not identify the cause", error.message)
+        self.assertNotIn("unknown airport", error.message)
 
     def test_missing_chromium_is_reported_as_browser_unavailable(self) -> None:
         error = classify_failure(
