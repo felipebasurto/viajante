@@ -1050,6 +1050,8 @@ class PublicApiTests(unittest.TestCase):
             "SearchErrorCode",
             "QueryFailure",
             "QuerySuccess",
+            "ItineraryValidationReport",
+            "validate_itinerary",
         ):
             self.assertTrue(hasattr(viajante, name), msg=name)
         self.assertEqual(
@@ -1066,6 +1068,7 @@ class PublicApiTests(unittest.TestCase):
                 "HiddenCityReport",
                 "HotelQuery",
                 "HotelSearchReport",
+                "ItineraryValidationReport",
                 "MultiCity",
                 "PointsBalance",
                 "PropertyTypeEvidence",
@@ -1090,6 +1093,7 @@ class PublicApiTests(unittest.TestCase):
                 "search_hotels",
                 "search_trip",
                 "transfer_paths",
+                "validate_itinerary",
             },
         )
 
