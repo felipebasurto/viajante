@@ -1620,7 +1620,7 @@ def _stamp_offer_evidence(
         offer_data = dict(offer.to_dict(currency))
         offer_data.pop("evidence", None)
         canonical = json.dumps(
-            {"query": query, "offer": offer_data},
+            {"query": query, "currency": currency, "offer": offer_data},
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,
@@ -1639,6 +1639,7 @@ def _stamp_offer_evidence(
                 evidence=OfferEvidence(
                     evidence_id=f"gf_{hashlib.sha256(canonical).hexdigest()[:24]}",
                     query=query,
+                    currency=currency,
                     retrieved_at=retrieved_at,
                     fetch_backend=fetch_backend,
                     query_url=query_url,

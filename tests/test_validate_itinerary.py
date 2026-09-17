@@ -69,6 +69,7 @@ def _row(
             "evidence_id": evidence_id,
             "source": "google_flights",
             "query": dict(query),
+            "currency": currency,
             "retrieved_at": "2026-09-17T10:00:00Z",
             "fetch_backend": "sweep",
             "query_url": "https://example.test/search",
@@ -231,6 +232,20 @@ class ValidateItineraryTests(unittest.TestCase):
         )
         report = validate_itinerary([first, second], {})
         self.assertIsNone(report.currency)
+        self.assertIsNone(report.fare_total)
+        self.assertEqual(_status(report, "currency"), "fail")
+
+    def test_offer_currency_cannot_differ_from_evidence(self) -> None:
+        row = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="currency-bound",
+            currency="USD",
+            segments=[_segment("JFK", "LHR")],
+        )
+        row["offer"]["currency"] = "GBP"
+        report = validate_itinerary([row], {})
         self.assertIsNone(report.fare_total)
         self.assertEqual(_status(report, "currency"), "fail")
 

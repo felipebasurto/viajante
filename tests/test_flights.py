@@ -962,6 +962,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(evidence)
         assert evidence is not None
         self.assertEqual(evidence.query, query.to_dict())
+        self.assertEqual(evidence.currency, "EUR")
         self.assertEqual(evidence.fetch_backend, "sweep")
         self.assertEqual(evidence.query_url, expected_query)
         self.assertEqual(evidence.offer_url, expected_offer)
@@ -972,6 +973,8 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(payload["queries"][0]["offers"][0]["google_flights_url"], expected_offer)
         self.assertEqual(payload["coverage"]["attempted"], 1)
         self.assertTrue(payload["coverage"]["complete"])
+        self.assertEqual(payload["coverage"]["strategy"], "finite")
+        self.assertIn("outside", payload["coverage"]["unsearched"])
 
     def test_offer_completeness_does_not_invent_segments(self) -> None:
         aggregate = _normalize_offer(card(), 1)

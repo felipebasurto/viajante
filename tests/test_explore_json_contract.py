@@ -93,6 +93,10 @@ class ExploreJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["days"], 7)
         self.assertEqual(self.data["fetch_backend"], "explore")
         self.assertEqual(self.data["fetch_ms"], 800)
+        self.assertFalse(self.data["coverage"]["complete"])
+        self.assertEqual(self.data["coverage"]["strategy"], "heuristic")
+        self.assertEqual(self.data["coverage"]["stopping_reason"], "shortlist_limit")
+        self.assertIn("outside", self.data["coverage"]["unsearched"])
 
     def test_schema_version_is_2(self) -> None:
         self.assertEqual(self.data["schema_version"], 2)

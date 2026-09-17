@@ -571,6 +571,7 @@ class OfferEvidence:
 
     evidence_id: str
     query: Mapping[str, object]
+    currency: str
     retrieved_at: datetime
     fetch_backend: Optional[str]
     query_url: Optional[str]
@@ -581,6 +582,7 @@ class OfferEvidence:
     def __post_init__(self) -> None:
         if not self.evidence_id.strip():
             raise ValueError("evidence_id is required")
+        object.__setattr__(self, "currency", normalize_currency(self.currency))
         if self.url_kind == "booking" and not self.offer_url:
             raise ValueError("booking URL evidence needs an offer_url")
         if self.url_kind == "query" and not self.query_url:
@@ -596,6 +598,7 @@ class OfferEvidence:
             "evidence_id": self.evidence_id,
             "source": self.source,
             "query": dict(self.query),
+            "currency": self.currency,
             "retrieved_at": retrieved_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "fetch_backend": self.fetch_backend,
             "query_url": self.query_url,
@@ -614,6 +617,9 @@ class SearchCoverage:
     empty: int
     failed: int
     complete: bool
+    strategy: Literal["finite", "heuristic"] = "finite"
+    stopping_reason: str = "completed_scope"
+    unsearched: Optional[str] = None
 
     def __post_init__(self) -> None:
         counts = (self.attempted, self.succeeded, self.empty, self.failed)
@@ -621,6 +627,8 @@ class SearchCoverage:
             raise ValueError("coverage counts must not be negative")
         if self.succeeded + self.empty + self.failed != self.attempted:
             raise ValueError("coverage outcomes must equal attempted")
+        if not self.stopping_reason.strip():
+            raise ValueError("coverage stopping_reason is required")
 
     def to_dict(self) -> Mapping[str, object]:
         return {
@@ -630,6 +638,9 @@ class SearchCoverage:
             "empty": self.empty,
             "failed": self.failed,
             "complete": self.complete,
+            "strategy": self.strategy,
+            "stopping_reason": self.stopping_reason,
+            "unsearched": self.unsearched,
         }
 
 
@@ -1033,6 +1044,7 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
         empty=empty,
         failed=failed,
         complete=True,
+        unsearched="queries outside the submitted finite scope",
     )
 
 
@@ -1247,6 +1259,7 @@ class DateCalendarReport:
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
             expected = (self.end_date - self.start_date).days + 1
+            coverage_complete = len({row.departure_date for row in self.days}) == expected
             object.__setattr__(
                 self,
                 "coverage",
@@ -1260,7 +1273,11 @@ class DateCalendarReport:
                     succeeded=succeeded,
                     empty=empty,
                     failed=failed,
-                    complete=len({row.departure_date for row in self.days}) == expected,
+                    complete=coverage_complete,
+                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    unsearched=(
+                        None if coverage_complete else "dates missing from the requested window"
+                    ),
                 ),
             )
 
@@ -1344,6 +1361,7 @@ class FlexSearchReport:
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
             expected = (self.end_date - self.start_date).days + 1
+            coverage_complete = len({row.departure_date for row in self.days}) == expected
             object.__setattr__(
                 self,
                 "coverage",
@@ -1358,7 +1376,13 @@ class FlexSearchReport:
                     succeeded=succeeded,
                     empty=empty,
                     failed=failed,
-                    complete=len({row.departure_date for row in self.days}) == expected,
+                    complete=coverage_complete,
+                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    unsearched=(
+                        None
+                        if coverage_complete
+                        else "dates missing from the requested flex window"
+                    ),
                 ),
             )
 
@@ -1481,6 +1505,7 @@ class ExploreReport:
         if self.coverage is None:
             succeeded = sum(row.price is not None for row in self.destinations)
             empty = len(self.destinations) - succeeded
+            failed = int(self.error is not None)
             object.__setattr__(
                 self,
                 "coverage",
@@ -1491,11 +1516,14 @@ class ExploreReport:
                         "from": self.start_date.isoformat(),
                         "days": self.days,
                     },
-                    attempted=len(self.destinations),
+                    attempted=len(self.destinations) + failed,
                     succeeded=succeeded,
                     empty=empty,
-                    failed=0,
+                    failed=failed,
                     complete=False,
+                    strategy="heuristic",
+                    stopping_reason="shortlist_limit",
+                    unsearched="destinations outside the provider shortlist and local top limit",
                 ),
             )
 

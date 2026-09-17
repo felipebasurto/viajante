@@ -210,7 +210,30 @@ def _currency_and_totals(
     prices: list[float] = []
     ranked: list[float] = []
     for _query, offer in selected:
-        value = offer.get("currency", named)
+        evidence_value = offer.get("evidence")
+        evidence_currency = None
+        if evidence_value is not None:
+            evidence = _mapping(evidence_value, role="offer.evidence")
+            source_currency = evidence.get("currency")
+            if source_currency is not None:
+                if not isinstance(source_currency, str):
+                    raise ValueError("offer.evidence.currency must be a currency code")
+                evidence_currency = normalize_currency(source_currency)
+        explicit_currency = offer.get("currency")
+        if explicit_currency is not None and not isinstance(explicit_currency, str):
+            raise ValueError("offer currency must be a currency code")
+        if (
+            explicit_currency is not None
+            and evidence_currency is not None
+            and normalize_currency(explicit_currency) != evidence_currency
+        ):
+            return (
+                None,
+                None,
+                None,
+                _status("currency", "fail", "offer currency differs from its evidence"),
+            )
+        value = explicit_currency or evidence_currency or named
         if not isinstance(value, str):
             return (
                 None,
