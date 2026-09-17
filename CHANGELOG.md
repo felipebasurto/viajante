@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `viajante hidden-city` and MCP `search_hidden_city`: Skiplagged cards are USD. A named keep that matches no owned card currency is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. Omit currency or pass USD; do not advertise EUR as a Skiplagged quote.
+- MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs (smoke 2026-09-17 LHR→BKK, nights=14, bags=1, nearby → 31/31 cells; cheapest owned 412 GBP on 2026-11-17). See `docs/smoke-2026-09-17.md`.
+- MCP `validate_itinerary` evidence-safe validator (PR #41 / issues #34–#40 on `develop`, not `main`): never reports `feasible=true` without owned provenance; incomplete evidence stays unknown/infeasible. Issues #34–#40 closed against the develop merge.
 
 ## [1.2.1] - 2026-09-11
 
