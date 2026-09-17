@@ -24,6 +24,7 @@ from viajante.mcp_handlers import (
     search_hidden_city_tool,
     search_hotels_tool,
     search_trip_tool,
+    validate_itinerary_tool,
 )
 
 FUTURE = (date.today() + timedelta(days=30)).isoformat()
@@ -899,6 +900,13 @@ class McpHandlerTests(unittest.TestCase):
         payload = lookup_transfers_tool("not-a-program", 50000)
         self.assertEqual(payload["transfer_paths"], [])
 
+    def test_validate_itinerary_is_local_strict_v2_math(self) -> None:
+        payload = validate_itinerary_tool([], {}, currency="USD")
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertIsNone(payload["feasible"])
+        with self.assertRaisesRegex(ValueError, "unsupported itinerary constraints"):
+            validate_itinerary_tool([], {"optimal": True}, currency="USD")
+
     def test_overlapping_search_is_rejected(self) -> None:
         started = threading.Event()
         release = threading.Event()
@@ -917,6 +925,8 @@ class McpHandlerTests(unittest.TestCase):
             self.assertIn("already running", str(ctx.exception))
             rows = lookup_airports_tool("NRT", limit=1)
             self.assertGreaterEqual(len(rows), 1)
+            validation = validate_itinerary_tool([], {}, currency="USD")
+            self.assertEqual(validation["schema_version"], 2)
             release.set()
             worker.join(2)
             self.assertFalse(worker.is_alive())
@@ -967,6 +977,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIn("search_flex", help_text)
         self.assertIn("search_trip", help_text)
         self.assertIn("search_hidden_city", help_text)
+        self.assertIn("validate_itinerary", help_text)
         self.assertIn("stdio", help_text)
 
     def test_build_server_registers_tools_without_sdk(self) -> None:
@@ -1011,6 +1022,7 @@ class McpServerImportTests(unittest.TestCase):
                 "search_hidden_city",
                 "compare_awards",
                 "lookup_transfers",
+                "validate_itinerary",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))
