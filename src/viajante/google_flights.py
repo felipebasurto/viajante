@@ -823,7 +823,7 @@ class GoogleFlightsHttpSource:
                 )
             except BaseException as exc:
                 cards = exc
-            days = self._days_from_calendar_response(cal_resp, posts[2 * index + 1].url)
+            days = self._days_from_calendar_response(cal_resp)
             results.append((cards, days))
         client, replay = self._plan_replay(client, [cards for cards, _days in results])
         if replay:
@@ -843,7 +843,7 @@ class GoogleFlightsHttpSource:
                     )
                 except BaseException as exc:
                     cards = exc
-                days = self._days_from_calendar_response(cal_resp, retry_posts[2 * offset + 1].url)
+                days = self._days_from_calendar_response(cal_resp)
                 results[index] = (cards, days)
         return results
 
@@ -945,7 +945,7 @@ class GoogleFlightsHttpSource:
             cards = self._cards_from_shopping_response(client, query, shop_resp, posts[0].url)
         except CompactParseMiss:
             cards = self._html_cards(client, query)
-        days = self._days_from_calendar_response(cal_resp, posts[1].url)
+        days = self._days_from_calendar_response(cal_resp)
         return cards, days
 
     def _fetch_compact(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
@@ -992,19 +992,12 @@ class GoogleFlightsHttpSource:
         return parse_http_flight_cards(html)
 
     def _days_from_calendar_response(
-        self,
-        response: SweepHttpResponse,
-        url: str,
+        self, response: SweepHttpResponse
     ) -> tuple[CompactCalendarDay, ...]:
+        """Typical side of a paired POST: a block, HTTP error, or miss is no typical, not a fail."""
+        if response.status >= 400 or looks_blocked(response.text, response.url):
+            return ()
         try:
-            if (
-                response.status in {403, 429, 503}
-                or looks_blocked(response.text, response.url)
-                or response.status >= 400
-            ):
-                if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
-                    _raise_if_blocked(response.status, response.text, response.url, url)
-                return ()
             return parse_calendar_body(response.text)
         except Exception:
             return ()

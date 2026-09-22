@@ -16,6 +16,7 @@ from viajante.google_hotels_rpc import (
     HOTELS_SEARCH_URL,
     HotelsBlocked,
     HotelsParseMiss,
+    _looks_blocked,
     build_hotels_request,
     parse_hotels_body,
 )
@@ -75,7 +76,7 @@ class GoogleHotelsSource:
         client = self._ensure_client()
         url, body = build_hotels_request(query, html_lang=self._html_lang, currency=self._currency)
         response = client.post(url, data=body, headers=HOTELS_POST_HEADERS, timeout=self._timeout)
-        if response.status in {403, 429, 503} or _looks_blocked(response.text, response.url):
+        if response.status in {403, 429, 503} or _looks_blocked(f"{response.text} {response.url}"):
             raise HotelsBlocked(f"Google Hotels HTTP {response.status} from {url}")
         if response.status >= 400:
             raise HotelsParseMiss(f"hotel HTTP {response.status}")
@@ -93,8 +94,3 @@ class GoogleHotelsSource:
         if self._injected_client is not None:
             return self._injected_client
         return shared_chrome_sweep_client()
-
-
-def _looks_blocked(body: str, final_url: str) -> bool:
-    lowered = f"{body} {final_url}".casefold()
-    return "/sorry/" in lowered or "unusual traffic" in lowered
