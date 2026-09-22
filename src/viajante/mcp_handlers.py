@@ -16,6 +16,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
+from viajante.evidence import record, summarize
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     month_window,
@@ -69,6 +70,11 @@ def _with_search_lock(fn):
         return fn()
     finally:
         _SEARCH_LOCK.release()
+
+
+def _owned(payload: dict) -> dict:
+    record(payload)
+    return {**payload, "lead": summarize(payload)}
 
 
 def lookup_airports_tool(query: str, *, limit: int = 20) -> list[Mapping[str, str]]:
@@ -159,7 +165,7 @@ def search_flights_tool(
             proxy=proxy,
         )
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
 def search_dates_tool(
@@ -248,7 +254,7 @@ def search_dates_tool(
             proxy=proxy,
         )
     )
-    return reports_payload(report)
+    return _owned(reports_payload(report))
 
 
 def search_flex_tool(
@@ -338,7 +344,7 @@ def search_flex_tool(
             proxy=proxy,
         )
     )
-    return reports_payload(report)
+    return _owned(reports_payload(report))
 
 
 def search_explore_tool(
@@ -431,7 +437,7 @@ def search_explore_tool(
             proxy=proxy,
         )
     )
-    return reports_payload(report)
+    return _owned(reports_payload(report))
 
 
 def search_hotels_tool(
@@ -467,7 +473,7 @@ def search_hotels_tool(
     report = _with_search_lock(
         lambda: search_hotels((query,), top=top, source=source, currency=currency)
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
 def search_trip_tool(
@@ -584,7 +590,7 @@ def search_trip_tool(
             hotel_source=source,
         )
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
 def search_hidden_city_tool(
@@ -612,7 +618,7 @@ def search_hidden_city_tool(
             currency=currency,
         )
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
 def compare_awards_tool(

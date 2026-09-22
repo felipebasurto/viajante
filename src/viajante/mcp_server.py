@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Callable, Optional, Sequence, TypeVar
 
+from viajante.evidence import verify_answer as verify_answer_tool
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
 from viajante.mcp_handlers import (
@@ -40,12 +41,17 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_trip, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers.
+compare_awards, lookup_transfers, verify_answer.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
-or retry them 8×60s. lookup_airports, compare_awards, and lookup_transfers may
-run during a search.
+or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers, and
+verify_answer may run during a search.
+
+Search results carry a lead list: the cheapest owned row, its link, and any
+failures. Quote from it. Before replying, pass the draft to verify_answer; it
+flags amounts, currencies, codes, dates, and links no search in this process
+returned.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
@@ -671,6 +677,19 @@ def build_server():
                 balances=balances,
             )
         )
+
+    @server.tool()
+    async def verify_answer(answer: str) -> dict:
+        """Check a draft reply against this process's recent search payloads.
+
+        Call before sending a reply that quotes fares, stays, dates, airport
+        codes, or links. Lists each amount, currency, IATA code, ISO date, and
+        URL in the draft that no recorded search returned. Drop or re-search
+        every unowned row; do not quote it as found. Sums you computed are
+        unowned unless a payload carries them (e.g. trip_total). Local; may run
+        during a search.
+        """
+        return dict(await run_lookup_tool(verify_answer_tool, answer))
 
     return server
 

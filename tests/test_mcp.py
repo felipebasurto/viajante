@@ -1011,6 +1011,7 @@ class McpServerImportTests(unittest.TestCase):
                 "search_hidden_city",
                 "compare_awards",
                 "lookup_transfers",
+                "verify_answer",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))
