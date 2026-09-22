@@ -9,7 +9,7 @@ import re
 import sys
 from datetime import date
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata, lookup_airports, parse_exclude_regions
 from viajante.bench import run_bench
@@ -57,6 +57,7 @@ from viajante.models import (
     DateCalendarReport,
     ExploreReport,
     FlexSearchReport,
+    FlightCabin,
     FlightOffer,
     FlightQuery,
     HiddenCityReport,
@@ -1052,7 +1053,64 @@ def _occupancy_from_args(args: argparse.Namespace) -> dict[str, int]:
     }
 
 
-def _add_occupancy_flags(parser: argparse.ArgumentParser) -> None:
+def _add_max_stops_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-stops",
+        type=int,
+        default=1,
+        choices=[0, 1, 2],
+        help="Maximum stops (default 1). 2 means two-or-fewer.",
+    )
+
+
+def _add_cabin_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--cabin",
+        default="economy",
+        choices=list(get_args(FlightCabin)),
+        help="Cabin class (default economy)",
+    )
+
+
+def _add_save_flag(
+    parser: argparse.ArgumentParser, help_text: str = "Write JSON report atomically to FILE"
+) -> None:
+    parser.add_argument("--save", default=None, metavar="FILE", help=help_text)
+
+
+def _add_hotel_filter_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--rooms", type=int, default=1, help="Hotel rooms (default 1)")
+    parser.add_argument(
+        "--min-rating",
+        type=float,
+        default=None,
+        dest="min_rating",
+        metavar="SCORE",
+        help="Minimum hotel review score (Booking 0-10; Google Hotels 0-5)",
+    )
+    parser.add_argument(
+        "--entire-home",
+        action="store_true",
+        help="Require entire homes/apartments (cards with unknown property type may remain)",
+    )
+    parser.add_argument(
+        "--allow-non-refundable",
+        action="store_true",
+        help="Include non-refundable stays (default filters to free cancellation)",
+    )
+    parser.add_argument(
+        "--source",
+        default="booking",
+        choices=["booking", "google"],
+        help=(
+            "Hotel source. booking is the Playwright evidence path (CLI default). "
+            "google is the HTTP shortlist (MCP default)."
+        ),
+    )
+
+
+def _add_flight_query_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--adults", type=int, default=1, help="Number of adults (default 1)")
     parser.add_argument(
         "--children",
         type=int,
@@ -1073,6 +1131,9 @@ def _add_occupancy_flags(parser: argparse.ArgumentParser) -> None:
         dest="infants_on_lap",
         help="Infants on lap (default 0)",
     )
+    _add_cabin_flag(parser)
+    _add_currency_country_flags(parser)
+    _add_proxy_flag(parser)
 
 
 def _add_proxy_flag(parser: argparse.ArgumentParser) -> None:
@@ -1861,13 +1922,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
     )
-    flights.add_argument(
-        "--max-stops",
-        type=int,
-        default=1,
-        choices=[0, 1, 2],
-        help="Maximum stops (default 1). 2 means two-or-fewer.",
-    )
+    _add_max_stops_flag(flights)
     flights.add_argument(
         "--trip",
         default="one-way",
@@ -1880,42 +1935,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Aliases: oneway, one_way, round-trip, round_trip."
         ),
     )
-    flights.add_argument(
-        "--adults",
-        type=int,
-        default=1,
-        help="Number of adults (default 1)",
-    )
-    _add_occupancy_flags(flights)
-    flights.add_argument(
-        "--cabin",
-        default="economy",
-        choices=["economy", "premium-economy", "business", "first"],
-        help="Cabin class (default economy)",
-    )
-    _add_currency_country_flags(flights)
-    _add_proxy_flag(flights)
-    flights.add_argument(
-        "--bags",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Checked bags on the shopping request (omit to leave unset)",
-    )
-    flights.add_argument(
-        "--carry-on",
-        action="store_true",
-        dest="carry_on",
-        help="Ask the shopping request for one carry-on (omit to leave unset)",
-    )
-    flights.add_argument(
-        "--price-cap",
-        type=int,
-        default=None,
-        metavar="AMOUNT",
-        dest="price_cap",
-        help="Drop owned fares above this amount in the quote currency (omit to leave unset)",
-    )
+    _add_flight_query_flags(flights)
     _add_nearby_flag(flights)
     flights.add_argument(
         "--top",
@@ -1934,59 +1954,6 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     flights.add_argument(
-        "--airlines",
-        default=None,
-        metavar="CODES",
-        help="Airline IATA codes on the shopping request (comma-separated, e.g. BA,KL)",
-    )
-    flights.add_argument(
-        "--exclude-airlines",
-        default=None,
-        dest="exclude_airlines",
-        metavar="CODES",
-        help="Airline IATA codes to exclude from shopping (comma-separated, e.g. DL)",
-    )
-    flights.add_argument(
-        "--alliance",
-        default=None,
-        metavar="NAMES",
-        help="Restrict the shopping request to these alliances (oneworld, skyteam, star)",
-    )
-    flights.add_argument(
-        "--exclude-alliance",
-        default=None,
-        dest="exclude_alliance",
-        metavar="NAMES",
-        help="Exclude these alliances from the shopping request (oneworld, skyteam, star)",
-    )
-    flights.add_argument(
-        "--depart-window",
-        default=None,
-        dest="depart_window",
-        metavar="START-END",
-        help="Keep local departures in START-END inclusive (hours 6-20 or clocks 06:00-20:00)",
-    )
-    flights.add_argument(
-        "--arrive-before",
-        default=None,
-        dest="arrive_before",
-        metavar="HH:MM",
-        help=(
-            "Keep local arrivals at or before HH:MM. Post-filter on owned offer clocks; "
-            "unknown arrival cannot prove the bound"
-        ),
-    )
-    flights.add_argument(
-        "--depart-after",
-        default=None,
-        dest="depart_after",
-        metavar="HH:MM",
-        help=(
-            "Keep local departures at or after HH:MM. Post-filter on owned offer clocks; "
-            "unknown departure cannot prove the bound"
-        ),
-    )
-    flights.add_argument(
         "--fetch",
         default="auto",
         choices=["auto", "sweep", "detail"],
@@ -1996,97 +1963,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "auto uses sweep for 3+ queries and detail for 1-2 (default auto)"
         ),
     )
-    flights.add_argument(
-        "--max-layover",
-        type=float,
-        default=None,
-        metavar="HOURS",
-        dest="max_layover",
-        help="Drop 1-stop offers whose layover exceeds HOURS (sweep and detail)",
-    )
-    flights.add_argument(
-        "--min-layover",
-        type=float,
-        default=None,
-        metavar="HOURS",
-        dest="min_layover",
-        help="Drop 1-stop offers whose layover is shorter than HOURS",
-    )
-    flights.add_argument(
-        "--via",
-        default=None,
-        metavar="CODES",
-        dest="via",
-        help=(
-            "Keep connecting offers whose parsed layover matches these IATA codes "
-            "(comma-separated). Post-filter only; unknown layover cannot prove a via"
-        ),
-    )
-    flights.add_argument(
-        "--exclude-via",
-        default=None,
-        metavar="CODES",
-        dest="exclude_via",
-        help=(
-            "Drop connecting offers whose parsed layover matches these IATA codes "
-            "(comma-separated). Unknown layover stays"
-        ),
-    )
-    flights.add_argument(
-        "--no-overnight",
-        default=None,
-        metavar="CODES",
-        dest="no_overnight",
-        help=(
-            "Drop offers whose owned layover city+clock is overnight at these IATA codes "
-            "(or any). Unknown city/clock cannot prove exclude"
-        ),
-    )
-    flights.add_argument(
-        "--require-overnight",
-        default=None,
-        metavar="CODES",
-        dest="require_overnight",
-        help=(
-            "Keep only offers with an owned overnight layover at these IATA codes "
-            "(or any). Unknown city/clock cannot prove include"
-        ),
-    )
-    flights.add_argument(
-        "--exclude-airports",
-        default=None,
-        metavar="CODES",
-        dest="exclude_airports",
-        help=(
-            "Drop named origin/dest IATA in this list (comma-separated). "
-            "Nearby cannot sneak an excluded same-city code back. Unnamed stays unset"
-        ),
-    )
-    flights.add_argument(
-        "--include-airports",
-        default=None,
-        metavar="CODES",
-        dest="include_airports",
-        help=(
-            "Keep the search only when dest is in this IATA list (comma-separated). "
-            "Nearby same-city dests already in the list stay. Do not rewrite to a "
-            "substitute. Unnamed stays unset"
-        ),
-    )
-    flights.add_argument(
-        "--max-duration",
-        type=float,
-        default=None,
-        metavar="HOURS",
-        dest="max_duration",
-        help="Drop offers whose elapsed time exceeds HOURS",
-    )
-    flights.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON report atomically to FILE",
-    )
+    _add_owned_shop_filters(flights)
+    _add_save_flag(flights)
 
     hotels = sub.add_parser(
         "hotels",
@@ -2117,44 +1995,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Number of adults (default 2)",
     )
     hotels.add_argument(
-        "--rooms",
-        type=int,
-        default=1,
-        help="Number of rooms (default 1)",
-    )
-    hotels.add_argument(
         "--top",
         type=int,
         default=DEFAULT_TOP,
         help=f"Stays to show (default {DEFAULT_TOP})",
     )
-    hotels.add_argument(
-        "--min-rating",
-        type=float,
-        default=None,
-        dest="min_rating",
-        metavar="SCORE",
-        help="Minimum review score (Booking 0-10; Google Hotels 0-5)",
-    )
-    hotels.add_argument(
-        "--entire-home",
-        action="store_true",
-        help=("Require entire homes/apartments (cards with unknown property type may remain)"),
-    )
-    hotels.add_argument(
-        "--allow-non-refundable",
-        action="store_true",
-        help="Include non-refundable stays (default filters to free cancellation)",
-    )
-    hotels.add_argument(
-        "--source",
-        default="booking",
-        choices=["booking", "google"],
-        help=(
-            "booking is the Playwright evidence path (CLI default). "
-            "google is the HTTP shortlist (MCP default)."
-        ),
-    )
+    _add_hotel_filter_flags(hotels)
     hotels.add_argument(
         "--compare-cancellation",
         action="store_true",
@@ -2163,12 +2009,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "and print a joined price table"
         ),
     )
-    hotels.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON report atomically to FILE",
-    )
+    _add_save_flag(hotels)
 
     trip = sub.add_parser(
         "trip",
@@ -2215,31 +2056,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "Sugar without --trip stays two one-ways."
         ),
     )
-    trip.add_argument(
-        "--max-stops",
-        type=int,
-        default=1,
-        choices=[0, 1, 2],
-        help="Maximum stops (default 1). 2 means two-or-fewer.",
-    )
+    _add_max_stops_flag(trip)
     trip.add_argument(
         "--adults",
         type=int,
         default=1,
         help="Adults for both flights and the hotel (default 1)",
     )
-    trip.add_argument(
-        "--rooms",
-        type=int,
-        default=1,
-        help="Hotel rooms (default 1)",
-    )
-    trip.add_argument(
-        "--cabin",
-        default="economy",
-        choices=["economy", "premium-economy", "business", "first"],
-        help="Cabin class (default economy)",
-    )
+    _add_cabin_flag(trip)
     _add_currency_country_flags(trip)
     trip.add_argument(
         "--top",
@@ -2263,41 +2087,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "auto uses sweep for 3+ flight queries and detail for 1-2 (default auto)"
         ),
     )
-    trip.add_argument(
-        "--source",
-        default="booking",
-        choices=["booking", "google"],
-        help=(
-            "Hotel source. booking is the Playwright evidence path (CLI default). "
-            "google is the HTTP shortlist (MCP default)."
-        ),
-    )
-    trip.add_argument(
-        "--min-rating",
-        type=float,
-        default=None,
-        dest="min_rating",
-        metavar="SCORE",
-        help="Minimum hotel review score (Booking 0-10; Google Hotels 0-5)",
-    )
-    trip.add_argument(
-        "--entire-home",
-        action="store_true",
-        help=("Require entire homes/apartments (cards with unknown property type may remain)"),
-    )
-    trip.add_argument(
-        "--allow-non-refundable",
-        action="store_true",
-        help="Include non-refundable stays (default filters to free cancellation)",
-    )
+    _add_hotel_filter_flags(trip)
     _add_owned_shop_filters(trip)
     _add_nearby_flag(trip)
-    trip.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON (flights, hotels, optional trip_total) atomically to FILE",
-    )
+    _add_save_flag(trip, "Write JSON (flights, hotels, optional trip_total) atomically to FILE")
 
     dates = sub.add_parser(
         "dates",
@@ -2336,28 +2129,8 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Stay length in nights for a round-trip calendar. Implies --trip rt.",
     )
-    dates.add_argument(
-        "--max-stops",
-        type=int,
-        default=1,
-        choices=[0, 1, 2],
-        help="Maximum stops (default 1). 2 means two-or-fewer.",
-    )
-    dates.add_argument(
-        "--adults",
-        type=int,
-        default=1,
-        help="Number of adults (default 1)",
-    )
-    _add_occupancy_flags(dates)
-    dates.add_argument(
-        "--cabin",
-        default="economy",
-        choices=["economy", "premium-economy", "business", "first"],
-        help="Cabin class (default economy)",
-    )
-    _add_currency_country_flags(dates)
-    _add_proxy_flag(dates)
+    _add_max_stops_flag(dates)
+    _add_flight_query_flags(dates)
     _add_owned_shop_filters(dates)
     _add_nearby_flag(dates)
     _add_baggage_buffer_flag(dates)
@@ -2379,12 +2152,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["auto", "sweep", "detail"],
         help="Calendar uses the compact date-grid RPC (sweep). detail is accepted and ignored.",
     )
-    dates.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON report atomically to FILE",
-    )
+    _add_save_flag(dates)
 
     flex = sub.add_parser(
         "flex",
@@ -2423,28 +2191,8 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Stay length in nights for a packaged round-trip. Implies --trip rt.",
     )
-    flex.add_argument(
-        "--max-stops",
-        type=int,
-        default=1,
-        choices=[0, 1, 2],
-        help="Maximum stops (default 1). 2 means two-or-fewer.",
-    )
-    flex.add_argument(
-        "--adults",
-        type=int,
-        default=1,
-        help="Number of adults (default 1)",
-    )
-    _add_occupancy_flags(flex)
-    flex.add_argument(
-        "--cabin",
-        default="economy",
-        choices=["economy", "premium-economy", "business", "first"],
-        help="Cabin class (default economy)",
-    )
-    _add_currency_country_flags(flex)
-    _add_proxy_flag(flex)
+    _add_max_stops_flag(flex)
+    _add_flight_query_flags(flex)
     flex.add_argument(
         "--top",
         type=int,
@@ -2466,12 +2214,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["auto", "sweep", "detail"],
         help="Uses the date-grid RPC plus one HTTP shopping POST. detail is accepted and ignored.",
     )
-    flex.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON report atomically to FILE",
-    )
+    _add_save_flag(flex)
 
     explore = sub.add_parser(
         "explore",
@@ -2513,21 +2256,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=[0, 1],
         help="Maximum stops when pricing a destination (default 1)",
     )
-    explore.add_argument(
-        "--adults",
-        type=int,
-        default=1,
-        help="Number of adults (default 1)",
-    )
-    _add_occupancy_flags(explore)
-    explore.add_argument(
-        "--cabin",
-        default="economy",
-        choices=["economy", "premium-economy", "business", "first"],
-        help="Cabin class (default economy)",
-    )
-    _add_currency_country_flags(explore)
-    _add_proxy_flag(explore)
+    _add_flight_query_flags(explore)
     _add_owned_shop_filters(explore)
     explore.add_argument(
         "--exclude-regions",
@@ -2553,12 +2282,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_baggage_buffer_flag(explore)
-    explore.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON report atomically to FILE",
-    )
+    _add_save_flag(explore)
 
     hidden = sub.add_parser(
         "hidden-city",
@@ -2594,12 +2318,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="ISO 4217 code to keep. Unnamed uses each card's owned currency; not origin cash",
     )
-    hidden.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON report atomically to FILE",
-    )
+    _add_save_flag(hidden)
 
     awards = sub.add_parser(
         "awards",
@@ -2631,12 +2350,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="JSON {balances:[{program,balance},...]} of named card currencies",
     )
-    awards.add_argument(
-        "--save",
-        default=None,
-        metavar="FILE",
-        help="Write JSON report atomically to FILE",
-    )
+    _add_save_flag(awards)
 
     points = sub.add_parser(
         "points",
