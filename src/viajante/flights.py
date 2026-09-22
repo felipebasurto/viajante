@@ -482,7 +482,7 @@ def plan_unit_count(plan: FlightPlan) -> int:
     return len(plan)
 
 
-def _as_trip_tuple(plan: FlightPlan | Trip | Sequence[Trip]) -> Tuple[Trip, ...]:
+def as_trips(plan: FlightPlan | Trip | Sequence[Trip]) -> Tuple[Trip, ...]:
     if isinstance(plan, (FlightQuery, RoundTrip, MultiCity)):
         return (plan,)
     return tuple(plan)
@@ -2011,7 +2011,7 @@ def get_flights(
                 f"get_flights is for flight offers; use {hint} for {plan.intent} intent"
             )
         parsed = plan_to_trips(replace(plan, nearby=False))
-        trips = expand_nearby_trips(_as_trip_tuple(parsed), nearby=bool(nearby or plan.nearby))
+        trips = expand_nearby_trips(as_trips(parsed), nearby=bool(nearby or plan.nearby))
         plan_kw = _search_kwargs_from_plan(plan)
         for key, value in plan_kw.items():
             if search_kw.get(key) is None and value is not None:
@@ -2031,7 +2031,7 @@ def get_flights(
         if items and isinstance(items[0], str):
             specs = items  # type: ignore[assignment]
         else:
-            trips = expand_nearby_trips(_as_trip_tuple(items), nearby=nearby)  # type: ignore[arg-type]
+            trips = expand_nearby_trips(as_trips(items), nearby=nearby)  # type: ignore[arg-type]
             return _search(trips)
     parsed_plan = parse_flight_plan(
         specs,
@@ -2046,7 +2046,7 @@ def get_flights(
         infants_in_seat=infants_in_seat if infants_in_seat is not None else 0,
         infants_on_lap=infants_on_lap if infants_on_lap is not None else 0,
     )
-    trips = expand_nearby_trips(_as_trip_tuple(parsed_plan), nearby=nearby)
+    trips = expand_nearby_trips(as_trips(parsed_plan), nearby=nearby)
     return _search(trips)
 
 

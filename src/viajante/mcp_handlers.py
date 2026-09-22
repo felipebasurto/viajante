@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import calendar
 import threading
 from datetime import date
 from typing import Mapping, Optional, Sequence
@@ -17,10 +16,16 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.explore import DEFAULT_EXPLORE_TOP, search_explore, validate_explore_window
+from viajante.explore import (
+    DEFAULT_EXPLORE_TOP,
+    month_window,
+    search_explore,
+    validate_explore_window,
+)
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
+    as_trips,
     expand_nearby_trips,
     parse_depart_window,
     parse_flight_plan,
@@ -30,7 +35,7 @@ from viajante.flights import (
     search_flights,
 )
 from viajante.hotels import HotelSourceName, search_hotels
-from viajante.models import FlightCabin, HotelQuery, MultiCity, RoundTrip, Trip
+from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
     award_offer_from_mapping,
     compare_award,
@@ -50,12 +55,6 @@ from viajante.trip import search_trip, stay_window_from_trips
 _SEARCH_LOCK = threading.Lock()
 
 
-def _as_trips(plan: object) -> tuple[Trip, ...]:
-    if isinstance(plan, (RoundTrip, MultiCity)):
-        return (plan,)
-    return tuple(plan)  # type: ignore[arg-type]
-
-
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
     today = date.today()
     for value in dates:
@@ -70,15 +69,6 @@ def _with_search_lock(fn):
         return fn()
     finally:
         _SEARCH_LOCK.release()
-
-
-def _month_start(value: str) -> date:
-    try:
-        year_text, month_text = value.split("-", 1)
-        year, month = int(year_text), int(month_text)
-        return date(year, month, 1)
-    except ValueError as exc:
-        raise ValueError("month must look like YYYY-MM") from exc
 
 
 def lookup_airports_tool(query: str, *, limit: int = 20) -> list[Mapping[str, str]]:
@@ -136,7 +126,7 @@ def search_flights_tool(
         carry_on=carry_on,
         price_cap=price_cap,
     )
-    trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
+    trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
@@ -396,8 +386,7 @@ def search_explore_tool(
     if month and start:
         raise ValueError("use either month or start, not both")
     if month:
-        start_date = _month_start(month)
-        days = calendar.monthrange(start_date.year, start_date.month)[1]
+        start_date, days = month_window(month)
     else:
         if not start:
             raise ValueError("start or month is required")
@@ -541,7 +530,7 @@ def search_trip_tool(
         carry_on=carry_on,
         price_cap=price_cap,
     )
-    trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
+    trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer

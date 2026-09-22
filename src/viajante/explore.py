@@ -5,6 +5,7 @@ Catalog RPC, then price the first --top dests on the start date.
 
 from __future__ import annotations
 
+import calendar
 import time
 from datetime import date, datetime, timezone
 from typing import Callable, Optional, Protocol, Sequence, Tuple
@@ -71,6 +72,16 @@ def validate_explore_window(start: date, days: int, *, today: Optional[date] = N
     check = today or date.today()
     if start < check:
         raise ValueError(f"start date is in the past: {start.isoformat()}")
+
+
+def month_window(value: str, *, flag: str = "month") -> tuple[date, int]:
+    """First day of YYYY-MM and that month's length in days."""
+    try:
+        year_text, month_text = value.split("-", 1)
+        start = date(int(year_text), int(month_text), 1)
+    except ValueError as exc:
+        raise ValueError(f"{flag} must look like YYYY-MM") from exc
+    return start, calendar.monthrange(start.year, start.month)[1]
 
 
 def _rank_explore_destinations(

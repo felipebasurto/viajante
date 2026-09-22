@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import calendar
 import os
 import re
 import sys
@@ -30,6 +29,7 @@ from viajante.dates import (
 )
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
+    month_window,
     search_explore,
     validate_explore_window,
 )
@@ -38,6 +38,8 @@ from viajante.flights import (
     FLIGHT_SORTS,
     FlightSort,
     _clock_minutes,
+    _effective_cost,
+    as_trips,
     expand_nearby_trips,
     nearby_notes,
     nearby_origin_notes,
@@ -59,7 +61,6 @@ from viajante.models import (
     FlexSearchReport,
     FlightCabin,
     FlightOffer,
-    FlightQuery,
     HiddenCityReport,
     HotelOffer,
     HotelQuery,
@@ -209,10 +210,7 @@ Examples:
 def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dict[str, object]]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
-    if args.baggage_buffer is not None and args.baggage_buffer < 0:
-        raise ValueError("--baggage-buffer must not be negative")
     occupancy = _occupancy_from_args(args)
-    args.country = normalize_country(args.country)
     shop = _owned_shop_filters_from_args(args)
     plan = parse_flight_plan(
         args.routes,
@@ -228,16 +226,10 @@ def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dic
     for departure in _plan_departure_dates(plan):
         if departure < today:
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
-    trips = _as_trips(plan)
+    trips = as_trips(plan)
     trips = expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
     _resolve_quote_from_args(args, first_origin_iata(trips[0]))
     return trips, shop
-
-
-def _as_trips(plan: object) -> Tuple[Trip, ...]:
-    if isinstance(plan, (RoundTrip, MultiCity)):
-        return (plan,)
-    return tuple(plan)  # type: ignore[arg-type]
 
 
 def _plan_departure_dates(plan: object) -> Tuple[date, ...]:
@@ -260,7 +252,7 @@ def _format_layover_hours(hours: float) -> str:
     return f"{hours:.1f}h"
 
 
-def _format_stops_with_layover(offer: FlightOffer) -> str:
+def _format_stops_with_layover(offer: FlightOffer | StopsCompareSide) -> str:
     label = _format_stops(offer.stops_count)
     if offer.layover_city:
         label = f"{label} {offer.layover_city}"
@@ -284,10 +276,6 @@ def _format_clock(text: Optional[str]) -> str:
     return cleaned or text.strip()
 
 
-def _ranked_total(offer: FlightOffer) -> float:
-    return offer.price + offer.baggage_buffer
-
-
 def _sort_value(offer: FlightOffer, sort: FlightSort) -> float:
     if sort in ("fare", "price"):
         return offer.price
@@ -299,26 +287,33 @@ def _sort_value(offer: FlightOffer, sort: FlightSort) -> float:
     if sort == "arrival":
         minutes = _clock_minutes(offer.arrival)
         return float(minutes) if minutes is not None else float("inf")
-    return _ranked_total(offer)
+    return _effective_cost(offer)
 
 
 def _format_ranking_columns(offer: FlightOffer, currency: str) -> str:
     fare = format_money(offer.price, currency, width=7)
     if offer.baggage_buffer:
-        return f"{fare}  {format_money(_ranked_total(offer), currency, width=7)} ranked"
+        return f"{fare}  {format_money(_effective_cost(offer), currency, width=7)} ranked"
     extra = "  [baggage?]" if offer.needs_bag_verify else ""
     return f"{fare}{extra}"
 
 
+def _format_offer_row(offer: FlightOffer, currency: str) -> str:
+    times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
+    return (
+        f"  {_format_ranking_columns(offer, currency)}"
+        f"{_format_typical(offer, currency)}"
+        f"{_format_parsed_bags(offer)}  "
+        f"{offer.duration or '?':<12} "
+        f"{_format_stops_with_layover(offer):<16} {times:<18} "
+        f"{_format_airline(offer.airline)}"
+    )
+
+
 def _format_compare_side(side: StopsCompareSide, currency: str) -> str:
-    label = _format_stops(side.stops_count)
-    if side.layover_city:
-        label = f"{label} {side.layover_city}"
-    if side.layover_hours is not None:
-        label = f"{label} {_format_layover_hours(side.layover_hours)}"
     duration = side.duration or "?"
     return (
-        f"{format_money(side.price, currency)}  {duration}  {label}  "
+        f"{format_money(side.price, currency)}  {duration}  {_format_stops_with_layover(side)}  "
         f"{_format_airline(side.airline)}"
     )
 
@@ -428,8 +423,8 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
         out_offer = min(outbound.offers, key=lambda offer: _sort_value(offer, sort))
         back_offer = min(inbound.offers, key=lambda offer: _sort_value(offer, sort))
         if sort == "ranked":
-            out_value = _ranked_total(out_offer)
-            back_value = _ranked_total(back_offer)
+            out_value = _effective_cost(out_offer)
+            back_value = _effective_cost(back_offer)
             unit = "ranked"
         else:
             out_value = out_offer.price
@@ -518,15 +513,7 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                 _print_google_flights_url(query_url, indent="  ")
             print_per_offer = any(offer.booking_token for offer in result.offers)
             for offer in result.offers:
-                times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
-                print(
-                    f"  {_format_ranking_columns(offer, currency)}"
-                    f"{_format_typical(offer, currency)}"
-                    f"{_format_parsed_bags(offer)}  "
-                    f"{offer.duration or '?':<12} "
-                    f"{_format_stops_with_layover(offer):<16} {times:<18} "
-                    f"{_format_airline(offer.airline)}"
-                )
+                print(_format_offer_row(offer, currency))
                 _print_offer_legs(offer)
                 if print_per_offer:
                     _print_google_flights_url(
@@ -751,12 +738,14 @@ def _print_hotel_report(report) -> None:
 
 
 def _exit_code(report) -> int:
-    failures = sum(result.status == "error" for result in report.queries)
+    return _status_exit_code(report.queries)
+
+
+def _status_exit_code(rows: Sequence) -> int:
+    failures = sum(row.status == "error" for row in rows)
     if failures == 0:
         return 0
-    if failures == len(report.queries):
-        return 2
-    return 3
+    return 2 if failures == len(rows) else 3
 
 
 def _run_flights(args: argparse.Namespace) -> int:
@@ -814,15 +803,6 @@ def _print_trip_total(report: TripSearchReport) -> None:
     if report.trip_total is None:
         return
     print(f"\n{format_trip_total(report.trip_total, report.currency)}")
-
-
-def _combined_exit_code(*reports: object) -> int:
-    codes = [_exit_code(report) for report in reports]
-    if all(code == 0 for code in codes):
-        return 0
-    if all(code == 2 for code in codes):
-        return 2
-    return 3
 
 
 def _trip_hotel_query(args: argparse.Namespace, trips: Tuple[Trip, ...]) -> HotelQuery:
@@ -892,7 +872,7 @@ def _run_trip(args: argparse.Namespace) -> int:
 
     _save(args, report)
 
-    return _combined_exit_code(report.flights, report.hotels)
+    return _combine_exit_codes((_exit_code(report.flights), _exit_code(report.hotels)))
 
 
 def _print_dates_report(report: DateCalendarReport) -> None:
@@ -987,12 +967,7 @@ def _print_airports(query: str) -> int:
 
 
 def _dates_exit_code(report: DateCalendarReport) -> int:
-    failures = sum(row.status == "error" for row in report.days)
-    if failures == 0:
-        return 0
-    if failures == len(report.days):
-        return 2
-    return 3
+    return _status_exit_code(report.days)
 
 
 def _add_nearby_flag(parser: argparse.ArgumentParser) -> None:
@@ -1187,10 +1162,10 @@ def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -
 
 
 def _resolve_quote_from_args(args: argparse.Namespace, origin: Optional[str]) -> None:
-    args.country = normalize_country(getattr(args, "country", None))
-    args.currency = resolve_quote_currency(getattr(args, "currency", None), origin)
     if getattr(args, "baggage_buffer", None) is not None and args.baggage_buffer < 0:
         raise ValueError("--baggage-buffer must not be negative")
+    args.country = normalize_country(getattr(args, "country", None))
+    args.currency = resolve_quote_currency(getattr(args, "currency", None), origin)
     args.baggage_buffer = resolve_baggage_buffer(
         getattr(args, "baggage_buffer", None), args.currency
     )
@@ -1435,32 +1410,10 @@ def _run_dates(args: argparse.Namespace) -> int:
         start = _parse_iso_date(args.start, "--from")
         end = _parse_iso_date(args.end, "--to")
         occupancy = _occupancy_from_args(args)
-        if args.baggage_buffer is not None and args.baggage_buffer < 0:
-            raise ValueError("--baggage-buffer must not be negative")
         validate_date_window(start, end)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args, origin)
-        FlightQuery(
-            origin,
-            destination,
-            start,
-            max_stops=args.max_stops,
-            bags=shop["bags"],
-            carry_on=shop["carry_on"],
-            price_cap=shop["price_cap"],
-            airlines=shop["airlines"],
-            exclude_airlines=shop["exclude_airlines"],
-            alliances=shop["alliances"],
-            exclude_alliances=shop["exclude_alliances"],
-            **occupancy,
-        )
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    nearby = bool(getattr(args, "nearby", False))
-    if nearby:
         seed = calendar_trip(
             origin,
             destination,
@@ -1477,9 +1430,15 @@ def _run_dates(args: argparse.Namespace) -> int:
             exclude_alliances=shop["exclude_alliances"],
             **occupancy,
         )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    nearby = bool(getattr(args, "nearby", False))
+    if nearby:
         for note in nearby_notes(
             expand_nearby_trips((seed,), nearby=True),
-            exclude_airports=shop.get("exclude_airports"),
+            exclude_airports=shop["exclude_airports"],
         ):
             print(note, file=sys.stderr)
 
@@ -1547,15 +1506,7 @@ def _print_flex_report(report: FlexSearchReport) -> None:
         return
     print_per_offer = any(offer.booking_token for offer in report.offers)
     for offer in report.offers:
-        times = f"{_format_clock(offer.departure)} -> {_format_clock(offer.arrival)}"
-        print(
-            f"  {_format_ranking_columns(offer, report.currency)}"
-            f"{_format_typical(offer, report.currency)}"
-            f"{_format_parsed_bags(offer)}  "
-            f"{offer.duration or '?':<12} "
-            f"{_format_stops_with_layover(offer):<16} {times:<18} "
-            f"{_format_airline(offer.airline)}"
-        )
+        print(_format_offer_row(offer, report.currency))
         if print_per_offer:
             _print_google_flights_url(offer.google_flights_url)
     if not print_per_offer:
@@ -1574,32 +1525,10 @@ def _run_flex(args: argparse.Namespace) -> int:
         occupancy = _occupancy_from_args(args)
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
-        if args.baggage_buffer is not None and args.baggage_buffer < 0:
-            raise ValueError("--baggage-buffer must not be negative")
         start, _end = flex_window(around, args.flex_days)
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args, origin)
-        FlightQuery(
-            origin,
-            destination,
-            start,
-            max_stops=args.max_stops,
-            bags=shop["bags"],
-            carry_on=shop["carry_on"],
-            price_cap=shop["price_cap"],
-            airlines=shop["airlines"],
-            exclude_airlines=shop["exclude_airlines"],
-            alliances=shop["alliances"],
-            exclude_alliances=shop["exclude_alliances"],
-            **occupancy,
-        )
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    nearby = bool(getattr(args, "nearby", False))
-    if nearby:
         seed = calendar_trip(
             origin,
             destination,
@@ -1616,9 +1545,15 @@ def _run_flex(args: argparse.Namespace) -> int:
             exclude_alliances=shop["exclude_alliances"],
             **occupancy,
         )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    nearby = bool(getattr(args, "nearby", False))
+    if nearby:
         for note in nearby_notes(
             expand_nearby_trips((seed,), nearby=True),
-            exclude_airports=shop.get("exclude_airports"),
+            exclude_airports=shop["exclude_airports"],
         ):
             print(note, file=sys.stderr)
 
@@ -1647,15 +1582,6 @@ def _run_flex(args: argparse.Namespace) -> int:
     return _combine_exit_codes(_flex_exit_code(report) for report in reports)
 
 
-def _month_start(value: str) -> date:
-    try:
-        year_text, month_text = value.split("-", 1)
-        year, month = int(year_text), int(month_text)
-        return date(year, month, 1)
-    except ValueError as exc:
-        raise ValueError("--month must look like YYYY-MM") from exc
-
-
 def _run_explore(args: argparse.Namespace) -> int:
     try:
         origin = args.origin.strip().upper()
@@ -1664,8 +1590,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         if args.month and (args.start or args.days != 7):
             raise ValueError("use either --month or --from/--days, not both")
         if args.month:
-            start = _month_start(args.month)
-            days = calendar.monthrange(start.year, start.month)[1]
+            start, days = month_window(args.month, flag="--month")
         else:
             if not args.start:
                 raise ValueError("--from or --month is required")
@@ -1674,8 +1599,6 @@ def _run_explore(args: argparse.Namespace) -> int:
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
         occupancy = _occupancy_from_args(args)
-        if args.baggage_buffer is not None and args.baggage_buffer < 0:
-            raise ValueError("--baggage-buffer must not be negative")
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args, origin)
         validate_explore_window(start, days)
@@ -1768,7 +1691,7 @@ def _hidden_city_route(
             plan.return_date,
         )
     else:
-        trips = _as_trips(plan)
+        trips = as_trips(plan)
         if len(trips) != 1:
             raise ValueError("hidden-city takes one DATE or ORIGIN-DESTINATION:OUT:BACK")
         query = trips[0]
