@@ -716,9 +716,9 @@ def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     # Empty result lists and grounded empty-state copy both mean no flights.
     # Unknown shells without either signal are markup drift, except a tiny
     # shell which is a block, not a parse of a results page.
-    if _has_empty_state(parser) or parser.css_first("ul.Rk10dc") is not None:
-        observed = EMPTY_STATE_TEXT if _has_empty_state(parser) else ""
-        raise NoFlightsFound(observed)
+    empty_state = _has_empty_state(parser)
+    if empty_state or parser.css_first("ul.Rk10dc") is not None:
+        raise NoFlightsFound(EMPTY_STATE_TEXT if empty_state else "")
     n = len(html)
     if n < _SHORT_SHELL_CHARS:
         raise GoogleFlightsBlocked(
@@ -772,29 +772,18 @@ class GoogleFlightsHttpSource:
         jobs = [self._shopping_post(trip) for trip in trips]
         responses = dispatch_posts(client, jobs, timeout=self._timeout)
         results: list[tuple[RawFlightCard, ...] | BaseException] = []
-        retry_indexes: list[int] = []
-        rate_indexes: list[int] = []
-        for index, (trip, response) in enumerate(zip(trips, responses, strict=True)):
+        for trip, job, response in zip(trips, jobs, responses, strict=True):
             try:
-                results.append(self._cards_from_shopping_response(client, trip, response))
+                results.append(self._cards_from_shopping_response(client, trip, response, job.url))
             except BaseException as exc:
                 results.append(exc)
-                if _is_rate_limited_sweep_failure(exc):
-                    rate_indexes.append(index)
-                elif _is_retriable_sweep_failure(exc):
-                    retry_indexes.append(index)
-        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
-        if replay and SWEEP_RETRY_LIMIT >= 1:
-            if rate_indexes:
-                client = self._client_after_rate_limit()
-            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
-                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
-            retry_jobs = [jobs[index] for index in replay]
-            retried = dispatch_posts(client, retry_jobs, timeout=self._timeout)
+        client, replay = self._plan_replay(client, results)
+        if replay:
+            retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
             for index, response in zip(replay, retried, strict=True):
                 try:
                     results[index] = self._cards_from_shopping_response(
-                        client, trips[index], response
+                        client, trips[index], response, jobs[index].url
                     )
                 except BaseException as exc:
                     results[index] = exc
@@ -823,29 +812,21 @@ class GoogleFlightsHttpSource:
         results: list[
             tuple[tuple[RawFlightCard, ...] | BaseException, tuple[CompactCalendarDay, ...]]
         ] = []
-        retry_indexes: list[int] = []
-        rate_indexes: list[int] = []
         for index, (query, _start, _end) in enumerate(jobs):
             shop_resp = responses[2 * index]
             cal_resp = responses[2 * index + 1]
             try:
                 cards: tuple[RawFlightCard, ...] | BaseException = (
-                    self._cards_from_shopping_response(client, query, shop_resp)
+                    self._cards_from_shopping_response(
+                        client, query, shop_resp, posts[2 * index].url
+                    )
                 )
             except BaseException as exc:
                 cards = exc
-                if _is_rate_limited_sweep_failure(exc):
-                    rate_indexes.append(index)
-                elif _is_retriable_sweep_failure(exc):
-                    retry_indexes.append(index)
             days = self._days_from_calendar_response(cal_resp, posts[2 * index + 1].url)
             results.append((cards, days))
-        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
-        if replay and SWEEP_RETRY_LIMIT >= 1:
-            if rate_indexes:
-                client = self._client_after_rate_limit()
-            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
-                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+        client, replay = self._plan_replay(client, [cards for cards, _days in results])
+        if replay:
             retry_posts: list[SweepPost] = []
             for index in replay:
                 query, start, end = jobs[index]
@@ -857,7 +838,9 @@ class GoogleFlightsHttpSource:
                 shop_resp = retried[2 * offset]
                 cal_resp = retried[2 * offset + 1]
                 try:
-                    cards = self._cards_from_shopping_response(client, query, shop_resp)
+                    cards = self._cards_from_shopping_response(
+                        client, query, shop_resp, retry_posts[2 * offset].url
+                    )
                 except BaseException as exc:
                     cards = exc
                 days = self._days_from_calendar_response(cal_resp, retry_posts[2 * offset + 1].url)
@@ -867,6 +850,26 @@ class GoogleFlightsHttpSource:
     def reset(self) -> None:
         if self._injected_client is None and self._opener is None:
             reset_shared_chrome_sweep_client()
+
+    def _plan_replay(
+        self, client: SweepHttpClient, outcomes: Sequence[object]
+    ) -> tuple[SweepHttpClient, list[int]]:
+        """One replay of retriable failures; any 429 resets TLS and replays those too."""
+        failures = [(i, o) for i, o in enumerate(outcomes) if isinstance(o, BaseException)]
+        rate = [i for i, exc in failures if _is_rate_limited_sweep_failure(exc)]
+        retry = [
+            i
+            for i, exc in failures
+            if not _is_rate_limited_sweep_failure(exc) and _is_retriable_sweep_failure(exc)
+        ]
+        replay = sorted(rate + retry) if rate else retry
+        if not replay or SWEEP_RETRY_LIMIT < 1:
+            return client, []
+        if rate:
+            return self._client_after_rate_limit(), replay
+        if SWEEP_RETRY_BACKOFF_SECONDS > 0:
+            self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+        return client, replay
 
     def _client_after_rate_limit(self) -> SweepHttpClient:
         self.reset()
@@ -939,38 +942,31 @@ class GoogleFlightsHttpSource:
         posts = (self._shopping_post(query), self._calendar_post(query, start, end))
         shop_resp, cal_resp = dispatch_posts(client, posts, timeout=self._timeout)
         try:
-            cards = self._cards_from_shopping_response(client, query, shop_resp)
+            cards = self._cards_from_shopping_response(client, query, shop_resp, posts[0].url)
         except CompactParseMiss:
             cards = self._html_cards(client, query)
         days = self._days_from_calendar_response(cal_resp, posts[1].url)
         return cards, days
 
     def _fetch_compact(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
-        url, body = build_shopping_request(
-            trip,
-            html_lang=self._html_lang,
-            currency=self._currency,
-            country=self._country,
-        )
+        post = self._shopping_post(trip)
         try:
             response = client.post(
-                url, data=body, headers=SHOPPING_POST_HEADERS, timeout=self._timeout
+                post.url, data=post.data, headers=post.headers, timeout=self._timeout
             )
         except CompactParseMiss:
             raise
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
-        return self._cards_from_shopping_response(client, trip, response)
+        return self._cards_from_shopping_response(client, trip, response, post.url)
 
     def _cards_from_shopping_response(
         self,
         client: SweepHttpClient,
         trip: Trip,
         response: SweepHttpResponse,
+        url: str,
     ) -> tuple[RawFlightCard, ...]:
-        url, _body = build_shopping_request(
-            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
-        )
         if (
             response.status in {403, 429}
             or response.status >= 500

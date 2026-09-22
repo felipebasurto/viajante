@@ -219,9 +219,9 @@ def build_search_constraints(
     )
 
 
-def build_shopping_inner(trip: Trip, token: Optional[str] = None) -> list[Any]:
+def build_shopping_inner(trip: Trip) -> list[Any]:
     return [
-        [None, None, None, token],
+        [None, None, None, None],
         build_search_constraints(trip),
         0,
         1,
@@ -352,18 +352,22 @@ SHOPPING_POST_HEADERS = {
 }
 
 
-def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
+def _wrb_json(text: str, *, kind: str, subject: str = "route") -> Any:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
+            f"Google Flights rejected this {subject} or date (unknown airport or invalid query)."
         )
     payload = first_wrb_data(text)
     if payload is None:
-        raise CompactParseMiss("no wrb.fr shopping payload")
+        raise CompactParseMiss(f"no wrb.fr {kind} payload")
     try:
-        data = json.loads(payload)
+        return json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr data is not JSON") from exc
+        raise CompactParseMiss(f"wrb.fr {kind} data is not JSON") from exc
+
+
+def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
+    data = _wrb_json(text, kind="shopping")
     if not isinstance(data, list):
         raise CompactParseMiss("wrb.fr data is not a list")
     items = _collect_itineraries(data)
@@ -860,17 +864,7 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
 
 
 def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
-    if _is_shopping_rejected(text):
-        raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
-        )
-    payload = first_wrb_data(text)
-    if payload is None:
-        raise CompactParseMiss("no wrb.fr calendar payload")
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr calendar data is not JSON") from exc
+    data = _wrb_json(text, kind="calendar")
     if not isinstance(data, list) or len(data) < 2 or not isinstance(data[1], list):
         raise CompactParseMiss("calendar payload has no date rows")
     rows: list[CompactCalendarDay] = []
@@ -884,17 +878,7 @@ def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
 
 
 def parse_explore_body(text: str) -> tuple[CompactExplorePlace, ...]:
-    if _is_shopping_rejected(text):
-        raise ShoppingRejected(
-            "Google Flights rejected this origin or date (unknown airport or invalid query)."
-        )
-    payload = first_wrb_data(text)
-    if payload is None:
-        raise CompactParseMiss("no wrb.fr explore payload")
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr explore data is not JSON") from exc
+    data = _wrb_json(text, kind="explore", subject="origin")
     if not isinstance(data, list) or len(data) < 4 or not isinstance(data[3], list):
         raise CompactParseMiss("explore payload has no destination group")
     group = data[3][0] if data[3] else None
