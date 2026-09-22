@@ -22,15 +22,15 @@ _FLIGHT_TO = 14
 
 _AIRPORT_CODE = 2
 
-_SEAT: Mapping[FlightCabin, int] = {
+CABIN_SEAT: Mapping[FlightCabin, int] = {
     "economy": 1,
     "premium-economy": 2,
     "business": 3,
     "first": 4,
 }
-_TRIP_ONE_WAY = 2
-_TRIP_ROUND_TRIP = 1
-_TRIP_MULTI_CITY = 3
+TRIP_ONE_WAY = 2
+TRIP_ROUND_TRIP = 1
+TRIP_MULTI_CITY = 3
 _PASSENGER_ADULT = 1
 _PASSENGER_CHILD = 2
 _PASSENGER_INFANT_IN_SEAT = 3
@@ -46,17 +46,17 @@ def encode_tfs(trip: Trip) -> str:
         infants_in_seat=trip.infants_in_seat,
         infants_on_lap=trip.infants_on_lap,
         cabin=trip.cabin,
-        trip_kind=_tfs_trip_kind(trip),
+        trip_kind=trip_kind_code(trip),
     )
 
 
-def _tfs_trip_kind(trip: Trip) -> int:
+def trip_kind_code(trip: Trip) -> int:
     if isinstance(trip, RoundTrip):
-        return _TRIP_ROUND_TRIP
+        return TRIP_ROUND_TRIP
     if isinstance(trip, MultiCity):
-        return _TRIP_MULTI_CITY
+        return TRIP_MULTI_CITY
     if isinstance(trip, FlightQuery):
-        return _TRIP_ONE_WAY
+        return TRIP_ONE_WAY
     raise ValueError(f"cannot encode tfs for {type(trip).__name__}")
 
 
@@ -126,7 +126,7 @@ def _encode_legs(
     payload = (
         flights
         + _packed_enums(_INFO_PASSENGERS, passengers)
-        + _varint_field(_INFO_SEAT, _SEAT[cabin])
+        + _varint_field(_INFO_SEAT, CABIN_SEAT[cabin])
         + _varint_field(_INFO_TRIP, trip_kind)
     )
     return base64.b64encode(payload).decode("ascii")
