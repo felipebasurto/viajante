@@ -205,60 +205,23 @@ Examples:
 """
 
 
-def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
+def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dict[str, object]]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
     if args.baggage_buffer is not None and args.baggage_buffer < 0:
         raise ValueError("--baggage-buffer must not be negative")
     occupancy = _occupancy_from_args(args)
     args.country = normalize_country(args.country)
-    if args.bags is not None and args.bags < 0:
-        raise ValueError("--bags must not be negative")
-    carry_on = 1 if args.carry_on else None
-    if args.price_cap is not None and args.price_cap <= 0:
-        raise ValueError("--price-cap must be a positive amount in the quote currency")
-    if args.max_layover is not None and args.max_layover < 0:
-        raise ValueError("--max-layover must not be negative")
-    if args.min_layover is not None and args.min_layover < 0:
-        raise ValueError("--min-layover must not be negative")
-    if args.max_duration is not None and args.max_duration < 0:
-        raise ValueError("--max-duration must not be negative")
-    if (
-        args.min_layover is not None
-        and args.max_layover is not None
-        and args.min_layover > args.max_layover
-    ):
-        raise ValueError("--min-layover must be at or below --max-layover")
-    parse_airline_codes(args.airlines)
-    parse_airline_codes(args.exclude_airlines)
-    parse_alliances(args.alliance)
-    parse_alliances(args.exclude_alliance)
-    parse_depart_window(args.depart_window)
-    parse_named_clock(getattr(args, "arrive_before", None), role="arrive-before")
-    parse_named_clock(getattr(args, "depart_after", None), role="depart-after")
-    parse_via_airports(args.via)
-    parse_via_airports(args.exclude_via, role="exclude-via")
-    parse_overnight_airports(getattr(args, "no_overnight", None), role="no-overnight")
-    parse_overnight_airports(getattr(args, "require_overnight", None), role="require-overnight")
-    parse_via_airports(getattr(args, "exclude_airports", None), role="exclude-airports")
-    parse_via_airports(getattr(args, "include_airports", None), role="include-airports")
-    if args.via and args.exclude_via:
-        include = parse_via_airports(args.via) or ()
-        exclude = parse_via_airports(args.exclude_via, role="exclude-via") or ()
-        if set(include) & set(exclude):
-            raise ValueError("--via and --exclude-via must not share a code")
+    shop = _owned_shop_filters_from_args(args)
     plan = parse_flight_plan(
         args.routes,
         trip=args.trip,
         max_stops=args.max_stops,
-        adults=occupancy["adults"],
-        children=occupancy["children"],
-        infants_in_seat=occupancy["infants_in_seat"],
-        infants_on_lap=occupancy["infants_on_lap"],
         cabin=args.cabin,
         bags=args.bags,
-        carry_on=carry_on,
+        carry_on=shop["carry_on"],
         price_cap=args.price_cap,
+        **occupancy,
     )
     today = date.today()
     for departure in _plan_departure_dates(plan):
@@ -267,7 +230,7 @@ def _parse_and_validate(args: argparse.Namespace) -> Tuple[Trip, ...]:
     trips = _as_trips(plan)
     trips = expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
     _resolve_quote_from_args(args, first_origin_iata(trips[0]))
-    return trips
+    return trips, shop
 
 
 def _as_trips(plan: object) -> Tuple[Trip, ...]:
@@ -797,18 +760,13 @@ def _exit_code(report) -> int:
 
 def _run_flights(args: argparse.Namespace) -> int:
     try:
-        queries = _parse_and_validate(args)
+        queries, shop = _parse_and_validate(args)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     if getattr(args, "nearby", False):
-        for note in nearby_notes(
-            queries,
-            exclude_airports=parse_via_airports(
-                getattr(args, "exclude_airports", None), role="exclude-airports"
-            ),
-        ):
+        for note in nearby_notes(queries, exclude_airports=shop["exclude_airports"]):
             print(note, file=sys.stderr)
 
     report = search_flights(
@@ -818,33 +776,10 @@ def _run_flights(args: argparse.Namespace) -> int:
         progress=lambda line: print(line, file=sys.stderr),
         sort=args.sort,
         fetch=args.fetch,
-        max_layover_hours=args.max_layover,
-        min_layover_hours=args.min_layover,
-        max_duration_hours=args.max_duration,
-        airlines=parse_airline_codes(args.airlines),
-        exclude_airlines=parse_airline_codes(args.exclude_airlines),
-        alliances=parse_alliances(args.alliance),
-        exclude_alliances=parse_alliances(args.exclude_alliance),
-        depart_window=parse_depart_window(args.depart_window),
-        arrive_before=parse_named_clock(args.arrive_before, role="arrive-before"),
-        depart_after=parse_named_clock(args.depart_after, role="depart-after"),
-        via=parse_via_airports(args.via),
-        exclude_via=parse_via_airports(args.exclude_via, role="exclude-via"),
-        no_overnight=parse_overnight_airports(
-            getattr(args, "no_overnight", None), role="no-overnight"
-        ),
-        require_overnight=parse_overnight_airports(
-            getattr(args, "require_overnight", None), role="require-overnight"
-        ),
-        exclude_airports=parse_via_airports(
-            getattr(args, "exclude_airports", None), role="exclude-airports"
-        ),
-        include_airports=parse_via_airports(
-            getattr(args, "include_airports", None), role="include-airports"
-        ),
         currency=args.currency,
         country=args.country,
         proxy=getattr(args, "proxy", None) or None,
+        **{key: value for key, value in shop.items() if key not in _TRIP_SHOP_FIELDS},
     )
     _print_report(report, sort=args.sort)
 
@@ -889,36 +824,6 @@ def _combined_exit_code(*reports: object) -> int:
     return 3
 
 
-def _ensure_flight_validate_defaults(args: argparse.Namespace) -> None:
-    defaults = {
-        "children": 0,
-        "infants_in_seat": 0,
-        "infants_on_lap": 0,
-        "bags": None,
-        "carry_on": False,
-        "price_cap": None,
-        "max_layover": None,
-        "min_layover": None,
-        "max_duration": None,
-        "airlines": None,
-        "exclude_airlines": None,
-        "alliance": None,
-        "exclude_alliance": None,
-        "depart_window": None,
-        "arrive_before": None,
-        "depart_after": None,
-        "via": None,
-        "exclude_via": None,
-        "no_overnight": None,
-        "require_overnight": None,
-        "exclude_airports": None,
-        "include_airports": None,
-    }
-    for key, value in defaults.items():
-        if not hasattr(args, key):
-            setattr(args, key, value)
-
-
 def _trip_hotel_query(args: argparse.Namespace, trips: Tuple[Trip, ...]) -> HotelQuery:
     if args.check_in and args.check_out:
         check_in = _parse_iso_date(args.check_in, "check-in")
@@ -953,11 +858,9 @@ def _trip_hotel_query(args: argparse.Namespace, trips: Tuple[Trip, ...]) -> Hote
 
 
 def _run_trip(args: argparse.Namespace) -> int:
-    _ensure_flight_validate_defaults(args)
     try:
-        trips = _parse_and_validate(args)
+        trips, shop = _parse_and_validate(args)
         hotel_query = _trip_hotel_query(args, trips)
-        shop = _owned_shop_filters_from_args(args)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1404,6 +1307,9 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         dest="max_duration",
         help="Drop offers whose elapsed time exceeds HOURS (shop cards only)",
     )
+
+
+_TRIP_SHOP_FIELDS = frozenset({"bags", "carry_on", "price_cap"})
 
 
 def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
