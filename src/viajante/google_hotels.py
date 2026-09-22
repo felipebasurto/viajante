@@ -7,7 +7,10 @@ from typing import Optional
 from urllib.parse import urlencode
 
 from viajante.google_flights import (
+    COOLDOWN_UNCHECKED,
+    NOT_SENT,
     SweepHttpClient,
+    cooldown_client,
     reset_shared_chrome_sweep_client,
     shared_chrome_sweep_client,
 )
@@ -16,6 +19,7 @@ from viajante.google_hotels_rpc import (
     HOTELS_SEARCH_URL,
     HotelsBlocked,
     HotelsParseMiss,
+    _looks_blocked,
     build_hotels_request,
     parse_hotels_body,
 )
@@ -63,6 +67,7 @@ class GoogleHotelsSource:
         self._currency = currency
         self._injected_client = client
         self._timeout = timeout
+        self._cooldown = COOLDOWN_UNCHECKED
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency)
 
     def fetch(
@@ -75,7 +80,11 @@ class GoogleHotelsSource:
         client = self._ensure_client()
         url, body = build_hotels_request(query, html_lang=self._html_lang, currency=self._currency)
         response = client.post(url, data=body, headers=HOTELS_POST_HEADERS, timeout=self._timeout)
-        if response.status in {403, 429, 503} or _looks_blocked(response.text, response.url):
+        advice = response.rate_limit
+        if response.status == 429 and advice:
+            message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
+            raise HotelsBlocked(message, rate_limited=True)
+        if response.status in {403, 429, 503} or _looks_blocked(f"{response.text} {response.url}"):
             raise HotelsBlocked(f"Google Hotels HTTP {response.status} from {url}")
         if response.status >= 400:
             raise HotelsParseMiss(f"hotel HTTP {response.status}")
@@ -92,9 +101,5 @@ class GoogleHotelsSource:
     def _ensure_client(self) -> SweepHttpClient:
         if self._injected_client is not None:
             return self._injected_client
-        return shared_chrome_sweep_client()
-
-
-def _looks_blocked(body: str, final_url: str) -> bool:
-    lowered = f"{body} {final_url}".casefold()
-    return "/sorry/" in lowered or "unusual traffic" in lowered
+        self._cooldown, paused = cooldown_client(self._cooldown)
+        return paused or shared_chrome_sweep_client()

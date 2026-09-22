@@ -36,6 +36,14 @@ def typical_from_daily_prices(
     return float(median(owned))
 
 
+def _typical_fields(price: float, typical: Optional[float]) -> Optional[dict[str, object]]:
+    label = vs_typical(price, typical)
+    pct = vs_typical_pct(price, typical)
+    if typical is None or label is None or pct is None:
+        return None
+    return {"typical": typical, "vs_typical": label, "vs_typical_pct": pct}
+
+
 def with_typical(
     offer: FlightOffer,
     typical: Optional[float],
@@ -43,25 +51,12 @@ def with_typical(
     cheapest_date: Optional[date] = None,
     cheapest: Optional[float] = None,
 ) -> FlightOffer:
-    label = vs_typical(offer.price, typical)
-    pct = vs_typical_pct(offer.price, typical)
-    if typical is None or label is None or pct is None:
+    fields = _typical_fields(offer.price, typical)
+    if fields is None:
         return offer
-    if cheapest_date is None or cheapest is None or cheapest <= 0:
-        return replace(
-            offer,
-            typical=typical,
-            vs_typical=label,
-            vs_typical_pct=pct,
-        )
-    return replace(
-        offer,
-        typical=typical,
-        vs_typical=label,
-        vs_typical_pct=pct,
-        cheapest_date=cheapest_date,
-        cheapest=cheapest,
-    )
+    if cheapest_date is not None and cheapest is not None and cheapest > 0:
+        fields.update(cheapest_date=cheapest_date, cheapest=cheapest)
+    return replace(offer, **fields)
 
 
 def with_typical_dest(
@@ -69,15 +64,5 @@ def with_typical_dest(
     typical: Optional[float],
 ) -> ExploreDestination:
     """Stamp a shopped dest from the same-route calendar median flights uses."""
-    if dest.price is None:
-        return dest
-    label = vs_typical(dest.price, typical)
-    pct = vs_typical_pct(dest.price, typical)
-    if typical is None or label is None or pct is None:
-        return dest
-    return replace(
-        dest,
-        typical=typical,
-        vs_typical=label,
-        vs_typical_pct=pct,
-    )
+    fields = None if dest.price is None else _typical_fields(dest.price, typical)
+    return dest if fields is None else replace(dest, **fields)

@@ -37,12 +37,10 @@ BROWSER_INSTALL_HINT = (
 )
 
 
-def _clip_error_message(text: str, *, limit: int = ERROR_MESSAGE_MAX_CHARS) -> str:
-    if len(text) <= limit:
+def _clip_error_message(text: str) -> str:
+    if len(text) <= ERROR_MESSAGE_MAX_CHARS:
         return text
-    if limit <= 3:
-        return text[:limit]
-    return text[: limit - 3] + "..."
+    return text[: ERROR_MESSAGE_MAX_CHARS - 3] + "..."
 
 
 def classify_failure(exc: BaseException) -> SearchError:

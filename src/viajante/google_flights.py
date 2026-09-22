@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import math
 import threading
 import time
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
@@ -31,6 +33,7 @@ from viajante.google_flights_rpc import (
     parse_shopping_body,
 )
 from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, Trip
+from viajante.storage import default_state_dir, write_json_atomic
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
@@ -301,6 +304,95 @@ class SweepHttpResponse:
     status: int
     text: str
     url: str = ""
+    rate_limit: Optional[str] = None
+
+
+RATE_LIMIT_FILE = "google-rate-limit.json"
+# ponytail: Google publishes no quota. The cooldown is a guess: 2 min, doubling per repeat
+# 429 up to 30 min, unless Retry-After names one. Upgrade: learn it from observed recoveries.
+RATE_LIMIT_COOLDOWN_SECONDS = 120.0
+RATE_LIMIT_MAX_COOLDOWN_SECONDS = 1800.0
+NOT_SENT = "Not sent. "
+
+
+def _read_rate_limit() -> Optional[dict]:
+    try:
+        state = json.loads((default_state_dir() / RATE_LIMIT_FILE).read_text(encoding="utf-8"))
+        return state if all(isinstance(state[k], (int, float)) for k in ("at", "until")) else None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def rate_limit_status(now: Optional[float] = None) -> Optional[dict]:
+    """The recorded Google cooldown for this machine while it runs, else None."""
+    state = _read_rate_limit()
+    current = time.time() if now is None else now
+    return state if state is not None and state["until"] > current else None
+
+
+def note_rate_limited(retry_after: Optional[float] = None, now: Optional[float] = None) -> dict:
+    """Record a real Google 429 in the state dir so the next search in any process waits."""
+    current = time.time() if now is None else now
+    previous = _read_rate_limit()
+    if previous is not None and previous["until"] > current:
+        return previous
+    cooldown = RATE_LIMIT_COOLDOWN_SECONDS
+    if retry_after is not None and retry_after > 0:
+        cooldown = retry_after
+    elif previous is not None and current < previous["until"] + previous.get("cooldown_s", 0):
+        cooldown = min(RATE_LIMIT_MAX_COOLDOWN_SECONDS, previous["cooldown_s"] * 2)
+    state = {"at": current, "until": current + cooldown, "cooldown_s": cooldown}
+    with contextlib.suppress(OSError):
+        write_json_atomic(state, default_state_dir() / RATE_LIMIT_FILE)
+    return state
+
+
+def rate_limit_advice(state: Mapping[str, float], *, sent: bool = True) -> str:
+    def clock(epoch: float) -> str:
+        return datetime.fromtimestamp(epoch, timezone.utc).strftime("%H:%M")
+
+    minutes = max(1, math.ceil((state["until"] - time.time()) / 60))
+    prefix = "" if sent else NOT_SENT
+    return (
+        f"{prefix}Google is rate-limiting this machine (HTTP 429 at {clock(state['at'])} UTC). "
+        f"Viajante pauses Google searches until {clock(state['until'])} UTC (~{minutes} min). "
+        "Tell the user to wait; do not retry or switch fetch mode."
+    )
+
+
+def _retry_after_seconds(response: Any) -> Optional[float]:
+    headers = getattr(response, "headers", None) or {}
+    try:
+        return float(headers.get("retry-after") or headers.get("Retry-After"))
+    except (TypeError, ValueError):
+        return None
+
+
+class _CooldownClient:
+    """Answers every request with a local 429 while a recorded cooldown runs. No network."""
+
+    def __init__(self, state: Mapping[str, float]) -> None:
+        self._advice = rate_limit_advice(state, sent=False)
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+
+    def post(
+        self, url: str, *, data: str, headers: Mapping[str, str], timeout: float
+    ) -> SweepHttpResponse:
+        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+
+    def close(self) -> None:
+        return None
+
+
+COOLDOWN_UNCHECKED: Any = object()
+
+
+def cooldown_client(snapshot: Any) -> tuple[Any, Optional[_CooldownClient]]:
+    """Read the cooldown once per search; mid-search 429 replays keep the live session."""
+    state = rate_limit_status() if snapshot is COOLDOWN_UNCHECKED else snapshot
+    return state, (_CooldownClient(state) if state is not None else None)
 
 
 class SweepHttpClient(Protocol):
@@ -357,6 +449,7 @@ class ChromeSweepClient:
 
         curl_requests = _curl_requests()
         self._asyncio = asyncio
+        self._proxied = _normalize_proxy(proxy) is not None
         self._loop = asyncio.new_event_loop()
         self._session: Any = None
         self._error: Optional[BaseException] = None
@@ -426,7 +519,12 @@ class ChromeSweepClient:
             response, timeout
         ):
             response = await send()
-        return _as_sweep_response(response)
+        out = _as_sweep_response(response)
+        # ponytail: a proxy is another egress IP, so its 429 does not pause direct searches.
+        if out.status == 429 and not self._proxied:
+            state = note_rate_limited(_retry_after_seconds(response))
+            out = replace(out, rate_limit=rate_limit_advice(state))
+        return out
 
     async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
         return await self._exchange(
@@ -597,12 +695,14 @@ class _OpenerSweepClient:
         return None
 
 
-def _raise_if_blocked(status: int, body: str, final_url: str, fallback_url: str) -> None:
+def _raise_if_blocked(
+    status: int, body: str, final_url: str, fallback_url: str, advice: Optional[str] = None
+) -> None:
     if status in {403, 429, 503}:
-        raise GoogleFlightsBlocked(
-            f"Google Flights HTTP {status} from {fallback_url}",
-            status=status,
-        )
+        message = f"Google Flights HTTP {status} from {fallback_url}"
+        if status == 429 and advice:
+            message = advice if advice.startswith(NOT_SENT) else f"{message}. {advice}"
+        raise GoogleFlightsBlocked(message, status=status)
     if status >= 400:
         raise GoogleFlightsBlocked(
             f"Google Flights HTTP {status} from {final_url or fallback_url}",
@@ -670,7 +770,7 @@ def fetch_search_html(
 ) -> tuple[str, str]:
     if client is not None:
         response = client.get(url, timeout=timeout)
-        _raise_if_blocked(response.status, response.text, response.url, url)
+        _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
         return response.text, response.url
     if opener is not None:
         html, final_url, status = _opener_get(url, opener=opener, timeout=timeout)
@@ -716,9 +816,9 @@ def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     # Empty result lists and grounded empty-state copy both mean no flights.
     # Unknown shells without either signal are markup drift, except a tiny
     # shell which is a block, not a parse of a results page.
-    if _has_empty_state(parser) or parser.css_first("ul.Rk10dc") is not None:
-        observed = EMPTY_STATE_TEXT if _has_empty_state(parser) else ""
-        raise NoFlightsFound(observed)
+    empty_state = _has_empty_state(parser)
+    if empty_state or parser.css_first("ul.Rk10dc") is not None:
+        raise NoFlightsFound(EMPTY_STATE_TEXT if empty_state else "")
     n = len(html)
     if n < _SHORT_SHELL_CHARS:
         raise GoogleFlightsBlocked(
@@ -750,6 +850,7 @@ class GoogleFlightsHttpSource:
         self._timeout = timeout
         self._sleep = time.sleep if sleep is None else sleep
         self._proxy = _normalize_proxy(proxy)
+        self._cooldown = COOLDOWN_UNCHECKED
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency, country=country)
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
@@ -772,29 +873,18 @@ class GoogleFlightsHttpSource:
         jobs = [self._shopping_post(trip) for trip in trips]
         responses = dispatch_posts(client, jobs, timeout=self._timeout)
         results: list[tuple[RawFlightCard, ...] | BaseException] = []
-        retry_indexes: list[int] = []
-        rate_indexes: list[int] = []
-        for index, (trip, response) in enumerate(zip(trips, responses, strict=True)):
+        for trip, job, response in zip(trips, jobs, responses, strict=True):
             try:
-                results.append(self._cards_from_shopping_response(client, trip, response))
+                results.append(self._cards_from_shopping_response(client, trip, response, job.url))
             except BaseException as exc:
                 results.append(exc)
-                if _is_rate_limited_sweep_failure(exc):
-                    rate_indexes.append(index)
-                elif _is_retriable_sweep_failure(exc):
-                    retry_indexes.append(index)
-        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
-        if replay and SWEEP_RETRY_LIMIT >= 1:
-            if rate_indexes:
-                client = self._client_after_rate_limit()
-            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
-                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
-            retry_jobs = [jobs[index] for index in replay]
-            retried = dispatch_posts(client, retry_jobs, timeout=self._timeout)
+        client, replay = self._plan_replay(client, results)
+        if replay:
+            retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
             for index, response in zip(replay, retried, strict=True):
                 try:
                     results[index] = self._cards_from_shopping_response(
-                        client, trips[index], response
+                        client, trips[index], response, jobs[index].url
                     )
                 except BaseException as exc:
                     results[index] = exc
@@ -823,29 +913,21 @@ class GoogleFlightsHttpSource:
         results: list[
             tuple[tuple[RawFlightCard, ...] | BaseException, tuple[CompactCalendarDay, ...]]
         ] = []
-        retry_indexes: list[int] = []
-        rate_indexes: list[int] = []
         for index, (query, _start, _end) in enumerate(jobs):
             shop_resp = responses[2 * index]
             cal_resp = responses[2 * index + 1]
             try:
                 cards: tuple[RawFlightCard, ...] | BaseException = (
-                    self._cards_from_shopping_response(client, query, shop_resp)
+                    self._cards_from_shopping_response(
+                        client, query, shop_resp, posts[2 * index].url
+                    )
                 )
             except BaseException as exc:
                 cards = exc
-                if _is_rate_limited_sweep_failure(exc):
-                    rate_indexes.append(index)
-                elif _is_retriable_sweep_failure(exc):
-                    retry_indexes.append(index)
-            days = self._days_from_calendar_response(cal_resp, posts[2 * index + 1].url)
+            days = self._days_from_calendar_response(cal_resp)
             results.append((cards, days))
-        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
-        if replay and SWEEP_RETRY_LIMIT >= 1:
-            if rate_indexes:
-                client = self._client_after_rate_limit()
-            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
-                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+        client, replay = self._plan_replay(client, [cards for cards, _days in results])
+        if replay:
             retry_posts: list[SweepPost] = []
             for index in replay:
                 query, start, end = jobs[index]
@@ -857,16 +939,38 @@ class GoogleFlightsHttpSource:
                 shop_resp = retried[2 * offset]
                 cal_resp = retried[2 * offset + 1]
                 try:
-                    cards = self._cards_from_shopping_response(client, query, shop_resp)
+                    cards = self._cards_from_shopping_response(
+                        client, query, shop_resp, retry_posts[2 * offset].url
+                    )
                 except BaseException as exc:
                     cards = exc
-                days = self._days_from_calendar_response(cal_resp, retry_posts[2 * offset + 1].url)
+                days = self._days_from_calendar_response(cal_resp)
                 results[index] = (cards, days)
         return results
 
     def reset(self) -> None:
         if self._injected_client is None and self._opener is None:
             reset_shared_chrome_sweep_client()
+
+    def _plan_replay(
+        self, client: SweepHttpClient, outcomes: Sequence[object]
+    ) -> tuple[SweepHttpClient, list[int]]:
+        """One replay of retriable failures; any 429 resets TLS and replays those too."""
+        failures = [(i, o) for i, o in enumerate(outcomes) if isinstance(o, BaseException)]
+        rate = [i for i, exc in failures if _is_rate_limited_sweep_failure(exc)]
+        retry = [
+            i
+            for i, exc in failures
+            if not _is_rate_limited_sweep_failure(exc) and _is_retriable_sweep_failure(exc)
+        ]
+        replay = sorted(rate + retry) if rate else retry
+        if not replay or SWEEP_RETRY_LIMIT < 1:
+            return client, []
+        if rate:
+            return self._client_after_rate_limit(), replay
+        if SWEEP_RETRY_BACKOFF_SECONDS > 0:
+            self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+        return client, replay
 
     def _client_after_rate_limit(self) -> SweepHttpClient:
         self.reset()
@@ -883,6 +987,10 @@ class GoogleFlightsHttpSource:
             return self._injected_client
         if self._opener is not None:
             return _OpenerSweepClient(self._opener)
+        if self._proxy is None:
+            self._cooldown, paused = cooldown_client(self._cooldown)
+            if paused is not None:
+                return paused
         return shared_chrome_sweep_client(proxy=self._proxy)
 
     def _retry_sweep(self, fn: Callable[[], Any]) -> Any:
@@ -939,44 +1047,39 @@ class GoogleFlightsHttpSource:
         posts = (self._shopping_post(query), self._calendar_post(query, start, end))
         shop_resp, cal_resp = dispatch_posts(client, posts, timeout=self._timeout)
         try:
-            cards = self._cards_from_shopping_response(client, query, shop_resp)
+            cards = self._cards_from_shopping_response(client, query, shop_resp, posts[0].url)
         except CompactParseMiss:
             cards = self._html_cards(client, query)
-        days = self._days_from_calendar_response(cal_resp, posts[1].url)
+        days = self._days_from_calendar_response(cal_resp)
         return cards, days
 
     def _fetch_compact(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
-        url, body = build_shopping_request(
-            trip,
-            html_lang=self._html_lang,
-            currency=self._currency,
-            country=self._country,
-        )
+        post = self._shopping_post(trip)
         try:
             response = client.post(
-                url, data=body, headers=SHOPPING_POST_HEADERS, timeout=self._timeout
+                post.url, data=post.data, headers=post.headers, timeout=self._timeout
             )
         except CompactParseMiss:
             raise
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
-        return self._cards_from_shopping_response(client, trip, response)
+        return self._cards_from_shopping_response(client, trip, response, post.url)
 
     def _cards_from_shopping_response(
         self,
         client: SweepHttpClient,
         trip: Trip,
         response: SweepHttpResponse,
+        url: str,
     ) -> tuple[RawFlightCard, ...]:
-        url, _body = build_shopping_request(
-            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
-        )
         if (
             response.status in {403, 429}
             or response.status >= 500
             or looks_blocked(response.text, response.url)
         ):
-            _raise_if_blocked(response.status, response.text, response.url, url)
+            _raise_if_blocked(
+                response.status, response.text, response.url, url, response.rate_limit
+            )
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")
         try:
@@ -996,19 +1099,12 @@ class GoogleFlightsHttpSource:
         return parse_http_flight_cards(html)
 
     def _days_from_calendar_response(
-        self,
-        response: SweepHttpResponse,
-        url: str,
+        self, response: SweepHttpResponse
     ) -> tuple[CompactCalendarDay, ...]:
+        """Typical side of a paired POST: a block, HTTP error, or miss is no typical, not a fail."""
+        if response.status >= 400 or looks_blocked(response.text, response.url):
+            return ()
         try:
-            if (
-                response.status in {403, 429, 503}
-                or looks_blocked(response.text, response.url)
-                or response.status >= 400
-            ):
-                if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
-                    _raise_if_blocked(response.status, response.text, response.url, url)
-                return ()
             return parse_calendar_body(response.text)
         except Exception:
             return ()
@@ -1074,7 +1170,9 @@ class GoogleFlightsHttpSource:
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
         if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
-            _raise_if_blocked(response.status, response.text, response.url, url)
+            _raise_if_blocked(
+                response.status, response.text, response.url, url, response.rate_limit
+            )
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")
         return response

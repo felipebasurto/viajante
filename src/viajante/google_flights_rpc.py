@@ -6,14 +6,13 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypeVar
 from urllib.parse import quote, urlencode
 
 from viajante.carriers import carrier_filter_payload, shopping_carrier_codes
 from viajante.models import (
     FETCH_LANGUAGE,
     FlightCabin,
-    MultiCity,
     RawJourneyLeg,
     RawLayover,
     RawSegment,
@@ -21,6 +20,7 @@ from viajante.models import (
     Trip,
 )
 from viajante.parsers import normalize_clock
+from viajante.tfs import CABIN_SEAT, TRIP_ONE_WAY, trip_kind_code
 
 SHOPPING_RESULTS_URL = (
     "https://www.google.com/_/FlightsFrontendUi/data/"
@@ -35,18 +35,10 @@ EXPLORE_DESTINATIONS_URL = (
     "travel.frontend.flights.FlightsFrontendService/GetExploreDestinations"
 )
 
-_SEAT: Mapping[FlightCabin, int] = {
-    "economy": 1,
-    "premium-economy": 2,
-    "business": 3,
-    "first": 4,
-}
-_TRIP_ONE_WAY = 2
-_TRIP_ROUND_TRIP = 1
-_TRIP_MULTI_CITY = 3
 _SEGMENT_OUTBOUND = 3
 _SEGMENT_RETURN = 1
 _ANTI_XSSI = ")]}'"
+_T = TypeVar("_T")
 # viajante max_stops -> shopping segment[3]. TFS field 5 stays the viajante integer.
 _SHOPPING_STOPS: Mapping[int, int] = {0: 1, 1: 2, 2: 3}
 # Compact fare blocks put a [checked, carry_on] pair after the booking token.
@@ -103,14 +95,6 @@ def shopping_stop_code(max_stops: int) -> int:
         return _SHOPPING_STOPS[max_stops]
     except KeyError:
         raise ValueError("max_stops must be 0, 1, or 2") from None
-
-
-def _shopping_trip_kind(trip: Trip) -> int:
-    if isinstance(trip, RoundTrip):
-        return _TRIP_ROUND_TRIP
-    if isinstance(trip, MultiCity):
-        return _TRIP_MULTI_CITY
-    return _TRIP_ONE_WAY
 
 
 def _segment_classifier(trip: Trip, index: int) -> int:
@@ -171,7 +155,7 @@ def _constraints_from_segments(
     *,
     adults: int,
     cabin: FlightCabin,
-    trip_kind: int = _TRIP_ONE_WAY,
+    trip_kind: int = TRIP_ONE_WAY,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     children: int = 0,
@@ -184,7 +168,7 @@ def _constraints_from_segments(
         trip_kind,
         None,
         [],
-        _SEAT[cabin],
+        CABIN_SEAT[cabin],
         _occupancy_slot(
             adults=adults,
             children=children,
@@ -229,15 +213,15 @@ def build_search_constraints(
         infants_in_seat=trip.infants_in_seat,
         infants_on_lap=trip.infants_on_lap,
         cabin=trip.cabin,
-        trip_kind=_shopping_trip_kind(trip),
+        trip_kind=trip_kind_code(trip),
         bags=trip.bags,
         carry_on=trip.carry_on,
     )
 
 
-def build_shopping_inner(trip: Trip, token: Optional[str] = None) -> list[Any]:
+def build_shopping_inner(trip: Trip) -> list[Any]:
     return [
-        [None, None, None, token],
+        [None, None, None, None],
         build_search_constraints(trip),
         0,
         1,
@@ -368,18 +352,22 @@ SHOPPING_POST_HEADERS = {
 }
 
 
-def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
+def _wrb_json(text: str, *, kind: str, subject: str = "route") -> Any:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
+            f"Google Flights rejected this {subject} or date (unknown airport or invalid query)."
         )
-    payload = _first_wrb_data(text)
+    payload = first_wrb_data(text)
     if payload is None:
-        raise CompactParseMiss("no wrb.fr shopping payload")
+        raise CompactParseMiss(f"no wrb.fr {kind} payload")
     try:
-        data = json.loads(payload)
+        return json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr data is not JSON") from exc
+        raise CompactParseMiss(f"wrb.fr {kind} data is not JSON") from exc
+
+
+def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
+    data = _wrb_json(text, kind="shopping")
     if not isinstance(data, list):
         raise CompactParseMiss("wrb.fr data is not a list")
     items = _collect_itineraries(data)
@@ -395,7 +383,24 @@ def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightC
     return cards
 
 
-def _first_wrb_data(text: str) -> Optional[str]:
+def _wrb_data_string(obj: object) -> Optional[str]:
+    if (
+        isinstance(obj, list)
+        and obj
+        and isinstance(obj[0], list)
+        and obj[0]
+        and obj[0][0] == "wrb.fr"
+    ):
+        obj = obj[0]
+    if isinstance(obj, list) and len(obj) >= 3 and obj[0] == "wrb.fr" and isinstance(obj[2], str):
+        return obj[2]
+    return None
+
+
+def first_wrb_data(
+    text: str, extract: Callable[[object], Optional[_T]] = _wrb_data_string
+) -> Optional[_T]:
+    """First wrb.fr envelope ``extract`` accepts, across length-prefixed or bare JSON chunks."""
     body = text.lstrip()
     if body.startswith(_ANTI_XSSI):
         body = body[len(_ANTI_XSSI) :].lstrip()
@@ -419,7 +424,7 @@ def _first_wrb_data(text: str) -> Optional[str]:
                 except json.JSONDecodeError:
                     idx = newline + 1
                     continue
-                found = _wrb_data_string(obj)
+                found = extract(obj)
                 if found is not None:
                     return found
                 idx = newline + 1 + size
@@ -428,21 +433,7 @@ def _first_wrb_data(text: str) -> Optional[str]:
             obj, _ = decoder.raw_decode(body, idx)
         except json.JSONDecodeError:
             break
-        return _wrb_data_string(obj)
-    return None
-
-
-def _wrb_data_string(obj: object) -> Optional[str]:
-    if (
-        isinstance(obj, list)
-        and obj
-        and isinstance(obj[0], list)
-        and obj[0]
-        and obj[0][0] == "wrb.fr"
-    ):
-        obj = obj[0]
-    if isinstance(obj, list) and len(obj) >= 3 and obj[0] == "wrb.fr" and isinstance(obj[2], str):
-        return obj[2]
+        return extract(obj)
     return None
 
 
@@ -873,17 +864,7 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
 
 
 def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
-    if _is_shopping_rejected(text):
-        raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
-        )
-    payload = _first_wrb_data(text)
-    if payload is None:
-        raise CompactParseMiss("no wrb.fr calendar payload")
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr calendar data is not JSON") from exc
+    data = _wrb_json(text, kind="calendar")
     if not isinstance(data, list) or len(data) < 2 or not isinstance(data[1], list):
         raise CompactParseMiss("calendar payload has no date rows")
     rows: list[CompactCalendarDay] = []
@@ -897,17 +878,7 @@ def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
 
 
 def parse_explore_body(text: str) -> tuple[CompactExplorePlace, ...]:
-    if _is_shopping_rejected(text):
-        raise ShoppingRejected(
-            "Google Flights rejected this origin or date (unknown airport or invalid query)."
-        )
-    payload = _first_wrb_data(text)
-    if payload is None:
-        raise CompactParseMiss("no wrb.fr explore payload")
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr explore data is not JSON") from exc
+    data = _wrb_json(text, kind="explore", subject="origin")
     if not isinstance(data, list) or len(data) < 4 or not isinstance(data[3], list):
         raise CompactParseMiss("explore payload has no destination group")
     group = data[3][0] if data[3] else None

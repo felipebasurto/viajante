@@ -7,7 +7,6 @@ flight then hotel loops sequentially. Never invents a fare or a stay.
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
 
 from viajante.airports import get_airport
@@ -33,7 +32,6 @@ from viajante.models import (
     format_money,
 )
 from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
-from viajante.storage import write_json_atomic
 
 
 def trip_date_span(query: Trip) -> tuple[date, date]:
@@ -255,10 +253,6 @@ def search_trip(
         currency=flights.currency,
         fetch_ms=fetch_ms,
     )
-
-
-def write_trip_report_atomic(report: TripSearchReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)
 
 
 def format_trip_total(total: TripTotal, currency: str) -> str:

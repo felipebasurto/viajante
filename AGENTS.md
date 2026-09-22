@@ -40,6 +40,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
+- MCP evidence ledger, `verify_answer`, and the search `lead` lines: `src/viajante/evidence.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
 
 `google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
@@ -47,7 +48,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 ## Public contract
 
 CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hidden_city`, `compare_awards`, `lookup_transfers`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `verify_answer`.
 Library: `get_flights` (route spec, trips, or NL via `plan_prompt`), plus the `search_*` functions. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. `compare_award` / `lookup_transfers` are local and do not invent seats.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -131,8 +132,14 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
-  jobs. `no_results`, `rejected`, `blocked`, `markup_drift`, and
-  `browser_unavailable` do not get a Playwright second attempt. A calendar
+  jobs. A real direct (unproxied) Google 429 also writes `google-rate-limit.json` in
+  the state dir: a guessed cooldown (2 min, doubling per repeat 429 up to 30 min, or
+  a named `Retry-After`). While it runs, new flight/hotel Google searches in any
+  process send nothing and fail `blocked` with `rate_limited: true`; a search
+  already running keeps its replay. Rate-limited failures do not fall back to
+  detail. MCP search tools replay an identical successful call for 5 min
+  (`cached: true`) instead of asking Google again. `no_results`, `rejected`, `blocked`,
+  `markup_drift`, and `browser_unavailable` do not get a Playwright second attempt. A calendar
   `blocked` (including a short unknown HTML shell) stops that calendar; no
   flex, shop, or browser recovery. Booking card-wait timeouts fail immediately.
   Do not hammer Booking after a challenge.

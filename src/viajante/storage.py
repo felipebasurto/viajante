@@ -18,6 +18,14 @@ def default_state_dir() -> Path:
     return Path.home() / ".local" / "state" / "viajante"
 
 
+def reports_payload(result: object) -> dict:
+    """One report's JSON, or ``{"queries": [...]}`` for a nearby fan-out tuple."""
+    reports = result if isinstance(result, tuple) else (result,)
+    if len(reports) == 1:
+        return dict(reports[0].to_dict())
+    return {"queries": [dict(row.to_dict()) for row in reports]}
+
+
 def write_json_atomic(payload: Mapping[str, object], destination: Path) -> None:
     write_text_atomic(
         json.dumps(payload, indent=2, ensure_ascii=False),

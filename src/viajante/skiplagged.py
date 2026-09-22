@@ -6,7 +6,6 @@ import json
 import threading
 import time
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
@@ -25,7 +24,6 @@ from viajante.models import (
     normalize_currency,
 )
 from viajante.parsers import parse_price
-from viajante.storage import write_json_atomic
 
 SKIPLAGGED_MCP_URL = "https://mcp.skiplagged.com/mcp"
 SKIPLAGGED_FLIGHTS_TOOL = "sk_flights_search"
@@ -592,7 +590,3 @@ def search_hidden_city(
         warnings=HIDDEN_CITY_WARNINGS,
         locale=FETCH_LANGUAGE,
     )
-
-
-def write_hidden_city_report_atomic(report: HiddenCityReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)
