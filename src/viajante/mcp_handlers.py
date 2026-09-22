@@ -205,7 +205,6 @@ def search_dates_tool(
     start_date = date.fromisoformat(start)
     end_date = date.fromisoformat(end)
     validate_date_window(start_date, end_date)
-    _reject_past((start_date,))
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
@@ -294,8 +293,7 @@ def search_flex_tool(
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
-    start, _end = flex_window(around_date, flex)
-    _reject_past((around_date, start), label="around")
+    flex_window(around_date, flex)
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
@@ -392,7 +390,6 @@ def search_explore_tool(
             raise ValueError("start or month is required")
         start_date = date.fromisoformat(start)
     validate_explore_window(start_date, days)
-    _reject_past((start_date,))
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_explore(
