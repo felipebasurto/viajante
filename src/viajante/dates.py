@@ -274,16 +274,6 @@ def _day_trip(
     )
 
 
-def _stamp_trip_google_flights_url(
-    trip: Trip,
-    *,
-    currency: str,
-    country: Optional[str],
-    booking_token: Optional[str] = None,
-) -> Optional[str]:
-    return google_flights_url(trip, currency=currency, country=country, booking_token=booking_token)
-
-
 def _stamp_date_row_url(
     row: DatePriceRow,
     seed: FlightQuery | RoundTrip,
@@ -292,7 +282,7 @@ def _stamp_date_row_url(
     currency: str,
     country: Optional[str],
 ) -> DatePriceRow:
-    url = _stamp_trip_google_flights_url(
+    url = google_flights_url(
         _day_trip(seed, row.departure_date, nights),
         currency=currency,
         country=country,
@@ -312,7 +302,7 @@ def _stamp_offer_urls(
     return tuple(
         replace(
             offer,
-            google_flights_url=_stamp_trip_google_flights_url(
+            google_flights_url=google_flights_url(
                 trip,
                 currency=currency,
                 country=country,
@@ -519,7 +509,7 @@ def _date_calendar_for_seed(
         nights=stay,
         fetch_backend=backend,
         fetch_ms=fetch_ms,
-        google_flights_url=_stamp_trip_google_flights_url(seed, currency=currency, country=country),
+        google_flights_url=google_flights_url(seed, currency=currency, country=country),
         nearby_label=seed.nearby_label,
         currency=currency,
     )
@@ -571,8 +561,6 @@ def search_dates(
     currency = resolve_quote_currency(currency, origin)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
-    if baggage_buffer < 0:
-        raise ValueError("baggage buffer must not be negative")
     if sort is not None:
         validate_sort(sort)
     filters = parse_offer_filters(
@@ -623,8 +611,6 @@ def search_dates(
     reports: list[DateCalendarReport] = []
     try:
         for item in trips:
-            if not isinstance(item, (FlightQuery, RoundTrip)):
-                continue
             reports.append(
                 _date_calendar_for_seed(
                     client,
@@ -781,9 +767,7 @@ def _flex_report_for_seed(
         nights=stay,
         fetch_backend=backend,
         fetch_ms=fetch_ms,
-        google_flights_url=_stamp_trip_google_flights_url(
-            url_trip, currency=currency, country=country
-        ),
+        google_flights_url=google_flights_url(url_trip, currency=currency, country=country),
         error=error,
         nearby_label=seed.nearby_label,
         currency=currency,
@@ -843,8 +827,6 @@ def search_flex(
     country = normalize_country(country)
     if top <= 0:
         raise ValueError("top must be a positive integer")
-    if baggage_buffer < 0:
-        raise ValueError("baggage buffer must not be negative")
     validate_sort(sort)
     filters = parse_offer_filters(
         max_layover_hours=max_layover_hours,
@@ -897,8 +879,6 @@ def search_flex(
     reports: list[FlexSearchReport] = []
     try:
         for item in trips:
-            if not isinstance(item, (FlightQuery, RoundTrip)):
-                continue
             reports.append(
                 _flex_report_for_seed(
                     client,

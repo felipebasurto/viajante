@@ -14,6 +14,7 @@ from viajante.flights import (
     _overnight_from_owned_clocks,
     _rank_offers,
     _run_search,
+    as_trips,
     classify_failure,
     compare_nonstop_vs_one_stop,
     drop_excluded_airport_trips,
@@ -30,7 +31,6 @@ from viajante.flights import (
     parse_overnight_lists,
     parse_route_specs,
     parse_via_airports,
-    plan_unit_count,
     resolve_fetch_mode,
     search_flights,
 )
@@ -643,7 +643,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             max_stops=1,
         )
         self.assertIsInstance(plan, tuple)
-        self.assertEqual(plan_unit_count(plan), 2)
+        self.assertEqual(len(as_trips(plan)), 2)
 
     def test_parse_flight_plan_rt(self) -> None:
         plan = parse_flight_plan(
@@ -657,7 +657,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(plan.origin, "LAX")
         self.assertEqual(plan.destination, "NRT")
         self.assertEqual(plan.adults, 2)
-        self.assertEqual(plan_unit_count(plan), 1)
+        self.assertEqual(len(as_trips(plan)), 1)
         with self.assertRaises(ValueError):
             parse_flight_plan(["JFK-LHR:2026-09-01"], trip="rt", max_stops=1)
         with self.assertRaises(ValueError):
@@ -697,7 +697,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(plan.adults, 2)
         self.assertEqual(plan.children, 1)
-        self.assertEqual(plan_unit_count(plan), 1)
+        self.assertEqual(len(as_trips(plan)), 1)
         mirrored = parse_flight_plan(
             ["YVR-LHR:2026-10-09:2026-10-13"],
             trip="rt",
@@ -909,7 +909,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(plan, MultiCity)
         self.assertEqual(len(plan.legs), 2)
         self.assertEqual(plan.legs[1].origin, "LHR")
-        self.assertEqual(plan_unit_count(plan), 1)
+        self.assertEqual(len(as_trips(plan)), 1)
         with self.assertRaises(ValueError):
             parse_flight_plan(["JFK-LHR:2026-09-01"], trip="multi", max_stops=1)
         with self.assertRaises(ValueError):

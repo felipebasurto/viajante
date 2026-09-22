@@ -270,7 +270,7 @@ def nearby_notes(
     exclude_airports: Optional[Sequence[str]] = None,
 ) -> Tuple[str, ...]:
     """Stderr legend for `--nearby` expands. Named open-jaw is not expanded."""
-    blocked = _blocked_iata(exclude_airports)
+    blocked = _named_iata(exclude_airports)
     notes: list[str] = []
     seen: set[tuple[str, str]] = set()
     for trip in trips:
@@ -291,33 +291,20 @@ def nearby_notes(
     return tuple(notes)
 
 
-def _expand_flight_query(query: FlightQuery) -> Tuple[FlightQuery, ...]:
-    origin_codes = same_city_iata(query.origin) or (query.origin,)
-    dest_codes = same_city_iata(query.destination) or (query.destination,)
-    expanded: list[FlightQuery] = []
-    for origin in origin_codes:
-        for destination in dest_codes:
-            if origin == destination:
-                continue
-            label = _nearby_pair_label(origin, destination, origin_codes, dest_codes)
-            expanded.append(
-                replace(query, origin=origin, destination=destination, nearby_label=label)
-            )
-    return tuple(expanded) if expanded else (query,)
-
-
-def _expand_round_trip(trip: RoundTrip) -> Tuple[RoundTrip, ...]:
+def _expand_od_trip(trip: FlightQuery | RoundTrip) -> Tuple[FlightQuery | RoundTrip, ...]:
     origin_codes = same_city_iata(trip.origin) or (trip.origin,)
     dest_codes = same_city_iata(trip.destination) or (trip.destination,)
-    expanded: list[RoundTrip] = []
-    for origin in origin_codes:
-        for destination in dest_codes:
-            if origin == destination:
-                continue
-            label = _nearby_pair_label(origin, destination, origin_codes, dest_codes)
-            expanded.append(
-                replace(trip, origin=origin, destination=destination, nearby_label=label)
-            )
+    expanded = [
+        replace(
+            trip,
+            origin=origin,
+            destination=destination,
+            nearby_label=_nearby_pair_label(origin, destination, origin_codes, dest_codes),
+        )
+        for origin in origin_codes
+        for destination in dest_codes
+        if origin != destination
+    ]
     return tuple(expanded) if expanded else (trip,)
 
 
@@ -332,10 +319,8 @@ def expand_nearby_trips(trips: Sequence[Trip], *, nearby: bool = False) -> Tuple
         return tuple(trips)
     expanded: list[Trip] = []
     for trip in trips:
-        if isinstance(trip, FlightQuery):
-            expanded.extend(_expand_flight_query(trip))
-        elif isinstance(trip, RoundTrip):
-            expanded.extend(_expand_round_trip(trip))
+        if isinstance(trip, (FlightQuery, RoundTrip)):
+            expanded.extend(_expand_od_trip(trip))
         else:
             expanded.append(trip)
     return tuple(expanded) if expanded else tuple(trips)
@@ -355,7 +340,7 @@ def expand_nearby_origins(
     an excluded same-city code back.
     """
     seed = origin.strip().upper()
-    blocked = _blocked_iata(exclude_airports)
+    blocked = _named_iata(exclude_airports)
     if not nearby:
         return () if seed in blocked else ((seed, None),)
     codes = same_city_iata(seed)
@@ -376,7 +361,7 @@ def nearby_origin_notes(
     origin: str, exclude_airports: Optional[Sequence[str]] = None
 ) -> Tuple[str, ...]:
     """Stderr legend for explore ``--nearby``. No invented codes."""
-    blocked = _blocked_iata(exclude_airports)
+    blocked = _named_iata(exclude_airports)
     codes = tuple(code for code in same_city_iata(origin) if code not in blocked)
     if len(codes) < 2:
         return ()
@@ -476,12 +461,6 @@ def parse_route_specs(
     return tuple(queries)
 
 
-def plan_unit_count(plan: FlightPlan) -> int:
-    if isinstance(plan, (RoundTrip, MultiCity)):
-        return 1
-    return len(plan)
-
-
 def as_trips(plan: FlightPlan | Trip | Sequence[Trip]) -> Tuple[Trip, ...]:
     if isinstance(plan, (FlightQuery, RoundTrip, MultiCity)):
         return (plan,)
@@ -533,7 +512,7 @@ def parse_flight_plan(
     infants_on_lap: int = 0,
 ) -> FlightPlan:
     kind = normalize_trip_kind(trip)
-    occupancy = {
+    shop = {
         "adults": adults,
         "children": children,
         "infants_in_seat": infants_in_seat,
@@ -544,22 +523,10 @@ def parse_flight_plan(
         "price_cap": price_cap,
     }
     if kind == "one-way":
-        return parse_route_specs(
-            specs,
-            max_stops=max_stops,
-            **occupancy,
-        )
+        return parse_route_specs(specs, max_stops=max_stops, **shop)
     if kind == "rt":
-        return _parse_round_trip_plan(
-            specs,
-            max_stops=max_stops,
-            **occupancy,
-        )
-    return _parse_multi_city_plan(
-        specs,
-        max_stops=max_stops,
-        **occupancy,
-    )
+        return _parse_round_trip_plan(specs, max_stops=max_stops, **shop)
+    return _parse_multi_city_plan(specs, max_stops=max_stops, **shop)
 
 
 def _split_route(spec: str, *, grammar: str) -> tuple[str, str, str]:
@@ -574,31 +541,13 @@ def _split_route(spec: str, *, grammar: str) -> tuple[str, str, str]:
 
 
 def _parse_round_trip_plan(
-    specs: Sequence[str],
-    *,
-    max_stops: int,
-    adults: int,
-    cabin: FlightCabin,
-    bags: Optional[int] = None,
-    carry_on: Optional[int] = None,
-    price_cap: Optional[int] = None,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
+    specs: Sequence[str], *, max_stops: int, **shop: Any
 ) -> RoundTrip | MultiCity:
     if len(specs) == 2:
-        return _parse_open_jaw_rt_package(
-            specs,
-            max_stops=max_stops,
-            adults=adults,
-            cabin=cabin,
-            bags=bags,
-            carry_on=carry_on,
-            price_cap=price_cap,
-            children=children,
-            infants_in_seat=infants_in_seat,
-            infants_on_lap=infants_on_lap,
-        )
+        # ORIGIN-DEST:OUT:BACK always returns from DEST. YVR-LHR out + LGW-YVR back
+        # cannot use that grammar without dropping LGW, so two DATE legs under
+        # --trip rt POST one open-jaw multi-city package, not a mirrored RT.
+        return _parse_multi_city_plan(specs, max_stops=max_stops, **shop)
     if len(specs) != 1:
         raise ValueError(f"--trip rt expects exactly one {RT_GRAMMAR}")
     spec = specs[0]
@@ -610,69 +559,10 @@ def _parse_round_trip_plan(
         raise ValueError(f"--trip rt expects {RT_GRAMMAR}")
     outbound = date.fromisoformat(rt_match.group(1))
     inbound = date.fromisoformat(rt_match.group(2))
-    return RoundTrip(
-        origin,
-        destination,
-        outbound,
-        inbound,
-        max_stops=max_stops,
-        adults=adults,
-        children=children,
-        infants_in_seat=infants_in_seat,
-        infants_on_lap=infants_on_lap,
-        cabin=cabin,
-        bags=bags,
-        carry_on=carry_on,
-        price_cap=price_cap,
-    )
+    return RoundTrip(origin, destination, outbound, inbound, max_stops=max_stops, **shop)
 
 
-def _parse_open_jaw_rt_package(
-    specs: Sequence[str],
-    *,
-    max_stops: int,
-    adults: int,
-    cabin: FlightCabin,
-    bags: Optional[int] = None,
-    carry_on: Optional[int] = None,
-    price_cap: Optional[int] = None,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-) -> MultiCity:
-    """Two DATE legs under --trip rt are one open-jaw package, not a mirrored RT.
-
-    ``ORIGIN-DEST:OUT:BACK`` always returns from DEST. YVR-LHR out + LGW-YVR
-    back cannot use that grammar without dropping LGW, so we POST a two-leg
-    multi-city package instead. No invented fare.
-    """
-    return _parse_multi_city_plan(
-        specs,
-        max_stops=max_stops,
-        adults=adults,
-        cabin=cabin,
-        bags=bags,
-        carry_on=carry_on,
-        price_cap=price_cap,
-        children=children,
-        infants_in_seat=infants_in_seat,
-        infants_on_lap=infants_on_lap,
-    )
-
-
-def _parse_multi_city_plan(
-    specs: Sequence[str],
-    *,
-    max_stops: int,
-    adults: int,
-    cabin: FlightCabin,
-    bags: Optional[int] = None,
-    carry_on: Optional[int] = None,
-    price_cap: Optional[int] = None,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-) -> MultiCity:
+def _parse_multi_city_plan(specs: Sequence[str], *, max_stops: int, **shop: Any) -> MultiCity:
     if not 2 <= len(specs) <= 6:
         raise ValueError(f"--trip multi expects 2 to 6 {MULTI_GRAMMAR} routes")
     legs: list[FlightLeg] = []
@@ -685,24 +575,9 @@ def _parse_multi_city_plan(
         if _ONE_DATE.fullmatch(dates_part) is None:
             raise ValueError(f"invalid route: {spec!r}. Expected {MULTI_GRAMMAR}")
         legs.append(
-            FlightLeg(
-                origin,
-                destination,
-                date.fromisoformat(dates_part),
-                max_stops=max_stops,
-            )
+            FlightLeg(origin, destination, date.fromisoformat(dates_part), max_stops=max_stops)
         )
-    return MultiCity(
-        tuple(legs),
-        adults=adults,
-        children=children,
-        infants_in_seat=infants_in_seat,
-        infants_on_lap=infants_on_lap,
-        cabin=cabin,
-        bags=bags,
-        carry_on=carry_on,
-        price_cap=price_cap,
-    )
+    return MultiCity(tuple(legs), **shop)
 
 
 _AIRLINE_STRIP = re.compile(r"[^a-z0-9 ]+")
@@ -944,13 +819,9 @@ def _named_iata(codes: Optional[Sequence[str]]) -> frozenset[str]:
     return frozenset(code.strip().upper() for code in codes if str(code).strip())
 
 
-def _blocked_iata(exclude_airports: Optional[Sequence[str]]) -> frozenset[str]:
-    return _named_iata(exclude_airports)
-
-
 def trip_uses_excluded_airport(trip: Trip, exclude_airports: Optional[Sequence[str]]) -> bool:
     """True when a named origin or dest is in the owned exclude list."""
-    blocked = _blocked_iata(exclude_airports)
+    blocked = _named_iata(exclude_airports)
     if not blocked:
         return False
     if isinstance(trip, MultiCity):
@@ -968,7 +839,7 @@ def drop_excluded_airport_trips(
     named airport on that jaw is excluded. Nearby expansions that match
     the list are dropped; remaining owned same-city codes stay.
     """
-    blocked = _blocked_iata(exclude_airports)
+    blocked = _named_iata(exclude_airports)
     if not blocked:
         return tuple(trips)
     return tuple(trip for trip in trips if not trip_uses_excluded_airport(trip, blocked))
@@ -1278,22 +1149,14 @@ def _passes_depart_window(raw: RawFlightCard, window: Optional[Tuple[int, int]])
     return start <= minutes <= end
 
 
-def _passes_arrive_before(clock_text: Optional[str], bound: Optional[int]) -> bool:
+def _passes_clock_bound(clock_text: Optional[str], bound: Optional[int], *, before: bool) -> bool:
+    """Unknown clock cannot prove a named bound."""
     if bound is None:
         return True
     minutes = _clock_minutes(clock_text)
     if minutes is None:
         return False
-    return minutes <= bound
-
-
-def _passes_depart_after(clock_text: Optional[str], bound: Optional[int]) -> bool:
-    if bound is None:
-        return True
-    minutes = _clock_minutes(clock_text)
-    if minutes is None:
-        return False
-    return minutes >= bound
+    return minutes <= bound if before else minutes >= bound
 
 
 def _eligible_stops(stops: Optional[str], max_stops: int) -> bool:
@@ -1434,9 +1297,9 @@ def _normalize_offer(
         checked_bags=raw.checked_bags,
         carry_on=raw.carry_on,
     )
-    if not _passes_arrive_before(offer.arrival, arrive_before):
+    if not _passes_clock_bound(offer.arrival, arrive_before, before=True):
         return None
-    if not _passes_depart_after(offer.departure, depart_after):
+    if not _passes_clock_bound(offer.departure, depart_after, before=False):
         return None
     return offer
 
@@ -1499,31 +1362,19 @@ def _hide_slow_connections(
     return tuple(kept) if kept else tuple(offers)
 
 
+def _duration_key(offer: FlightOffer) -> float:
+    return offer.duration_hours if offer.duration_hours is not None else UNKNOWN_DURATION_SORTS_LAST
+
+
 def _cheapest_by_fare(offers: Sequence[FlightOffer]) -> Optional[FlightOffer]:
-    if not offers:
-        return None
-
-    def sort_key(offer: FlightOffer) -> tuple[float, float]:
-        duration = offer.duration_hours
-        if duration is None:
-            duration = UNKNOWN_DURATION_SORTS_LAST
-        return (offer.price, duration)
-
-    return min(offers, key=sort_key)
+    return min(offers, key=lambda offer: (offer.price, _duration_key(offer)), default=None)
 
 
 def _cheapest_by_ranked(offers: Sequence[FlightOffer]) -> Optional[FlightOffer]:
     """Cheapest by owned fare+buffer. Missing buffer stamp is fare alone; never invent."""
-    if not offers:
-        return None
-
-    def sort_key(offer: FlightOffer) -> tuple[float, float]:
-        duration = offer.duration_hours
-        if duration is None:
-            duration = UNKNOWN_DURATION_SORTS_LAST
-        return (_effective_cost(offer), duration)
-
-    return min(offers, key=sort_key)
+    return min(
+        offers, key=lambda offer: (_effective_cost(offer), _duration_key(offer)), default=None
+    )
 
 
 def compare_nonstop_vs_one_stop(offers: Sequence[FlightOffer]) -> Optional[StopsCompare]:
@@ -1547,21 +1398,14 @@ def _rank_offers(
     rows = offers if sort != "ranked" else _hide_slow_connections(offers)
 
     def sort_key(offer: FlightOffer) -> tuple[float, float]:
-        duration = offer.duration_hours
-        if duration is None:
-            duration = UNKNOWN_DURATION_SORTS_LAST
         if sort == "duration":
-            return (duration, offer.price)
-        if sort == "departure":
-            minutes = _clock_minutes(offer.departure)
-            primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
-            return (primary, offer.price)
-        if sort == "arrival":
-            minutes = _clock_minutes(offer.arrival)
+            return (_duration_key(offer), offer.price)
+        if sort in ("departure", "arrival"):
+            minutes = _clock_minutes(getattr(offer, sort))
             primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
             return (primary, offer.price)
         primary = offer.price if sort in ("fare", "price") else _effective_cost(offer)
-        return (primary, duration)
+        return (primary, _duration_key(offer))
 
     rows = sorted(rows, key=sort_key)
     seen: set[tuple] = set()
@@ -1717,8 +1561,6 @@ def _run_search(
     currency: str = "EUR",
     sort: FlightSort = "ranked",
     inter_query_delay: Callable[[random.Random], float] = inter_query_delay_seconds,
-    fetch_backend: Optional[FetchBackend] = None,
-    fetch_ms: Optional[int] = None,
     filters: OfferFilters = NO_OFFER_FILTERS,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
 ) -> SearchReport:
@@ -1735,6 +1577,14 @@ def _run_search(
             eligible_count=len(eligible),
             offers=_stamp_typical(trip, ranked, source, typical_cache),
             stops_compare=compare_nonstop_vs_one_stop(eligible),
+        )
+
+    def _stamp(result: QueryResult) -> QueryResult:
+        return _stamp_google_flights_urls(
+            result,
+            html_lang=getattr(source.config, "html_lang", "en"),
+            currency=currency,
+            country=getattr(source.config, "country", None),
         )
 
     def _maybe_reset(failure: SearchError) -> None:
@@ -1779,12 +1629,7 @@ def _run_search(
                 ),
             )
             report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
-        return _stamp_google_flights_urls(
-            outcome,
-            html_lang=getattr(source.config, "html_lang", "en"),
-            currency=currency,
-            country=getattr(source.config, "country", None),
-        )
+        return _stamp(outcome)
 
     fetch_batch = getattr(source, "fetch_many_with_calendar", None)
     if (
@@ -1814,28 +1659,14 @@ def _run_search(
                         typical_cache[_typical_cache_key(seed)] = _summary_from_calendar_days(
                             days, start, end
                         )
-                    results.append(
-                        _stamp_google_flights_urls(
-                            _success_from_cards(trip, cards_or_exc),
-                            html_lang=getattr(source.config, "html_lang", "en"),
-                            currency=currency,
-                            country=getattr(source.config, "country", None),
-                        )
-                    )
+                    results.append(_stamp(_success_from_cards(trip, cards_or_exc)))
                     continue
                 failure = classify_failure(cards_or_exc)
                 if failure.code in NON_RETRIABLE_CODES:
                     _maybe_reset(failure)
                     outcome = QueryFailure(query=trip, error=failure)
                     report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
-                    results.append(
-                        _stamp_google_flights_urls(
-                            outcome,
-                            html_lang=getattr(source.config, "html_lang", "en"),
-                            currency=currency,
-                            country=getattr(source.config, "country", None),
-                        )
-                    )
+                    results.append(_stamp(outcome))
                     continue
                 results.append(_search_one(trip, start_attempt=1))
             return SearchReport(
@@ -1843,8 +1674,6 @@ def _run_search(
                 queries=tuple(results),
                 locale=locale,
                 currency=currency,
-                fetch_backend=fetch_backend,
-                fetch_ms=fetch_ms,
             )
 
     for index, trip in enumerate(trips):
@@ -1857,8 +1686,6 @@ def _run_search(
         queries=tuple(results),
         locale=locale,
         currency=currency,
-        fetch_backend=fetch_backend,
-        fetch_ms=fetch_ms,
     )
 
 

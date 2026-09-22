@@ -184,8 +184,6 @@ def search_explore(
         raise ValueError(f"unknown origin IATA code: {origin!r}")
     currency = resolve_quote_currency(currency, origin)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
-    if baggage_buffer < 0:
-        raise ValueError("baggage buffer must not be negative")
     report_progress = progress or (lambda _: None)
     drop_unpriced = (
         bags is not None
