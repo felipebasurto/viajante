@@ -44,6 +44,7 @@ from viajante.quote import (
     resolve_quote_currency,
 )
 from viajante.skiplagged import search_hidden_city
+from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
 
 _SEARCH_LOCK = threading.Lock()
@@ -53,13 +54,6 @@ def _as_trips(plan: object) -> tuple[Trip, ...]:
     if isinstance(plan, (RoundTrip, MultiCity)):
         return (plan,)
     return tuple(plan)  # type: ignore[arg-type]
-
-
-def _payload_from_reports(result: object) -> dict:
-    reports = result if isinstance(result, tuple) else (result,)
-    if len(reports) == 1:
-        return dict(reports[0].to_dict())
-    return {"queries": [dict(row.to_dict()) for row in reports]}
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -265,7 +259,7 @@ def search_dates_tool(
             proxy=proxy,
         )
     )
-    return _payload_from_reports(report)
+    return reports_payload(report)
 
 
 def search_flex_tool(
@@ -356,7 +350,7 @@ def search_flex_tool(
             proxy=proxy,
         )
     )
-    return _payload_from_reports(report)
+    return reports_payload(report)
 
 
 def search_explore_tool(
@@ -451,7 +445,7 @@ def search_explore_tool(
             proxy=proxy,
         )
     )
-    return _payload_from_reports(report)
+    return reports_payload(report)
 
 
 def search_hotels_tool(

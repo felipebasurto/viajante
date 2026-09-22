@@ -27,14 +27,11 @@ from viajante.dates import (
     search_dates,
     search_flex,
     validate_date_window,
-    write_dates_reports_atomic,
-    write_flex_reports_atomic,
 )
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     search_explore,
     validate_explore_window,
-    write_explore_reports_atomic,
 )
 from viajante.flights import (
     DEFAULT_TOP,
@@ -51,10 +48,9 @@ from viajante.flights import (
     parse_overnight_airports,
     parse_via_airports,
     search_flights,
-    write_report_atomic,
 )
 from viajante.google_flights import google_flights_url
-from viajante.hotels import search_hotels, write_hotel_report_atomic
+from viajante.hotels import search_hotels
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -86,7 +82,6 @@ from viajante.points import (
     load_award_offer,
     load_balances,
     transfer_paths,
-    write_award_compare_atomic,
 )
 from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
 from viajante.quote import (
@@ -95,12 +90,12 @@ from viajante.quote import (
     resolve_baggage_buffer,
     resolve_quote_currency,
 )
-from viajante.skiplagged import search_hidden_city, write_hidden_city_report_atomic
+from viajante.skiplagged import search_hidden_city
+from viajante.storage import reports_payload, write_json_atomic
 from viajante.trip import (
     format_trip_total,
     search_trip,
     stay_window_from_trips,
-    write_trip_report_atomic,
 )
 
 FLIGHTS_EXAMPLES = """\
@@ -853,10 +848,7 @@ def _run_flights(args: argparse.Namespace) -> int:
     )
     _print_report(report, sort=args.sort)
 
-    if args.save:
-        destination = Path(args.save)
-        write_report_atomic(report, destination)
-        print(f"\nSaved {destination}")
+    _save(args, report)
 
     return _exit_code(report)
 
@@ -877,10 +869,7 @@ def _run_hotels(args: argparse.Namespace) -> int:
     )
     _print_hotel_report(report)
 
-    if args.save:
-        destination = Path(args.save)
-        write_hotel_report_atomic(report, destination)
-        print(f"\nSaved {destination}")
+    _save(args, report)
 
     return _exit_code(report)
 
@@ -997,10 +986,7 @@ def _run_trip(args: argparse.Namespace) -> int:
     _print_hotel_report(report.hotels)
     _print_trip_total(report)
 
-    if args.save:
-        destination = Path(args.save)
-        write_trip_report_atomic(report, destination)
-        print(f"\nSaved {destination}")
+    _save(args, report)
 
     return _combined_exit_code(report.flights, report.hotels)
 
@@ -1115,6 +1101,13 @@ def _add_nearby_flag(parser: argparse.ArgumentParser) -> None:
             "labeled alternative (default off; named open-jaw airports stay)"
         ),
     )
+
+
+def _save(args: argparse.Namespace, result: object) -> None:
+    if args.save:
+        destination = Path(args.save)
+        write_json_atomic(reports_payload(result), destination)
+        print(f"\nSaved {destination}")
 
 
 def _as_report_tuple(result: object) -> tuple:
@@ -1543,10 +1536,7 @@ def _run_dates(args: argparse.Namespace) -> int:
     reports = _as_report_tuple(result)
     for report in reports:
         _print_dates_report(report)
-    if args.save:
-        destination_path = Path(args.save)
-        write_dates_reports_atomic(reports, destination_path)
-        print(f"\nSaved {destination_path}")
+    _save(args, reports)
     return _combine_exit_codes(_dates_exit_code(report) for report in reports)
 
 
@@ -1686,10 +1676,7 @@ def _run_flex(args: argparse.Namespace) -> int:
     reports = _as_report_tuple(result)
     for report in reports:
         _print_flex_report(report)
-    if args.save:
-        destination_path = Path(args.save)
-        write_flex_reports_atomic(reports, destination_path)
-        print(f"\nSaved {destination_path}")
+    _save(args, reports)
     return _combine_exit_codes(_flex_exit_code(report) for report in reports)
 
 
@@ -1754,10 +1741,7 @@ def _run_explore(args: argparse.Namespace) -> int:
     reports = _as_report_tuple(result)
     for report in reports:
         _print_explore_report(report)
-    if args.save:
-        destination_path = Path(args.save)
-        write_explore_reports_atomic(reports, destination_path)
-        print(f"\nSaved {destination_path}")
+    _save(args, reports)
     return _combine_exit_codes(
         2 if report.error is not None and not report.destinations else 0 for report in reports
     )
@@ -1860,10 +1844,7 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
         currency=args.currency,
     )
     _print_hidden_city_report(report)
-    if args.save:
-        destination = Path(args.save)
-        write_hidden_city_report_atomic(report, destination)
-        print(f"\nSaved {destination}")
+    _save(args, report)
     if report.error is not None and not report.offers:
         return 2
     return 0
@@ -1911,10 +1892,7 @@ def _run_awards(args: argparse.Namespace) -> int:
     for step in report.playbook:
         print(f"{step.kind}: {step.title}")
         print(f"  {step.body}")
-    if args.save:
-        destination = Path(args.save)
-        write_award_compare_atomic(report, destination)
-        print(f"\nSaved {destination}")
+    _save(args, report)
     return 0
 
 

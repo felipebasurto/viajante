@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
 
 from viajante.flights import (
@@ -48,7 +47,6 @@ from viajante.models import (
     normalize_country,
 )
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
-from viajante.storage import write_json_atomic
 from viajante.typical import typical_from_daily_prices, vs_typical, with_typical
 
 MAX_DATE_WINDOW_DAYS = 31
@@ -648,18 +646,6 @@ def search_dates(
     return one_or_many(reports)
 
 
-def write_dates_report_atomic(report: DateCalendarReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)
-
-
-def write_dates_reports_atomic(reports: Sequence[DateCalendarReport], destination: Path) -> None:
-    owned = tuple(reports)
-    if len(owned) == 1:
-        write_dates_report_atomic(owned[0], destination)
-        return
-    write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
-
-
 def flex_window(
     around: date,
     flex_days: int,
@@ -935,18 +921,6 @@ def search_flex(
     finally:
         client.close()
     return one_or_many(reports)
-
-
-def write_flex_report_atomic(report: FlexSearchReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)
-
-
-def write_flex_reports_atomic(reports: Sequence[FlexSearchReport], destination: Path) -> None:
-    owned = tuple(reports)
-    if len(owned) == 1:
-        write_flex_report_atomic(owned[0], destination)
-        return
-    write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
 
 
 def _return_for(day: date, nights: Optional[int], found: Optional[date] = None) -> Optional[date]:

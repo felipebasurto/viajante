@@ -7,7 +7,6 @@ import re
 import time
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, get_args
 
 from viajante.airports import get_airport, is_known_iata, same_city_iata
@@ -62,7 +61,7 @@ from viajante.parsers import (
     parse_stops_count,
 )
 from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
-from viajante.storage import default_state_dir, write_json_atomic
+from viajante.storage import default_state_dir
 from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
 DEFAULT_TOP = 8
@@ -2198,7 +2197,3 @@ def search_flights(
             backend = "sweep_then_detail"
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return replace(report, fetch_backend=backend, fetch_ms=fetch_ms)
-
-
-def write_report_atomic(report: SearchReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)

@@ -8,9 +8,13 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from viajante.flights import write_report_atomic
 from viajante.models import SearchReport
-from viajante.storage import default_state_dir, write_json_atomic, write_text_atomic
+from viajante.storage import (
+    default_state_dir,
+    reports_payload,
+    write_json_atomic,
+    write_text_atomic,
+)
 
 
 class DefaultStateDirTests(unittest.TestCase):
@@ -79,7 +83,7 @@ class WriteReportAtomicTests(unittest.TestCase):
                 searched_at=datetime(2026, 8, 10, 9, 0, 0),
                 queries=(),
             )
-            write_report_atomic(report, path)
+            write_json_atomic(reports_payload(report), path)
             self.assertTrue(path.exists())
             data = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(data["schema_version"], 1)

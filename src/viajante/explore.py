@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import time
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
@@ -42,7 +41,6 @@ from viajante.models import (
     normalize_country,
 )
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
-from viajante.storage import write_json_atomic
 from viajante.typical import with_typical_dest
 
 DEFAULT_EXPLORE_TOP = 12
@@ -295,18 +293,6 @@ def search_explore(
         return one_or_many([explore_origin(code, label) for code, label in origins])
     finally:
         client.close()
-
-
-def write_explore_report_atomic(report: ExploreReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)
-
-
-def write_explore_reports_atomic(reports: Sequence[ExploreReport], destination: Path) -> None:
-    owned = tuple(reports)
-    if len(owned) == 1:
-        write_explore_report_atomic(owned[0], destination)
-        return
-    write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
 
 
 def _cheapest_shop(

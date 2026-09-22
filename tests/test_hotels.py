@@ -18,7 +18,6 @@ from viajante.hotels import (
     _rank_offers,
     _run_search,
     search_hotels,
-    write_hotel_report_atomic,
 )
 from viajante.models import (
     AppliedHotelFilters,
@@ -39,6 +38,7 @@ from viajante.orchestration import (
     REQUEST_DELAY_SECONDS,
     REQUEST_JITTER_SECONDS,
 )
+from viajante.storage import reports_payload, write_json_atomic
 
 ScriptedResponse = Union[HotelPage, Exception]
 
@@ -685,18 +685,6 @@ class HotelOrchestrationTests(unittest.TestCase):
         self.assertTrue(source.closed)
         self.assertIsInstance(report.queries[0], HotelQueryFailure)
 
-    def test_report_writer_delegates_to_atomic_storage(self) -> None:
-        report = HotelSearchReport(
-            searched_at=datetime(2026, 8, 10, 10, 0, 0),
-            queries=(),
-        )
-        destination = Path("hotels.json")
-
-        with patch("viajante.hotels.write_json_atomic") as writer:
-            write_hotel_report_atomic(report, destination)
-
-        writer.assert_called_once_with(report.to_dict(), destination)
-
     def test_report_writer_produces_json_atomically(self) -> None:
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 10, 10, 0, 0),
@@ -705,7 +693,7 @@ class HotelOrchestrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp) / "nested" / "hotels.json"
-            write_hotel_report_atomic(report, destination)
+            write_json_atomic(reports_payload(report), destination)
 
             self.assertTrue(destination.exists())
             self.assertFalse(destination.with_suffix(".json.tmp").exists())
