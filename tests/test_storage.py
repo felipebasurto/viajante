@@ -88,6 +88,14 @@ class WriteReportAtomicTests(unittest.TestCase):
             data = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(data["schema_version"], 1)
 
+    def test_nearby_fan_out_nests_under_queries(self) -> None:
+        report = SearchReport(searched_at=datetime(2026, 8, 10, 9, 0, 0), queries=())
+        self.assertEqual(reports_payload((report,)), dict(report.to_dict()))
+        self.assertEqual(
+            reports_payload((report, report)),
+            {"queries": [dict(report.to_dict()), dict(report.to_dict())]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
