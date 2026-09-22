@@ -61,6 +61,11 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 
 One search at a time in the MCP process.
 
+Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
+cooldown (error `rate_limited: true`, and the first `lead` line names the UTC
+time to wait until). Tell the user to wait; do not retry. Identical successful
+searches within 5 minutes return `cached: true` without a new request.
+
 ## Currency
 
 Pass `currency` (ISO 4217) or infer from a named origin airport country

@@ -658,9 +658,13 @@ class SearchErrorCode(str, Enum):
 class SearchError:
     code: SearchErrorCode
     message: str
+    rate_limited: bool = False
 
-    def to_dict(self) -> Mapping[str, str]:
-        return {"code": self.code.value, "message": self.message}
+    def to_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {"code": self.code.value, "message": self.message}
+        if self.rate_limited:
+            payload["rate_limited"] = True
+        return payload
 
 
 @dataclass(frozen=True)

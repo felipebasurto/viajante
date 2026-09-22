@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import math
 import threading
 import time
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
@@ -31,6 +33,7 @@ from viajante.google_flights_rpc import (
     parse_shopping_body,
 )
 from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, Trip
+from viajante.storage import default_state_dir, write_json_atomic
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
@@ -301,6 +304,95 @@ class SweepHttpResponse:
     status: int
     text: str
     url: str = ""
+    rate_limit: Optional[str] = None
+
+
+RATE_LIMIT_FILE = "google-rate-limit.json"
+# ponytail: Google publishes no quota. The cooldown is a guess: 2 min, doubling per repeat
+# 429 up to 30 min, unless Retry-After names one. Upgrade: learn it from observed recoveries.
+RATE_LIMIT_COOLDOWN_SECONDS = 120.0
+RATE_LIMIT_MAX_COOLDOWN_SECONDS = 1800.0
+NOT_SENT = "Not sent. "
+
+
+def _read_rate_limit() -> Optional[dict]:
+    try:
+        state = json.loads((default_state_dir() / RATE_LIMIT_FILE).read_text(encoding="utf-8"))
+        return state if all(isinstance(state[k], (int, float)) for k in ("at", "until")) else None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def rate_limit_status(now: Optional[float] = None) -> Optional[dict]:
+    """The recorded Google cooldown for this machine while it runs, else None."""
+    state = _read_rate_limit()
+    current = time.time() if now is None else now
+    return state if state is not None and state["until"] > current else None
+
+
+def note_rate_limited(retry_after: Optional[float] = None, now: Optional[float] = None) -> dict:
+    """Record a real Google 429 in the state dir so the next search in any process waits."""
+    current = time.time() if now is None else now
+    previous = _read_rate_limit()
+    if previous is not None and previous["until"] > current:
+        return previous
+    cooldown = RATE_LIMIT_COOLDOWN_SECONDS
+    if retry_after is not None and retry_after > 0:
+        cooldown = retry_after
+    elif previous is not None and current < previous["until"] + previous.get("cooldown_s", 0):
+        cooldown = min(RATE_LIMIT_MAX_COOLDOWN_SECONDS, previous["cooldown_s"] * 2)
+    state = {"at": current, "until": current + cooldown, "cooldown_s": cooldown}
+    with contextlib.suppress(OSError):
+        write_json_atomic(state, default_state_dir() / RATE_LIMIT_FILE)
+    return state
+
+
+def rate_limit_advice(state: Mapping[str, float], *, sent: bool = True) -> str:
+    def clock(epoch: float) -> str:
+        return datetime.fromtimestamp(epoch, timezone.utc).strftime("%H:%M")
+
+    minutes = max(1, math.ceil((state["until"] - time.time()) / 60))
+    prefix = "" if sent else NOT_SENT
+    return (
+        f"{prefix}Google is rate-limiting this machine (HTTP 429 at {clock(state['at'])} UTC). "
+        f"Viajante pauses Google searches until {clock(state['until'])} UTC (~{minutes} min). "
+        "Tell the user to wait; do not retry or switch fetch mode."
+    )
+
+
+def _retry_after_seconds(response: Any) -> Optional[float]:
+    headers = getattr(response, "headers", None) or {}
+    try:
+        return float(headers.get("retry-after") or headers.get("Retry-After"))
+    except (TypeError, ValueError):
+        return None
+
+
+class _CooldownClient:
+    """Answers every request with a local 429 while a recorded cooldown runs. No network."""
+
+    def __init__(self, state: Mapping[str, float]) -> None:
+        self._advice = rate_limit_advice(state, sent=False)
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+
+    def post(
+        self, url: str, *, data: str, headers: Mapping[str, str], timeout: float
+    ) -> SweepHttpResponse:
+        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+
+    def close(self) -> None:
+        return None
+
+
+COOLDOWN_UNCHECKED: Any = object()
+
+
+def cooldown_client(snapshot: Any) -> tuple[Any, Optional[_CooldownClient]]:
+    """Read the cooldown once per search; mid-search 429 replays keep the live session."""
+    state = rate_limit_status() if snapshot is COOLDOWN_UNCHECKED else snapshot
+    return state, (_CooldownClient(state) if state is not None else None)
 
 
 class SweepHttpClient(Protocol):
@@ -357,6 +449,7 @@ class ChromeSweepClient:
 
         curl_requests = _curl_requests()
         self._asyncio = asyncio
+        self._proxied = _normalize_proxy(proxy) is not None
         self._loop = asyncio.new_event_loop()
         self._session: Any = None
         self._error: Optional[BaseException] = None
@@ -426,7 +519,12 @@ class ChromeSweepClient:
             response, timeout
         ):
             response = await send()
-        return _as_sweep_response(response)
+        out = _as_sweep_response(response)
+        # ponytail: a proxy is another egress IP, so its 429 does not pause direct searches.
+        if out.status == 429 and not self._proxied:
+            state = note_rate_limited(_retry_after_seconds(response))
+            out = replace(out, rate_limit=rate_limit_advice(state))
+        return out
 
     async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
         return await self._exchange(
@@ -597,12 +695,14 @@ class _OpenerSweepClient:
         return None
 
 
-def _raise_if_blocked(status: int, body: str, final_url: str, fallback_url: str) -> None:
+def _raise_if_blocked(
+    status: int, body: str, final_url: str, fallback_url: str, advice: Optional[str] = None
+) -> None:
     if status in {403, 429, 503}:
-        raise GoogleFlightsBlocked(
-            f"Google Flights HTTP {status} from {fallback_url}",
-            status=status,
-        )
+        message = f"Google Flights HTTP {status} from {fallback_url}"
+        if status == 429 and advice:
+            message = advice if advice.startswith(NOT_SENT) else f"{message}. {advice}"
+        raise GoogleFlightsBlocked(message, status=status)
     if status >= 400:
         raise GoogleFlightsBlocked(
             f"Google Flights HTTP {status} from {final_url or fallback_url}",
@@ -670,7 +770,7 @@ def fetch_search_html(
 ) -> tuple[str, str]:
     if client is not None:
         response = client.get(url, timeout=timeout)
-        _raise_if_blocked(response.status, response.text, response.url, url)
+        _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
         return response.text, response.url
     if opener is not None:
         html, final_url, status = _opener_get(url, opener=opener, timeout=timeout)
@@ -750,6 +850,7 @@ class GoogleFlightsHttpSource:
         self._timeout = timeout
         self._sleep = time.sleep if sleep is None else sleep
         self._proxy = _normalize_proxy(proxy)
+        self._cooldown = COOLDOWN_UNCHECKED
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency, country=country)
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
@@ -886,6 +987,10 @@ class GoogleFlightsHttpSource:
             return self._injected_client
         if self._opener is not None:
             return _OpenerSweepClient(self._opener)
+        if self._proxy is None:
+            self._cooldown, paused = cooldown_client(self._cooldown)
+            if paused is not None:
+                return paused
         return shared_chrome_sweep_client(proxy=self._proxy)
 
     def _retry_sweep(self, fn: Callable[[], Any]) -> Any:
@@ -972,7 +1077,9 @@ class GoogleFlightsHttpSource:
             or response.status >= 500
             or looks_blocked(response.text, response.url)
         ):
-            _raise_if_blocked(response.status, response.text, response.url, url)
+            _raise_if_blocked(
+                response.status, response.text, response.url, url, response.rate_limit
+            )
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")
         try:
@@ -1063,7 +1170,9 @@ class GoogleFlightsHttpSource:
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
         if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
-            _raise_if_blocked(response.status, response.text, response.url, url)
+            _raise_if_blocked(
+                response.status, response.text, response.url, url, response.rate_limit
+            )
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")
         return response

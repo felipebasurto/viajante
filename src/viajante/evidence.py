@@ -182,16 +182,16 @@ def _priced_rows(
             yield from _priced_rows(value, scope)
 
 
-def _errors(node: object) -> list[str]:
+def failure_codes(node: object) -> list[str]:
     if isinstance(node, (list, tuple)):
-        return [code for value in node for code in _errors(value)]
+        return [code for value in node for code in failure_codes(value)]
     if not isinstance(node, Mapping):
         return []
     found = []
     error = node.get("error")
     if isinstance(error, Mapping) and isinstance(error.get("code"), str):
         found.append(error["code"])
-    return found + [code for value in node.values() for code in _errors(value)]
+    return found + [code for value in node.values() for code in failure_codes(value)]
 
 
 def _amount(value: float) -> str:
@@ -230,7 +230,7 @@ def summarize(payload: Mapping[str, object]) -> list[str]:
             f" (flight {_amount(float(trip_total['flight_fare']))}"
             f" + stay {_amount(float(trip_total['hotel_stay']))})"
         )
-    errors = _errors(payload)
+    errors = failure_codes(payload)
     if errors:
         lines.append(f"failed: {len(errors)} ({', '.join(sorted(set(errors)))})")
     lines.append(

@@ -45,6 +45,10 @@ class HotelsRejected(Exception):
 class HotelsBlocked(Exception):
     """Hotel RPC was blocked or challenged."""
 
+    def __init__(self, message: str = "", *, rate_limited: bool = False) -> None:
+        super().__init__(message)
+        self.rate_limited = rate_limited
+
 
 def build_hotels_inner(
     query: HotelQuery,

@@ -53,6 +53,12 @@ failures. Quote from it. Before replying, pass the draft to verify_answer; it
 flags amounts, currencies, codes, dates, and links no search in this process
 returned.
 
+If an error has rate_limited true, or lead starts with "Google is
+rate-limiting this machine", tell the user to wait until the named UTC time.
+Do not retry, switch fetch mode, or fan out other searches; they are paused
+locally and send nothing. An identical successful search within 5 minutes
+comes back cached (cached: true) without a new request.
+
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
 search_dates is HTTP-calendar only and has no fetch parameter. If it returns

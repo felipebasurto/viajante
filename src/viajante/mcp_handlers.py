@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import threading
+import time
 from datetime import date
 from typing import Mapping, Optional, Sequence
 
@@ -16,7 +18,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.evidence import record, summarize
+from viajante.evidence import failure_codes, record, summarize
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     month_window,
@@ -35,6 +37,7 @@ from viajante.flights import (
     parse_via_airports,
     search_flights,
 )
+from viajante.google_flights import rate_limit_advice, rate_limit_status
 from viajante.hotels import HotelSourceName, search_hotels
 from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
@@ -54,6 +57,8 @@ from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
 
 _SEARCH_LOCK = threading.Lock()
+CACHE_SECONDS = 300.0
+_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -74,13 +79,40 @@ def _with_search_lock(fn):
 
 def _owned(payload: dict) -> dict:
     record(payload)
-    return {**payload, "lead": summarize(payload)}
+    lead = summarize(payload)
+    cooldown = rate_limit_status()
+    if cooldown is not None:
+        lead = [rate_limit_advice(cooldown), *lead]
+    return {**payload, "lead": lead}
+
+
+def _cached(fn):
+    """Replay an identical successful search for CACHE_SECONDS instead of asking Google again."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = (fn.__name__, repr((args, sorted(kwargs.items()))))
+        now = time.monotonic()
+        hit = _CACHE.get(key)
+        if hit is not None and now - hit[0] < CACHE_SECONDS:
+            result = hit[1]
+            note = f"cached: same query ran at {result.get('searched_at')}; no new request sent"
+            return {**result, "cached": True, "lead": [note, *result["lead"]]}
+        result = fn(*args, **kwargs)
+        if not failure_codes(result):
+            for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
+                del _CACHE[stale]
+            _CACHE[key] = (now, result)
+        return result
+
+    return wrapper
 
 
 def lookup_airports_tool(query: str, *, limit: int = 20) -> list[Mapping[str, str]]:
     return [row.to_dict() for row in lookup_airports(query, limit=limit)]
 
 
+@_cached
 def search_flights_tool(
     routes: Sequence[str],
     *,
@@ -168,6 +200,7 @@ def search_flights_tool(
     return _owned(reports_payload(report))
 
 
+@_cached
 def search_dates_tool(
     route: str,
     start: str,
@@ -257,6 +290,7 @@ def search_dates_tool(
     return _owned(reports_payload(report))
 
 
+@_cached
 def search_flex_tool(
     route: str,
     around: str,
@@ -347,6 +381,7 @@ def search_flex_tool(
     return _owned(reports_payload(report))
 
 
+@_cached
 def search_explore_tool(
     origin: str,
     start: Optional[str] = None,
@@ -440,6 +475,7 @@ def search_explore_tool(
     return _owned(reports_payload(report))
 
 
+@_cached
 def search_hotels_tool(
     location: str,
     check_in: str,
@@ -476,6 +512,7 @@ def search_hotels_tool(
     return _owned(reports_payload(report))
 
 
+@_cached
 def search_trip_tool(
     routes: Sequence[str],
     location: str,
@@ -593,6 +630,7 @@ def search_trip_tool(
     return _owned(reports_payload(report))
 
 
+@_cached
 def search_hidden_city_tool(
     route: str,
     departure: str,

@@ -2219,6 +2219,11 @@ class SweepRateLimitSessionTests(unittest.TestCase):
 
 
 class SweepClientShapeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        no_cooldown = patch("viajante.google_flights.rate_limit_status", return_value=None)
+        no_cooldown.start()
+        self.addCleanup(no_cooldown.stop)
+
     def test_fetch_with_calendar_uses_one_multiplex_round(self) -> None:
         shop = _compact_body(_itinerary(price=88, airline="Iberia"))
         calendar = _calendar_rpc_body(

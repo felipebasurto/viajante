@@ -171,7 +171,7 @@ def resolve_fetch_mode(
 def _needs_detail_fallback(result: QueryResult) -> bool:
     if isinstance(result, QuerySuccess):
         return result.raw_count == 0
-    if not isinstance(result, QueryFailure):
+    if not isinstance(result, QueryFailure) or result.error.rate_limited:
         return False
     if result.error.code == SearchErrorCode.NO_RESULTS:
         return True
@@ -197,6 +197,7 @@ def classify_failure(exc: BaseException) -> SearchError:
         return SearchError(
             code=SearchErrorCode.BLOCKED,
             message=str(exc) or "Google Flights blocked the request.",
+            rate_limited=exc.status == 429,
         )
     if isinstance(exc, GoogleFlightsMarkupError):
         return SearchError(

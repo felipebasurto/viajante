@@ -176,7 +176,8 @@ def _classify_hotel_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, HotelsBlocked):
         return SearchError(
             code=SearchErrorCode.BLOCKED,
-            message="Google Hotels blocked the sweep.",
+            message=str(exc) if exc.rate_limited else "Google Hotels blocked the sweep.",
+            rate_limited=exc.rate_limited,
         )
     if isinstance(exc, HotelsParseMiss):
         return SearchError(
