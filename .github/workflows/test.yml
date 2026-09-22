@@ -58,6 +58,9 @@ jobs:
                           "search_hotels",
                           "search_trip",
                           "lookup_airports",
+                          "search_hidden_city",
+                          "compare_awards",
+                          "lookup_transfers",
                       }
                       missing = expected - names
                       assert not missing, missing
