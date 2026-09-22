@@ -11,7 +11,7 @@ from datetime import date, datetime, timezone
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
-from viajante.dates import calendar_trip, one_or_many
+from viajante.dates import _fetch_or_exception, calendar_trip, one_or_many
 from viajante.flights import (
     FlightSort,
     OfferFilters,
@@ -19,6 +19,8 @@ from viajante.flights import (
     _cheapest_by_fare,
     _cheapest_by_ranked,
     _clock_minutes,
+    _summary_from_calendar_days,
+    _typical_window,
     classify_failure,
     compare_nonstop_vs_one_stop,
     expand_nearby_origins,
@@ -241,11 +243,9 @@ def search_explore(
                 and dest_blocked_by_exclude_regions(place.iata, parsed_exclude_regions)
             )
         )
-        priced: list[ExploreDestination] = []
-        typical_cache: dict = {}
-        for index, place in enumerate(places[:top]):
-            report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
-            shop = calendar_trip(
+        chosen = places[:top]
+        shops = [
+            calendar_trip(
                 code,
                 place.iata,
                 start,
@@ -263,8 +263,27 @@ def search_explore(
                 alliances=alliances,
                 exclude_alliances=exclude_alliances,
             )
+            for place in chosen
+        ]
+        typical_start, typical_end = _typical_window(start)
+        batch = None
+        fetch_batch = getattr(client, "fetch_many_with_calendar", None)
+        if callable(fetch_batch) and len(shops) > 1:
+            report_progress(f"pricing {len(shops)} dests on one multiplexed round-trip")
+            try:
+                batch = fetch_batch([(shop, typical_start, typical_end) for shop in shops])
+            except Exception:
+                batch = None
+        priced: list[ExploreDestination] = []
+        typical_cache: dict = {}
+        for index, (place, shop) in enumerate(zip(chosen, shops, strict=True)):
+            if batch is None:
+                report_progress(f"[{index + 1}/{len(chosen)}] pricing {place.iata}")
+                cards, calendar_days = _fetch_or_exception(client, shop), None
+            else:
+                cards, calendar_days = batch[index]
             cheapest, compare = _cheapest_shop(
-                client, shop, filters, baggage_buffer=baggage_buffer, sort=sort
+                cards, shop, filters, baggage_buffer=baggage_buffer, sort=sort
             )
             if drop_unpriced and cheapest is None:
                 continue
@@ -281,7 +300,11 @@ def search_explore(
                 baggage_buffer=cheapest.baggage_buffer if cheapest is not None else None,
             )
             if cheapest is not None:
-                summary = _calendar_summary_from_source(client, shop, typical_cache)
+                summary = (
+                    _calendar_summary_from_source(client, shop, typical_cache)
+                    if batch is None
+                    else _summary_from_calendar_days(calendar_days, typical_start, typical_end)
+                )
                 if summary is not None:
                     dest = with_typical_dest(dest, summary.median_price)
             priced.append(dest)
@@ -305,16 +328,14 @@ def search_explore(
 
 
 def _cheapest_shop(
-    source: ExploreSource,
+    cards: Sequence[RawFlightCard] | BaseException,
     query: Trip,
     filters: OfferFilters,
     *,
     baggage_buffer: int,
     sort: FlightSort,
 ) -> tuple[Optional[FlightOffer], Optional[StopsCompare]]:
-    try:
-        cards = source.fetch(query)
-    except Exception:
+    if isinstance(cards, BaseException):
         return None, None
     eligible = offers_from_cards(cards, query, filters, baggage_buffer=baggage_buffer)
     cheapest = _cheapest_by_ranked(eligible) if sort == "ranked" else _cheapest_by_fare(eligible)
