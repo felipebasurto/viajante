@@ -115,9 +115,21 @@ def build_card(
     duration: str = "2 hr 50 min",
     stops: str = "Nonstop",
     price: str = "€129",
+    aria_label: str | None = None,
+    impact_itinerary: str | None = None,
 ) -> str:
+    owned = ""
+    if aria_label:
+        owned += f'<div aria-label="{aria_label}"></div>'
+    if impact_itinerary:
+        owned += (
+            "<div data-travelimpactmodelwebsiteurl="
+            '"https://www.travelimpactmodel.org/lookup/flight?itinerary='
+            f'{impact_itinerary}"></div>'
+        )
     return (
         "<li>"
+        f"{owned}"
         f'<div class="sSHqwe tPgKwe ogfYpf"><span>{airline}</span></div>'
         f'<span class="mv1WYe"><div>{departure}</div><div>{arrival}</div></span>'
         f'<div class="Ak5kof"><div>{duration}</div></div>'
@@ -380,6 +392,66 @@ class OwnedCardParserTests(unittest.TestCase):
         self.assertEqual(len(cards), 2)
         self.assertEqual(cards[1].airline, "Vueling")
         self.assertEqual(cards[1].price, "€99")
+
+    def test_html_fallback_keeps_owned_layover_and_flight_numbers(self) -> None:
+        label = (
+            "Departs at 1:05 PM and arrives at 7:30 PM. Total duration 6 hr 25 min. "
+            "Layover (1 of 1) is a 2 hr 25 min layover at Amsterdam Airport Schiphol "
+            "in Amsterdam."
+        )
+        card = parse_flight_cards(
+            build_results_page(
+                build_card(
+                    airline="KLM",
+                    departure="1:05 PM on Wed, Nov 18",
+                    arrival="7:30 PM on Wed, Nov 18",
+                    duration="6 hr 25 min",
+                    stops="1 stop",
+                    price="€109",
+                    aria_label=label,
+                    impact_itinerary="MAD-AMS-KL-1504-20261118,AMS-PRG-KL-1359-20261118",
+                )
+            )
+        )[0]
+        self.assertEqual(card.layover_city, "Amsterdam")
+        self.assertAlmostEqual(card.layover_hours or 0, 2 + 25 / 60)
+        self.assertEqual(card.flight_numbers, ("KL1504", "KL1359"))
+        self.assertEqual(card.legs[0].segments[0].origin, "MAD")
+        self.assertEqual(card.legs[0].segments[0].carrier, "KL")
+        self.assertEqual(card.legs[0].segments[0].departure_date, date(2026, 11, 18))
+        self.assertEqual(card.legs[0].segments[1].destination, "PRG")
+        offer = _normalize_offer(card, max_stops=1)
+        assert offer is not None
+        self.assertEqual(offer.departure, "13:05")
+        self.assertEqual(offer.arrival, "19:30")
+        self.assertEqual(offer.layover_city, "Amsterdam")
+        self.assertEqual(offer.flight_numbers, ("KL1504", "KL1359"))
+
+    def test_html_layover_keeps_longest_stop_and_digit_carrier(self) -> None:
+        label = (
+            "Layover (1 of 2) is a 35 min layover at Brussels Airport in Brussels. "
+            "Layover (2 of 2) is a 10 hr layover at Frankfurt Airport in Frankfurt am Main."
+        )
+        card = parse_flight_cards(
+            build_results_page(
+                build_card(
+                    stops="2 stops",
+                    aria_label=label,
+                    impact_itinerary="ATH-PRG-A3-701-20261118",
+                )
+            )
+        )[0]
+        self.assertEqual(card.layover_city, "Frankfurt am Main")
+        self.assertEqual(card.layover_hours, 10.0)
+        self.assertEqual(card.flight_numbers, ("A3701",))
+        self.assertEqual(card.legs[0].segments[0].carrier, "A3")
+
+    def test_plain_html_card_does_not_invent_layover_or_flight_numbers(self) -> None:
+        card = parse_flight_cards(build_results_page(build_card(stops="1 stop")))[0]
+        self.assertIsNone(card.layover_city)
+        self.assertIsNone(card.layover_hours)
+        self.assertIsNone(card.flight_numbers)
+        self.assertEqual(card.legs, ())
 
     def test_one_stop_is_filtered_by_max_stops_but_kept_otherwise(self) -> None:
         card = parse_flight_cards(build_results_page(build_card(stops="1 stop")))[0]
