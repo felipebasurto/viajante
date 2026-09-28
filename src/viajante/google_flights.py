@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -30,7 +31,15 @@ from viajante.google_flights_rpc import (
     parse_explore_body,
     parse_shopping_body,
 )
-from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, Trip
+from viajante.models import (
+    FETCH_LANGUAGE,
+    FETCH_LOCALE,
+    FlightCabin,
+    RawJourneyLeg,
+    RawLayover,
+    RawSegment,
+    Trip,
+)
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
@@ -87,6 +96,14 @@ TIME_SELECTOR = "span.mv1WYe div"
 DURATION_SELECTOR = "div.Ak5kof div"
 STOPS_SELECTOR = ".BbR8Ec .ogfYpf"
 PRICE_SELECTOR = ".YMlIz.FpEdX"
+# HTML fallback cards put the layover sentence on the link aria-label and the
+# flown slices on the Travel Impact Model URL. Both are owned card text.
+_ARIA_LAYOVER = re.compile(
+    r"Layover \(\d+ of \d+\) is an? (?:(\d+) hr(?: (\d+) min)?|(\d+) min) "
+    r"layover at .+? in ([^.]+)\.",
+    re.IGNORECASE,
+)
+_IMPACT_SLICE = re.compile(r"([A-Z]{3})-([A-Z]{3})-([A-Z0-9]{2,3})-(\d{1,4}[A-Z]?)-(\d{8})")
 
 CONSENT_SELECTORS = [
     'text="Accept all"',
@@ -198,6 +215,56 @@ def _text_or_none(node) -> Optional[str]:
     return text or None
 
 
+def _aria_layover(label: str) -> tuple[Optional[str], Optional[float]]:
+    best_city: Optional[str] = None
+    best_hours: Optional[float] = None
+    for match in _ARIA_LAYOVER.finditer(label):
+        hours_text, mins_text, only_mins, city = match.groups()
+        if only_mins:
+            hours = int(only_mins) / 60.0
+        elif hours_text:
+            hours = int(hours_text) + (int(mins_text) / 60.0 if mins_text else 0.0)
+        else:
+            continue
+        if best_hours is None or hours > best_hours:
+            best_hours = hours
+            best_city = city.strip() or None
+    return best_city, best_hours
+
+
+def _impact_date(text: str) -> Optional[date]:
+    if len(text) != 8 or not text.isdigit():
+        return None
+    try:
+        return date(int(text[0:4]), int(text[4:6]), int(text[6:8]))
+    except ValueError:
+        return None
+
+
+def _impact_segments(item) -> tuple[RawSegment, ...]:
+    node = item.css_first("[data-travelimpactmodelwebsiteurl]")
+    if node is None:
+        return ()
+    url = node.attributes.get("data-travelimpactmodelwebsiteurl") or ""
+    segments: list[RawSegment] = []
+    for origin, dest, code, number, day in _IMPACT_SLICE.findall(url):
+        if not any(char.isalpha() for char in code):
+            continue
+        on = _impact_date(day)
+        if on is None:
+            continue
+        segments.append(
+            RawSegment(
+                origin=origin,
+                destination=dest,
+                flight_number=f"{code}{number}",
+                departure_date=on,
+                carrier=code,
+            )
+        )
+    return tuple(segments)
+
+
 def _extract_card(item) -> Optional[RawFlightCard]:
     price = _text_or_none(item.css_first(PRICE_SELECTOR))
     if price is None:
@@ -205,13 +272,43 @@ def _extract_card(item) -> Optional[RawFlightCard]:
     times = item.css(TIME_SELECTOR)
     departure = _text_or_none(times[0]) if len(times) > 0 else None
     arrival = _text_or_none(times[1]) if len(times) > 1 else None
+    duration = _text_or_none(item.css_first(DURATION_SELECTOR))
+    stops = _text_or_none(item.css_first(STOPS_SELECTOR))
+    label_node = item.css_first("[aria-label]")
+    label = ""
+    if label_node is not None:
+        label = label_node.attributes.get("aria-label") or ""
+    layover_city, layover_hours = _aria_layover(label)
+    segments = _impact_segments(item)
+    flight_numbers = (
+        tuple(segment.flight_number for segment in segments if segment.flight_number) or None
+    )
+    legs: tuple[RawJourneyLeg, ...] = ()
+    if segments or layover_city is not None or layover_hours is not None:
+        layovers: tuple[RawLayover, ...] = ()
+        if layover_city is not None or layover_hours is not None:
+            layovers = (RawLayover(city=layover_city, hours=layover_hours),)
+        legs = (
+            RawJourneyLeg(
+                departure=departure,
+                arrival=arrival,
+                duration=duration,
+                stops=stops,
+                segments=segments,
+                layovers=layovers,
+            ),
+        )
     return RawFlightCard(
         airline=_text_or_none(item.css_first(AIRLINE_SELECTOR)),
         departure=departure,
         arrival=arrival,
-        duration=_text_or_none(item.css_first(DURATION_SELECTOR)),
-        stops=_text_or_none(item.css_first(STOPS_SELECTOR)),
+        duration=duration,
+        stops=stops,
         price=price,
+        layover_city=layover_city,
+        layover_hours=layover_hours,
+        flight_numbers=flight_numbers,
+        legs=legs,
     )
 
 
@@ -962,11 +1059,48 @@ class GoogleFlightsHttpSource:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
         return self._cards_from_shopping_response(client, trip, response)
 
+    def fetch_selected(
+        self,
+        trip: Trip,
+        selections: Sequence[list[Any]],
+    ) -> list[tuple[RawFlightCard, ...] | BaseException]:
+        """Next-leg shopping for owned outbound slices. One miss does not drop the rest."""
+        if not selections:
+            return []
+        client = self._ensure_client()
+        posts = []
+        for selected in selections:
+            url, body = build_shopping_request(
+                trip,
+                html_lang=self._html_lang,
+                currency=self._currency,
+                country=self._country,
+                selected_flight=selected,
+            )
+            posts.append(SweepPost(url, body, SHOPPING_POST_HEADERS))
+        responses = dispatch_posts(client, posts, timeout=self._timeout)
+        parsed: list[tuple[RawFlightCard, ...] | BaseException] = []
+        for response in responses:
+            try:
+                parsed.append(
+                    self._cards_from_shopping_response(
+                        client,
+                        trip,
+                        response,
+                        allow_html_fallback=False,
+                    )
+                )
+            except Exception as exc:
+                parsed.append(exc)
+        return parsed
+
     def _cards_from_shopping_response(
         self,
         client: SweepHttpClient,
         trip: Trip,
         response: SweepHttpResponse,
+        *,
+        allow_html_fallback: bool = True,
     ) -> tuple[RawFlightCard, ...]:
         url, _body = build_shopping_request(
             trip, html_lang=self._html_lang, currency=self._currency, country=self._country
@@ -986,6 +1120,8 @@ class GoogleFlightsHttpSource:
         except ShoppingRejected as exc:
             raise GoogleFlightsRejected(str(exc)) from exc
         except CompactParseMiss:
+            if not allow_html_fallback:
+                raise
             return self._html_cards(client, trip)
 
     def _html_cards(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:

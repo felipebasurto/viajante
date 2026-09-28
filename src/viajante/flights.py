@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import get_airport, is_known_iata, same_city_iata
-from viajante.browser import playwright_available
+from viajante.browser import chromium_installed, playwright_available
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
     GoogleFlightsBlocked,
@@ -49,6 +49,7 @@ from viajante.models import (
     owned_calendar_summary,
 )
 from viajante.orchestration import (
+    BROWSER_INSTALL_HINT,
     MAX_ATTEMPTS,
     NON_RETRIABLE_CODES,
     inter_query_delay_seconds,
@@ -1678,6 +1679,91 @@ def _report_with_evidence(
     )
 
 
+def _selected_slices(leg: RawJourneyLeg) -> Optional[list[list[object]]]:
+    """Owned slices for a next-leg shopping call. Incomplete slices stay unset."""
+    if not leg.segments:
+        return None
+    rows: list[list[object]] = []
+    for segment in leg.segments:
+        code = segment.carrier
+        number = segment.flight_number
+        on = segment.departure_date
+        if not segment.origin or not segment.destination or on is None or not code or not number:
+            return None
+        if not number.upper().startswith(code.upper()):
+            return None
+        bare = number[len(code) :]
+        if not bare or not bare[0].isdigit():
+            return None
+        rows.append([segment.origin, on.isoformat(), segment.destination, None, code, bare])
+    return rows
+
+
+def _priced_return_leg(
+    cards: Sequence[RawFlightCard],
+    price: float,
+    origin: str,
+) -> Optional[RawJourneyLeg]:
+    """The next leg whose package price equals the offer, only when that match is unique."""
+    found: list[RawJourneyLeg] = []
+    for card in cards:
+        amount = parse_price(card.price)
+        if amount is None or amount != price:
+            continue
+        if not card.legs:
+            continue
+        leg = card.legs[0]
+        start = leg.segments[0].origin if leg.segments else None
+        if start != origin:
+            continue
+        found.append(leg)
+    if len(found) != 1:
+        return None
+    return found[0]
+
+
+def _attach_missing_legs(
+    trip: Trip,
+    offers: Tuple[FlightOffer, ...],
+    source: object,
+) -> Tuple[FlightOffer, ...]:
+    """Fill the next packaged leg from a follow-up shop. A miss stays unknown.
+
+    ponytail: one follow-up fills only the next leg. A 3+ city trip still
+    marks later legs unknown; chain selections if that search shows up.
+    """
+    fetch = getattr(source, "fetch_selected", None)
+    if not callable(fetch) or len(trip.legs) < 2 or not offers:
+        return offers
+    pending: list[tuple[int, list[list[object]]]] = []
+    for index, offer in enumerate(offers):
+        if len(offer.legs) != 1:
+            continue
+        selected = _selected_slices(offer.legs[0])
+        if selected is None:
+            continue
+        pending.append((index, selected))
+    if not pending:
+        return offers
+    try:
+        results = fetch(trip, [selected for _, selected in pending])
+    except Exception:
+        return offers
+    if not isinstance(results, Sequence) or len(results) != len(pending):
+        return offers
+    updated = list(offers)
+    for (index, _), result in zip(pending, results, strict=True):
+        if isinstance(result, BaseException):
+            continue
+        offer = updated[index]
+        origin = trip.legs[len(offer.legs)].origin
+        leg = _priced_return_leg(result, offer.price, origin)
+        if leg is None:
+            continue
+        updated[index] = replace(offer, legs=offer.legs + (leg,), completeness=None)
+    return tuple(updated)
+
+
 def _stamp_typical(
     trip: Trip,
     offers: Tuple[FlightOffer, ...],
@@ -1766,11 +1852,13 @@ def _run_search(
             is not None
         ]
         ranked = _rank_offers(eligible, top=top, sort=sort)
+        shown = _stamp_typical(trip, ranked, source, typical_cache)
+        shown = _attach_missing_legs(trip, shown, source)
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),
             eligible_count=len(eligible),
-            offers=_stamp_typical(trip, ranked, source, typical_cache),
+            offers=shown,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
         )
 
@@ -2287,6 +2375,9 @@ def search_flights(
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
         ]
+        if retry_indexes and not chromium_installed():
+            report_progress(BROWSER_INSTALL_HINT)
+            retry_indexes = []
         if retry_indexes:
             report_progress("sweep empty/markup/block; falling back to detail")
             retry_trips = tuple(trips[index] for index in retry_indexes)

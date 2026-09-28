@@ -1081,8 +1081,9 @@ class FlightsOrchestrationTests(unittest.TestCase):
         detail = FakeSource({("JFK", "LHR", "2026-09-01", 1): (card(airline="Iberia"),)})
         lines: list[str] = []
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=sweep):
-            with patch("viajante.flights.GoogleFlightsSource", return_value=detail):
-                report = search_flights((query,), top=1, fetch="sweep", progress=lines.append)
+            with patch("viajante.flights.chromium_installed", return_value=True):
+                with patch("viajante.flights.GoogleFlightsSource", return_value=detail):
+                    report = search_flights((query,), top=1, fetch="sweep", progress=lines.append)
         self.assertEqual(report.fetch_backend, "sweep_then_detail")
         self.assertIsInstance(report.queries[0], QuerySuccess)
         self.assertEqual(report.queries[0].offers[0].airline, "Iberia")
@@ -1102,13 +1103,166 @@ class FlightsOrchestrationTests(unittest.TestCase):
         )
         detail = FakeSource({("LAX", "ICN", "2026-09-22", 1): (card(airline="Korean Air"),)})
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=sweep):
-            with patch("viajante.flights.GoogleFlightsSource", return_value=detail) as detail_ctor:
-                report = search_flights((ok, empty), top=1, fetch="sweep")
+            with patch("viajante.flights.chromium_installed", return_value=True):
+                with patch(
+                    "viajante.flights.GoogleFlightsSource", return_value=detail
+                ) as detail_ctor:
+                    report = search_flights((ok, empty), top=1, fetch="sweep")
         self.assertEqual(report.fetch_backend, "sweep_then_detail")
         self.assertEqual(report.queries[0].offers[0].airline, "Vueling")
         self.assertEqual(report.queries[1].offers[0].airline, "Korean Air")
         self.assertEqual(detail.fetch_calls, 1)
         detail_ctor.assert_called_once()
+
+    def test_sweep_fallback_without_chromium_keeps_the_sweep_error(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+        sweep = FakeSource(
+            {
+                ("JFK", "LHR", "2026-09-01", 1): GoogleFlightsBlocked(
+                    "short unknown shell (89 chars)"
+                )
+            }
+        )
+        lines: list[str] = []
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=sweep):
+            with patch("viajante.flights.chromium_installed", return_value=False):
+                with patch("viajante.flights.GoogleFlightsSource") as detail:
+                    report = search_flights((query,), top=1, fetch="sweep", progress=lines.append)
+        detail.assert_not_called()
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertIsInstance(report.queries[0], QueryFailure)
+        self.assertEqual(report.queries[0].error.code, SearchErrorCode.BLOCKED)
+        self.assertIn("short unknown shell", report.queries[0].error.message)
+        self.assertTrue(any("Detail is optional" in line for line in lines))
+
+    def test_priced_return_leg_attaches_only_a_unique_match(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2026, 12, 3), date(2026, 12, 9))
+        outbound = card(
+            airline="British Airways",
+            price="200 €",
+            departure="07:00",
+            arrival="09:30",
+            legs=(
+                RawJourneyLeg(
+                    departure="07:00",
+                    arrival="09:30",
+                    duration="2 hr 30 min",
+                    stops="Nonstop",
+                    segments=(
+                        RawSegment(
+                            origin="JFK",
+                            destination="LHR",
+                            departure="07:00",
+                            arrival="09:30",
+                            airline="British Airways",
+                            flight_number="BA178",
+                            departure_date=date(2026, 12, 3),
+                            carrier="BA",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        returning = card(
+            airline="British Airways",
+            price="200 €",
+            departure="18:10",
+            arrival="21:05",
+            legs=(
+                RawJourneyLeg(
+                    departure="18:10",
+                    arrival="21:05",
+                    duration="7 hr 55 min",
+                    stops="Nonstop",
+                    segments=(
+                        RawSegment(
+                            origin="LHR",
+                            destination="JFK",
+                            departure="18:10",
+                            arrival="21:05",
+                            airline="British Airways",
+                            flight_number="BA179",
+                            departure_date=date(2026, 12, 9),
+                            carrier="BA",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        source = FakeSource({("JFK", "LHR", "2026-12-03", 1): (outbound,)})
+        seen: list[object] = []
+
+        def fetch_selected(_trip, selections):
+            seen.extend(selections)
+            return [(returning,)]
+
+        source.fetch_selected = fetch_selected  # type: ignore[method-assign]
+        report = _run_search(
+            (trip,),
+            top=1,
+            source=source,
+            sleep=lambda _delay: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            inter_query_delay=lambda _rng: 0.0,
+        )
+        offer = report.queries[0].offers[0]
+        self.assertEqual(len(offer.legs), 2)
+        self.assertEqual(offer.legs[1].departure, "18:10")
+        self.assertEqual(offer.legs[1].segments[0].flight_number, "BA179")
+        self.assertEqual(
+            seen,
+            [[["JFK", "2026-12-03", "LHR", None, "BA", "178"]]],
+        )
+
+    def test_tied_return_prices_stay_unknown(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2026, 12, 3), date(2026, 12, 9))
+        outbound = card(
+            price="200 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="07:00",
+                    arrival="09:30",
+                    segments=(
+                        RawSegment(
+                            origin="JFK",
+                            destination="LHR",
+                            flight_number="BA178",
+                            departure_date=date(2026, 12, 3),
+                            carrier="BA",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        def same_price(departure: str) -> RawFlightCard:
+            return card(
+                price="200 €",
+                departure=departure,
+                legs=(
+                    RawJourneyLeg(
+                        departure=departure,
+                        arrival="21:00",
+                        segments=(RawSegment(origin="LHR", destination="JFK"),),
+                    ),
+                ),
+            )
+
+        source = FakeSource({("JFK", "LHR", "2026-12-03", 1): (outbound,)})
+        source.fetch_selected = lambda _trip, _selections: [  # type: ignore[method-assign]
+            (same_price("18:10"), same_price("20:10"))
+        ]
+        report = _run_search(
+            (trip,),
+            top=1,
+            source=source,
+            sleep=lambda _delay: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            inter_query_delay=lambda _rng: 0.0,
+        )
+        self.assertEqual(len(report.queries[0].offers[0].legs), 1)
 
     def test_rejected_sweep_query_does_not_open_chromium(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
