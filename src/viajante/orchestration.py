@@ -33,7 +33,8 @@ NON_RETRIABLE_CODES = frozenset(
 ERROR_MESSAGE_MAX_CHARS = 500
 BROWSER_INSTALL_HINT = (
     "Chromium is not available to Playwright. "
-    "Install viajante[browser] and run 'playwright install chromium'."
+    "Sweep does not need a browser. Detail is optional: "
+    "pip install 'viajante[browser]' && playwright install chromium."
 )
 
 

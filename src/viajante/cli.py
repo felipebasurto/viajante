@@ -72,6 +72,7 @@ from viajante.models import (
     MultiCity,
     QueryFailure,
     QuerySuccess,
+    RawJourneyLeg,
     RoundTrip,
     StopsCompare,
     StopsCompareSide,
@@ -511,15 +512,51 @@ def _query_header(query: Trip) -> str:
     )
 
 
-def _print_offer_legs(offer: FlightOffer) -> None:
-    if len(offer.legs) < 2:
-        return
+def _format_flight_numbers(numbers: Optional[Tuple[str, ...]]) -> str:
+    if not numbers:
+        return ""
+    return "  " + " ".join(numbers)
+
+
+def _leg_airline(leg: RawJourneyLeg) -> Optional[str]:
+    names: list[str] = []
+    for segment in leg.segments:
+        if segment.airline and segment.airline not in names:
+            names.append(segment.airline)
+    if names:
+        return ", ".join(names)
+    return None
+
+
+def _leg_flight_numbers(leg: RawJourneyLeg) -> Tuple[str, ...]:
+    return tuple(segment.flight_number for segment in leg.segments if segment.flight_number)
+
+
+def _format_leg_stops(leg: RawJourneyLeg) -> str:
+    label = leg.stops or "?"
+    layover = None
+    if leg.layovers:
+        layover = max(leg.layovers, key=lambda row: row.hours or 0.0)
+    if layover is not None and layover.city:
+        label = f"{label} {layover.city}"
+    if layover is not None and layover.hours is not None:
+        label = f"{label} {_format_layover_hours(layover.hours)}"
+    return label
+
+
+def _print_offer_legs(offer: FlightOffer, query: Trip) -> None:
+    expected = len(query.legs)
     for index, leg in enumerate(offer.legs[1:], start=2):
         times = f"{_format_clock(leg.departure)} -> {_format_clock(leg.arrival)}"
-        label = "return" if len(offer.legs) == 2 else f"leg {index}"
+        label = "return" if expected == 2 else f"leg {index}"
         print(
-            f"    {label}  {leg.duration or '?':<12} {times:<18} {_format_airline(offer.airline)}"
+            f"    {label}  {leg.duration or '?':<12} {_format_leg_stops(leg):<16} "
+            f"{times:<18} {_format_airline(_leg_airline(leg))}"
+            f"{_format_flight_numbers(_leg_flight_numbers(leg))}"
         )
+    for index in range(len(offer.legs) + 1, expected + 1):
+        label = "return" if expected == 2 else f"leg {index}"
+        print(f"    {label}  unknown")
 
 
 def _google_flights_url_for(
@@ -567,8 +604,9 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                     f"{offer.duration or '?':<12} "
                     f"{_format_stops_with_layover(offer):<16} {times:<18} "
                     f"{_format_airline(offer.airline)}"
+                    f"{_format_flight_numbers(offer.flight_numbers)}"
                 )
-                _print_offer_legs(offer)
+                _print_offer_legs(offer, result.query)
                 if print_per_offer:
                     _print_google_flights_url(
                         _google_flights_url_for(

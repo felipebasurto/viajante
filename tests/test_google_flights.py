@@ -804,6 +804,16 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(constraints[2], 3)
         self.assertEqual([segment[14] for segment in constraints[13]], [3, 3, 3])
 
+    def test_shopping_inner_pins_a_selected_itinerary_on_the_outbound_only(self) -> None:
+        trip = RoundTrip("MAD", "PRG", date(2026, 12, 3), date(2026, 12, 8))
+        selected = [
+            ["MAD", "2026-12-03", "WAW", None, "LO", "434"],
+            ["WAW", "2026-12-03", "PRG", None, "LO", "529"],
+        ]
+        inner = build_shopping_inner(trip, selected_flight=selected)
+        self.assertEqual(inner[1][13][0][8], selected)
+        self.assertIsNone(inner[1][13][1][8])
+
     def test_selected_flight_lands_on_the_first_segment(self) -> None:
         pinned = ["tok"]
         constraints = build_search_constraints(
@@ -1833,6 +1843,46 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(offer.layover_hours, 18.0)
         self.assertEqual(offer.flight_numbers, ("TP1013", "TP1922"))
         self.assertEqual(offer.booking_token, "tok")
+
+    def test_digit_carrier_and_integer_flight_number_stay_owned(self) -> None:
+        day = [2026, 10, 9]
+        leg = _live_leg(
+            origin="MAD",
+            origin_name="Adolfo Suárez Madrid-Barajas Airport",
+            dest="ATH",
+            dest_name="Athens International Airport",
+            dep=[13, 5],
+            arr=[15, 40],
+            minutes=155,
+            dep_date=day,
+            arr_date=day,
+            code="A3",
+            number="701",
+            airline="Aegean",
+        )
+        leg[22][1] = 701
+        card = parse_shopping_body(
+            _compact_body(
+                _priced(
+                    _live_flight(
+                        code="A3",
+                        airline="Aegean",
+                        legs=[leg],
+                        origin="MAD",
+                        dest="ATH",
+                        dep_date=day,
+                        dep=[13, 5],
+                        arr_date=day,
+                        arr=[15, 40],
+                        minutes=155,
+                    ),
+                    120,
+                )
+            )
+        )[0]
+        self.assertEqual(card.flight_numbers, ("A3701",))
+        self.assertEqual(card.legs[0].segments[0].carrier, "A3")
+        self.assertEqual(card.legs[0].segments[0].departure_date, date(2026, 10, 9))
 
     def test_layover_from_legs_when_itinerary_block_is_missing(self) -> None:
         item = _tap_long_layover()

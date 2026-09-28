@@ -962,11 +962,48 @@ class GoogleFlightsHttpSource:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
         return self._cards_from_shopping_response(client, trip, response)
 
+    def fetch_selected(
+        self,
+        trip: Trip,
+        selections: Sequence[list[Any]],
+    ) -> list[tuple[RawFlightCard, ...] | BaseException]:
+        """Next-leg shopping for owned outbound slices. One miss does not drop the rest."""
+        if not selections:
+            return []
+        client = self._ensure_client()
+        posts = []
+        for selected in selections:
+            url, body = build_shopping_request(
+                trip,
+                html_lang=self._html_lang,
+                currency=self._currency,
+                country=self._country,
+                selected_flight=selected,
+            )
+            posts.append(SweepPost(url, body, SHOPPING_POST_HEADERS))
+        responses = dispatch_posts(client, posts, timeout=self._timeout)
+        parsed: list[tuple[RawFlightCard, ...] | BaseException] = []
+        for response in responses:
+            try:
+                parsed.append(
+                    self._cards_from_shopping_response(
+                        client,
+                        trip,
+                        response,
+                        allow_html_fallback=False,
+                    )
+                )
+            except Exception as exc:
+                parsed.append(exc)
+        return parsed
+
     def _cards_from_shopping_response(
         self,
         client: SweepHttpClient,
         trip: Trip,
         response: SweepHttpResponse,
+        *,
+        allow_html_fallback: bool = True,
     ) -> tuple[RawFlightCard, ...]:
         url, _body = build_shopping_request(
             trip, html_lang=self._html_lang, currency=self._currency, country=self._country
@@ -986,6 +1023,8 @@ class GoogleFlightsHttpSource:
         except ShoppingRejected as exc:
             raise GoogleFlightsRejected(str(exc)) from exc
         except CompactParseMiss:
+            if not allow_html_fallback:
+                raise
             return self._html_cards(client, trip)
 
     def _html_cards(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:

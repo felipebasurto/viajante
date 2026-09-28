@@ -239,10 +239,15 @@ def build_search_constraints(
     )
 
 
-def build_shopping_inner(trip: Trip, token: Optional[str] = None) -> list[Any]:
+def build_shopping_inner(
+    trip: Trip,
+    token: Optional[str] = None,
+    *,
+    selected_flight: Any = None,
+) -> list[Any]:
     return [
         [None, None, None, token],
-        build_search_constraints(trip),
+        build_search_constraints(trip, selected_flight=selected_flight),
         0,
         1,
         0,
@@ -282,9 +287,10 @@ def build_shopping_request(
     html_lang: str = FETCH_LANGUAGE,
     currency: str = "EUR",
     country: Optional[str] = None,
+    selected_flight: Any = None,
 ) -> tuple[str, str]:
     url = f"{SHOPPING_RESULTS_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
-    return url, _rpc_body(build_shopping_inner(trip))
+    return url, _rpc_body(build_shopping_inner(trip, selected_flight=selected_flight))
 
 
 def build_calendar_inner(
@@ -861,6 +867,16 @@ def _format_duration_minutes(minutes: int) -> str:
     return f"{mins} min"
 
 
+def _leg_date(value: object) -> Optional[date]:
+    parsed = _ymd(value)
+    if parsed is None or parsed[0] < 100:
+        return None
+    try:
+        return date(*parsed)
+    except ValueError:
+        return None
+
+
 def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
     legs = flight[2] if len(flight) > 2 else None
     if not isinstance(legs, list):
@@ -884,6 +900,8 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
                 arrival=_format_clock(leg[10] if len(leg) > 10 else None),
                 airline=airline,
                 flight_number=None if ident is None else f"{ident[0]}{ident[1]}",
+                departure_date=_leg_date(leg[20] if len(leg) > 20 else None),
+                carrier=None if ident is None else ident[0],
             )
         )
     return tuple(segments)
@@ -1012,18 +1030,42 @@ def _airline_codes(flight: list[Any]) -> Optional[tuple[str, ...]]:
     return tuple(unique) or None
 
 
+def _carrier_code(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    code = value.strip().upper()
+    if not 2 <= len(code) <= 3 or not code.isalnum() or not any(char.isalpha() for char in code):
+        return None
+    return code
+
+
+def _flight_number_text(value: object) -> Optional[str]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        return None
+    if not text or not text[0].isdigit():
+        return None
+    if not text.isdigit() and not (text[:-1].isdigit() and text[-1].isalpha()):
+        return None
+    return text
+
+
 def _leg_ident(leg: object) -> Optional[tuple[str, str]]:
     if not isinstance(leg, list) or len(leg) <= 22:
         return None
     ident = leg[22]
     if not isinstance(ident, list) or len(ident) < 2:
         return None
-    code, number = ident[0], ident[1]
-    if not isinstance(code, str) or not isinstance(number, str):
+    code = _carrier_code(ident[0])
+    number = _flight_number_text(ident[1])
+    if code is None or number is None:
         return None
-    if not code.isalpha() or not number:
-        return None
-    return code.upper(), number
+    return code, number
 
 
 def _format_stops(legs: object) -> Optional[str]:

@@ -69,6 +69,7 @@ def _offer(
     cheapest: Optional[float] = None,
     checked_bags: Optional[int] = None,
     carry_on: Optional[int] = None,
+    flight_numbers: Optional[tuple[str, ...]] = None,
 ) -> FlightOffer:
     return FlightOffer(
         airline=airline,
@@ -92,6 +93,7 @@ def _offer(
         cheapest=cheapest,
         checked_bags=checked_bags,
         carry_on=carry_on,
+        flight_numbers=flight_numbers,
     )
 
 
@@ -771,6 +773,20 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("07:00 -> 09:30", output)
         self.assertIn("return", output)
         self.assertIn("14:00 -> 16:20", output)
+
+    def test_round_trip_without_a_return_leg_is_marked_unknown(self) -> None:
+        trip = RoundTrip("MAD", "PRG", date(2026, 12, 3), date(2026, 12, 8))
+        offer = _offer(departure="15:30", arrival="21:45", flight_numbers=("LO434", "LO529"))
+        report = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="EUR",
+            queries=(QuerySuccess(query=trip, raw_count=1, eligible_count=1, offers=(offer,)),),
+        )
+        output = _rendered(report)
+        self.assertIn("LO434", output)
+        self.assertIn("LO529", output)
+        self.assertIn("return  unknown", output)
+        self.assertNotIn("return  2", output)
 
     def test_filter_flags_reach_the_search(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
