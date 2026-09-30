@@ -80,7 +80,6 @@ from viajante.models import (
     normalize_country,
 )
 from viajante.points import (
-    cents_per_point,
     compare_award,
     load_award_offer,
     load_balances,
@@ -203,8 +202,8 @@ Examples:
 
 POINTS_EXAMPLES = """\
 Examples:
-  viajante points --cash 1200 --points 70000 --taxes 186 --currency USD
-  viajante points --program aeroplan --points 70000 --balances balances.json
+  viajante points --program aeroplan --points 70000
+  viajante points --program avios --points 50000 --balances balances.json
 """
 
 
@@ -1826,32 +1825,19 @@ def _run_awards(args: argparse.Namespace) -> int:
 
 def _run_points(args: argparse.Namespace) -> int:
     try:
-        if args.points is None or args.points <= 0:
-            raise ValueError("--points must be positive")
-        if args.cash is None and not args.program and not args.balances:
-            raise ValueError("name --cash, --program, or --balances")
-        if args.cash is not None:
-            if args.cash <= 0:
-                raise ValueError("--cash must be positive")
-            currency = resolve_quote_currency(args.currency, None)
-            cpp = cents_per_point(args.cash, args.points, taxes=args.taxes)
-            print(f"cpp {cpp:.2f} cents  cash {format_money(args.cash, currency)}")
-        if args.program:
-            balances = load_balances(Path(args.balances)) if args.balances else ()
-            for path in transfer_paths(args.program, args.points, balances):
-                cover = "covers" if path.covers else "short"
-                print(
-                    f"{path.currency} -> {path.program}  {path.effective_points} "
-                    f"({cover}, table {path.last_verified.isoformat()})"
-                )
-        elif args.balances and args.cash is None:
-            raise ValueError("--balances needs --program")
-    except ValueError as exc:
+        balances = load_balances(Path(args.balances)) if args.balances else ()
+        paths = transfer_paths(args.program, args.points, balances)
+    except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    except OSError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+    if not paths:
+        print(f"No local transfer partner is recorded for {args.program}.")
+    for path in paths:
+        cover = "covers" if path.covers else "short"
+        print(
+            f"{path.currency} -> {path.program}  {path.effective_points} "
+            f"({cover}, table {path.last_verified.isoformat()})"
+        )
     return 0
 
 
@@ -2318,38 +2304,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     points = sub.add_parser(
         "points",
-        help="Local cents-per-point and transfer-table lookup",
+        help="Local card-to-program transfer table (not live award seats)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=POINTS_EXAMPLES,
     )
     points.add_argument(
-        "--cash",
-        type=float,
-        default=None,
-        help="Owned cash fare (requires --currency)",
-    )
-    points.add_argument(
-        "--points",
-        type=int,
-        default=None,
-        help="Award points for the named program or CPP math",
-    )
-    points.add_argument(
-        "--taxes",
-        type=float,
-        default=None,
-        help="Award cash outlay in the same currency as --cash",
-    )
-    points.add_argument(
-        "--currency",
-        default=None,
-        help="ISO 4217 code for --cash (required when --cash is named)",
-    )
-    points.add_argument(
         "--program",
-        default=None,
+        required=True,
         help="Loyalty program code for the local transfer table (e.g. aeroplan)",
     )
+    points.add_argument("--points", type=int, required=True, help="Award points needed")
     points.add_argument(
         "--balances",
         default=None,
