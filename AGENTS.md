@@ -8,6 +8,15 @@ the agent contract: where to edit, traps, and what must not be invented.
 > The `cursor` remote (`origin.cursor.com/fil/viajante.git`) is a backup with expired credentials; it is not used for fetch/push.
 > `pyproject.toml` still lists `github.com/felipebasurto/viajante` as Homepage; do not treat that URL as the repo of record, and do not rewrite it from this markdown pass.
 
+## Design stance
+
+Viajante gives an agent superpowers; it does not replace the agent's judgment.
+It fetches owned provider evidence fast and refuses to guess. The calling agent
+reads the payload, weighs trade-offs, and recommends. Do not add summaries,
+"cheapest is X" lead lines, or recommendation prose to results; add evidence
+(a field the provider returned) or a primitive the agent can compose. See
+`docs/architecture.md`.
+
 ## Where to edit
 
 - `tfs` bytes, cabin, or occupancy in the Google Flights URL: `src/viajante/tfs.py`
