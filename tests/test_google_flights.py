@@ -159,8 +159,8 @@ def build_empty_page() -> str:
 class QueryEncodingTests(unittest.TestCase):
     def test_direct_query_matches_the_golden_url(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0)
-        self.assertEqual(build_search_url(query), GOLDEN_URL_DIRECT)
-        params = build_search_params(query)
+        self.assertEqual(build_search_url(query, currency="EUR"), GOLDEN_URL_DIRECT)
+        params = build_search_params(query, currency="EUR")
         self.assertEqual(params["tfs"], GOLDEN_TFS_DIRECT)
         self.assertEqual(params["hl"], "en")
         self.assertEqual(params["curr"], "EUR")
@@ -168,9 +168,9 @@ class QueryEncodingTests(unittest.TestCase):
 
     def test_one_stop_query_changes_only_the_max_stops_field(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=1)
-        params = build_search_params(query)
+        params = build_search_params(query, currency="EUR")
         self.assertEqual(params["tfs"], GOLDEN_TFS_ONE_STOP)
-        parsed = parse_qs(urlparse(build_search_url(query)).query)
+        parsed = parse_qs(urlparse(build_search_url(query, currency="EUR")).query)
         self.assertEqual(parsed["tfs"], [GOLDEN_TFS_ONE_STOP])
         self.assertEqual(parsed["hl"], ["en"])
         self.assertEqual(parsed["curr"], ["EUR"])
@@ -178,31 +178,34 @@ class QueryEncodingTests(unittest.TestCase):
 
     def test_two_adults_query_matches_the_golden_tfs(self) -> None:
         params = build_search_params(
-            FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0, adults=2)
+            FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0, adults=2),
+            currency="EUR",
         )
         self.assertEqual(params["tfs"], GOLDEN_TFS_TWO_ADULTS)
         self.assertEqual(params["hl"], "en")
         self.assertEqual(params["curr"], "EUR")
 
     def test_booking_token_builds_a_google_flights_url(self) -> None:
-        url = build_itinerary_url("tok")
+        url = build_itinerary_url("tok", currency="EUR")
         parsed = parse_qs(urlparse(url).query)
         self.assertEqual(urlparse(url).path, "/travel/flights")
         self.assertEqual(parsed["hl"], ["en"])
         self.assertEqual(parsed["curr"], ["EUR"])
         self.assertEqual(parsed["booking_token"], ["tok"])
         with self.assertRaises(ValueError):
-            build_itinerary_url("   ")
+            build_itinerary_url("   ", currency="EUR")
 
     def test_google_flights_url_uses_search_url_without_a_token(self) -> None:
         query = FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0)
-        url = google_flights_url(query)
+        url = google_flights_url(query, currency="EUR")
         self.assertEqual(url, GOLDEN_URL_DIRECT)
-        self.assertEqual(google_flights_url(query, booking_token="   "), GOLDEN_URL_DIRECT)
+        self.assertEqual(
+            google_flights_url(query, booking_token="   ", currency="EUR"), GOLDEN_URL_DIRECT
+        )
 
     def test_google_flights_url_prefers_owned_booking_token(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0)
-        url = google_flights_url(query, booking_token="tok")
+        url = google_flights_url(query, booking_token="tok", currency="EUR")
         parsed = parse_qs(urlparse(url).query)
         self.assertEqual(parsed["booking_token"], ["tok"])
         self.assertNotIn("tfs", parsed)
@@ -214,17 +217,19 @@ class QueryEncodingTests(unittest.TestCase):
                 FlightLeg("LHR", "CDG", date(2026, 9, 3)),
             )
         )
-        url = google_flights_url(trip)
-        self.assertEqual(url, build_search_url(trip))
+        url = google_flights_url(trip, currency="EUR")
+        self.assertEqual(url, build_search_url(trip, currency="EUR"))
         parsed = parse_qs(urlparse(url).query)
         self.assertEqual(parsed["tfs"], [encode_tfs(trip)])
         self.assertEqual(parsed["hl"], ["en"])
-        token_url = google_flights_url(trip, booking_token="tok")
+        token_url = google_flights_url(trip, booking_token="tok", currency="EUR")
         self.assertIn("booking_token=tok", token_url)
         self.assertNotIn("tfs=", token_url)
 
     def test_google_flights_url_keeps_occupancy_and_currency(self) -> None:
-        solo = google_flights_url(FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0))
+        solo = google_flights_url(
+            FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0), currency="EUR"
+        )
         family = google_flights_url(
             FlightQuery(
                 "JFK",
@@ -251,7 +256,8 @@ class QueryEncodingTests(unittest.TestCase):
                 date(2026, 12, 4),
                 max_stops=0,
                 cabin="business",
-            )
+            ),
+            currency="EUR",
         )
         self.assertEqual(params["tfs"], GOLDEN_TFS_BUSINESS)
         self.assertEqual(params["hl"], "en")
@@ -287,7 +293,7 @@ class QueryEncodingTests(unittest.TestCase):
     def test_round_trip_repeats_flight_data_and_sets_trip_kind(self) -> None:
         trip = RoundTrip("MAD", "OPO", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
         self.assertEqual(encode_tfs(trip), GOLDEN_TFS_ROUND_TRIP)
-        self.assertEqual(build_search_params(trip)["tfs"], GOLDEN_TFS_ROUND_TRIP)
+        self.assertEqual(build_search_params(trip, currency="EUR")["tfs"], GOLDEN_TFS_ROUND_TRIP)
 
     def test_multi_city_tfs_repeats_legs_and_sets_trip_kind(self) -> None:
         trip = MultiCity(
@@ -323,10 +329,10 @@ class QueryEncodingTests(unittest.TestCase):
             [("YVR", "LHR", "2026-10-09"), ("LGW", "YVR", "2026-10-13")],
         )
         self.assertEqual([value for field, value in fields if field == 19], [3])
-        params = build_search_params(trip)
+        params = build_search_params(trip, currency="EUR")
         self.assertEqual(params["tfs"], encoded)
         self.assertEqual(params["hl"], "en")
-        parsed = parse_qs(urlparse(build_search_url(trip)).query)
+        parsed = parse_qs(urlparse(build_search_url(trip, currency="EUR")).query)
         self.assertEqual(parsed["tfs"], [encoded])
         self.assertEqual(parsed["hl"], ["en"])
 
@@ -341,7 +347,7 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertEqual(inbound[6], "2026-10-13")
         self.assertEqual(outbound[14], 3)
         self.assertEqual(inbound[14], 3)
-        url, body = build_shopping_request(trip)
+        url, body = build_shopping_request(trip, currency="EUR")
         self.assertEqual(parse_qs(urlparse(url).query)["hl"], ["en"])
         self.assertTrue(body.startswith("f.req="))
 
@@ -607,7 +613,7 @@ class HttpSweepParseTests(unittest.TestCase):
             def open(self, request: object, timeout: float = 0) -> _Resp:
                 return _Resp()
 
-        source = GoogleFlightsHttpSource(opener=_Opener())
+        source = GoogleFlightsHttpSource(opener=_Opener(), currency="EUR")
         cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€131")
@@ -633,7 +639,7 @@ class HttpSweepParseTests(unittest.TestCase):
             def open(self, request: object, timeout: float = 0) -> _Resp:
                 return _Resp()
 
-        source = GoogleFlightsHttpSource(opener=_Opener())
+        source = GoogleFlightsHttpSource(opener=_Opener(), currency="EUR")
         with self.assertRaises(GoogleFlightsBlocked):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
 
@@ -896,7 +902,7 @@ class ShoppingRpcTests(unittest.TestCase):
 
     def test_request_body_is_f_req_envelope(self) -> None:
         query = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=0)
-        url, body = build_shopping_request(query)
+        url, body = build_shopping_request(query, currency="EUR")
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
         self.assertEqual(params["hl"], ["en"])
@@ -919,7 +925,7 @@ class ShoppingRpcTests(unittest.TestCase):
 
     def test_compact_price_text_uses_quote_currency_not_a_euro_glyph(self) -> None:
         item = _itinerary(price=199)
-        euro = parse_shopping_body(_compact_body(item))[0]
+        euro = parse_shopping_body(_compact_body(item), currency="EUR")[0]
         usd = parse_shopping_body(_compact_body(item), currency="USD")[0]
         self.assertEqual(euro.price, "€199")
         self.assertEqual(usd.price, "199 USD")
@@ -929,7 +935,7 @@ class ShoppingRpcTests(unittest.TestCase):
         outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]
         inbound = _itinerary(airline="Iberia", dep=(18, 0), arr=(19, 20), minutes=80, price=40)[0]
         item = [[outbound, inbound], [[None, 199], "tok"]]
-        card = parse_shopping_body(_compact_body(item))[0]
+        card = parse_shopping_body(_compact_body(item), currency="EUR")[0]
         self.assertEqual(card.departure, "08:00")
         self.assertEqual(card.arrival, "09:10")
         self.assertEqual(card.price, "€199")
@@ -941,7 +947,7 @@ class ShoppingRpcTests(unittest.TestCase):
         assert offer is not None
         self.assertEqual(len(offer.legs), 2)
         self.assertEqual(offer.legs[1].departure, "18:00")
-        self.assertEqual(offer.to_dict()["legs"][1]["arrival"], "19:20")
+        self.assertEqual(offer.to_dict(currency="EUR")["legs"][1]["arrival"], "19:20")
 
     def test_wrapped_round_trip_pair_keeps_return_leg(self) -> None:
         outbound = _itinerary(airline="Iberia", dep=(8, 0), arr=(9, 10), minutes=70, price=40)[0]
@@ -949,14 +955,14 @@ class ShoppingRpcTests(unittest.TestCase):
         inbound[3] = "OPO"
         inbound[6] = "JFK"
         item = [[[outbound], [inbound]], [[None, 199], "tok"]]
-        card = parse_shopping_body(_compact_body(item))[0]
+        card = parse_shopping_body(_compact_body(item), currency="EUR")[0]
         self.assertEqual(len(card.legs), 2)
         self.assertEqual(card.legs[0].departure, "08:00")
         self.assertEqual(card.legs[1].departure, "18:00")
         self.assertEqual(card.legs[1].arrival, "19:20")
         offer = _normalize_offer(card, max_stops=1)
         assert offer is not None
-        data = offer.to_dict()
+        data = offer.to_dict(currency="EUR")
         self.assertEqual(len(data["legs"]), 2)
         self.assertEqual(data["legs"][1]["departure"], "18:00")
         self.assertEqual(data["legs"][1]["arrival"], "19:20")
@@ -967,12 +973,12 @@ class ShoppingRpcTests(unittest.TestCase):
         inbound[3] = "OPO"
         inbound[6] = "JFK"
         item = [outbound, [[None, 199], "tok"], inbound]
-        card = parse_shopping_body(_compact_body(item))[0]
+        card = parse_shopping_body(_compact_body(item), currency="EUR")[0]
         self.assertEqual(len(card.legs), 2)
         self.assertEqual(card.legs[1].arrival, "19:20")
         offer = _normalize_offer(card, max_stops=1)
         assert offer is not None
-        self.assertEqual(len(offer.to_dict()["legs"]), 2)
+        self.assertEqual(len(offer.to_dict(currency="EUR")["legs"]), 2)
 
     def test_live_shaped_round_trip_keeps_return_airports(self) -> None:
         day_out = [2026, 10, 9]
@@ -1026,25 +1032,25 @@ class ShoppingRpcTests(unittest.TestCase):
             minutes=80,
         )
         item = [[outbound, inbound], [[None, 199], "tok"]]
-        card = parse_shopping_body(_compact_body(item))[0]
+        card = parse_shopping_body(_compact_body(item), currency="EUR")[0]
         self.assertEqual(len(card.legs), 2)
         self.assertEqual(card.legs[0].departure, "08:00")
         self.assertEqual(card.legs[1].departure, "18:00")
         self.assertEqual(card.legs[1].arrival, "19:20")
         offer = _normalize_offer(card, max_stops=1)
         assert offer is not None
-        data = offer.to_dict()
+        data = offer.to_dict(currency="EUR")
         self.assertEqual(len(data["legs"]), 2)
         self.assertEqual(data["legs"][1]["arrival"], "19:20")
 
     def test_outbound_only_compact_does_not_invent_a_return_leg(self) -> None:
         # Packaged --trip rt still encodes return_date on the query. If the
         # shopping body only has the outbound flight, we must not fake a return.
-        card = parse_shopping_body(_compact_body(_iberia_late_nonstop()))[0]
+        card = parse_shopping_body(_compact_body(_iberia_late_nonstop()), currency="EUR")[0]
         self.assertEqual(len(card.legs), 1)
         offer = _normalize_offer(card, max_stops=1)
         assert offer is not None
-        self.assertEqual(len(offer.to_dict()["legs"]), 1)
+        self.assertEqual(len(offer.to_dict(currency="EUR")["legs"]), 1)
 
     def test_compact_body_yields_raw_card_fields(self) -> None:
         body = _compact_body(
@@ -1057,7 +1063,7 @@ class ShoppingRpcTests(unittest.TestCase):
                 legs=2,
             )
         )
-        cards = parse_shopping_body(body)
+        cards = parse_shopping_body(body, currency="EUR")
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0].airline, "Air Europa")
         self.assertEqual(cards[0].departure, "17:05")
@@ -1072,21 +1078,23 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(offer.duration_hours, 4 + 5 / 60)
         self.assertIsNone(cards[0].checked_bags)
         self.assertIsNone(cards[0].carry_on)
-        self.assertNotIn("checked_bags", offer.to_dict())
-        self.assertNotIn("carry_on", offer.to_dict())
+        self.assertNotIn("checked_bags", offer.to_dict(currency="EUR"))
+        self.assertNotIn("carry_on", offer.to_dict(currency="EUR"))
 
     def test_fare_bags_pair_is_parsed_and_otherwise_omitted(self) -> None:
-        with_bags = parse_shopping_body(_compact_body(_itinerary(price=91, bags=(1, 1))))[0]
+        with_bags = parse_shopping_body(
+            _compact_body(_itinerary(price=91, bags=(1, 1))), currency="EUR"
+        )[0]
         self.assertEqual(with_bags.checked_bags, 1)
         self.assertEqual(with_bags.carry_on, 1)
         offer = _normalize_offer(with_bags, max_stops=1)
         assert offer is not None
         self.assertEqual(offer.checked_bags, 1)
         self.assertEqual(offer.carry_on, 1)
-        self.assertEqual(offer.to_dict()["checked_bags"], 1)
+        self.assertEqual(offer.to_dict(currency="EUR")["checked_bags"], 1)
         self.assertFalse(offer.needs_bag_verify)
         self.assertEqual(offer.baggage_buffer, 0)
-        missing = parse_shopping_body(_compact_body(_itinerary(price=91)))[0]
+        missing = parse_shopping_body(_compact_body(_itinerary(price=91)), currency="EUR")[0]
         self.assertIsNone(missing.checked_bags)
         self.assertIsNone(missing.carry_on)
 
@@ -1094,7 +1102,7 @@ class ShoppingRpcTests(unittest.TestCase):
         body = (Path(__file__).resolve().parent / "bench" / "shopping-bags.wrb").read_text(
             encoding="utf-8"
         )
-        card = parse_shopping_body(body)[0]
+        card = parse_shopping_body(body, currency="EUR")[0]
         self.assertEqual(card.airline, "Ryanair")
         self.assertEqual(card.checked_bags, 1)
         self.assertEqual(card.carry_on, 1)
@@ -1110,7 +1118,7 @@ class ShoppingRpcTests(unittest.TestCase):
         last[8] = [15, 10]
         last[10] = [16, 20]
         item[0][2] = [first, last]
-        card = parse_shopping_body(_compact_body(item))[0]
+        card = parse_shopping_body(_compact_body(item), currency="EUR")[0]
         self.assertEqual(card.departure, "13:40")
         self.assertEqual(card.arrival, "16:20")
 
@@ -1118,7 +1126,7 @@ class ShoppingRpcTests(unittest.TestCase):
         body = _compact_body(
             _itinerary(dep=(0, 10), arr=(12, 0), minutes=60, price=40, legs=1),
         )
-        card = parse_shopping_body(body)[0]
+        card = parse_shopping_body(body, currency="EUR")[0]
         self.assertEqual(card.departure, "00:10")
         self.assertEqual(card.arrival, "12:00")
         self.assertEqual(card.duration, "1 hr")
@@ -1126,16 +1134,16 @@ class ShoppingRpcTests(unittest.TestCase):
 
     def test_empty_itinerary_slots_are_no_flights(self) -> None:
         with self.assertRaises(EmptyShoppingResults):
-            parse_shopping_body(_compact_body())
+            parse_shopping_body(_compact_body(), currency="EUR")
 
     def test_unreadable_body_is_compact_miss(self) -> None:
         with self.assertRaises(CompactParseMiss):
-            parse_shopping_body("not a shopping payload")
+            parse_shopping_body("not a shopping payload", currency="EUR")
 
     def test_source_uses_compact_post_not_html(self) -> None:
         sleeps: list[float] = []
         client = _FakeSweepClient(post_text=_compact_body(_itinerary(price=88, airline="Iberia")))
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€88")
@@ -1147,7 +1155,7 @@ class ShoppingRpcTests(unittest.TestCase):
         sleeps: list[float] = []
         html = _http_page(build_results_page(build_card(price="€39", airline="Vueling")))
         client = _FakeSweepClient(post_text="totally unrelated", get_text=html)
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Vueling")
         self.assertEqual(cards[0].price, "€39")
@@ -1158,7 +1166,7 @@ class ShoppingRpcTests(unittest.TestCase):
     def test_empty_compact_does_not_download_html(self) -> None:
         sleeps: list[float] = []
         client = _FakeSweepClient(post_text=_compact_body())
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         with self.assertRaises(NoFlightsFound):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 2)
@@ -1168,7 +1176,7 @@ class ShoppingRpcTests(unittest.TestCase):
     def test_source_raises_blocked_on_shopping_403(self) -> None:
         sleeps: list[float] = []
         client = _FakeSweepClient(post_status=403, post_text="no")
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         with self.assertRaises(GoogleFlightsBlocked):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 1)
@@ -1178,7 +1186,7 @@ class ShoppingRpcTests(unittest.TestCase):
     def test_source_raises_blocked_on_shopping_429_without_retry(self) -> None:
         sleeps: list[float] = []
         client = _FakeSweepClient(post_status=429, post_text="no")
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         with self.assertRaises(GoogleFlightsBlocked) as caught:
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(caught.exception.status, 429)
@@ -1202,7 +1210,7 @@ class HttpSweepRetryTests(unittest.TestCase):
             ),
             get_replies=(SweepHttpResponse(200, tiny),),
         )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€77")
@@ -1214,7 +1222,7 @@ class HttpSweepRetryTests(unittest.TestCase):
         sleeps: list[float] = []
         tiny = _http_page("<div>loading</div>")
         client = _FakeSweepClient(post_text="not shopping", get_text=tiny)
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         with self.assertRaises(GoogleFlightsBlocked):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 2)
@@ -1229,7 +1237,7 @@ class HttpSweepRetryTests(unittest.TestCase):
                 SweepHttpResponse(200, _compact_body(_itinerary(price=64, airline="Ryanair"))),
             )
         )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Ryanair")
         self.assertEqual(len(client.posts), 2)
@@ -1244,7 +1252,7 @@ class HttpSweepRetryTests(unittest.TestCase):
                 SweepHttpResponse(200, _compact_body(_itinerary(price=91, airline="Iberia"))),
             )
         )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].price, "€91")
         self.assertEqual(len(client.posts), 2)
@@ -1254,7 +1262,7 @@ class HttpSweepRetryTests(unittest.TestCase):
     def test_shopping_500_retries_once_then_stays_blocked(self) -> None:
         sleeps: list[float] = []
         client = _FakeSweepClient(post_status=500, post_text="no")
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         with self.assertRaises(GoogleFlightsBlocked) as caught:
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(caught.exception.status, 500)
@@ -1265,7 +1273,7 @@ class HttpSweepRetryTests(unittest.TestCase):
     def test_shopping_reject_is_not_retried(self) -> None:
         sleeps: list[float] = []
         client = _FakeSweepClient(post_text=_error_response_body())
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         with self.assertRaises(GoogleFlightsRejected):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(len(client.posts), 1)
@@ -1279,7 +1287,7 @@ class HttpSweepRetryTests(unittest.TestCase):
             get_url="https://consent.google.com/ml",
             get_text="<html></html>",
         )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append)
+        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
         with self.assertRaises(GoogleFlightsBlocked) as caught:
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertIsNone(caught.exception.status)
@@ -1897,7 +1905,7 @@ def _error_response_body() -> str:
 
 class LiveShapedCompactTests(unittest.TestCase):
     def test_tap_one_stop_hour_only_arrival_and_layover(self) -> None:
-        card = parse_shopping_body(_compact_body(_tap_long_layover()))[0]
+        card = parse_shopping_body(_compact_body(_tap_long_layover()), currency="EUR")[0]
         self.assertEqual(card.airline, "Tap Air Portugal")
         self.assertEqual(card.departure, "13:40")
         self.assertEqual(card.arrival, "09:00")
@@ -1950,7 +1958,8 @@ class LiveShapedCompactTests(unittest.TestCase):
                     ),
                     120,
                 )
-            )
+            ),
+            currency="EUR",
         )[0]
         self.assertEqual(card.flight_numbers, ("A3701",))
         self.assertEqual(card.legs[0].segments[0].carrier, "A3")
@@ -1959,30 +1968,30 @@ class LiveShapedCompactTests(unittest.TestCase):
     def test_layover_from_legs_when_itinerary_block_is_missing(self) -> None:
         item = _tap_long_layover()
         item[0][13] = None
-        card = parse_shopping_body(_compact_body(item))[0]
+        card = parse_shopping_body(_compact_body(item), currency="EUR")[0]
         self.assertEqual(card.arrival, "09:00")
         self.assertEqual(card.layover_city, "LIS")
         self.assertEqual(card.layover_hours, 18.0)
 
     def test_iberia_hour_only_arrival_is_not_null(self) -> None:
-        card = parse_shopping_body(_compact_body(_iberia_hour_only_arrival()))[0]
+        card = parse_shopping_body(_compact_body(_iberia_hour_only_arrival()), currency="EUR")[0]
         self.assertEqual(card.departure, "19:40")
         self.assertEqual(card.arrival, "20:00")
         self.assertIsNone(card.layover_city)
         self.assertIsNone(card.layover_hours)
 
     def test_late_iberia_nonstop_keeps_next_day_arrival(self) -> None:
-        card = parse_shopping_body(_compact_body(_iberia_late_nonstop()))[0]
+        card = parse_shopping_body(_compact_body(_iberia_late_nonstop()), currency="EUR")[0]
         self.assertEqual(card.departure, "23:10")
         self.assertEqual(card.arrival, "00:30")
         self.assertEqual(card.stops, "Nonstop")
 
     def test_late_evening_mad_fco_arrivals_are_not_null(self) -> None:
-        iberia = parse_shopping_body(_compact_body(_iberia_fco_late_evening()))[0]
+        iberia = parse_shopping_body(_compact_body(_iberia_fco_late_evening()), currency="EUR")[0]
         self.assertEqual(iberia.airline, "Iberia")
         self.assertEqual(iberia.departure, "21:50")
         self.assertEqual(iberia.arrival, "00:05")
-        ryanair = parse_shopping_body(_compact_body(_ryanair_fco_late_evening()))[0]
+        ryanair = parse_shopping_body(_compact_body(_ryanair_fco_late_evening()), currency="EUR")[0]
         self.assertEqual(ryanair.airline, "Ryanair")
         self.assertEqual(ryanair.departure, "22:15")
         self.assertEqual(ryanair.arrival, "00:30")
@@ -1995,37 +2004,43 @@ class LiveShapedCompactTests(unittest.TestCase):
         )
         for name, airline, dep, arr in cases:
             with self.subTest(name=name):
-                card = parse_shopping_body((root / name).read_text(encoding="utf-8"))[0]
+                card = parse_shopping_body(
+                    (root / name).read_text(encoding="utf-8"), currency="EUR"
+                )[0]
                 self.assertEqual(card.airline, airline)
                 self.assertEqual(card.departure, dep)
                 self.assertEqual(card.arrival, arr)
                 offer = _normalize_offer(card, max_stops=1)
                 assert offer is not None
-                data = offer.to_dict()
+                data = offer.to_dict(currency="EUR")
                 self.assertEqual(data["departure"], dep)
                 self.assertEqual(data["arrival"], arr)
                 self.assertEqual(data["legs"][0]["arrival"], arr)
 
     def test_omitted_midnight_hour_is_not_null(self) -> None:
-        iberia = parse_shopping_body(_compact_body(_iberia_fco_omitted_midnight_hour()))[0]
+        iberia = parse_shopping_body(
+            _compact_body(_iberia_fco_omitted_midnight_hour()), currency="EUR"
+        )[0]
         self.assertEqual(iberia.departure, "21:50")
         self.assertEqual(iberia.arrival, "00:05")
-        ryanair = parse_shopping_body(_compact_body(_ryanair_fco_omitted_midnight_hour()))[0]
+        ryanair = parse_shopping_body(
+            _compact_body(_ryanair_fco_omitted_midnight_hour()), currency="EUR"
+        )[0]
         self.assertEqual(ryanair.departure, "22:15")
         self.assertEqual(ryanair.arrival, "00:30")
         offer = _normalize_offer(ryanair, max_stops=1)
         assert offer is not None
-        self.assertEqual(offer.to_dict()["arrival"], "00:30")
+        self.assertEqual(offer.to_dict(currency="EUR")["arrival"], "00:30")
 
     def test_two_stop_card_keeps_both_layover_cities(self) -> None:
-        card = parse_shopping_body(_compact_body(_two_stop_mad_icn()))[0]
+        card = parse_shopping_body(_compact_body(_two_stop_mad_icn()), currency="EUR")[0]
         self.assertEqual(card.stops, "2 stops")
         offer = _normalize_offer(card, max_stops=2)
         assert offer is not None
         self.assertEqual(offer.stops_count, 2)
         cities = [row.city for row in offer.legs[0].layovers]
         self.assertEqual(cities, ["Helsinki", "Tokyo"])
-        data = offer.to_dict()
+        data = offer.to_dict(currency="EUR")
         self.assertIsNone(data["layover_city"])
         self.assertEqual(
             [row["city"] for row in data["legs"][0]["layovers"]], ["Helsinki", "Tokyo"]
@@ -2033,7 +2048,7 @@ class LiveShapedCompactTests(unittest.TestCase):
 
     def test_longhaul_group_starting_with_hour_only_departure_parses(self) -> None:
         body = _compact_body(_longhaul_cz_hour_only_dep(), other=(_longhaul_etihad(),))
-        cards = parse_shopping_body(body)
+        cards = parse_shopping_body(body, currency="EUR")
         self.assertEqual(len(cards), 2)
         by_airline = {card.airline: card for card in cards}
         cz = by_airline["China Southern"]
@@ -2050,14 +2065,14 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(ey.layover_city, "Abu Dhabi")
 
     def test_hour_only_departure_as_only_best_itinerary_is_not_empty(self) -> None:
-        cards = parse_shopping_body(_compact_body(_longhaul_cz_hour_only_dep()))
+        cards = parse_shopping_body(_compact_body(_longhaul_cz_hour_only_dep()), currency="EUR")
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0].airline, "China Southern")
         self.assertEqual(cards[0].departure, "21:00")
 
     def test_shopping_error_response_is_rejected_not_a_compact_miss(self) -> None:
         with self.assertRaises(ShoppingRejected) as ctx:
-            parse_shopping_body(_error_response_body())
+            parse_shopping_body(_error_response_body(), currency="EUR")
         message = str(ctx.exception).lower()
         self.assertIn("did not identify the cause", message)
         self.assertNotIn("unknown airport", message)
@@ -2065,7 +2080,7 @@ class LiveShapedCompactTests(unittest.TestCase):
 
     def test_source_does_not_download_html_after_shopping_reject(self) -> None:
         client = _FakeSweepClient(post_text=_error_response_body())
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, currency="EUR")
         with self.assertRaises(GoogleFlightsRejected):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(client.gets, [])
@@ -2164,6 +2179,7 @@ class _ScriptedMuxClient:
 
 class _TrackingHttpSource(GoogleFlightsHttpSource):
     def __init__(self, *args: object, **kwargs: object) -> None:
+        kwargs.setdefault("currency", "EUR")
         super().__init__(*args, **kwargs)
         self.reset_calls = 0
 
@@ -2356,7 +2372,7 @@ class SweepClientShapeTests(unittest.TestCase):
             ]
         )
         client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar)
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, currency="EUR")
         cards, days = source.fetch_with_calendar(
             FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),
             date(2026, 9, 1),
@@ -2370,7 +2386,7 @@ class SweepClientShapeTests(unittest.TestCase):
     def test_fetch_many_multiplexes_calendar_day_fanout(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
         client = _MuxFakeSweepClient(shop_text=shop)
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, currency="EUR")
         trips = tuple(
             FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, 8)
         )
@@ -2391,7 +2407,7 @@ class SweepClientShapeTests(unittest.TestCase):
             ]
         )
         client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar)
-        source = GoogleFlightsHttpSource(client=client)
+        source = GoogleFlightsHttpSource(client=client, currency="EUR")
         jobs = tuple(
             (
                 FlightQuery("JFK", dest, date(2026, 9, 1), max_stops=1),
@@ -2431,7 +2447,7 @@ class SweepClientShapeTests(unittest.TestCase):
         self.assertEqual(fanout["curr"], ["GBP"])
         self.assertEqual(fanout["gl"], ["GB"])
         unnamed_client = _FakeSweepClient(post_text=calendar)
-        GoogleFlightsHttpSource(client=unnamed_client).fetch_calendar(
+        GoogleFlightsHttpSource(client=unnamed_client, currency="EUR").fetch_calendar(
             FlightQuery("JFK", "LHR", date(2026, 9, 1)),
             date(2026, 9, 1),
             date(2026, 9, 2),
@@ -2446,7 +2462,9 @@ class SweepClientShapeTests(unittest.TestCase):
             '55\n[["di",34],["af.httprm",34,"-7689648241438755997",6]]\n'
             '25\n[["e",4,null,null,131]]\n'
         )
-        source = GoogleFlightsHttpSource(client=_FakeSweepClient(post_text=throttled))
+        source = GoogleFlightsHttpSource(
+            client=_FakeSweepClient(post_text=throttled), currency="EUR"
+        )
         with self.assertRaisesRegex(GoogleFlightsBlocked, "RPC error status 13"):
             source.fetch_calendar(
                 FlightQuery("SIN", "BKK", date(2026, 11, 20)),
@@ -2482,8 +2500,8 @@ class SweepClientShapeTests(unittest.TestCase):
 
         with patch("viajante.google_flights.ChromeSweepClient", FakeChrome):
             reset_shared_chrome_sweep_client()
-            first = GoogleFlightsHttpSource()
-            second = GoogleFlightsHttpSource()
+            first = GoogleFlightsHttpSource(currency="EUR")
+            second = GoogleFlightsHttpSource(currency="EUR")
             query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
             first.fetch(query)
             second.fetch(query)
@@ -2491,7 +2509,7 @@ class SweepClientShapeTests(unittest.TestCase):
             self.assertEqual(len(created), 1)
             first.close()
             second.close()
-            third = GoogleFlightsHttpSource()
+            third = GoogleFlightsHttpSource(currency="EUR")
             third.fetch(query)
             self.assertEqual(len(created), 1)
             reset_shared_chrome_sweep_client()
@@ -2524,10 +2542,10 @@ class SweepClientShapeTests(unittest.TestCase):
         with patch("viajante.google_flights.ChromeSweepClient", FakeChrome):
             reset_shared_chrome_sweep_client()
             query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
-            proxied = GoogleFlightsHttpSource(proxy="http://127.0.0.1:8080")
+            proxied = GoogleFlightsHttpSource(proxy="http://127.0.0.1:8080", currency="EUR")
             proxied.fetch(query)
             self.assertEqual(created[0].proxy, "http://127.0.0.1:8080")
-            GoogleFlightsHttpSource().fetch(query)
+            GoogleFlightsHttpSource(currency="EUR").fetch(query)
             self.assertEqual(len(created), 2)
             self.assertIsNone(created[1].proxy)
             self.assertEqual(len(closed), 1)
@@ -2554,7 +2572,7 @@ class DetailSorryPageTests(unittest.TestCase):
             def new_page(self) -> SorryPage:
                 return SorryPage()
 
-        source = GoogleFlightsSource(Path("."), session=Session())  # type: ignore[arg-type]
+        source = GoogleFlightsSource(Path("."), session=Session(), currency="EUR")  # type: ignore[arg-type]
         with self.assertRaisesRegex(GoogleFlightsBlocked, "blocked the browser"):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 11, 10)))
 

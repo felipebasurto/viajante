@@ -135,12 +135,12 @@ class ExploreJsonContractTests(unittest.TestCase):
                 )
             ),
         )
-        data = dest.to_dict()
+        data = dest.to_dict(currency="EUR")
         self.assertEqual(set(data), DESTINATION_KEYS | {"stops_compare"})
         self.assertEqual(set(data["stops_compare"]), {"nonstop"})
         self.assertNotIn("one_stop", data["stops_compare"])
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
-        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
+        self.assertEqual(set(catalog.to_dict(currency="EUR")), DESTINATION_KEYS)
 
     def test_google_flights_url_is_an_extra_key_when_present(self) -> None:
         dest = ExploreDestination(
@@ -150,7 +150,7 @@ class ExploreJsonContractTests(unittest.TestCase):
             price=42.0,
             google_flights_url="https://www.google.com/travel/flights?tfs=opo",
         )
-        data = dest.to_dict()
+        data = dest.to_dict(currency="EUR")
         self.assertEqual(set(data), DESTINATION_KEYS | {"google_flights_url"})
         self.assertNotIn("booking_token", data)
         report = ExploreReport(
@@ -160,11 +160,12 @@ class ExploreJsonContractTests(unittest.TestCase):
             days=7,
             destinations=(dest,),
             google_flights_url="https://www.google.com/travel/flights?tfs=report",
+            currency="EUR",
         ).to_dict()
         self.assertEqual(set(report), REPORT_KEYS | {"google_flights_url"})
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
-        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
-        self.assertNotIn("booking_token", catalog.to_dict())
+        self.assertEqual(set(catalog.to_dict(currency="EUR")), DESTINATION_KEYS)
+        self.assertNotIn("booking_token", catalog.to_dict(currency="EUR"))
 
     def test_typical_is_an_extra_dest_key_when_stamped(self) -> None:
         dest = ExploreDestination(
@@ -176,18 +177,18 @@ class ExploreJsonContractTests(unittest.TestCase):
             vs_typical="below",
             vs_typical_pct=-20,
         )
-        data = dest.to_dict()
+        data = dest.to_dict(currency="EUR")
         self.assertEqual(set(data), DESTINATION_KEYS | DESTINATION_TYPICAL_KEYS)
         self.assertEqual(data["typical"], 100.0)
         self.assertEqual(data["vs_typical"], "below")
         self.assertEqual(data["vs_typical_pct"], -20)
         self.assertEqual(data["typical_deal"], "below typical 100 € (−20%)")
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
-        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
-        self.assertNotIn("typical", catalog.to_dict())
-        self.assertNotIn("vs_typical", catalog.to_dict())
-        self.assertNotIn("vs_typical_pct", catalog.to_dict())
-        self.assertNotIn("typical_deal", catalog.to_dict())
+        self.assertEqual(set(catalog.to_dict(currency="EUR")), DESTINATION_KEYS)
+        self.assertNotIn("typical", catalog.to_dict(currency="EUR"))
+        self.assertNotIn("vs_typical", catalog.to_dict(currency="EUR"))
+        self.assertNotIn("vs_typical_pct", catalog.to_dict(currency="EUR"))
+        self.assertNotIn("typical_deal", catalog.to_dict(currency="EUR"))
 
     def test_owned_duration_and_clocks_are_extra_dest_keys_when_shopped(self) -> None:
         dest = ExploreDestination(
@@ -199,16 +200,16 @@ class ExploreJsonContractTests(unittest.TestCase):
             departure="07:00",
             arrival="07:50",
         )
-        data = dest.to_dict()
+        data = dest.to_dict(currency="EUR")
         self.assertEqual(set(data), DESTINATION_KEYS | DESTINATION_SHOP_CLOCK_KEYS)
         self.assertEqual(data["duration_hours"], 1.0)
         self.assertEqual(data["departure"], "07:00")
         self.assertEqual(data["arrival"], "07:50")
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
-        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
-        self.assertNotIn("duration_hours", catalog.to_dict())
-        self.assertNotIn("departure", catalog.to_dict())
-        self.assertNotIn("arrival", catalog.to_dict())
+        self.assertEqual(set(catalog.to_dict(currency="EUR")), DESTINATION_KEYS)
+        self.assertNotIn("duration_hours", catalog.to_dict(currency="EUR"))
+        self.assertNotIn("departure", catalog.to_dict(currency="EUR"))
+        self.assertNotIn("arrival", catalog.to_dict(currency="EUR"))
         silent = ExploreDestination(
             iata="FCO",
             city="Rome",
@@ -216,7 +217,7 @@ class ExploreJsonContractTests(unittest.TestCase):
             price=90.0,
         )
         self.assertIsNone(silent.duration_hours)
-        self.assertNotIn("duration_hours", silent.to_dict())
+        self.assertNotIn("duration_hours", silent.to_dict(currency="EUR"))
 
     def test_baggage_buffer_is_an_extra_dest_key_when_shopped(self) -> None:
         dest = ExploreDestination(
@@ -226,13 +227,13 @@ class ExploreJsonContractTests(unittest.TestCase):
             price=40.0,
             baggage_buffer=70,
         )
-        data = dest.to_dict()
+        data = dest.to_dict(currency="EUR")
         self.assertEqual(set(data), DESTINATION_KEYS | {"baggage_buffer"})
         self.assertEqual(data["baggage_buffer"], 70)
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
-        self.assertEqual(set(catalog.to_dict()), DESTINATION_KEYS)
-        self.assertNotIn("baggage_buffer", catalog.to_dict())
-        self.assertNotIn("needs_bag_verify", catalog.to_dict())
+        self.assertEqual(set(catalog.to_dict(currency="EUR")), DESTINATION_KEYS)
+        self.assertNotIn("baggage_buffer", catalog.to_dict(currency="EUR"))
+        self.assertNotIn("needs_bag_verify", catalog.to_dict(currency="EUR"))
 
 
 if __name__ == "__main__":

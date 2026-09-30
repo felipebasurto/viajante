@@ -254,6 +254,7 @@ class NonRetriableFailureTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
+            currency="EUR",
         )
         return report.queries[0], source, sleeps
 
@@ -320,6 +321,7 @@ class ProgressTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             progress=lines.append,
+            currency="EUR",
         )
         self.assertIn("[1/2] JFK -> LHR 2026-09-01", lines)
         self.assertIn("[2/2] JFK -> CDG 2026-09-02", lines)
@@ -351,6 +353,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            currency="EUR",
         )
 
         self.assertEqual(source.reset_calls, MAX_ATTEMPTS)
@@ -374,6 +377,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 9, 0, 0),
             retry_backoff=lambda _attempt, _rng: 0.0,
+            currency="EUR",
         )
         self.assertEqual(source.fetch_calls, MAX_ATTEMPTS)
         self.assertEqual(source.reset_calls, MAX_ATTEMPTS)
@@ -415,6 +419,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            currency="EUR",
         )
         self.assertEqual(source.batch_calls, 1)
         self.assertEqual(source.reset_calls, 0)
@@ -455,7 +460,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert offer is not None
         self.assertEqual(offer.baggage_buffer, 0)
         self.assertTrue(offer.needs_bag_verify)
-        self.assertNotIn("checked_bags", offer.to_dict())
+        self.assertNotIn("checked_bags", offer.to_dict(currency="EUR"))
 
     def test_parse_flight_plan_keeps_bags_unset_by_default(self) -> None:
         plan = parse_flight_plan(["JFK-LHR:2026-09-01"], max_stops=1, bags=1, carry_on=1)
@@ -522,6 +527,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
+            currency="EUR",
         )
         outcome = report.queries[0]
         self.assertIsInstance(outcome, QuerySuccess)
@@ -529,7 +535,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(outcome.eligible_count, 0)
         self.assertEqual(outcome.offers, ())
         self.assertIsNone(outcome.stops_compare)
-        self.assertNotIn("stops_compare", outcome.to_dict())
+        self.assertNotIn("stops_compare", outcome.to_dict(currency="EUR"))
 
     def test_rank_dedupe_and_baggage(self) -> None:
         offers = (
@@ -1041,6 +1047,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             inter_query_delay=sweep_inter_query_delay_seconds,
+            currency="EUR",
         )
         self.assertEqual(sleeps, [0.0])
 
@@ -1205,6 +1212,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             inter_query_delay=lambda _rng: 0.0,
+            currency="EUR",
         )
         offer = report.queries[0].offers[0]
         self.assertEqual(len(offer.legs), 2)
@@ -1261,6 +1269,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             inter_query_delay=lambda _rng: 0.0,
+            currency="EUR",
         )
         self.assertEqual(len(report.queries[0].offers[0].legs), 1)
 
@@ -1359,6 +1368,7 @@ class FetchModeTests(unittest.TestCase):
         ok = SearchReport(
             searched_at=datetime(2026, 8, 10),
             queries=(QuerySuccess(query=query, raw_count=2, eligible_count=1, offers=()),),
+            currency="EUR",
         )
         empty = SearchReport(
             searched_at=datetime(2026, 8, 10),
@@ -1368,6 +1378,7 @@ class FetchModeTests(unittest.TestCase):
                     error=classify_failure(NoFlightsFound()),
                 ),
             ),
+            currency="EUR",
         )
         self.assertFalse(any(_needs_detail_fallback(result) for result in ok.queries))
         self.assertTrue(any(_needs_detail_fallback(result) for result in empty.queries))
@@ -2120,6 +2131,7 @@ class StopsCompareTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             baggage_buffer=0,
+            currency="EUR",
         )
         outcome = report.queries[0]
         self.assertIsInstance(outcome, QuerySuccess)
@@ -2132,7 +2144,7 @@ class StopsCompareTests(unittest.TestCase):
         self.assertEqual(compare.nonstop.price, 88.0)
         self.assertEqual(compare.one_stop.airline, "Air Europa")
         self.assertEqual(compare.one_stop.price, 69.0)
-        payload = outcome.to_dict()["stops_compare"]
+        payload = outcome.to_dict(currency="EUR")["stops_compare"]
         self.assertEqual(payload["nonstop"]["price"], 88.0)
         self.assertEqual(payload["one_stop"]["price"], 69.0)
         self.assertEqual(payload["one_stop"]["layover_city"], "Palma")
@@ -2155,6 +2167,7 @@ class StopsCompareTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             baggage_buffer=0,
+            currency="EUR",
         )
         outcome = report.queries[0]
         self.assertIsInstance(outcome, QuerySuccess)
@@ -2162,7 +2175,7 @@ class StopsCompareTests(unittest.TestCase):
         assert outcome.stops_compare.nonstop is not None
         self.assertEqual(outcome.stops_compare.nonstop.price, 88.0)
         self.assertIsNone(outcome.stops_compare.one_stop)
-        self.assertNotIn("one_stop", outcome.to_dict()["stops_compare"])
+        self.assertNotIn("one_stop", outcome.to_dict(currency="EUR")["stops_compare"])
 
 
 if __name__ == "__main__":

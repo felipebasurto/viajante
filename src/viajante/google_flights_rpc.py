@@ -264,7 +264,7 @@ def build_shopping_request(
     trip: Trip,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     country: Optional[str] = None,
     selected_flight: Any = None,
 ) -> tuple[str, str]:
@@ -299,7 +299,7 @@ def build_calendar_request(
     end: date,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     country: Optional[str] = None,
 ) -> tuple[str, str]:
     base = CALENDAR_GRAPH_URL if isinstance(trip, RoundTrip) else CALENDAR_GRID_URL
@@ -342,7 +342,7 @@ def build_explore_request(
     adults: int = 1,
     cabin: FlightCabin = "economy",
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     country: Optional[str] = None,
     children: int = 0,
     infants_in_seat: int = 0,
@@ -384,7 +384,7 @@ def _wrb_json(text: str, *, kind: str) -> Any:
         raise CompactParseMiss(f"wrb.fr {kind} data is not JSON") from exc
 
 
-def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
+def parse_shopping_body(text: str, *, currency: str) -> tuple[RawFlightCard, ...]:
     data = _wrb_json(text, kind="shopping")
     if not isinstance(data, list):
         raise CompactParseMiss("wrb.fr data is not a list")
@@ -557,7 +557,7 @@ def _looks_like_itinerary(item: object) -> bool:
     return bool(_itinerary_journeys(item))
 
 
-def _itinerary_to_card(item: list[Any], *, currency: str = "EUR") -> Optional[RawFlightCard]:
+def _itinerary_to_card(item: list[Any], *, currency: str) -> Optional[RawFlightCard]:
     journeys = _itinerary_journeys(item)
     if not journeys:
         return None
@@ -674,7 +674,7 @@ def _bags_from_fare(block: object) -> tuple[Optional[int], Optional[int]]:
     return None, None
 
 
-def _price_text(block: object, *, currency: str = "EUR") -> Optional[str]:
+def _price_text(block: object, *, currency: str) -> Optional[str]:
     if not isinstance(block, list) or not block:
         return None
     first = block[0]

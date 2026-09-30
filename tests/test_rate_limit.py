@@ -77,7 +77,9 @@ class CooldownGateTests(_StateDir):
     def test_proxied_search_is_not_paused(self) -> None:
         note_rate_limited()
         with patch("viajante.google_flights.shared_chrome_sweep_client") as client:
-            GoogleFlightsHttpSource(proxy="http://proxy.example:8080")._ensure_client()
+            GoogleFlightsHttpSource(
+                proxy="http://proxy.example:8080", currency="EUR"
+            )._ensure_client()
         client.assert_called_once()
 
 

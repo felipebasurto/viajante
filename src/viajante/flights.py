@@ -1690,7 +1690,7 @@ def _run_search(
     baggage_buffer: int = 0,
     progress: Optional[Callable[[str], None]] = None,
     locale: str = "en",
-    currency: str = "EUR",
+    currency: str,
     fetch_backend: Optional[FetchBackend] = None,
     sort: FlightSort = "ranked",
     inter_query_delay: Callable[[random.Random], float] = inter_query_delay_seconds,

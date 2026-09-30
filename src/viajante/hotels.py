@@ -199,7 +199,7 @@ def _run_search(
     random_gen: random.Random,
     now: Callable[[], datetime],
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     progress: Optional[Callable[[str], None]] = None,
     provider: HotelProvider = "booking.com",
     applied_filters: Optional[Callable[..., AppliedHotelFilters]] = None,

@@ -118,6 +118,7 @@ def _report() -> HotelSearchReport:
                 ),
             ),
         ),
+        currency="EUR",
     )
 
 
@@ -155,6 +156,7 @@ class HotelJsonContractTests(unittest.TestCase):
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 11, 12, 32, 0, tzinfo=timezone(timedelta(hours=2))),
             queries=(),
+            currency="EUR",
         )
         self.assertEqual(report.to_dict()["searched_at"], "2026-08-11T10:32:00Z")
 
@@ -184,6 +186,7 @@ class HotelJsonContractTests(unittest.TestCase):
             queries=(),
             locale="en",
             provider="google-hotels",
+            currency="EUR",
         )
         data = report.to_dict()
         self.assertEqual(set(data), REPORT_KEYS)

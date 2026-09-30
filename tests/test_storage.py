@@ -82,6 +82,7 @@ class WriteReportAtomicTests(unittest.TestCase):
             report = SearchReport(
                 searched_at=datetime(2026, 8, 10, 9, 0, 0),
                 queries=(),
+                currency="EUR",
             )
             write_json_atomic(reports_payload(report), path)
             self.assertTrue(path.exists())
@@ -89,7 +90,9 @@ class WriteReportAtomicTests(unittest.TestCase):
             self.assertEqual(data["schema_version"], 2)
 
     def test_nearby_fan_out_nests_under_queries(self) -> None:
-        report = SearchReport(searched_at=datetime(2026, 8, 10, 9, 0, 0), queries=())
+        report = SearchReport(
+            searched_at=datetime(2026, 8, 10, 9, 0, 0), queries=(), currency="EUR"
+        )
         self.assertEqual(reports_payload((report,)), dict(report.to_dict()))
         self.assertEqual(
             reports_payload((report, report)),

@@ -64,7 +64,7 @@ def _typical_json(
     typical: Optional[float],
     vs: Optional[VsTypical],
     pct: Optional[int],
-    currency: str = "EUR",
+    currency: str,
 ) -> dict[str, object]:
     if typical is None or vs is None or pct is None:
         return {}
@@ -80,7 +80,7 @@ def format_typical_deal(
     vs: Optional[VsTypical],
     typical: Optional[float],
     pct: Optional[int],
-    currency: str = "EUR",
+    currency: str,
 ) -> Optional[str]:
     """English one-liner, or None when typical is omitted."""
     if vs is None or typical is None or pct is None:
@@ -506,7 +506,7 @@ class OfferEvidence:
 
     evidence_id: str
     query: Mapping[str, object]
-    currency: str
+    currency: str = field(kw_only=True)
     retrieved_at: datetime
     fetch_backend: Optional[str]
     query_url: Optional[str]
@@ -756,10 +756,10 @@ class FlightOffer:
                 ),
             )
 
-    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+    def typical_deal(self, currency: str) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         lead = self.legs[0]
         two_stop = self.stops_count is not None and self.stops_count >= 2
         payload: dict[str, object] = {
@@ -916,7 +916,7 @@ class QuerySuccess:
         if self.eligible_count < len(self.offers):
             raise ValueError("eligible_count must be >= number of offers")
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         query = dict(self.query.to_dict())
         if self.google_flights_url:
             query["google_flights_url"] = self.google_flights_url
@@ -977,8 +977,8 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
 class SearchReport:
     searched_at: datetime
     queries: Tuple[QueryResult, ...]
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     fetch_backend: Optional[FetchBackend] = None
     fetch_ms: Optional[int] = None
     coverage: Optional[SearchCoverage] = None
@@ -1103,10 +1103,10 @@ class DatePriceRow:
         ):
             raise ValueError("shop duration/clocks require an owned day fare")
 
-    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+    def typical_deal(self, currency: str) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "date": self.departure_date.isoformat(),
             "price": self.price,
@@ -1142,8 +1142,8 @@ class DateCalendarReport:
     start_date: date
     end_date: date
     days: Tuple[DatePriceRow, ...]
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     trip: DateTripKind = "one-way"
     nights: Optional[int] = None
     fetch_backend: Optional[str] = "calendar"
@@ -1241,8 +1241,8 @@ class FlexSearchReport:
     stops_compare: Optional[StopsCompare] = None
     typical: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     trip: DateTripKind = "one-way"
     nights: Optional[int] = None
     fetch_backend: Optional[FlexFetchBackend] = "calendar"
@@ -1358,10 +1358,10 @@ class ExploreDestination:
         if self.price is None and self.baggage_buffer is not None:
             raise ValueError("baggage buffer requires an owned dest fare")
 
-    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+    def typical_deal(self, currency: str) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "iata": self.iata,
             "city": self.city,
@@ -1391,8 +1391,8 @@ class ExploreReport:
     start_date: date
     days: int
     destinations: Tuple[ExploreDestination, ...]
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     fetch_backend: Optional[str] = "explore"
     fetch_ms: Optional[int] = None
     google_flights_url: Optional[str] = None
@@ -1648,8 +1648,8 @@ HotelFetchBackend = Literal["booking", "google"]
 class HotelSearchReport:
     searched_at: datetime
     queries: Tuple[HotelQueryResult, ...]
+    currency: str = field(kw_only=True)
     locale: str = FETCH_LANGUAGE
-    currency: str = "EUR"
     schema_version: int = field(init=False, default=2)
     provider: HotelProvider = "booking.com"
     price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
@@ -1711,8 +1711,8 @@ class TripSearchReport:
     flights: SearchReport
     hotels: HotelSearchReport
     trip_total: Optional[TripTotal] = None
+    currency: str = field(kw_only=True)
     locale: str = FETCH_LANGUAGE
-    currency: str = "EUR"
     fetch_ms: Optional[int] = None
     schema_version: int = field(init=False, default=2)
 
@@ -1759,7 +1759,7 @@ class HiddenCityOffer:
     destination: str
     departure_date: date
     price: float
-    currency: str
+    currency: str = field(kw_only=True)
     evidence: EvidenceLevel
     source: str = HIDDEN_CITY_SOURCE
     airline: Optional[str] = None
@@ -1957,7 +1957,7 @@ class PointsBalance:
 
 @dataclass(frozen=True)
 class TransferPath:
-    currency: str
+    currency: str = field(kw_only=True)
     program: str
     ratio: float
     points_needed: int

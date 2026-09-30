@@ -186,7 +186,7 @@ def provider_card(
 
 class AppliedFiltersTests(unittest.TestCase):
     def test_default_url_and_free_cancellation_chip(self) -> None:
-        applied = build_applied_filters(query())
+        applied = build_applied_filters(query(), currency="EUR")
         params = parse_qs(urlparse(applied.url).query)
 
         self.assertEqual(applied.chips, ("oos=1",))
@@ -207,7 +207,7 @@ class AppliedFiltersTests(unittest.TestCase):
         )
 
     def test_non_refundable_opt_in_has_no_filter_chip(self) -> None:
-        applied = build_applied_filters(query(free_cancellation=False))
+        applied = build_applied_filters(query(free_cancellation=False), currency="EUR")
 
         self.assertEqual(applied.chips, ())
         params = parse_qs(urlparse(applied.url).query)
@@ -215,7 +215,7 @@ class AppliedFiltersTests(unittest.TestCase):
         self.assertEqual(params["order"], ["price"])
 
     def test_entire_home_uses_exact_chips(self) -> None:
-        applied = build_applied_filters(query(entire_home=True))
+        applied = build_applied_filters(query(entire_home=True), currency="EUR")
 
         self.assertEqual(
             applied.chips,
@@ -235,11 +235,11 @@ class AppliedFiltersTests(unittest.TestCase):
 
 class BookingHotelsSourceTests(unittest.TestCase):
     def source_for(self, page: FakePage, state_dir: Path) -> BookingHotelsSource:
-        return BookingHotelsSource(state_dir, session=FakeSession(page))
+        return BookingHotelsSource(state_dir, session=FakeSession(page), currency="EUR")
 
     def test_default_session_uses_booking_browser_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source = BookingHotelsSource(Path(tmp))
+            source = BookingHotelsSource(Path(tmp), currency="EUR")
             config = source.config
             self.assertEqual(config.state_filename, "pw_state_booking.json")
             self.assertEqual(config.locale, "en-US")
@@ -276,7 +276,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
             state_dir = Path(tmp)
             source = self.source_for(page, state_dir)
             with self.assertRaises(BookingResultsTimeout):
-                source.fetch(query(), build_applied_filters(query()), 24)
+                source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
             self.assertTrue((state_dir / FAILURE_HTML_NAME).exists())
             meta = (state_dir / FAILURE_META_NAME).read_text(encoding="utf-8")
             self.assertIn("url:", meta)
@@ -288,7 +288,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             source = self.source_for(page, Path(tmp))
-            result = source.fetch(query(), build_applied_filters(query()), 24)
+            result = source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
 
         self.assertEqual(result.cards, ())
         self.assertIsInstance(result, HotelPage)
@@ -300,7 +300,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = self.source_for(page, Path(tmp))
             with self.assertRaises(RuntimeError):
-                source.fetch(query(), build_applied_filters(query()), 24)
+                source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
             self.assertTrue((Path(tmp) / FAILURE_HTML_NAME).exists())
 
         self.assertTrue(page.closed)
@@ -310,7 +310,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             source = self.source_for(page, Path(tmp))
-            result = source.fetch(query(), build_applied_filters(query()), 24)
+            result = source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
 
         self.assertEqual([row.title for row in result.cards], ["Good"])
         self.assertTrue(page.closed)
@@ -326,7 +326,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             source = self.source_for(page, Path(tmp))
-            result = source.fetch(query(), build_applied_filters(query()), 2)
+            result = source.fetch(query(), build_applied_filters(query(), currency="EUR"), 2)
 
         self.assertEqual([row.title for row in result.cards], ["One", "Two"])
 
@@ -335,7 +335,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             source = self.source_for(page, Path(tmp))
-            result = source.fetch(query(), build_applied_filters(query()), 24)
+            result = source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
 
         extracted = result.cards[0]
         self.assertEqual(extracted.rating, "8,7 Fabuloso")
@@ -350,7 +350,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             source = self.source_for(page, Path(tmp))
-            result = source.fetch(query(), build_applied_filters(query()), 24)
+            result = source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
 
         self.assertEqual(len(result.cards), 1)
         self.assertEqual(result.cards[0].total_price, "")
@@ -359,7 +359,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
     def test_close_and_reset_delegate_to_session(self) -> None:
         session = FakeSession(FakePage())
         with tempfile.TemporaryDirectory() as tmp:
-            source = BookingHotelsSource(Path(tmp), session=session)
+            source = BookingHotelsSource(Path(tmp), session=session, currency="EUR")
             source.reset()
             source.close()
         self.assertEqual(session.reset_calls, 1)

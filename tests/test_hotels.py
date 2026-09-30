@@ -349,6 +349,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(3),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         self.assertIsInstance(report.queries[0], HotelQuerySuccess)
@@ -373,6 +374,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(7),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         self.assertEqual(len(source.fetch_calls), MAX_ATTEMPTS)
@@ -402,6 +404,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -425,6 +428,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -447,6 +451,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(11),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         self.assertEqual(sleeps, [expected])
@@ -462,6 +467,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
             progress=lines.append,
+            currency="EUR",
         )
         self.assertEqual(
             lines,
@@ -481,6 +487,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -511,6 +518,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -530,6 +538,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -561,6 +570,7 @@ class HotelOrchestrationTests(unittest.TestCase):
                 sleep=lambda _: None,
                 random_gen=Random(0),
                 now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+                currency="EUR",
             )
 
         result = report.queries[0]
@@ -579,9 +589,9 @@ class HotelOrchestrationTests(unittest.TestCase):
         }
 
         with self.assertRaises(ValueError):
-            _run_search((), top=8, **kwargs)
+            _run_search((), top=8, **kwargs, currency="EUR")
         with self.assertRaises(ValueError):
-            _run_search((query(),), top=0, **kwargs)
+            _run_search((query(),), top=0, **kwargs, currency="EUR")
 
         self.assertEqual(source.fetch_calls, [])
 
@@ -617,6 +627,7 @@ class HotelOrchestrationTests(unittest.TestCase):
                 url="https://www.google.com/travel/search",
             ),
             delay_seconds=lambda _: 0.0,
+            currency="EUR",
         )
         self.assertEqual(report.provider, "google-hotels")
         self.assertEqual(report.locale, "en")
@@ -634,6 +645,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
             provider="google-hotels",
+            currency="EUR",
         )
         self.assertEqual(len(source.fetch_calls), 1)
         self.assertEqual(sleeps, [])
@@ -652,6 +664,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
             provider="google-hotels",
+            currency="EUR",
         )
         self.assertEqual(len(source.fetch_calls), 1)
         result = report.queries[0]
@@ -689,6 +702,7 @@ class HotelOrchestrationTests(unittest.TestCase):
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 10, 10, 0, 0),
             queries=(),
+            currency="EUR",
         )
 
         with tempfile.TemporaryDirectory() as tmp:

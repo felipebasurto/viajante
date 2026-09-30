@@ -246,6 +246,7 @@ class GoogleHotelsFetchTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
             provider="google-hotels",
+            currency="EUR",
         )
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(len(sleeps), 1)

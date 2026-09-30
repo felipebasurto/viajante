@@ -261,7 +261,7 @@ class JsonContractTests(unittest.TestCase):
             checked_bags=1,
             carry_on=1,
         )
-        data = offer.to_dict()
+        data = offer.to_dict(currency="EUR")
         self.assertEqual(data["checked_bags"], 1)
         self.assertEqual(data["carry_on"], 1)
         self.assertEqual(set(data), OFFER_KEYS | {"checked_bags", "carry_on"})
@@ -283,7 +283,7 @@ class JsonContractTests(unittest.TestCase):
             vs_typical="below",
             vs_typical_pct=-15,
         )
-        data = offer.to_dict()
+        data = offer.to_dict(currency="EUR")
         self.assertEqual(data["typical"], 340.0)
         self.assertEqual(data["vs_typical"], "below")
         self.assertEqual(data["vs_typical_pct"], -15)
@@ -347,7 +347,7 @@ class JsonContractTests(unittest.TestCase):
             cheapest_date=date(2026, 9, 16),
             cheapest=300.0,
         )
-        data = offer.to_dict()
+        data = offer.to_dict(currency="EUR")
         self.assertEqual(data["cheapest_date"], "2026-09-16")
         self.assertEqual(data["cheapest"], 300.0)
         self.assertEqual(set(data), OFFER_KEYS | {"cheapest_date", "cheapest"})
@@ -380,7 +380,7 @@ class JsonContractTests(unittest.TestCase):
                 ),
             ),
         )
-        data = offer.to_dict()
+        data = offer.to_dict(currency="EUR")
         self.assertIsNone(data["layover_city"])
         self.assertEqual([row["city"] for row in data["legs"][0]["layovers"]], ["LIS", "GRU"])
 
@@ -420,7 +420,9 @@ class JsonContractTests(unittest.TestCase):
                 RawJourneyLeg(departure="14:00", arrival="16:20", duration="2 hr 20 min"),
             ),
         )
-        data = QuerySuccess(query=query, raw_count=1, eligible_count=1, offers=(offer,)).to_dict()
+        data = QuerySuccess(query=query, raw_count=1, eligible_count=1, offers=(offer,)).to_dict(
+            currency="EUR"
+        )
         self.assertEqual(data["query"]["trip"], "rt")
         self.assertEqual(data["query"]["return_date"], "2026-12-09")
         self.assertEqual(data["query"]["departure_date"], "2026-12-03")
@@ -469,7 +471,7 @@ class JsonContractTests(unittest.TestCase):
             eligible_count=2,
             offers=(),
             stops_compare=StopsCompare(nonstop=nonstop, one_stop=one_stop),
-        ).to_dict()
+        ).to_dict(currency="EUR")
         self.assertEqual(set(data), SUCCESS_KEYS | {"stops_compare"})
         self.assertEqual(set(data["stops_compare"]), {"nonstop", "one_stop"})
         self.assertEqual(set(data["stops_compare"]["nonstop"]), STOPS_COMPARE_SIDE_KEYS)
@@ -497,7 +499,7 @@ class JsonContractTests(unittest.TestCase):
             eligible_count=1,
             offers=(),
             stops_compare=StopsCompare(one_stop=one_stop),
-        ).to_dict()
+        ).to_dict(currency="EUR")
         self.assertEqual(set(data["stops_compare"]), {"one_stop"})
         self.assertNotIn("nonstop", data["stops_compare"])
 
@@ -525,7 +527,7 @@ class JsonContractTests(unittest.TestCase):
             eligible_count=1,
             offers=(offer,),
             google_flights_url=url,
-        ).to_dict()
+        ).to_dict(currency="EUR")
         self.assertEqual(data["query"]["google_flights_url"], url)
         self.assertIn("booking_token=tok", data["offers"][0]["google_flights_url"])
         self.assertNotEqual(
@@ -539,7 +541,7 @@ class JsonContractTests(unittest.TestCase):
                 FlightLeg("LHR", "CDG", date(2026, 9, 3)),
             )
         )
-        url = google_flights_url(trip)
+        url = google_flights_url(trip, currency="EUR")
         self.assertIsNotNone(url)
         self.assertIn("tfs=", url or "")
         offer = FlightOffer(
@@ -562,7 +564,7 @@ class JsonContractTests(unittest.TestCase):
             eligible_count=1,
             offers=(offer,),
             google_flights_url=url,
-        ).to_dict()
+        ).to_dict(currency="EUR")
         self.assertEqual(data["query"]["google_flights_url"], url)
         self.assertEqual(data["offers"][0]["google_flights_url"], url)
 

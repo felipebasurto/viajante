@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `viajante points` is the transfer-table lookup only (mirrors MCP `lookup_transfers`). Cents-per-point math lives in `viajante awards` / `compare_awards`.
 - Explore prices all shortlisted destinations on one multiplexed sweep round-trip.
 - Google Hotels record detection no longer special-cases `€` (no user-visible change; non-euro totals already parsed).
+- Internal signatures no longer default `currency` to EUR; every model, source, and parser takes the owned quote currency explicitly.
 - Internal cleanup: one offer-filter bundle, one JSON save path, shared CLI flag helpers (−1.5k lines, JSON unchanged).
 
 ### Removed

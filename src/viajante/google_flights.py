@@ -50,7 +50,6 @@ SEARCH_URL = "https://www.google.com/travel/flights"
 STATE_FILENAME = "pw_state_google.json"
 
 SCRAPE_LANGUAGE = FETCH_LANGUAGE
-SCRAPE_CURRENCY = "EUR"
 # Owned `tfu` blob that selects result tabs; not produced by encode_tfs.
 RESULT_TABS = "EgQIABABIgA"
 
@@ -149,7 +148,7 @@ def build_search_params(
     trip: Trip,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
 ) -> dict[str, str]:
     params = {
@@ -167,7 +166,7 @@ def build_search_url(
     trip: Trip,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
 ) -> str:
     params = build_search_params(trip, html_lang=html_lang, currency=currency, country=country)
@@ -178,7 +177,7 @@ def build_itinerary_url(
     booking_token: str,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
 ) -> str:
     token = booking_token.strip()
@@ -194,7 +193,7 @@ def google_flights_url(
     trip: Trip,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
     booking_token: Optional[str] = None,
 ) -> Optional[str]:
@@ -950,7 +949,7 @@ class GoogleFlightsHttpSource:
         self,
         *,
         html_lang: str = SCRAPE_LANGUAGE,
-        currency: str = SCRAPE_CURRENCY,
+        currency: str,
         country: Optional[str] = None,
         opener: Optional[Any] = None,
         client: Optional[SweepHttpClient] = None,
@@ -1341,7 +1340,7 @@ class GoogleFlightsSource:
         session: Optional[ChromiumSession] = None,
         config: Optional[BrowserSessionConfig] = None,
         *,
-        currency: str = SCRAPE_CURRENCY,
+        currency: str,
         country: Optional[str] = None,
     ) -> None:
         self._config = config or BrowserSessionConfig(
