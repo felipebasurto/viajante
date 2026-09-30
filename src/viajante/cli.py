@@ -754,6 +754,8 @@ def _print_hotel_report(report) -> None:
                 print("  (no eligible stays)")
             for offer in result.offers:
                 rating = f"{offer.rating_score:.1f}" if offer.rating_score is not None else "-"
+                if offer.review_count is not None:
+                    rating += f" ({offer.review_count} reviews)"
                 address = f"  {offer.address}" if offer.address else ""
                 print(
                     f"  {format_money(offer.total_price, report.currency)} total stay  "

@@ -505,7 +505,9 @@ def build_server():
 
         Quotes are in the requested ISO 4217 currency as the provider returned
         them. Viajante does not convert. The calling agent may convert for the
-        user. Do not invent ISO 4217 from vibe.
+        user. Do not invent ISO 4217 from vibe. Google offers carry owned
+        latitude, longitude, and review_count: weigh location and how many
+        reviews back a rating yourself; the list is price order, not advice.
         """
         return dict(
             await run_mcp_tool(

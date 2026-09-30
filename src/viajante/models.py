@@ -1520,6 +1520,9 @@ class RawHotelCard:
     rating: Optional[str]
     details: str
     link: Optional[str]
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    review_count: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -1558,6 +1561,9 @@ class HotelOffer:
     bathrooms: Optional[int]
     beds: Optional[int]
     link: Optional[str]
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    review_count: Optional[int] = None
 
     def __post_init__(self) -> None:
         title = self.title.strip()
@@ -1584,6 +1590,9 @@ class HotelOffer:
             "bathrooms": self.bathrooms,
             "beds": self.beds,
             "link": self.link,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "review_count": self.review_count,
         }
 
 

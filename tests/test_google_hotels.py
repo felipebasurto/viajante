@@ -146,6 +146,15 @@ class HotelsParseTests(unittest.TestCase):
         self.assertEqual(cards[0].rating, "4")
         self.assertEqual(cards[0].link, "https://www.google.com/travel/clk/hi?qid=tok")
 
+    def test_card_carries_owned_coordinates_and_review_count(self) -> None:
+        card = parse_hotels_body(_wrap_wrb(_search_payload(_hotel_record())))[0]
+        self.assertEqual((card.latitude, card.longitude, card.review_count), (50.1, 14.4, 10))
+
+    def test_non_euro_stay_total_parses(self) -> None:
+        record = _hotel_record(nightly="JP¥4,107", stay_total="JP¥12,321")
+        cards = parse_hotels_body(_wrap_wrb(_search_payload(record)))
+        self.assertEqual(cards[0].total_price, "JP¥12,321")
+
     def test_missing_stay_total_is_a_parse_miss(self) -> None:
         record = _hotel_record()
         record[6][2][9] = None
@@ -243,6 +252,29 @@ class GoogleHotelsFetchTests(unittest.TestCase):
         self.assertEqual(len(client.posts), 2)
         self.assertEqual(len(sleeps), 1)
         self.assertIsInstance(report.queries[0], HotelQuerySuccess)
+
+    def test_min_rating_adds_a_relevance_page_and_survives_its_miss(self) -> None:
+        cheap = _wrap_wrb(_search_payload(_hotel_record(title="Cheap", rating=2.0)))
+        good = _wrap_wrb(_search_payload(_hotel_record(title="Good", rating=4.6)))
+        url = "https://www.google.com/travel/search"
+        rated = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), min_rating=4.5)
+        client = _ScriptedHotelClient([SweepHttpResponse(200, cheap, url)] * 2)
+        GoogleHotelsSource(client=client).fetch(QUERY, build_applied_filters(QUERY), 24)
+        self.assertEqual(len(client.posts), 1)
+        client = _ScriptedHotelClient(
+            [SweepHttpResponse(200, cheap, url), SweepHttpResponse(200, good, url)]
+        )
+        page = GoogleHotelsSource(client=client).fetch(rated, build_applied_filters(rated), 24)
+        self.assertEqual([card.title for card in page.cards], ["Cheap", "Good"])
+        client = _ScriptedHotelClient(
+            [SweepHttpResponse(200, cheap, url), SweepHttpResponse(200, "junk", url)]
+        )
+        page = GoogleHotelsSource(client=client).fetch(rated, build_applied_filters(rated), 24)
+        self.assertEqual([card.title for card in page.cards], ["Cheap"])
+
+    def test_relevance_page_leaves_the_sort_slot_empty(self) -> None:
+        self.assertEqual(build_hotels_inner(QUERY)[1][4][0][4], 3)
+        self.assertIsNone(build_hotels_inner(QUERY, sort=None)[1][4][0][4])
 
 
 class GoogleAppliedFiltersTests(unittest.TestCase):

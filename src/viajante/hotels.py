@@ -105,6 +105,9 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         bathrooms=hints["bathrooms"],
         beds=hints["beds"],
         link=card.link,
+        latitude=card.latitude,
+        longitude=card.longitude,
+        review_count=card.review_count,
     )
 
 

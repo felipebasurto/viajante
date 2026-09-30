@@ -58,6 +58,9 @@ OFFER_KEYS = {
     "bathrooms",
     "beds",
     "link",
+    "latitude",
+    "longitude",
+    "review_count",
 }
 ERROR_KEYS = {"code", "message"}
 FORBIDDEN_KEYS = {
