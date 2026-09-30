@@ -6,15 +6,16 @@ import json
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
+from viajante.google_flights_rpc import first_wrb_data
 from viajante.models import FETCH_LANGUAGE, HotelQuery, RawHotelCard
 
 HOTELS_RPC_URL = "https://www.google.com/_/TravelFrontendUi/data/batchexecute"
 HOTELS_RPC_ID = "AtySUc"
 HOTELS_SEARCH_URL = "https://www.google.com/travel/search"
-_ANTI_XSSI = ")]}'"
 _PROPERTY_HOTELS = 1
 _PROPERTY_VACATION_RENTALS = 2
-_SORT_LOWEST_PRICE = 3
+SORT_LOWEST_PRICE = 3
+SORT_RELEVANCE = None
 # Google drops brands/amenities/free-cancellation when this tail is missing.
 _REQUEST_META = (1, None, None, None, None, None, 13, None, 0)
 _HOTEL_ENTRY_KEY = "397419284"
@@ -45,11 +46,16 @@ class HotelsRejected(Exception):
 class HotelsBlocked(Exception):
     """Hotel RPC was blocked or challenged."""
 
+    def __init__(self, message: str = "", *, rate_limited: bool = False) -> None:
+        super().__init__(message)
+        self.rate_limited = rate_limited
+
 
 def build_hotels_inner(
     query: HotelQuery,
     *,
-    currency: str = "EUR",
+    currency: str,
+    sort: Optional[int] = SORT_LOWEST_PRICE,
 ) -> list[Any]:
     dates_slot = [
         None,
@@ -69,7 +75,7 @@ def build_hotels_inner(
         None,
         None,
         1 if query.free_cancellation else None,
-        _SORT_LOWEST_PRICE,
+        sort,
         None,
         currency,
         None,
@@ -106,9 +112,12 @@ def build_hotels_request(
     query: HotelQuery,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
+    sort: Optional[int] = SORT_LOWEST_PRICE,
 ) -> tuple[str, str]:
-    inner = json.dumps(build_hotels_inner(query, currency=currency), separators=(",", ":"))
+    inner = json.dumps(
+        build_hotels_inner(query, currency=currency, sort=sort), separators=(",", ":")
+    )
     envelope = [[[HOTELS_RPC_ID, inner, None, "1"]]]
     body = "f.req=" + quote(json.dumps(envelope, separators=(",", ":")), safe="")
     url = f"{HOTELS_RPC_URL}?{urlencode(_rpc_params(html_lang, currency))}"
@@ -126,7 +135,7 @@ HOTELS_POST_HEADERS = {
 def parse_hotels_body(text: str) -> tuple[RawHotelCard, ...]:
     if _looks_blocked(text):
         raise HotelsBlocked("Google Hotels blocked the sweep")
-    payload = _first_wrb_data(text)
+    payload = first_wrb_data(text, _wrb_data)
     if payload is None:
         raise HotelsParseMiss("no wrb.fr hotel payload")
     records = _collect_hotel_records(payload)
@@ -143,43 +152,6 @@ def parse_hotels_body(text: str) -> tuple[RawHotelCard, ...]:
 def _looks_blocked(text: str) -> bool:
     lowered = text.casefold()
     return "/sorry/" in lowered or "unusual traffic" in lowered
-
-
-def _first_wrb_data(text: str) -> Optional[Any]:
-    body = text.lstrip()
-    if body.startswith(_ANTI_XSSI):
-        body = body[len(_ANTI_XSSI) :].lstrip()
-    decoder = json.JSONDecoder()
-    idx = 0
-    while idx < len(body):
-        while idx < len(body) and body[idx] in " \t\r\n":
-            idx += 1
-        if idx >= len(body):
-            break
-        if body[idx].isdigit():
-            newline = body.find("\n", idx)
-            if newline < 0:
-                break
-            length_text = body[idx:newline].strip()
-            if length_text.isdigit():
-                size = int(length_text)
-                chunk = body[newline + 1 : newline + 1 + size]
-                try:
-                    obj, _ = decoder.raw_decode(chunk)
-                except json.JSONDecodeError:
-                    idx = newline + 1
-                    continue
-                found = _wrb_data(obj)
-                if found is not None:
-                    return found
-                idx = newline + 1 + size
-                continue
-        try:
-            obj, _ = decoder.raw_decode(body, idx)
-        except json.JSONDecodeError:
-            break
-        return _wrb_data(obj)
-    return None
 
 
 def _wrb_data(obj: object) -> Optional[Any]:
@@ -242,7 +214,7 @@ def _stay_total(record: list[Any]) -> Optional[str]:
     if not isinstance(pair, list) or not pair:
         return None
     # Slot 9 is usually a [?, stay-total] pair; live compact bodies now
-    # send a bare single-element ["€71"] list instead. The first element
+    # send a bare single-element ["JP¥12,321"] list instead. The first element
     # is only valid for an exactly one-element list: in a pair slot it
     # is a nightly-ish figure that must never stand in for the total.
     candidates: list[Any] = []
@@ -253,7 +225,7 @@ def _stay_total(record: list[Any]) -> Optional[str]:
     for candidate in candidates:
         if not (isinstance(candidate, str) and candidate):
             continue
-        if "€" not in candidate and not any(ch.isdigit() for ch in candidate):
+        if not any(ch.isdigit() for ch in candidate):
             continue
         return candidate
     return None
@@ -264,7 +236,12 @@ def _nightly_pair(record: list[Any]) -> Optional[list[Any]]:
         pair = record[6][2][1]
     except (IndexError, TypeError):
         return None
-    if isinstance(pair, list) and pair and isinstance(pair[0], str) and pair[0].startswith("€"):
+    if (
+        isinstance(pair, list)
+        and pair
+        and isinstance(pair[0], str)
+        and any(ch.isdigit() for ch in pair[0])
+    ):
         return pair
     return None
 
@@ -294,7 +271,31 @@ def _record_to_card(record: list[Any]) -> Optional[RawHotelCard]:
         rating=_rating(record),
         details=_details(record),
         link=_link(record),
+        **_coordinates(record),
+        review_count=_review_count(record),
     )
+
+
+def _coordinates(record: list[Any]) -> dict[str, Optional[float]]:
+    try:
+        lat, lng = record[2][0]
+    except (IndexError, TypeError, ValueError):
+        return {"latitude": None, "longitude": None}
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lat, lng)):
+        return {"latitude": None, "longitude": None}
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return {"latitude": None, "longitude": None}
+    return {"latitude": float(lat), "longitude": float(lng)}
+
+
+def _review_count(record: list[Any]) -> Optional[int]:
+    try:
+        count = record[7][0][1]
+    except (IndexError, TypeError):
+        return None
+    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+        return count
+    return None
 
 
 def _address(record: list[Any]) -> Optional[str]:

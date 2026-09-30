@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 import viajante
 from viajante.cli import _format_clock, _join_cancellation_rows, _print_report, main
-from viajante.hotels import write_hotel_report_atomic
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -38,6 +37,7 @@ from viajante.models import (
     TripTotal,
     VsTypical,
 )
+from viajante.storage import write_json_atomic
 
 FUTURE_DATE = date.today() + timedelta(days=30)
 PAST_DATE = date.today() - timedelta(days=1)
@@ -155,7 +155,7 @@ class CliTests(unittest.TestCase):
 
     def test_save_only_when_requested(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()):
-            with patch("viajante.cli.write_report_atomic") as writer:
+            with patch("viajante.cli.write_json_atomic") as writer:
                 with patch("viajante.cli._print_report"):
                     main(["flights", ROUTE])
                 writer.assert_not_called()
@@ -184,6 +184,7 @@ class CliTests(unittest.TestCase):
                     ),
                 ),
             ),
+            currency="EUR",
         )
         with patch("viajante.cli.search_flights", return_value=report):
             with patch("viajante.cli._print_report"):
@@ -199,6 +200,7 @@ class CliTests(unittest.TestCase):
                     error=SearchError(SearchErrorCode.FETCH_FAILED, "boom"),
                 ),
             ),
+            currency="EUR",
         )
         with patch("viajante.cli.search_flights", return_value=report):
             with patch("viajante.cli._print_report"):
@@ -490,6 +492,7 @@ class ReportRenderingTests(unittest.TestCase):
                     error=SearchError(SearchErrorCode.FETCH_FAILED, "blocked"),
                 ),
             ),
+            currency="EUR",
         )
         output = _rendered(report)
         self.assertNotIn("Verify checked baggage", output)
@@ -531,6 +534,7 @@ class ReportRenderingTests(unittest.TestCase):
         report = SearchReport(
             searched_at=SEARCHED_AT,
             queries=(QuerySuccess(query=QUERY, raw_count=5, eligible_count=0, offers=()),),
+            currency="EUR",
         )
         output = _rendered(report)
         self.assertIn("(no eligible offers)", output)
@@ -766,6 +770,7 @@ class ReportRenderingTests(unittest.TestCase):
         report = SearchReport(
             searched_at=SEARCHED_AT,
             queries=(QuerySuccess(query=trip, raw_count=1, eligible_count=1, offers=(offer,)),),
+            currency="EUR",
         )
         output = _rendered(report)
         self.assertIn("2026-12-03 / 2026-12-09", output)
@@ -1048,7 +1053,6 @@ class PublicApiTests(unittest.TestCase):
             "FlightQuery",
             "SearchReport",
             "get_flights",
-            "plan_prompt",
             "search_flights",
             "HotelQuery",
             "HotelSearchReport",
@@ -1104,7 +1108,6 @@ class PublicApiTests(unittest.TestCase):
                 "get_flights",
                 "load_award_offer",
                 "lookup_airports",
-                "plan_prompt",
                 "search_dates",
                 "search_explore",
                 "search_flex",
@@ -1282,6 +1285,7 @@ class HotelCliTests(unittest.TestCase):
                     offers=(open_offer,),
                 ),
             ),
+            currency="EUR",
         )
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
@@ -1333,6 +1337,7 @@ class HotelCliTests(unittest.TestCase):
                     ),
                 ),
             ),
+            currency="EUR",
         )
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
@@ -1504,6 +1509,7 @@ class HotelCliTests(unittest.TestCase):
                     offers=(_sample_hotel_offer(),),
                 ),
             ),
+            currency="EUR",
         )
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
@@ -1588,6 +1594,7 @@ class HotelCliTests(unittest.TestCase):
                     offers=(_sample_hotel_offer(),),
                 ),
             ),
+            currency="EUR",
         )
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
@@ -1662,6 +1669,7 @@ class HotelCliTests(unittest.TestCase):
                     ),
                 ),
             ),
+            currency="EUR",
         )
         with patch("viajante.cli.search_hotels", return_value=report):
             buffer = io.StringIO()
@@ -1676,15 +1684,15 @@ class HotelCliTests(unittest.TestCase):
 
     def test_save_only_when_requested(self) -> None:
         with patch("viajante.cli.search_hotels", return_value=_sample_hotel_report()):
-            with patch("viajante.cli.write_hotel_report_atomic") as writer:
+            with patch("viajante.cli.write_json_atomic") as writer:
                 main(["hotels", "Prague", "2026-12-04", "2026-12-07", "--currency", "CZK"])
                 writer.assert_not_called()
 
     def test_atomic_save(self) -> None:
         with patch("viajante.cli.search_hotels", return_value=_sample_hotel_report()):
             with patch(
-                "viajante.cli.write_hotel_report_atomic",
-                wraps=write_hotel_report_atomic,
+                "viajante.cli.write_json_atomic",
+                wraps=write_json_atomic,
             ) as writer:
                 with tempfile.TemporaryDirectory() as tmp:
                     out = Path(tmp) / "out.json"
@@ -1823,6 +1831,7 @@ class TripCliTests(unittest.TestCase):
                     offers=(_offer(price=412),),
                 ),
             ),
+            currency="EUR",
         )
         hotels = _sample_hotel_report()
         report = TripSearchReport(
@@ -1830,6 +1839,7 @@ class TripCliTests(unittest.TestCase):
             flights=flights,
             hotels=hotels,
             trip_total=None,
+            currency="EUR",
         )
         with patch("viajante.cli.search_trip", return_value=report):
             buffer = io.StringIO()
@@ -1888,6 +1898,7 @@ class TripCliTests(unittest.TestCase):
                 flights=_report(),
                 hotels=_sample_hotel_report(),
                 trip_total=None,
+                currency="EUR",
             )
             code = main(
                 [
@@ -1956,6 +1967,7 @@ class TripCliTests(unittest.TestCase):
                 flights=_report(),
                 hotels=_sample_hotel_report(),
                 trip_total=None,
+                currency="EUR",
             )
             code = main(
                 [
@@ -1994,6 +2006,7 @@ class TripCliTests(unittest.TestCase):
             flights=_report(),
             hotels=_sample_hotel_report(),
             trip_total=None,
+            currency="EUR",
         )
         with (
             patch("viajante.cli.search_trip", return_value=fake) as search,

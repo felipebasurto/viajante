@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Callable, Optional, Sequence, TypeVar
 
+from viajante.evidence import verify_answer as verify_answer_tool
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
 from viajante.mcp_handlers import (
@@ -41,12 +42,23 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_trip, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers, validate_itinerary.
+compare_awards, lookup_transfers, validate_itinerary, verify_answer.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
-or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers, and
-validate_itinerary may run during a search.
+or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
+validate_itinerary, and verify_answer may run during a search.
+
+Results are raw owned evidence, not a recommendation. You choose: read the
+payload, weigh price against duration, stops, clocks, and rating, and say why.
+Before replying, pass the draft to verify_answer; it flags amounts,
+currencies, codes, dates, and links no search in this process returned.
+
+If an error has rate_limited true, tell the user to wait until the UTC time
+named in its message.
+Do not retry, switch fetch mode, or fan out other searches; they are paused
+locally and send nothing. An identical successful search within 5 minutes
+comes back cached (cached: true) without a new request.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
@@ -59,7 +71,7 @@ search_hidden_city is Skiplagged, not Google. After a named-route
 search_flights on a hub or leisure trunk, the caller may run it once
 sequentially. Do not mix evidence. Skip when bags were named.
 Skiplagged cards are USD; omit currency or pass USD. Do not copy a
-Google/origin EUR keep. A keep that matches no owned card is
+Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
 compare_awards is local points math from a named offer; it does not invent seats.
 lookup_transfers is a local partner table, not live award inventory.
@@ -493,7 +505,9 @@ def build_server():
 
         Quotes are in the requested ISO 4217 currency as the provider returned
         them. Viajante does not convert. The calling agent may convert for the
-        user. Do not invent ISO 4217 from vibe.
+        user. Do not invent ISO 4217 from vibe. Google offers carry owned
+        latitude, longitude, and review_count: weigh location and how many
+        reviews back a rating yourself; the list is price order, not advice.
         """
         return dict(
             await run_mcp_tool(
@@ -627,7 +641,7 @@ def build_server():
         rows; confirm the fare on booking_url (do not scrape). Viajante does
         not book. Currency is an optional keep of owned card ISO 4217.
         Skiplagged cards are USD; omit currency or pass USD. Do not copy a
-        Google/origin EUR keep. A keep that matches no owned card is
+        Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
         currency_mismatch (owned quote stamped), not no_results. Does not
         infer from origin or convert.
         """
@@ -701,6 +715,19 @@ def build_server():
                 currency=currency,
             )
         )
+
+    @server.tool()
+    async def verify_answer(answer: str) -> dict:
+        """Check a draft reply against this process's recent search payloads.
+
+        Call before sending a reply that quotes fares, stays, dates, airport
+        codes, or links. Lists each amount, currency, IATA code, ISO date, and
+        URL in the draft that no recorded search returned. Drop or re-search
+        every unowned row; do not quote it as found. Sums you computed are
+        unowned unless a payload carries them (e.g. trip_total). Local; may run
+        during a search.
+        """
+        return dict(await run_lookup_tool(verify_answer_tool, answer))
 
     return server
 

@@ -57,7 +57,7 @@ def build_applied_filters(
     query: HotelQuery,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
 ) -> AppliedHotelFilters:
     chips: list[str] = []
     if query.free_cancellation:
@@ -91,7 +91,7 @@ class BookingHotelsSource:
         session: Optional[ChromiumSession] = None,
         config: Optional[BrowserSessionConfig] = None,
         *,
-        currency: str = "EUR",
+        currency: str,
     ) -> None:
         self._state_dir = state_dir
         self._config = config or BrowserSessionConfig(

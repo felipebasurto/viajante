@@ -177,12 +177,12 @@ class VsTypicalTests(unittest.TestCase):
         self.assertEqual(stamped.typical, 340.0)
         self.assertEqual(stamped.vs_typical, "below")
         self.assertEqual(stamped.vs_typical_pct, -15)
-        self.assertEqual(stamped.typical_deal(), "below typical 340 € (−15%)")
+        self.assertEqual(stamped.typical_deal(currency="EUR"), "below typical 340 € (−15%)")
         omitted = with_typical(_offer(price=289.0), None)
         self.assertIsNone(omitted.typical)
         self.assertIsNone(omitted.vs_typical)
         self.assertIsNone(omitted.vs_typical_pct)
-        self.assertIsNone(omitted.typical_deal())
+        self.assertIsNone(omitted.typical_deal(currency="EUR"))
         self.assertIsNone(stamped.cheapest_date)
         self.assertIsNone(omitted.cheapest_date)
 
@@ -207,6 +207,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(len(source.calendar_calls), 1)
         origin, dest, start, end, *_rest = source.calendar_calls[0]
@@ -220,10 +221,10 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertEqual(offer.typical, 360.0)
         self.assertEqual(offer.vs_typical, "below")
         self.assertEqual(offer.vs_typical_pct, -20)
-        self.assertEqual(offer.typical_deal(), "below typical 360 € (−20%)")
+        self.assertEqual(offer.typical_deal(currency="EUR"), "below typical 360 € (−20%)")
         self.assertEqual(offer.cheapest_date, date(2026, 9, 15))
         self.assertEqual(offer.cheapest, 300.0)
-        payload = offer.to_dict()
+        payload = offer.to_dict(currency="EUR")
         self.assertEqual(payload["cheapest_date"], "2026-09-15")
         self.assertEqual(payload["cheapest"], 300.0)
         self.assertIsNone(source.calendar_calls[0][-1])
@@ -240,6 +241,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         assert isinstance(report.queries[0], QuerySuccess)
         offer = report.queries[0].offers[0]
@@ -247,10 +249,10 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertIsNone(offer.typical)
         self.assertIsNone(offer.vs_typical)
         self.assertIsNone(offer.vs_typical_pct)
-        self.assertIsNone(offer.typical_deal())
+        self.assertIsNone(offer.typical_deal(currency="EUR"))
         self.assertIsNone(offer.cheapest_date)
         self.assertIsNone(offer.cheapest)
-        self.assertNotIn("cheapest_date", offer.to_dict())
+        self.assertNotIn("cheapest_date", offer.to_dict(currency="EUR"))
 
     def test_thin_calendar_omits_the_comparison(self) -> None:
         query = FlightQuery("LAX", "NRT", date(2026, 10, 1), max_stops=1)
@@ -269,6 +271,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         assert isinstance(report.queries[0], QuerySuccess)
         offer = report.queries[0].offers[0]
@@ -276,10 +279,10 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertIsNone(offer.typical)
         self.assertIsNone(offer.vs_typical)
         self.assertIsNone(offer.vs_typical_pct)
-        self.assertIsNone(offer.typical_deal())
+        self.assertIsNone(offer.typical_deal(currency="EUR"))
         self.assertIsNone(offer.cheapest_date)
         self.assertIsNone(offer.cheapest)
-        self.assertNotIn("cheapest_date", offer.to_dict())
+        self.assertNotIn("cheapest_date", offer.to_dict(currency="EUR"))
 
     def test_calendar_miss_does_not_fail_the_search_or_invent(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
@@ -294,13 +297,14 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         assert isinstance(report.queries[0], QuerySuccess)
         self.assertIsNone(report.queries[0].offers[0].typical)
         self.assertIsNone(report.queries[0].offers[0].vs_typical)
         self.assertIsNone(report.queries[0].offers[0].vs_typical_pct)
         self.assertIsNone(report.queries[0].offers[0].cheapest_date)
-        self.assertNotIn("cheapest_date", report.queries[0].offers[0].to_dict())
+        self.assertNotIn("cheapest_date", report.queries[0].offers[0].to_dict(currency="EUR"))
 
     def test_same_route_reuses_one_calendar_fetch(self) -> None:
         first = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
@@ -323,6 +327,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(len(source.calendar_calls), 1)
 
@@ -343,6 +348,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(len(source.calendar_calls), 1)
         origin, dest, start, end, _stops, _adults, _cabin, nights = source.calendar_calls[0]
@@ -357,7 +363,7 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertEqual(offer.typical, 620.0)
         self.assertEqual(offer.vs_typical, "near")
         self.assertEqual(offer.vs_typical_pct, 0)
-        self.assertEqual(offer.typical_deal(), "near typical 620 € (0%)")
+        self.assertEqual(offer.typical_deal(currency="EUR"), "near typical 620 € (0%)")
         self.assertEqual(offer.cheapest_date, date(2026, 10, 9))
         self.assertEqual(offer.cheapest, 580.0)
 
@@ -379,6 +385,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(len(source.calendar_calls), 2)
         self.assertIsNone(source.calendar_calls[0][-1])
@@ -409,6 +416,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         assert isinstance(report.queries[0], QuerySuccess)
         offer = report.queries[0].offers[0]
@@ -416,9 +424,9 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertIsNone(offer.typical)
         self.assertIsNone(offer.vs_typical)
         self.assertIsNone(offer.vs_typical_pct)
-        self.assertIsNone(offer.typical_deal())
+        self.assertIsNone(offer.typical_deal(currency="EUR"))
         self.assertIsNone(offer.cheapest_date)
-        self.assertNotIn("cheapest_date", offer.to_dict())
+        self.assertNotIn("cheapest_date", offer.to_dict(currency="EUR"))
 
     def test_same_packaged_stay_reuses_one_calendar_fetch(self) -> None:
         first = RoundTrip("JFK", "LHR", date(2026, 10, 9), date(2026, 10, 20), max_stops=1)
@@ -438,6 +446,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(len(source.calendar_calls), 1)
 
@@ -463,6 +472,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(source.calendar_calls, [])
         assert isinstance(report.queries[0], QuerySuccess)
@@ -471,7 +481,7 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertIsNone(offer.vs_typical)
         self.assertIsNone(offer.vs_typical_pct)
         self.assertIsNone(offer.cheapest_date)
-        self.assertNotIn("cheapest_date", offer.to_dict())
+        self.assertNotIn("cheapest_date", offer.to_dict(currency="EUR"))
 
     def test_failed_query_does_not_fetch_a_typical(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 15), max_stops=1)
@@ -486,6 +496,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(source.calendar_calls, [])
 
@@ -525,6 +536,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(source.pair_calls, 1)
         self.assertEqual(source.fetch_calls, 1)
@@ -534,7 +546,7 @@ class TypicalSearchTests(unittest.TestCase):
         self.assertEqual(offer.typical, 340.0)
         self.assertEqual(offer.vs_typical, "below")
         self.assertEqual(offer.vs_typical_pct, -15)
-        self.assertEqual(offer.typical_deal(), "below typical 340 € (−15%)")
+        self.assertEqual(offer.typical_deal(currency="EUR"), "below typical 340 € (−15%)")
         self.assertEqual(offer.cheapest_date, date(2026, 9, 15))
         self.assertEqual(offer.cheapest, 300.0)
 
@@ -556,6 +568,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         assert isinstance(report.queries[0], QuerySuccess)
         offer = report.queries[0].offers[0]
@@ -595,6 +608,7 @@ class TypicalSearchTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 20),
+            currency="EUR",
         )
         self.assertEqual(source.pair_calls, 1)
         self.assertEqual(source.calendar_calls[0][-1], 11)

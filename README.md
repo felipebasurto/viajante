@@ -100,7 +100,7 @@ Once connected, you can ask:
 > Search for hotels in Tokyo from November 12 to November 16, 2026, for two
 > adults. Use JPY and require free cancellation.
 
-The server exposes seven tools:
+The server exposes twelve tools:
 
 | Tool | Use it to |
 | --- | --- |
@@ -111,6 +111,11 @@ The server exposes seven tools:
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
 | `lookup_airports` | Look up airport codes offline. |
+| `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
+| `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
+| `lookup_transfers` | Local points transfer-partner table. |
+| `validate_itinerary` | Check a proposed itinerary against the searches' own evidence. |
+| `verify_answer` | Flag amounts, codes, dates, or links in a draft reply that no search returned. |
 
 ## Use the command line
 
@@ -126,6 +131,9 @@ Each search command accepts `--save FILE` to write a JSON report. Run
 | `viajante hotels` | Search Google Hotels or Booking.com. |
 | `viajante trip` | Search flights and a hotel stay in one request. |
 | `viajante airports` | Find airport codes by city or code. |
+| `viajante hidden-city` | Opt-in Skiplagged hidden-city search. |
+| `viajante awards` | Cents-per-point value of a named award offer. |
+| `viajante points` | Points transfer-partner lookup. |
 
 For example, compare dates for a seven-night round trip:
 

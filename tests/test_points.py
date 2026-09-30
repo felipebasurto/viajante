@@ -158,23 +158,12 @@ class CompareAwardTests(unittest.TestCase):
 
 
 class PointsCliTests(unittest.TestCase):
-    def test_points_cpp(self) -> None:
-        argv = [
-            "points",
-            "--cash",
-            "1200",
-            "--points",
-            "70000",
-            "--taxes",
-            "186",
-            "--currency",
-            "USD",
-        ]
+    def test_points_lists_transfer_partners(self) -> None:
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
-            code = main(argv)
+            code = main(["points", "--program", "aeroplan", "--points", "70000"])
         self.assertEqual(code, 0)
-        self.assertIn("cpp", buffer.getvalue())
+        self.assertIn("MR -> aeroplan", buffer.getvalue())
 
     def test_awards_help_does_not_invent_live_seats(self) -> None:
         buffer = io.StringIO()

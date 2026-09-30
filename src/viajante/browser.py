@@ -5,7 +5,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -50,7 +50,7 @@ class BrowserSessionConfig:
     state_filename: str
     locale: str
     html_lang: str
-    currency: str = "EUR"
+    currency: str = field(kw_only=True)
     country: Optional[str] = None
     viewport: Optional[Mapping[str, int]] = None
     user_agent: Optional[str] = None

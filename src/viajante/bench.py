@@ -1,6 +1,5 @@
-"""Offline keep-or-revert bench: gate plus one score_ms number.
+"""Offline bench: gate plus one score_ms number.
 
-The looping agent reads program.md. This module is the measuring stick:
 unittest + ruff must pass, then score_ms is tests_ms + parse_ms of the
 checked-in owned shopping / wrb.fr / card-parse corpus. No Chromium.
 No live Google unless VIAJANTE_BENCH_LIVE=1, and that extra never
@@ -198,16 +197,16 @@ def validate_corpus(root: Optional[Path] = None) -> list[dict[str, Any]]:
 
 def parse_fixture(kind: str, text: str) -> int:
     if kind == "shopping":
-        return len(parse_shopping_body(text))
+        return len(parse_shopping_body(text, currency="EUR"))
     if kind == "shopping_empty":
         try:
-            parse_shopping_body(text)
+            parse_shopping_body(text, currency="EUR")
         except EmptyShoppingResults:
             return 0
         raise BenchIntegrityError("shopping_empty fixture must raise EmptyShoppingResults")
     if kind == "shopping_rejected":
         try:
-            parse_shopping_body(text)
+            parse_shopping_body(text, currency="EUR")
         except ShoppingRejected:
             return 0
         raise BenchIntegrityError("shopping_rejected fixture must raise ShoppingRejected")

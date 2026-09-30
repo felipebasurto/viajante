@@ -5,11 +5,10 @@ alwaysApply: true
 
 # Public soon
 
-This tree will be public. Humans will delete the looping-agent bench
-surface (`viajante bench`, `--prompts`, `program.md`, `bench-history.md`,
-`bench-baseline.json`, `tests/bench/`, `tests/prompts/`, Dipsig-related
-loop protocol). **Do not delete that now. Do not grow it.** No new bench
-fixtures, prompt cases, score_ms work, or loop-protocol edits unless a
+This tree will be public. The looping-agent surface (prompt battery,
+LLM judge, `program.md`, `bench-history.md`) is gone; do not bring it back.
+The offline `viajante bench` gate (`bench-baseline.json`, `tests/bench/`)
+stays. Do not grow it: no new bench fixtures or score_ms work unless a
 human asked for that exact file.
 
 # International, no home hub

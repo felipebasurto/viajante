@@ -101,6 +101,7 @@ def _report(*, with_total: bool = True) -> TripSearchReport:
                 offers=(_offer(),),
             ),
         ),
+        currency="EUR",
     )
     hotels = HotelSearchReport(
         searched_at=datetime(2026, 8, 11, 10, 33, 0, tzinfo=timezone.utc),
@@ -119,6 +120,7 @@ def _report(*, with_total: bool = True) -> TripSearchReport:
                 offers=(_stay(),),
             ),
         ),
+        currency="EUR",
     )
     total = (
         TripTotal(flight_fare=412.0, hotel_stay=246.0, total=658.0, nights=4)
@@ -131,6 +133,7 @@ def _report(*, with_total: bool = True) -> TripSearchReport:
         hotels=hotels,
         trip_total=total,
         fetch_ms=180,
+        currency="EUR",
     )
 
 
