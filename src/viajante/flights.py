@@ -162,9 +162,11 @@ def resolve_fetch_mode(
     query_count: int,
     *,
     browser_available: bool = True,
+    packaged: bool = False,
 ) -> Literal["sweep", "detail"]:
     if fetch == "auto":
-        if not browser_available or query_count >= SWEEP_BATCH_THRESHOLD:
+        # Only sweep can shop the next packaged leg; detail leaves the return unknown.
+        if not browser_available or packaged or query_count >= SWEEP_BATCH_THRESHOLD:
             return "sweep"
         return "detail"
     if fetch in ("sweep", "detail"):
@@ -2113,7 +2115,12 @@ def search_flights(
         alliances=alliances,
         exclude_alliances=exclude_alliances,
     )
-    planned = resolve_fetch_mode(fetch, len(trips), browser_available=playwright_available())
+    planned = resolve_fetch_mode(
+        fetch,
+        len(trips),
+        browser_available=playwright_available(),
+        packaged=any(len(trip.legs) > 1 for trip in trips),
+    )
     if fetch == "auto" and any(
         trip.airlines or trip.exclude_airlines or trip.alliances or trip.exclude_alliances
         for trip in trips

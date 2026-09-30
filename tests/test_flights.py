@@ -1338,6 +1338,8 @@ class FetchModeTests(unittest.TestCase):
     def test_auto_is_detail_for_one_or_two_queries(self) -> None:
         self.assertEqual(resolve_fetch_mode("auto", 1), "detail")
         self.assertEqual(resolve_fetch_mode("auto", 2), "detail")
+        self.assertEqual(resolve_fetch_mode("auto", 1, packaged=True), "sweep")
+        self.assertEqual(resolve_fetch_mode("detail", 1, packaged=True), "detail")
 
     def test_auto_is_sweep_for_three_or_more(self) -> None:
         self.assertEqual(resolve_fetch_mode("auto", 3), "sweep")

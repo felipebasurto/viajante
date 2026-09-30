@@ -1909,7 +1909,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "sweep is a fast HTTP shortlist (owned shopping RPC, Chrome TLS session); "
             "detail is the Playwright scrape. "
-            "auto uses sweep for 3+ queries and detail for 1-2 (default auto)"
+            "auto uses sweep for 3+ queries or packaged RT/multi, else detail (default auto)"
         ),
     )
     _add_owned_shop_filters(flights)
@@ -2033,7 +2033,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["auto", "sweep", "detail"],
         help=(
             "sweep is a fast HTTP shortlist; detail is the Playwright scrape. "
-            "auto uses sweep for 3+ flight queries and detail for 1-2 (default auto)"
+            "auto uses sweep for 3+ queries or packaged RT/multi, else detail (default auto)"
         ),
     )
     _add_hotel_filter_flags(trip)

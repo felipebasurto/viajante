@@ -124,8 +124,8 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Two flight fetch modes, one public contract. Sweep: one Chrome TLS session
   (`curl_cffi`), HTTP/2 multiplex, owned shopping RPC, HTML fallback if compact
   parse misses. Detail: Playwright (`viajante[browser]`). `--fetch {auto,sweep,detail}`:
-  auto uses sweep for 3+ flight queries and detail for 1–2 when Playwright is
-  importable. Auto without Playwright stays on sweep. Sweep empty or `blocked` may
+  auto uses sweep for 3+ flight queries or any packaged RT/multi (only sweep
+  shops the next leg), and detail for other 1–2 when Playwright is importable. Auto without Playwright stays on sweep. Sweep empty or `blocked` may
   fall back to detail once (`fetch_backend: sweep_then_detail`) only when Playwright
   is installed; do not re-run successful sweep legs. Shopping `ErrorResponse` and
   owned markup drift fail without Chromium. Do not silently mix backends unless
