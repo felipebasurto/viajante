@@ -2456,6 +2456,22 @@ class SweepClientShapeTests(unittest.TestCase):
         self.assertEqual(unnamed["curr"], ["EUR"])
         self.assertNotIn("gl", unnamed)
 
+    def test_rpc_error_envelope_is_blocked_not_markup_drift(self) -> None:
+        throttled = (
+            ')]}\'\n\n39\n[["wrb.fr",null,null,null,null,[13]]]\n'
+            '55\n[["di",34],["af.httprm",34,"-7689648241438755997",6]]\n'
+            '25\n[["e",4,null,null,131]]\n'
+        )
+        source = GoogleFlightsHttpSource(client=_FakeSweepClient(post_text=throttled))
+        with self.assertRaisesRegex(GoogleFlightsBlocked, "RPC error status 13"):
+            source.fetch_calendar(
+                FlightQuery("SIN", "BKK", date(2026, 11, 20)),
+                date(2026, 11, 18),
+                date(2026, 11, 22),
+            )
+        with self.assertRaises(GoogleFlightsBlocked):
+            source.fetch_explore("LHR", date(2026, 11, 5))
+
     def test_http_sources_reuse_the_process_tls_session(self) -> None:
         created: list[object] = []
 

@@ -32,6 +32,7 @@ from viajante.google_flights_rpc import (
     parse_calendar_body,
     parse_explore_body,
     parse_shopping_body,
+    rpc_error_status,
 )
 from viajante.models import (
     FETCH_LANGUAGE,
@@ -337,7 +338,9 @@ def looks_blocked(html: str, final_url: str = "") -> bool:
     if any(marker in lowered_url for marker in BLOCK_URL_MARKERS):
         return True
     lowered = html.casefold()
-    return any(marker in lowered for marker in BLOCK_BODY_MARKERS)
+    return any(marker in lowered for marker in BLOCK_BODY_MARKERS) or (
+        rpc_error_status(html) is not None
+    )
 
 
 def _is_consent_interstitial(url: str) -> bool:
@@ -804,6 +807,22 @@ def _raise_if_blocked(
         raise GoogleFlightsBlocked(
             f"Google Flights HTTP {status} from {final_url or fallback_url}",
             status=status,
+        )
+    rpc_status = rpc_error_status(body)
+    if rpc_status is not None:
+        # Seen alongside google.com/sorry for the same IP while shopping still answers.
+        raise GoogleFlightsBlocked(
+            f"Google Flights answered with RPC error status {rpc_status} and no data "
+            f"from {fallback_url}. Google does this while throttling this IP; "
+            "wait before searching again."
+        )
+    rpc_status = rpc_error_status(body)
+    if rpc_status is not None:
+        # Seen alongside google.com/sorry for the same IP while shopping still answers.
+        raise GoogleFlightsBlocked(
+            f"Google Flights answered with RPC error status {rpc_status} and no data "
+            f"from {fallback_url}. Google does this while throttling this IP; "
+            "wait before searching again."
         )
     if looks_blocked(body, final_url):
         raise GoogleFlightsBlocked(

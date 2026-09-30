@@ -455,6 +455,24 @@ def first_wrb_data(
     return None
 
 
+def _wrb_error_status(obj: object) -> Optional[int]:
+    if isinstance(obj, list) and obj and isinstance(obj[0], list):
+        obj = obj[0]
+    if not (isinstance(obj, list) and len(obj) >= 6 and obj[0] == "wrb.fr" and obj[2] is None):
+        return None
+    status = obj[5]
+    if isinstance(status, list) and status and isinstance(status[0], int):
+        return status[0]
+    return None
+
+
+def rpc_error_status(text: str) -> Optional[int]:
+    """Status code of a data-less wrb.fr error envelope (e.g. 13), else None."""
+    if not text.lstrip().startswith(_ANTI_XSSI) or _is_shopping_rejected(text):
+        return None
+    return first_wrb_data(text, _wrb_error_status)
+
+
 def _has_itinerary_slots(data: list[Any]) -> bool:
     return len(data) > 3 and isinstance(data[2], list)
 

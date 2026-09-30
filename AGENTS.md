@@ -149,7 +149,8 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   detail. MCP search tools replay an identical successful call for 5 min
   (`cached: true`) instead of asking Google again. `no_results`, `rejected`, `blocked`,
   `markup_drift`, and `browser_unavailable` do not get a Playwright second attempt. A calendar
-  `blocked` (including a short unknown HTML shell) stops that calendar; no
+  `blocked` (including a short unknown HTML shell, or a data-less wrb.fr
+ error envelope such as status 13) stops that calendar; no
   flex, shop, or browser recovery. Booking card-wait timeouts fail immediately.
   Do not hammer Booking after a challenge.
   `rejected` and `markup_drift` do not fall back to detail.
