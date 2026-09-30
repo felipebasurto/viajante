@@ -57,13 +57,15 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 - compare_awards: local award vs cash math. No live award seats.
 - lookup_transfers: local transfer-partner table for a named program.
 - verify_answer: flags amounts, codes, dates, and links in a draft reply that no
-  search in this process returned. Search results carry a `lead` list to quote.
+  search in this process returned.
+- validate_itinerary: local pass/fail/unknown check of selected offers against
+  named constraints (layovers, stay length, bags). Unknown never becomes pass.
 
 One search at a time in the MCP process.
 
 Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
-cooldown (error `rate_limited: true`, and the first `lead` line names the UTC
-time to wait until). Tell the user to wait; do not retry. Identical successful
+cooldown (error `rate_limited: true`; its message names the UTC time to wait
+until). Tell the user to wait; do not retry. Identical successful
 searches within 5 minutes return `cached: true` without a new request.
 
 ## Currency

@@ -2,8 +2,7 @@
 
 The ledger holds this process's recent search payloads. ``verify_answer`` flags
 amounts, currencies, airport codes, ISO dates, and links in a draft that no
-recorded payload owns. ``summarize`` names the cheapest owned row so a caller
-quotes it instead of paraphrasing a long payload.
+recorded payload owns. Reading the payload and choosing is the caller's job.
 """
 
 from __future__ import annotations
@@ -29,10 +28,6 @@ _MONEY_KEYS = frozenset(
         "baggage_buffer",
     }
 )
-_ROW_PRICE_KEYS = ("price", "total_price")
-_URL_KEYS = ("google_flights_url", "booking_url", "url")
-_LABEL_KEYS = ("airline", "name", "city", "program")
-_WHEN_KEYS = ("departure_date", "check_in", "from")
 _ISO_4217 = frozenset(_COUNTRY_CASH_CURRENCY.values()) | {"EUR", "USD"}
 _GLYPH_CURRENCY = {"€": "EUR", "£": "GBP", "₹": "INR", "₩": "KRW"}
 _URL = re.compile(r"https?://[^\s)\]>\"'`]+")
@@ -160,28 +155,6 @@ def verify_answer(answer: str) -> dict[str, object]:
     }
 
 
-def _priced_rows(
-    node: object, context: Mapping[str, object]
-) -> Iterable[tuple[float, Mapping[str, object]]]:
-    if isinstance(node, (list, tuple)):
-        for value in node:
-            yield from _priced_rows(value, context)
-        return
-    if not isinstance(node, Mapping):
-        return
-    query = node.get("query")
-    scalars = {**(query if isinstance(query, Mapping) else {}), **node}
-    scope = {**context, **{k: v for k, v in scalars.items() if isinstance(v, (str, int, float))}}
-    for key in _ROW_PRICE_KEYS:
-        value = node.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            yield float(value), scope
-            break
-    for value in node.values():
-        if isinstance(value, (Mapping, list, tuple)):
-            yield from _priced_rows(value, scope)
-
-
 def failure_codes(node: object) -> list[str]:
     if isinstance(node, (list, tuple)):
         return [code for value in node for code in failure_codes(value)]
@@ -192,49 +165,3 @@ def failure_codes(node: object) -> list[str]:
     if isinstance(error, Mapping) and isinstance(error.get("code"), str):
         found.append(error["code"])
     return found + [code for value in node.values() for code in failure_codes(value)]
-
-
-def _amount(value: float) -> str:
-    return f"{value:,.0f}" if value == int(value) else f"{value:,.2f}"
-
-
-def summarize(payload: Mapping[str, object]) -> list[str]:
-    """English lead lines from owned payload fields only. Never computes a new amount."""
-    lines: list[str] = []
-    rows = list(_priced_rows(payload, {}))
-    if rows:
-        price, row = min(rows, key=lambda item: item[0])
-        currency = row.get("currency")
-        parts = [f"cheapest owned: {_amount(price)}" + (f" {currency}" if currency else "")]
-        label = next((str(row[k]) for k in _LABEL_KEYS if row.get(k)), None)
-        if label:
-            parts.append(label)
-        destination = row.get("destination") or row.get("iata")
-        if row.get("origin") and destination:
-            parts.append(f"{row['origin']}-{destination}")
-        when = next((str(row[k]) for k in _WHEN_KEYS if row.get(k)), None)
-        if when:
-            parts.append(when)
-        if row.get("typical_deal"):
-            parts.append(str(row["typical_deal"]))
-        url = next((str(row[k]) for k in _URL_KEYS if row.get(k)), None)
-        lines.append(", ".join(parts))
-        if url:
-            lines.append(f"link: {url}")
-    else:
-        lines.append("no priced rows; do not quote a fare or stay")
-    trip_total = payload.get("trip_total")
-    if isinstance(trip_total, Mapping) and isinstance(trip_total.get("total"), (int, float)):
-        lines.append(
-            f"owned trip total: {_amount(float(trip_total['total']))}"
-            f" (flight {_amount(float(trip_total['flight_fare']))}"
-            f" + stay {_amount(float(trip_total['hotel_stay']))})"
-        )
-    errors = failure_codes(payload)
-    if errors:
-        lines.append(f"failed: {len(errors)} ({', '.join(sorted(set(errors)))})")
-    lines.append(
-        "quote only amounts, codes, dates, and links from this payload; "
-        "verify on the provider before booking"
-    )
-    return lines

@@ -18,7 +18,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.evidence import failure_codes, record, summarize
+from viajante.evidence import failure_codes, record
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     month_window,
@@ -37,7 +37,6 @@ from viajante.flights import (
     parse_via_airports,
     search_flights,
 )
-from viajante.google_flights import rate_limit_advice, rate_limit_status
 from viajante.hotels import HotelSourceName, search_hotels
 from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
@@ -80,11 +79,7 @@ def _with_search_lock(fn):
 
 def _owned(payload: dict) -> dict:
     record(payload)
-    lead = summarize(payload)
-    cooldown = rate_limit_status()
-    if cooldown is not None:
-        lead = [rate_limit_advice(cooldown), *lead]
-    return {**payload, "lead": lead}
+    return payload
 
 
 def _cached(fn):
@@ -96,9 +91,7 @@ def _cached(fn):
         now = time.monotonic()
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
-            result = hit[1]
-            note = f"cached: same query ran at {result.get('searched_at')}; no new request sent"
-            return {**result, "cached": True, "lead": [note, *result["lead"]]}
+            return {**hit[1], "cached": True}
         result = fn(*args, **kwargs)
         if not failure_codes(result):
             for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:

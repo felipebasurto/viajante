@@ -46,16 +46,16 @@ compare_awards, lookup_transfers, validate_itinerary, verify_answer.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
-or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers, and
+or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
 validate_itinerary, and verify_answer may run during a search.
 
-Search results carry a lead list: the cheapest owned row, its link, and any
-failures. Quote from it. Before replying, pass the draft to verify_answer; it
-flags amounts, currencies, codes, dates, and links no search in this process
-returned.
+Results are raw owned evidence, not a recommendation. You choose: read the
+payload, weigh price against duration, stops, clocks, and rating, and say why.
+Before replying, pass the draft to verify_answer; it flags amounts,
+currencies, codes, dates, and links no search in this process returned.
 
-If an error has rate_limited true, or lead starts with "Google is
-rate-limiting this machine", tell the user to wait until the named UTC time.
+If an error has rate_limited true, tell the user to wait until the UTC time
+named in its message.
 Do not retry, switch fetch mode, or fan out other searches; they are paused
 locally and send nothing. An identical successful search within 5 minutes
 comes back cached (cached: true) without a new request.

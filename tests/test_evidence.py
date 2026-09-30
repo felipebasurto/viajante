@@ -58,17 +58,5 @@ class VerifyAnswerTests(unittest.TestCase):
         self.assertFalse(result["ok"])
 
 
-class SummarizeTests(unittest.TestCase):
-    def test_leads_with_cheapest_owned_row_link_and_failures(self) -> None:
-        lines = evidence.summarize(FLIGHTS)
-        self.assertEqual(lines[0], "cheapest owned: 291 USD, Icelandair, JFK-LHR, 2026-10-27")
-        self.assertEqual(lines[1], f"link: {URL}")
-        self.assertIn("failed: 1 (blocked)", lines)
-
-    def test_no_priced_rows_says_so(self) -> None:
-        lines = evidence.summarize({"currency": "JPY", "destinations": []})
-        self.assertEqual(lines[0], "no priced rows; do not quote a fare or stay")
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -93,13 +93,12 @@ class SearchCacheTests(unittest.TestCase):
         def tool(route: str, *, fail: bool = False) -> dict:
             calls.append(route)
             error = {"code": "blocked"} if fail else None
-            return {"searched_at": "t", "error": error, "lead": ["x"]}
+            return {"searched_at": "t", "error": error}
 
         tool("JFK-LHR")
         again = tool("JFK-LHR")
         self.assertEqual(calls, ["JFK-LHR"])
         self.assertTrue(again["cached"])
-        self.assertTrue(again["lead"][0].startswith("cached:"))
         tool("JFK-LHR", fail=True)
         tool("JFK-LHR", fail=True)
         self.assertEqual(calls, ["JFK-LHR", "JFK-LHR", "JFK-LHR"])
