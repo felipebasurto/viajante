@@ -1399,6 +1399,8 @@ class GoogleFlightsSource:
             page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
             if "consent.google" in page.url:
                 self._dismiss_consent(page)
+            if looks_blocked("", page.url):
+                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
             page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
             return page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
         finally:

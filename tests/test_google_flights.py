@@ -18,6 +18,7 @@ from viajante.google_flights import (
     GoogleFlightsHttpSource,
     GoogleFlightsMarkupError,
     GoogleFlightsRejected,
+    GoogleFlightsSource,
     NoFlightsFound,
     SweepHttpResponse,
     _consent_reject_form,
@@ -2548,6 +2549,31 @@ class SweepClientShapeTests(unittest.TestCase):
             self.assertIsNone(created[1].proxy)
             self.assertEqual(len(closed), 1)
             reset_shared_chrome_sweep_client()
+
+
+class DetailSorryPageTests(unittest.TestCase):
+    def test_sorry_redirect_fails_fast_without_waiting_for_cards(self) -> None:
+        class SorryPage:
+            url = (
+                "https://www.google.com/sorry/index?continue=https://www.google.com/travel/flights"
+            )
+
+            def goto(self, url: str, **_: object) -> None:
+                return None
+
+            def locator(self, selector: str) -> object:
+                raise AssertionError("must not wait for result cards on /sorry/")
+
+            def close(self) -> None:
+                return None
+
+        class Session:
+            def new_page(self) -> SorryPage:
+                return SorryPage()
+
+        source = GoogleFlightsSource(Path("."), session=Session())  # type: ignore[arg-type]
+        with self.assertRaisesRegex(GoogleFlightsBlocked, "blocked the browser"):
+            source.fetch(FlightQuery("JFK", "LHR", date(2026, 11, 10)))
 
 
 if __name__ == "__main__":
