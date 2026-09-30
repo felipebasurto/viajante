@@ -1,6 +1,5 @@
-"""Offline keep-or-revert bench: gate plus one score_ms number.
+"""Offline bench: gate plus one score_ms number.
 
-The looping agent reads program.md. This module is the measuring stick:
 unittest + ruff must pass, then score_ms is tests_ms + parse_ms of the
 checked-in owned shopping / wrb.fr / card-parse corpus. No Chromium.
 No live Google unless VIAJANTE_BENCH_LIVE=1, and that extra never

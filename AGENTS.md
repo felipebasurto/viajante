@@ -32,7 +32,6 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
-- Loop protocol: `program.md` (humans edit this to steer)
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
 - Graded prompt corpus: `tests/prompts/`
@@ -244,7 +243,7 @@ uv run viajante bench
 `viajante bench` is the offline gate: unittest + `ruff check` / `ruff format --check`,
 then `gate` and `score_ms` (`tests_ms` + owned `tests/bench/` parse). No Chromium.
 No live Google unless `VIAJANTE_BENCH_LIVE=1`; that extra `sweep_ms` is never the
-score. **Do not optimize `score_ms`.** Read `program.md` before a loop experiment.
+score. **Do not optimize `score_ms`.**
 
 `pip install -e .` still works; `uv` is the reproducible path. Tests are offline.
 They must not launch Chromium or use the network. CI runs the suite on Python
