@@ -215,11 +215,6 @@ improvement loops.
 - **Throttling is a guess.** Google publishes no quota. The cooldown lengths
   are marked with `ponytail:` comments and should learn from real recoveries.
   The RPC status-13 signal does not yet write the shared cooldown file.
-- **`prompt_plan.py` is the largest module** (≈3k lines): a deterministic
-  natural-language planner used by `get_flights` and the graded prompt bench.
-  It predates the "agent plans, viajante fetches" stance and overlaps with
-  what the calling agent already does. It stays until the bench surface is
-  retired.
 - **Internal `currency="EUR"` defaults** remain in lower-level signatures and
   dataclasses as test fixtures. Every public entry point resolves or requires
   currency first.

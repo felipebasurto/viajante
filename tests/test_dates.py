@@ -51,14 +51,13 @@ from viajante.models import (
     SearchErrorCode,
     owned_calendar_summary,
 )
-from viajante.prompt_bench import PROMPT_BENCH_TODAY
 from viajante.typical import MIN_DAILY_PRICES, typical_from_daily_prices
 
 
 class _FrozenDate(date):
     @classmethod
     def today(cls) -> date:
-        return PROMPT_BENCH_TODAY
+        return date(2026, 8, 20)
 
 
 _patchers: list[object] = []

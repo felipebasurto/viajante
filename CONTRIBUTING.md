@@ -41,16 +41,10 @@ uv run ruff check src tests
 uv run ruff format --check src tests
 ```
 
-Changes to natural-language planning should also run the prompt battery:
-
-```bash
-uv run viajante bench --prompts
-```
-
-LLM judging and live benchmarks are opt-in. An offline pass verifies the
+Live benchmarks are opt-in. An offline pass verifies the
 local code and fixtures; it does not establish that a provider's current
 pages still work. Read [program.md](program.md) before benchmark experiments
-and leave the baseline and human holdout unchanged.
+and leave the baseline unchanged.
 
 ## Before opening a pull request
 

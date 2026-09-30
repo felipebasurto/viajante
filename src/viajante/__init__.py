@@ -35,7 +35,6 @@ from viajante.models import (
     TripSearchReport,
 )
 from viajante.points import compare_award, load_award_offer, transfer_paths
-from viajante.prompt_plan import plan_prompt
 from viajante.skiplagged import search_hidden_city
 from viajante.trip import search_trip
 from viajante.validate import validate_itinerary
@@ -72,7 +71,6 @@ __all__ = [
     "get_flights",
     "load_award_offer",
     "lookup_airports",
-    "plan_prompt",
     "search_dates",
     "search_explore",
     "search_flex",

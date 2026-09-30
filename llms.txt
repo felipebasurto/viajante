@@ -83,10 +83,9 @@ Do not invent a bag fee.
 ## Python
 
 ```python
-from viajante import get_flights, plan_prompt, search_flights, SearchErrorCode, QueryFailure
+from viajante import get_flights, search_flights, SearchErrorCode, QueryFailure
 
 report = get_flights("JFK-LHR:YYYY-MM-DD", fetch="sweep")
-plan = plan_prompt("Flights JFK-LHR on YYYY-MM-DD")
 ```
 
 Sweep `proxy` covers flights, dates, flex, and explore. Hotels have no proxy flag.

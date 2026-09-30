@@ -34,7 +34,6 @@ from viajante.models import (
     TripSearchReport,
     TripTotal,
 )
-from viajante.prompt_plan import plan_prompt, plan_to_hotel_query, plan_to_trips
 from viajante.trip import (
     dates_overlap,
     format_trip_total,
@@ -648,40 +647,6 @@ class TripShopFilterTests(unittest.TestCase):
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
         self.assertEqual(report.trip_total.flight_fare, 100.0)
-
-
-class PlanToHotelQueryTests(unittest.TestCase):
-    def test_combined_plan_shares_dates_and_adults(self) -> None:
-        plan = plan_prompt(
-            "Packaged round-trip SIN-MEL on 2026-11-06 returning 2026-11-10, --trip rt, "
-            "and hotel in Melbourne from 2026-11-06 to 2026-11-10, 2 adults, 1 room, "
-            "free cancellation. Print the owned trip total when both searches succeed. "
-            "Do not invent a fare or a hotel total."
-        )
-        self.assertEqual(plan.intent, "flights")
-        self.assertTrue(plan.hotels)
-        self.assertEqual(plan.trip, "rt")
-        self.assertEqual(plan.adults, 2)
-        self.assertEqual(plan.rooms, 1)
-        self.assertEqual(plan.check_in, date(2026, 11, 6))
-        self.assertEqual(plan.check_out, date(2026, 11, 10))
-        self.assertEqual(plan.locale, "en")
-        self.assertTrue(plan.search_trip)
-        self.assertIn("search_trip", plan.notes)
-        trips = plan_to_trips(plan)
-        hotel = plan_to_hotel_query(plan)
-        self.assertEqual(trips.origin, "SIN")
-        self.assertEqual(trips.destination, "MEL")
-        self.assertEqual(trips.adults, 2)
-        self.assertEqual(hotel.location, "Melbourne")
-        self.assertEqual(hotel.adults, 2)
-        self.assertEqual(hotel.check_in, trips.departure_date)
-        self.assertEqual(hotel.check_out, trips.return_date)
-
-    def test_plan_to_hotel_query_refuses_flights_only(self) -> None:
-        plan = plan_prompt("Flights SIN-MEL on 2026-11-06")
-        with self.assertRaises(ValueError):
-            plan_to_hotel_query(plan)
 
 
 class NearbyTripTests(unittest.TestCase):

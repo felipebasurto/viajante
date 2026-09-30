@@ -262,11 +262,9 @@ for result in hotels.queries:
         print(result.error)
 ```
 
-`get_flights` also accepts natural-language flight requests through
-`plan_prompt`. The planner copies supported, explicit constraints into a query;
-it does not choose an unspecified origin or invent a destination. For other
-search types, use `search_dates`, `search_flex`, `search_explore`, or
-`search_trip`.
+`get_flights` takes a route spec or trip objects, not prose. Turning a request
+into a route is the calling agent's job. For other search types, use
+`search_dates`, `search_flex`, `search_explore`, or `search_trip`.
 
 See the exported types in [`viajante.__init__`](../src/viajante/__init__.py)
 for the Python interface.

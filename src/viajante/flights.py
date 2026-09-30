@@ -106,13 +106,6 @@ _CLOCK_TOKEN = re.compile(
     re.IGNORECASE,
 )
 _ROUTE_SPEC_RE = re.compile(r"^[A-Za-z]{3}-[A-Za-z]{3}:")
-_GET_FLIGHTS_INTENT_FN = {
-    "dates": "search_dates",
-    "flex": "search_flex",
-    "explore": "search_explore",
-    "hotels": "search_hotels",
-    "airports": "lookup_airports",
-}
 FetchMode = Literal["auto", "sweep", "detail"]
 TripKind = Literal["one-way", "rt", "multi"]
 FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | MultiCity
@@ -476,32 +469,6 @@ def as_trips(plan: FlightPlan | Trip | Sequence[Trip]) -> Tuple[Trip, ...]:
 
 def _is_route_spec(text: str) -> bool:
     return _ROUTE_SPEC_RE.match(text.strip()) is not None
-
-
-def _search_kwargs_from_plan(plan: Any) -> dict[str, Any]:
-    return {
-        "via": plan.via_airports or None,
-        "exclude_via": plan.exclude_via or None,
-        "no_overnight": plan.no_overnight or None,
-        "require_overnight": plan.require_overnight or None,
-        "exclude_airports": plan.exclude_airports or None,
-        "include_airports": plan.include_airports or None,
-        "airlines": plan.include_airlines or None,
-        "exclude_airlines": plan.exclude_airlines or None,
-        "alliances": plan.alliance or None,
-        "exclude_alliances": plan.exclude_alliance or None,
-        "depart_window": parse_depart_window(plan.depart_window),
-        "arrive_before": parse_named_clock(plan.arrive_before, role="arrive-before"),
-        "depart_after": parse_named_clock(plan.depart_after, role="depart-after"),
-        "max_layover_hours": plan.max_layover,
-        "min_layover_hours": plan.min_layover,
-        "max_duration_hours": plan.max_duration,
-        "sort": plan.sort or "ranked",
-        "fetch": plan.fetch or "auto",
-        "currency": plan.currency,
-        "country": plan.country,
-        "baggage_buffer": plan.baggage_buffer,
-    }
 
 
 def parse_flight_plan(
@@ -1946,12 +1913,10 @@ def get_flights(
     country: Optional[str] = None,
     proxy: Optional[str] = None,
 ) -> SearchReport:
-    """One-shot flight search: route spec, trips, or a natural-language prompt.
+    """One-shot flight search from a route spec or trips.
 
-    A string that looks like ``ORIGIN-DEST:DATE`` (or a sequence of those) is
-    parsed like the CLI. Any other string goes through ``plan_prompt``. Non-flight
-    intents raise ``ValueError`` naming the matching public function. Does not
-    run hotels when the plan has ``search_trip``.
+    A string like ``ORIGIN-DEST:DATE`` (or a sequence of those) is parsed like
+    the CLI. Any other string raises ``ValueError``.
     """
     search_kw: dict[str, Any] = {
         "top": top,
@@ -1998,30 +1963,10 @@ def get_flights(
         )
 
     if isinstance(query, str) and not _is_route_spec(query):
-        from viajante.prompt_plan import plan_prompt, plan_to_trips
-
-        plan = plan_prompt(query)
-        if plan.intent != "flights":
-            if plan.intent == "refuse" or plan.refuse:
-                reasons = ", ".join(plan.refuse) if plan.refuse else "refused"
-                raise ValueError(f"get_flights cannot search this prompt: {reasons}")
-            hint = _GET_FLIGHTS_INTENT_FN.get(plan.intent)
-            if hint is None:
-                raise ValueError(f"get_flights is for flight offers; got {plan.intent!r} intent")
-            raise ValueError(
-                f"get_flights is for flight offers; use {hint} for {plan.intent} intent"
-            )
-        parsed = plan_to_trips(replace(plan, nearby=False))
-        trips = expand_nearby_trips(as_trips(parsed), nearby=bool(nearby or plan.nearby))
-        plan_kw = _search_kwargs_from_plan(plan)
-        for key, value in plan_kw.items():
-            if search_kw.get(key) is None and value is not None:
-                search_kw[key] = value
-        if sort == "ranked" and plan.sort:
-            search_kw["sort"] = plan.sort
-        if fetch == "auto" and plan.fetch:
-            search_kw["fetch"] = plan.fetch
-        return _search(trips)
+        raise ValueError(
+            "get_flights takes a route spec like JFK-LHR:YYYY-MM-DD or Trip objects; "
+            "turning a natural-language prompt into a route is the caller's job"
+        )
     if isinstance(query, str):
         specs: Sequence[str] = (query.strip(),)
     elif isinstance(query, (FlightQuery, RoundTrip, MultiCity)):

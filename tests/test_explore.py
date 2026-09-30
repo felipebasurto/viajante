@@ -34,8 +34,6 @@ from viajante.models import (
     RawLayover,
     RawSegment,
 )
-from viajante.prompt_bench import PROMPT_BENCH_TODAY
-from viajante.prompt_plan import plan_prompt
 from viajante.typical import (
     typical_from_daily_prices,
     vs_typical,
@@ -47,7 +45,7 @@ from viajante.typical import (
 class _FrozenDate(date):
     @classmethod
     def today(cls) -> date:
-        return PROMPT_BENCH_TODAY
+        return date(2026, 8, 20)
 
 
 _patchers: list[object] = []
@@ -1532,31 +1530,6 @@ class ExcludeRegionsExploreTests(unittest.TestCase):
         self.assertEqual(iata, ["LHR"])
         self.assertNotIn("HND", iata)
         self.assertNotIn("NRT", iata)
-        self.assertEqual([query.destination for query in source.fetched_queries], ["LHR"])
-
-    def test_planner_not_asia_reaches_explore_filter(self) -> None:
-        plan = plan_prompt(
-            "Destinations from NRT on 2026-09-15, not Asia",
-            today=PROMPT_BENCH_TODAY,
-        )
-        self.assertEqual(plan.intent, "explore")
-        self.assertIn("asia", plan.exclude_regions)
-        places = (
-            CompactExplorePlace("HND", "Tokyo", "Japan"),
-            CompactExplorePlace("LHR", "London", "United Kingdom"),
-        )
-        prices = {"HND": (_card(price="€40"),), "LHR": (_card(price="€55"),)}
-        source = FakeExploreSource(places, prices=prices)
-        report = search_explore(
-            plan.origin or "NRT",
-            plan.departure_date or date(2026, 9, 15),
-            days=7,
-            top=3,
-            exclude_regions=plan.exclude_regions,
-            source=source,
-        )
-        self.assertEqual([row.iata for row in report.destinations], ["LHR"])
-        self.assertNotIn("HND", [row.iata for row in report.destinations])
         self.assertEqual([query.destination for query in source.fetched_queries], ["LHR"])
 
 

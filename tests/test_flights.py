@@ -1427,45 +1427,10 @@ class GetFlightsTests(unittest.TestCase):
             get_flights(list(specs), fetch="sweep")
         self.assertEqual(search.call_args.args[0], parsed)
 
-    def test_prompt_uses_plan_prompt_named_route(self) -> None:
-        fake = SearchReport(
-            searched_at=datetime(2026, 8, 10),
-            currency="USD",
-            queries=(),
-        )
-        with patch("viajante.flights.search_flights", return_value=fake) as search:
-            get_flights("Flights JFK-LHR on 2026-10-01", fetch="sweep")
-        trips = search.call_args.args[0]
-        self.assertEqual(len(trips), 1)
-        self.assertEqual(trips[0].origin, "JFK")
-        self.assertEqual(trips[0].destination, "LHR")
-        self.assertEqual(trips[0].departure_date, date(2026, 10, 1))
-
-    def test_prompt_does_not_invent_iata(self) -> None:
+    def test_prose_is_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            get_flights("Flights XXX-LHR on 2026-10-01")
-        self.assertIn("invalid_iata", str(ctx.exception))
-
-    def test_non_flight_intent_names_the_public_function(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            get_flights("Explore cheap destinations from NRT starting 2026-10-01, 7 days")
-        self.assertIn("search_explore", str(ctx.exception))
-        with self.assertRaises(ValueError) as ctx:
-            get_flights("Price calendar JFK-LHR from 2026-10-01 to 2026-10-14")
-        self.assertIn("search_dates", str(ctx.exception))
-        with self.assertRaises(ValueError) as ctx:
-            get_flights("What is the IATA code for London airports?")
-        self.assertIn("lookup_airports", str(ctx.exception))
-
-    def test_prompt_copies_via_onto_search(self) -> None:
-        fake = SearchReport(
-            searched_at=datetime(2026, 8, 10),
-            currency="USD",
-            queries=(),
-        )
-        with patch("viajante.flights.search_flights", return_value=fake) as search:
-            get_flights("Flights JFK-SIN on 2026-11-03 via IST", fetch="sweep")
-        self.assertEqual(search.call_args.kwargs["via"], ("IST",))
+            get_flights("Flights JFK-LHR on 2026-10-01")
+        self.assertIn("route spec", str(ctx.exception))
 
     def test_proxy_is_forwarded(self) -> None:
         fake = SearchReport(
@@ -1477,7 +1442,7 @@ class GetFlightsTests(unittest.TestCase):
             get_flights("JFK-LHR:2026-10-01", proxy="http://127.0.0.1:8080")
         self.assertEqual(search.call_args.kwargs["proxy"], "http://127.0.0.1:8080")
 
-    def test_named_kwargs_overlay_prompt(self) -> None:
+    def test_named_kwargs_overlay_route_spec(self) -> None:
         fake = SearchReport(
             searched_at=datetime(2026, 8, 10),
             currency="USD",
@@ -1485,7 +1450,7 @@ class GetFlightsTests(unittest.TestCase):
         )
         with patch("viajante.flights.search_flights", return_value=fake) as search:
             get_flights(
-                "Flights JFK-LHR on 2026-10-15",
+                "JFK-LHR:2026-10-15",
                 adults=2,
                 children=1,
                 bags=1,
@@ -1501,21 +1466,6 @@ class GetFlightsTests(unittest.TestCase):
         self.assertEqual(trip.cabin, "business")
         self.assertEqual(trip.max_stops, 0)
         self.assertEqual(trip.price_cap, 500)
-
-    def test_unset_kwargs_leave_plan_occupancy(self) -> None:
-        fake = SearchReport(
-            searched_at=datetime(2026, 8, 10),
-            currency="USD",
-            queries=(),
-        )
-        with patch("viajante.flights.search_flights", return_value=fake) as search:
-            get_flights(
-                "Flights JFK-LHR on 2026-10-15 --adults 2 --cabin business",
-                fetch="sweep",
-            )
-        trip = search.call_args.args[0][0]
-        self.assertEqual(trip.adults, 2)
-        self.assertEqual(trip.cabin, "business")
 
     def test_named_kwargs_overlay_built_trip(self) -> None:
         fake = SearchReport(

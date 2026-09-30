@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 from datetime import date
@@ -85,7 +84,6 @@ from viajante.points import (
     load_balances,
     transfer_paths,
 )
-from viajante.prompt_bench import PROMPTS_ENV, run_prompt_bench
 from viajante.quote import (
     HOTEL_CURRENCY_REQUIRED,
     first_origin_iata,
@@ -163,9 +161,6 @@ Examples:
 BENCH_EXAMPLES = """\
 Examples:
   viajante bench
-  viajante bench --prompts
-  viajante bench --prompts --holdout
-  viajante bench --prompts --timeit-sweep
 """
 
 HOTELS_EXAMPLES = """\
@@ -2331,38 +2326,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     airports.add_argument("query", help="IATA code or city/name fragment")
 
-    bench = sub.add_parser(
+    sub.add_parser(
         "bench",
         help="Offline keep-or-revert bench (unittest + owned parse corpus)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=BENCH_EXAMPLES,
-    )
-    bench.add_argument(
-        "--prompts",
-        action="store_true",
-        help=(
-            "Run the graded prompt battery instead of the speed bench. "
-            "Deterministic tiers are offline. LLM judge is opt-in "
-            "(VIAJANTE_BENCH_JUDGE=1, DEEPSEEK_API_KEY or VIAJANTE_JUDGE_KEY), "
-            "scores 1-100, and is never the score_ms. Unset key prints judge: skip."
-        ),
-    )
-    bench.add_argument(
-        "--holdout",
-        action="store_true",
-        help=(
-            "With --prompts, load only tests/prompts/holdout.jsonl. "
-            "Not part of the weekday corpus. Operator overfitting check."
-        ),
-    )
-    bench.add_argument(
-        "--timeit-sweep",
-        action="store_true",
-        help=(
-            "With --prompts, time HTTP sweep (fetch=sweep) for up to 8 planned "
-            "IATA+date flight queries. Same as VIAJANTE_BENCH_SWEEP=1. Off by "
-            "default. Never judge_mean or score_ms. No Playwright."
-        ),
     )
     return parser
 
@@ -2403,11 +2371,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.cmd == "points":
         return _run_points(args)
     if args.cmd == "bench":
-        sweep_kw = {"timeit_sweep": True} if args.timeit_sweep else {}
-        if args.holdout:
-            return run_prompt_bench(holdout=True, **sweep_kw)
-        if args.prompts or os.environ.get(PROMPTS_ENV) == "1" or args.timeit_sweep:
-            return run_prompt_bench(**sweep_kw)
         return run_bench()
 
     parser.print_help()
