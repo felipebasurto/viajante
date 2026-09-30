@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP `verify_answer`: flags amounts, currencies, IATA codes, ISO dates, and links in a draft reply that no search in this process returned.
+- Google rate-limit cooldown: a real HTTP 429 pauses Google searches on the machine (2 min doubling to 30 min); errors carry `rate_limited: true`. Identical successful MCP searches within 5 minutes return `cached: true`.
+- Google Hotels offers carry owned `latitude`, `longitude`, and `review_count`. A named `min_rating` also fetches the relevance-sorted page on the same multiplexed round-trip (Tokyo, 3 nights, min 4.5: 1 eligible stay before, 6 after).
+- `docs/architecture.md`: how the request path, fetch modes, hotels, and failure taxonomy fit together.
+
+### Changed
+
+- `--fetch auto` uses sweep for packaged round-trip and multi-city searches, since only sweep shops the return leg.
+- `viajante points` is the transfer-table lookup only (mirrors MCP `lookup_transfers`). Cents-per-point math lives in `viajante awards` / `compare_awards`.
+- Explore prices all shortlisted destinations on one multiplexed sweep round-trip.
+- Internal cleanup: one offer-filter bundle, one JSON save path, shared CLI flag helpers (−1.5k lines, JSON unchanged).
+
 ### Fixed
+
+- Google Hotels stay totals parse in any currency (the record detector required `€`).
+- A data-less wrb.fr error envelope (status 13, sent while Google throttles an IP) is `blocked`, not `markup_drift`.
+- Detail fetch fails fast on `google.com/sorry` instead of waiting minutes for result cards.
 
 - `viajante hidden-city` and MCP `search_hidden_city`: Skiplagged cards are USD. A named keep that matches no owned card currency is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. Omit currency or pass USD; do not advertise EUR as a Skiplagged quote.
 - MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs (smoke 2026-09-17 LHR→BKK, nights=14, bags=1, nearby → 31/31 cells; cheapest owned 412 GBP on 2026-11-17). See `docs/smoke-2026-09-17.md`.
