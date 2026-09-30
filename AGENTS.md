@@ -293,7 +293,7 @@ call `search_hidden_city` once with the same named route and date. Sequential
 (process lock). Do not mix Skiplagged and Google payloads. Skip when `bags`
 were named, and skip explore, dates, flex, and multi-city. Do not invent a
 beyond city. Omit hidden-city `currency` (Skiplagged cards are USD); do not
-copy a Google/origin EUR keep. Lead with `hidden_city: true` rows; confirm on
+copy a Google/origin quote keep (GBP, JPY, …). Lead with `hidden_city: true` rows; confirm on
 `booking_url` (do not scrape Skiplagged).
 
 When helping pick destinations (not a single named route/date), follow

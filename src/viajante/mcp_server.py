@@ -71,7 +71,7 @@ search_hidden_city is Skiplagged, not Google. After a named-route
 search_flights on a hub or leisure trunk, the caller may run it once
 sequentially. Do not mix evidence. Skip when bags were named.
 Skiplagged cards are USD; omit currency or pass USD. Do not copy a
-Google/origin EUR keep. A keep that matches no owned card is
+Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
 compare_awards is local points math from a named offer; it does not invent seats.
 lookup_transfers is a local partner table, not live award inventory.
@@ -641,7 +641,7 @@ def build_server():
         rows; confirm the fare on booking_url (do not scrape). Viajante does
         not book. Currency is an optional keep of owned card ISO 4217.
         Skiplagged cards are USD; omit currency or pass USD. Do not copy a
-        Google/origin EUR keep. A keep that matches no owned card is
+        Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
         currency_mismatch (owned quote stamped), not no_results. Does not
         infer from origin or convert.
         """

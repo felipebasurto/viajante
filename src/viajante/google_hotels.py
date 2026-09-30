@@ -45,7 +45,7 @@ def build_applied_filters(
     query: HotelQuery,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
 ) -> AppliedHotelFilters:
     chips: list[str] = []
     if query.free_cancellation:
@@ -67,7 +67,7 @@ class GoogleHotelsSource:
         self,
         *,
         html_lang: str = FETCH_LANGUAGE,
-        currency: str = "EUR",
+        currency: str,
         client: Optional[SweepHttpClient] = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
     ) -> None:

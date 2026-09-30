@@ -88,23 +88,23 @@ def _search_payload(*records: list) -> list:
 
 class HotelsEncodeTests(unittest.TestCase):
     def test_request_meta_tail_is_present(self) -> None:
-        inner = build_hotels_inner(QUERY)
+        inner = build_hotels_inner(QUERY, currency="CZK")
         self.assertEqual(inner[0], "Prague hotels")
         self.assertEqual(inner[2], [1, None, None, None, None, None, 13, None, 0])
         self.assertEqual(inner[1][0], 1)
         self.assertIsNone(inner[1][1])
         self.assertEqual(inner[1][4][0][3], 1)
         self.assertEqual(inner[1][4][0][4], 3)
-        self.assertEqual(inner[1][4][0][6], "EUR")
+        self.assertEqual(inner[1][4][0][6], "CZK")
         self.assertEqual(inner[1][2][1][1][2], 3)
 
     def test_entire_home_asks_for_vacation_rentals(self) -> None:
         query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), entire_home=True)
-        self.assertEqual(build_hotels_inner(query)[1][0], 2)
+        self.assertEqual(build_hotels_inner(query, currency="CZK")[1][0], 2)
 
     def test_non_default_adults_emit_an_extras_block(self) -> None:
         query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), adults=1)
-        self.assertEqual(build_hotels_inner(query)[1][1], [[[3]], 1])
+        self.assertEqual(build_hotels_inner(query, currency="CZK")[1][1], [[[3]], 1])
 
     def test_rooms_change_the_occupancy_block(self) -> None:
         dates = (date(2026, 12, 4), date(2026, 12, 7))
@@ -112,23 +112,26 @@ class HotelsEncodeTests(unittest.TestCase):
         one_adult = HotelQuery("Prague", *dates, adults=1, rooms=1)
         two_rooms = HotelQuery("Prague", *dates, adults=2, rooms=2)
         four_rooms = HotelQuery("Prague", *dates, adults=2, rooms=4)
-        self.assertIsNone(build_hotels_inner(default)[1][1])
-        self.assertEqual(build_hotels_inner(one_adult)[1][1], [[[3]], 1])
-        self.assertEqual(build_hotels_inner(two_rooms)[1][1], [[[3], [3]], 2])
-        self.assertEqual(build_hotels_inner(four_rooms)[1][1], [[[3], [3]], 4])
+        self.assertIsNone(build_hotels_inner(default, currency="CZK")[1][1])
+        self.assertEqual(build_hotels_inner(one_adult, currency="CZK")[1][1], [[[3]], 1])
+        self.assertEqual(build_hotels_inner(two_rooms, currency="CZK")[1][1], [[[3], [3]], 2])
+        self.assertEqual(build_hotels_inner(four_rooms, currency="CZK")[1][1], [[[3], [3]], 4])
         self.assertNotEqual(
-            build_hotels_inner(two_rooms)[1][1],
-            build_hotels_inner(four_rooms)[1][1],
+            build_hotels_inner(two_rooms, currency="CZK")[1][1],
+            build_hotels_inner(four_rooms, currency="CZK")[1][1],
         )
-        self.assertNotEqual(build_hotels_inner(two_rooms), build_hotels_inner(four_rooms))
+        self.assertNotEqual(
+            build_hotels_inner(two_rooms, currency="CZK"),
+            build_hotels_inner(four_rooms, currency="CZK"),
+        )
 
-    def test_request_url_is_batchexecute_with_eur(self) -> None:
-        url, body = build_hotels_request(QUERY)
+    def test_request_url_is_batchexecute_with_named_currency(self) -> None:
+        url, body = build_hotels_request(QUERY, currency="CZK")
         parsed = urlparse(url)
         self.assertEqual(parsed.path, "/_/TravelFrontendUi/data/batchexecute")
         query = parse_qs(parsed.query)
         self.assertEqual(query["hl"], ["en"])
-        self.assertEqual(query["curr"], ["EUR"])
+        self.assertEqual(query["curr"], ["CZK"])
         self.assertTrue(body.startswith("f.req="))
         envelope = json.loads(unquote(body[len("f.req=") :]))
         self.assertEqual(envelope[0][0][0], "AtySUc")
@@ -233,7 +236,7 @@ class GoogleHotelsFetchTests(unittest.TestCase):
                 SweepHttpResponse(200, body, "https://www.google.com/travel/search"),
             ]
         )
-        source = GoogleHotelsSource(client=client)
+        source = GoogleHotelsSource(client=client, currency="CZK")
         sleeps: list[float] = []
         report = _run_search(
             (QUERY,),
@@ -254,35 +257,41 @@ class GoogleHotelsFetchTests(unittest.TestCase):
         url = "https://www.google.com/travel/search"
         rated = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), min_rating=4.5)
         client = _ScriptedHotelClient([SweepHttpResponse(200, cheap, url)] * 2)
-        GoogleHotelsSource(client=client).fetch(QUERY, build_applied_filters(QUERY), 24)
+        GoogleHotelsSource(client=client, currency="CZK").fetch(
+            QUERY, build_applied_filters(QUERY, currency="CZK"), 24
+        )
         self.assertEqual(len(client.posts), 1)
         client = _ScriptedHotelClient(
             [SweepHttpResponse(200, cheap, url), SweepHttpResponse(200, good, url)]
         )
-        page = GoogleHotelsSource(client=client).fetch(rated, build_applied_filters(rated), 24)
+        page = GoogleHotelsSource(client=client, currency="CZK").fetch(
+            rated, build_applied_filters(rated, currency="CZK"), 24
+        )
         self.assertEqual([card.title for card in page.cards], ["Cheap", "Good"])
         client = _ScriptedHotelClient(
             [SweepHttpResponse(200, cheap, url), SweepHttpResponse(200, "junk", url)]
         )
-        page = GoogleHotelsSource(client=client).fetch(rated, build_applied_filters(rated), 24)
+        page = GoogleHotelsSource(client=client, currency="CZK").fetch(
+            rated, build_applied_filters(rated, currency="CZK"), 24
+        )
         self.assertEqual([card.title for card in page.cards], ["Cheap"])
 
     def test_relevance_page_leaves_the_sort_slot_empty(self) -> None:
-        self.assertEqual(build_hotels_inner(QUERY)[1][4][0][4], 3)
-        self.assertIsNone(build_hotels_inner(QUERY, sort=None)[1][4][0][4])
+        self.assertEqual(build_hotels_inner(QUERY, currency="CZK")[1][4][0][4], 3)
+        self.assertIsNone(build_hotels_inner(QUERY, currency="CZK", sort=None)[1][4][0][4])
 
 
 class GoogleAppliedFiltersTests(unittest.TestCase):
     def test_default_chips_and_en_url(self) -> None:
-        applied = build_applied_filters(QUERY)
+        applied = build_applied_filters(QUERY, currency="CZK")
         self.assertEqual(applied.chips, ("free_cancellation=1",))
         self.assertIn("hl=en", applied.url)
-        self.assertIn("curr=EUR", applied.url)
+        self.assertIn("curr=CZK", applied.url)
         self.assertIn("travel/search", applied.url)
 
     def test_entire_home_chip(self) -> None:
         query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), entire_home=True)
-        applied = build_applied_filters(query)
+        applied = build_applied_filters(query, currency="CZK")
         self.assertIn("property_type=vacation_rentals", applied.chips)
 
 

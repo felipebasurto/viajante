@@ -54,7 +54,7 @@ class HotelsBlocked(Exception):
 def build_hotels_inner(
     query: HotelQuery,
     *,
-    currency: str = "EUR",
+    currency: str,
     sort: Optional[int] = SORT_LOWEST_PRICE,
 ) -> list[Any]:
     dates_slot = [
@@ -112,7 +112,7 @@ def build_hotels_request(
     query: HotelQuery,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     sort: Optional[int] = SORT_LOWEST_PRICE,
 ) -> tuple[str, str]:
     inner = json.dumps(
