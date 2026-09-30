@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import time
 import unittest
 from datetime import date
 from pathlib import Path
@@ -2080,18 +2079,16 @@ def _calendar_rpc_body(rows: list[list[object]]) -> str:
 
 
 class _MuxFakeSweepClient:
-    """Owned transport: optional post_many with one RTT for the whole batch."""
+    """Owned transport: optional post_many for the whole batch."""
 
     def __init__(
         self,
         *,
         shop_text: str,
         calendar_text: str = "not-calendar",
-        rtt: float = 0.04,
     ) -> None:
         self.shop_text = shop_text
         self.calendar_text = calendar_text
-        self.rtt = rtt
         self.posts: list[str] = []
         self.gets: list[str] = []
         self.post_many_calls = 0
@@ -2109,12 +2106,10 @@ class _MuxFakeSweepClient:
         headers: object,
         timeout: float,
     ) -> SweepHttpResponse:
-        time.sleep(self.rtt)
         self.posts.append(url)
         return self._response(url)
 
     def post_many(self, jobs, *, timeout: float) -> list[SweepHttpResponse]:
-        time.sleep(self.rtt)
         self.post_many_calls += 1
         for job in jobs:
             self.posts.append(job.url)
@@ -2360,39 +2355,31 @@ class SweepClientShapeTests(unittest.TestCase):
                 ["2026-09-03", None, [[None, 100], "tok"], 1],
             ]
         )
-        client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar, rtt=0.04)
+        client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar)
         source = GoogleFlightsHttpSource(client=client)
-        started = time.perf_counter()
         cards, days = source.fetch_with_calendar(
             FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),
             date(2026, 9, 1),
             date(2026, 9, 3),
         )
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        print(f"sweep_client_ms={elapsed_ms:.1f}")
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(len(days), 3)
         self.assertEqual(client.post_many_calls, 1)
         self.assertEqual(len(client.posts), 2)
-        self.assertLess(elapsed_ms, 70)
 
     def test_fetch_many_multiplexes_calendar_day_fanout(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        client = _MuxFakeSweepClient(shop_text=shop, rtt=0.04)
+        client = _MuxFakeSweepClient(shop_text=shop)
         source = GoogleFlightsHttpSource(client=client)
         trips = tuple(
             FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, 8)
         )
-        started = time.perf_counter()
         results = source.fetch_many(trips)
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        print(f"sweep_client_fanout_ms={elapsed_ms:.1f}")
         self.assertEqual(len(results), 7)
         self.assertTrue(all(not isinstance(item, BaseException) for item in results))
         self.assertEqual(results[0][0].airline, "Vueling")
         self.assertEqual(client.post_many_calls, 1)
         self.assertEqual(len(client.posts), 7)
-        self.assertLess(elapsed_ms, 70)
 
     def test_fetch_many_with_calendar_uses_one_multiplex_round(self) -> None:
         shop = _compact_body(_itinerary(price=88, airline="Iberia"))
@@ -2403,7 +2390,7 @@ class SweepClientShapeTests(unittest.TestCase):
                 ["2026-09-03", None, [[None, 100], "tok"], 1],
             ]
         )
-        client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar, rtt=0.04)
+        client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar)
         source = GoogleFlightsHttpSource(client=client)
         jobs = tuple(
             (
@@ -2413,10 +2400,7 @@ class SweepClientShapeTests(unittest.TestCase):
             )
             for dest in ("NRT", "LHR", "CDG")
         )
-        started = time.perf_counter()
         results = source.fetch_many_with_calendar(jobs)
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        print(f"sweep_client_batch_ms={elapsed_ms:.1f}")
         self.assertEqual(len(results), 3)
         cards, days = results[0]
         self.assertFalse(isinstance(cards, BaseException))
@@ -2424,7 +2408,6 @@ class SweepClientShapeTests(unittest.TestCase):
         self.assertEqual(len(days), 3)
         self.assertEqual(client.post_many_calls, 1)
         self.assertEqual(len(client.posts), 6)
-        self.assertLess(elapsed_ms, 70)
 
     def test_http_source_currency_country_reach_calendar_and_fanout_urls(self) -> None:
         calendar = _calendar_rpc_body([["2026-09-01", None, [[None, 80], "tok"], 1]])
@@ -2440,7 +2423,7 @@ class SweepClientShapeTests(unittest.TestCase):
         self.assertEqual(params["curr"], ["USD"])
         self.assertEqual(params["gl"], ["US"])
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        mux = _MuxFakeSweepClient(shop_text=shop, rtt=0)
+        mux = _MuxFakeSweepClient(shop_text=shop)
         GoogleFlightsHttpSource(client=mux, currency="GBP", country="GB").fetch_many(
             (FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),)
         )

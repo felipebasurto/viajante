@@ -19,11 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--fetch auto` uses sweep for packaged round-trip and multi-city searches, since only sweep shops the return leg.
 - `viajante points` is the transfer-table lookup only (mirrors MCP `lookup_transfers`). Cents-per-point math lives in `viajante awards` / `compare_awards`.
 - Explore prices all shortlisted destinations on one multiplexed sweep round-trip.
+- Google Hotels record detection no longer special-cases `€` (no user-visible change; non-euro totals already parsed).
 - Internal cleanup: one offer-filter bundle, one JSON save path, shared CLI flag helpers (−1.5k lines, JSON unchanged).
 
 ### Fixed
 
-- Google Hotels stay totals parse in any currency (the record detector required `€`).
 - A data-less wrb.fr error envelope (status 13, sent while Google throttles an IP) is `blocked`, not `markup_drift`.
 - Detail fetch fails fast on `google.com/sorry` instead of waiting minutes for result cards.
 

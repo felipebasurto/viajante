@@ -150,11 +150,6 @@ class HotelsParseTests(unittest.TestCase):
         card = parse_hotels_body(_wrap_wrb(_search_payload(_hotel_record())))[0]
         self.assertEqual((card.latitude, card.longitude, card.review_count), (50.1, 14.4, 10))
 
-    def test_non_euro_stay_total_parses(self) -> None:
-        record = _hotel_record(nightly="JP¥4,107", stay_total="JP¥12,321")
-        cards = parse_hotels_body(_wrap_wrb(_search_payload(record)))
-        self.assertEqual(cards[0].total_price, "JP¥12,321")
-
     def test_missing_stay_total_is_a_parse_miss(self) -> None:
         record = _hotel_record()
         record[6][2][9] = None

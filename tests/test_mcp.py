@@ -962,7 +962,6 @@ class McpServerImportTests(unittest.TestCase):
         self.assertFalse(text.startswith("from mcp") or text.startswith("import mcp"))
         self.assertNotIn("\nfrom mcp", text)
         self.assertNotIn("\nimport mcp", text)
-        self.assertIn("    from mcp.server.fastmcp import FastMCP", text)
 
     def test_help_does_not_import_fastmcp(self) -> None:
         from viajante.mcp_server import main

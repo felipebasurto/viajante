@@ -530,7 +530,6 @@ class HiddenCitySearchTests(unittest.TestCase):
     def test_search_does_not_import_google_flights(self) -> None:
         import viajante.skiplagged as module
 
-        self.assertNotIn("google_flights", module.__name__)
         source = getsource(module)
         self.assertNotIn("viajante.google_flights", source)
         self.assertNotIn("viajante.flights", source)
