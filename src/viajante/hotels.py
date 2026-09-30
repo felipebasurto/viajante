@@ -6,7 +6,6 @@ import random
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Callable, Literal, Optional, Protocol, Sequence, Tuple
 
 from viajante.booking import (
@@ -65,7 +64,7 @@ from viajante.parsers import (
     parse_unit_hints,
 )
 from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
-from viajante.storage import default_state_dir, write_json_atomic
+from viajante.storage import default_state_dir
 
 
 class _HotelSource(Protocol):
@@ -177,7 +176,8 @@ def _classify_hotel_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, HotelsBlocked):
         return SearchError(
             code=SearchErrorCode.BLOCKED,
-            message="Google Hotels blocked the sweep.",
+            message=str(exc) if exc.rate_limited else "Google Hotels blocked the sweep.",
+            rate_limited=exc.rate_limited,
         )
     if isinstance(exc, HotelsParseMiss):
         return SearchError(
@@ -355,10 +355,3 @@ def search_hotels(
         hotel_source.close()
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return replace(report, fetch_ms=fetch_ms)
-
-
-def write_hotel_report_atomic(
-    report: HotelSearchReport,
-    destination: Path,
-) -> None:
-    write_json_atomic(report.to_dict(), destination)

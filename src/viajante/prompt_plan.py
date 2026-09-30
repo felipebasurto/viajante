@@ -13,7 +13,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from math import asin, cos, radians, sin, sqrt
-from typing import Any, Mapping, Optional, Sequence, Tuple, cast
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple, cast
 from zoneinfo import ZoneInfo
 
 from viajante.airports import (
@@ -1050,22 +1050,15 @@ def _flag_map(text: str) -> dict[str, str]:
     return found
 
 
-def _named_currency(flags: Mapping[str, str]) -> Optional[str]:
-    raw = flags.get("currency")
+def _named_code(
+    flags: Mapping[str, str], key: str, normalize: Callable[[str], Optional[str]]
+) -> Optional[str]:
+    """Named --currency / --country flag, or None when unnamed or not a valid code."""
+    raw = flags.get(key)
     if not raw:
         return None
     try:
-        return normalize_currency(raw)
-    except ValueError:
-        return None
-
-
-def _named_country(flags: Mapping[str, str]) -> Optional[str]:
-    raw = flags.get("country")
-    if not raw:
-        return None
-    try:
-        return normalize_country(raw)
+        return normalize(raw)
     except ValueError:
         return None
 
@@ -1595,14 +1588,6 @@ def _nonstop_min_layover_notes(min_layover: float) -> str:
     )
 
 
-def _origin_in_excluded_regions(
-    origin: Optional[str],
-    exclude_regions: Sequence[str],
-) -> Tuple[str, ...]:
-    """Owned IANA tz prefix vs excluded region. Unknown tz cannot prove inside."""
-    return matching_excluded_regions(origin, exclude_regions)
-
-
 def _origin_inside_excluded_region_notes(origin: str, regions: Sequence[str]) -> str:
     """Honesty line: named origin sits in an excluded region. No invented dests or fares."""
     dropped = ", ".join(regions)
@@ -1871,36 +1856,26 @@ def _bag_fields(
     return _baggage_label(carry_only=carry_only, no_checked=no_checked, bags=bags), bags, carry_on
 
 
-def _named_price_cap(folded: str, flags: Mapping[str, str]) -> Optional[int]:
-    """Named cap only. Unnamed stays None. Do not invent a fare or a cap."""
-    if "price-cap" in flags:
+def _named_amount(
+    folded: str,
+    flags: Mapping[str, str],
+    key: str,
+    prose: Sequence[re.Pattern[str]],
+    *,
+    minimum: int,
+) -> Optional[int]:
+    """Named flag or prose amount only. Unnamed stays None; never invent a fare, cap, or bag fee."""
+    if key in flags:
         try:
-            value = int(flags["price-cap"])
+            value = int(flags[key])
         except ValueError:
             return None
-        return value if value > 0 else None
-    cap = _PRICE_CAP_EUR_SIGN.search(folded)
-    if cap is None:
-        cap = _PRICE_CAP_EUR_WORD.search(folded)
-    if cap is None:
-        return None
-    value = int(cap.group(1))
-    return value if value > 0 else None
-
-
-def _named_baggage_buffer(folded: str, flags: Mapping[str, str]) -> Optional[int]:
-    """Named ranking buffer only. Unnamed stays None. Do not invent a fare or bags."""
-    if "baggage-buffer" in flags:
-        try:
-            value = int(flags["baggage-buffer"])
-        except ValueError:
+    else:
+        hit = next((match for pattern in prose if (match := pattern.search(folded))), None)
+        if hit is None:
             return None
-        return value if value >= 0 else None
-    hit = _BAG_BUFFER_PROSE.search(folded)
-    if hit is None:
-        return None
-    value = int(hit.group(1))
-    return value if value >= 0 else None
+        value = int(hit.group(1))
+    return value if value >= minimum else None
 
 
 _ENGLISH_IATA_WORDS = frozenset(
@@ -1968,18 +1943,12 @@ def _phrase_starts(folded: str, phrase: str) -> list[int]:
     return [match.start() for match in pattern.finditer(folded)]
 
 
-def _add_unique(dst: list[str], codes: Sequence[str]) -> None:
-    for code in codes:
-        if code not in dst:
-            dst.append(code)
-
-
 def _codes_from_blob(blob: str) -> tuple[str, ...]:
     codes: list[str] = []
     for part in _CODE_SPLIT.split(blob.strip()):
         token = part.strip().upper()
         if len(token) == 2 and token.isalpha() and token.casefold() not in _ENGLISH_IATA_WORDS:
-            _add_unique(codes, (token,))
+            _extend_unique(codes, (token,))
     return tuple(codes)
 
 
@@ -2000,10 +1969,10 @@ def _adjacent_airline_codes(folded: str, start: int, name: str) -> tuple[str, ..
     found: list[str] = []
     pre = _PREFIX_CODE.search(prefix)
     if pre:
-        _add_unique(found, _codes_from_blob(pre.group(1)))
+        _extend_unique(found, _codes_from_blob(pre.group(1)))
     post = _SUFFIX_CODE.match(suffix)
     if post:
-        _add_unique(found, _codes_from_blob(post.group(1)))
+        _extend_unique(found, _codes_from_blob(post.group(1)))
     return tuple(found)
 
 
@@ -2015,36 +1984,36 @@ def _carriers_from_prompt(
     alliance: list[str] = []
     exclude_alliance: list[str] = []
     if "airlines" in flags:
-        _add_unique(include, parse_airline_codes(flags["airlines"]) or ())
+        _extend_unique(include, parse_airline_codes(flags["airlines"]) or ())
     if "exclude-airlines" in flags:
-        _add_unique(exclude, parse_airline_codes(flags["exclude-airlines"]) or ())
+        _extend_unique(exclude, parse_airline_codes(flags["exclude-airlines"]) or ())
     if "alliance" in flags:
-        _add_unique(alliance, parse_alliances(flags["alliance"]) or ())
+        _extend_unique(alliance, parse_alliances(flags["alliance"]) or ())
     if "exclude-alliance" in flags:
-        _add_unique(exclude_alliance, parse_alliances(flags["exclude-alliance"]) or ())
+        _extend_unique(exclude_alliance, parse_alliances(flags["exclude-alliance"]) or ())
     for phrase, canonical in ALLIANCE_PHRASES:
         for start in _phrase_starts(folded, phrase):
             if _carrier_is_negated(folded, start):
-                _add_unique(exclude_alliance, (canonical,))
+                _extend_unique(exclude_alliance, (canonical,))
             else:
-                _add_unique(alliance, (canonical,))
+                _extend_unique(alliance, (canonical,))
     for name, codes in _AIRLINE_NAME_TABLE:
         for start in _phrase_starts(folded, name):
             neighbors = _adjacent_airline_codes(folded, start, name)
             if _carrier_is_negated(folded, start):
-                _add_unique(exclude, codes)
-                _add_unique(exclude, neighbors)
+                _extend_unique(exclude, codes)
+                _extend_unique(exclude, neighbors)
             else:
-                _add_unique(include, codes)
-                _add_unique(include, neighbors)
+                _extend_unique(include, codes)
+                _extend_unique(include, neighbors)
     carrier_text = _mask_alliance_phrases(folded)
     for match in _ONLY_CODES.finditer(carrier_text):
         blob = match.group(1) or match.group(2)
-        _add_unique(include, _codes_from_blob(blob))
+        _extend_unique(include, _codes_from_blob(blob))
     for match in _NOT_CODE.finditer(carrier_text):
-        _add_unique(exclude, _codes_from_blob(match.group(1)))
+        _extend_unique(exclude, _codes_from_blob(match.group(1)))
     for match in _OR_CODES.finditer(carrier_text):
-        _add_unique(include, _codes_from_blob(match.group(1)))
+        _extend_unique(include, _codes_from_blob(match.group(1)))
     include = [code for code in include if code not in exclude]
     alliance = [name for name in alliance if name not in exclude_alliance]
     return tuple(include), tuple(exclude), tuple(alliance), tuple(exclude_alliance)
@@ -2184,33 +2153,20 @@ def _named_iata_codes(raw: str, folded: str) -> set[str]:
     return named
 
 
+def _airport_name_hits(pattern: re.Pattern[str], raw: str) -> list[str]:
+    return [_AIRPORT_NAME_TO_IATA[match.group(1).casefold()] for match in pattern.finditer(raw)]
+
+
 def _excluded_airports(raw: str) -> list[str]:
-    found: list[str] = []
-    for match in _NEGATED_AIRPORT_IATA.finditer(raw):
-        code = match.group(1).upper()
-        if is_known_iata(code) and code not in found:
-            found.append(code)
-    for match in _NEGATED_AIRPORT_NAME.finditer(raw):
-        code = _AIRPORT_NAME_TO_IATA[match.group(1).casefold()]
-        if code not in found:
-            found.append(code)
-    for match in _JA_NOT_IATA.finditer(raw):
-        code = match.group(1).upper()
-        if is_known_iata(code) and code not in found:
-            found.append(code)
+    found = _iata_group_hits(_NEGATED_AIRPORT_IATA, raw)
+    _extend_unique(found, _airport_name_hits(_NEGATED_AIRPORT_NAME, raw))
+    _extend_unique(found, _iata_group_hits(_JA_NOT_IATA, raw))
     return found
 
 
 def _use_airports(raw: str) -> list[str]:
-    found: list[str] = []
-    for match in _PREFER_AIRPORT_IATA.finditer(raw):
-        code = match.group(1).upper()
-        if is_known_iata(code) and code not in found:
-            found.append(code)
-    for match in _PREFER_AIRPORT_NAME.finditer(raw):
-        code = _AIRPORT_NAME_TO_IATA[match.group(1).casefold()]
-        if code not in found:
-            found.append(code)
+    found = _iata_group_hits(_PREFER_AIRPORT_IATA, raw)
+    _extend_unique(found, _airport_name_hits(_PREFER_AIRPORT_NAME, raw))
     return found
 
 
@@ -2550,9 +2506,11 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
     if "viernes" in folded or "friday" in folded:
         weekday = "friday"
 
-    price_cap = _named_price_cap(folded, flags)
-    currency = _named_currency(flags)
-    country = _named_country(flags)
+    price_cap = _named_amount(
+        folded, flags, "price-cap", (_PRICE_CAP_EUR_SIGN, _PRICE_CAP_EUR_WORD), minimum=1
+    )
+    currency = _named_code(flags, "currency", normalize_currency)
+    country = _named_code(flags, "country", normalize_country)
 
     origin: Optional[str] = None
     destination: Optional[str] = None
@@ -2783,7 +2741,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             "Do not brute-force a date matrix; shortlist then ±1 on 1-3 finalists.",
         )
     if exclude_regions and _is_explore(folded):
-        origin_inside = _origin_in_excluded_regions(origin, exclude_regions)
+        origin_inside = matching_excluded_regions(origin, exclude_regions)
         if origin_inside and origin:
             notes = _append_note(
                 notes,
@@ -2859,7 +2817,7 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         refuse.append("past_date")
 
     baggage, bags, carry_on = _bag_fields(folded, flags, raw)
-    baggage_buffer = _named_baggage_buffer(folded, flags)
+    baggage_buffer = _named_amount(folded, flags, "baggage-buffer", (_BAG_BUFFER_PROSE,), minimum=0)
     arrive_before = _named_hhmm(folded, flags, flag="arrive-before", pattern=_ARRIVE_BEFORE)
     depart_after = _named_hhmm(folded, flags, flag="depart-after", pattern=_DEPART_AFTER)
     depart_window = _depart_window(folded, flags)
@@ -3091,10 +3049,10 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
             baggage_buffer=baggage_buffer,
         )
 
+    date_trip = (
+        "rt" if nights_stay is not None else (trip if trip in {"one-way", "rt"} else "one-way")
+    )
     if intent == "flex":
-        date_trip = (
-            "rt" if nights_stay is not None else (trip if trip in {"one-way", "rt"} else "one-way")
-        )
         return PromptPlan(
             intent="flex",
             origin=origin,
@@ -3139,9 +3097,6 @@ def plan_prompt(text: str, *, today: Optional[date] = None) -> PromptPlan:
         )
 
     if intent == "dates":
-        date_trip = (
-            "rt" if nights_stay is not None else (trip if trip in {"one-way", "rt"} else "one-way")
-        )
         return PromptPlan(
             intent="dates",
             origin=origin,

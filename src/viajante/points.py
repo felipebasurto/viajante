@@ -16,7 +16,6 @@ from viajante.models import (
     normalize_currency,
 )
 from viajante.quote import resolve_quote_currency
-from viajante.storage import write_json_atomic
 
 # Public 1:1 card-to-program partners. Ratios are not live availability.
 TRANSFER_LAST_VERIFIED = date(2026, 9, 10)
@@ -265,7 +264,3 @@ def compare_award(
         currency=quote,
         cpp_cents=cpp,
     )
-
-
-def write_award_compare_atomic(report: AwardCompareReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)

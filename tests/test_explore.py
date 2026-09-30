@@ -17,7 +17,7 @@ from viajante.flights import (
     parse_depart_window,
     parse_named_clock,
 )
-from viajante.google_flights import RawFlightCard, google_flights_url
+from viajante.google_flights import NoFlightsFound, RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactExplorePlace,
@@ -1680,6 +1680,51 @@ class TypicalExploreDestTests(unittest.TestCase):
         self.assertIsNone(by_iata["LIS"].typical)
         self.assertNotIn("typical", by_iata["LIS"].to_dict())
         self.assertNotEqual(by_iata["LIS"].typical, by_iata["OPO"].typical)
+
+    def test_batched_source_prices_all_dests_in_one_dispatch(self) -> None:
+        class Batched(FakeExploreCalendarSource):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.batches: list[list[tuple[str, date, date]]] = []
+
+            def fetch_many_with_calendar(self, jobs):
+                self.batches.append([(trip.destination, start, end) for trip, start, end in jobs])
+                rows = []
+                for trip, _start, _end in jobs:
+                    cards = self.prices.get(trip.destination)
+                    rows.append(
+                        (cards or NoFlightsFound(), self.calendars.get(trip.destination, ()))
+                    )
+                return rows
+
+        source = Batched(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+            ),
+            prices={"OPO": (_card(price="€80"),)},
+            calendars={
+                "OPO": (
+                    CompactCalendarDay(date(2026, 9, 1), 100.0),
+                    CompactCalendarDay(date(2026, 9, 2), 120.0),
+                    CompactCalendarDay(date(2026, 9, 3), 80.0),
+                ),
+                "LIS": (
+                    CompactCalendarDay(date(2026, 9, 1), 50.0),
+                    CompactCalendarDay(date(2026, 9, 2), 50.0),
+                    CompactCalendarDay(date(2026, 9, 3), 50.0),
+                ),
+            },
+        )
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
+        self.assertEqual([[job[0] for job in batch] for batch in source.batches], [["OPO", "LIS"]])
+        self.assertEqual(source.fetched_queries, [])
+        self.assertEqual(source.calendar_calls, [])
+        by_iata = {row.iata: row for row in report.destinations}
+        self.assertEqual(by_iata["OPO"].price, 80.0)
+        self.assertEqual(by_iata["OPO"].typical, 100.0)
+        self.assertIsNone(by_iata["LIS"].price)
+        self.assertIsNone(by_iata["LIS"].typical)
 
     def test_explore_cli_prints_typical_deal_for_shopped_dest(self) -> None:
         source = FakeExploreCalendarSource(

@@ -5,26 +5,30 @@ Catalog RPC, then price the first --top dests on the start date.
 
 from __future__ import annotations
 
+import calendar
 import time
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
+from viajante.dates import _fetch_or_exception, calendar_trip, one_or_many
 from viajante.flights import (
-    FLIGHT_SORTS,
     FlightSort,
+    OfferFilters,
     _calendar_summary_from_source,
     _cheapest_by_fare,
     _cheapest_by_ranked,
     _clock_minutes,
-    _normalize_offer,
+    _summary_from_calendar_days,
+    _typical_window,
     classify_failure,
     compare_nonstop_vs_one_stop,
     expand_nearby_origins,
-    parse_overnight_lists,
-    parse_via_airports,
-    validate_layover_hours,
+    offers_from_cards,
+    owned_clock,
+    parse_code_list,
+    parse_offer_filters,
+    validate_sort,
 )
 from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import CompactExplorePlace
@@ -36,10 +40,10 @@ from viajante.models import (
     FlightQuery,
     SearchError,
     StopsCompare,
+    Trip,
     normalize_country,
 )
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
-from viajante.storage import write_json_atomic
 from viajante.typical import with_typical_dest
 
 DEFAULT_EXPLORE_TOP = 12
@@ -72,90 +76,14 @@ def validate_explore_window(start: date, days: int, *, today: Optional[date] = N
         raise ValueError(f"start date is in the past: {start.isoformat()}")
 
 
-def _parse_via_pair(
-    via: Optional[Sequence[str]],
-    exclude_via: Optional[Sequence[str]],
-) -> tuple[Optional[tuple[str, ...]], Optional[tuple[str, ...]]]:
-    parsed_via = parse_via_airports(",".join(via), role="via") if via else None
-    parsed_exclude = (
-        parse_via_airports(",".join(exclude_via), role="exclude-via") if exclude_via else None
-    )
-    if parsed_via and parsed_exclude and set(parsed_via) & set(parsed_exclude):
-        raise ValueError("via and exclude-via must not share a code")
-    return parsed_via, parsed_exclude
-
-
-def _parse_exclude_airports(
-    exclude_airports: Optional[Sequence[str]],
-) -> Optional[tuple[str, ...]]:
-    return (
-        parse_via_airports(",".join(exclude_airports), role="exclude-airports")
-        if exclude_airports
-        else None
-    )
-
-
-def _parse_include_airports(
-    include_airports: Optional[Sequence[str]],
-) -> Optional[tuple[str, ...]]:
-    return (
-        parse_via_airports(",".join(include_airports), role="include-airports")
-        if include_airports
-        else None
-    )
-
-
-def _parse_exclude_regions(
-    exclude_regions: Optional[Sequence[str]],
-) -> Optional[tuple[str, ...]]:
-    return parse_exclude_regions(",".join(exclude_regions)) if exclude_regions else None
-
-
-def _named_shop_filters(
-    *,
-    bags: Optional[int],
-    carry_on: Optional[int],
-    price_cap: Optional[int],
-    airlines: Optional[Sequence[str]],
-    exclude_airlines: Optional[Sequence[str]],
-    alliances: Optional[Sequence[str]],
-    exclude_alliances: Optional[Sequence[str]],
-    via: Optional[Sequence[str]],
-    exclude_via: Optional[Sequence[str]],
-    no_overnight: Optional[Sequence[str]],
-    require_overnight: Optional[Sequence[str]],
-    depart_window: Optional[Tuple[int, int]],
-    arrive_before: Optional[int],
-    depart_after: Optional[int],
-    max_layover_hours: Optional[float],
-    min_layover_hours: Optional[float],
-    max_duration_hours: Optional[float],
-) -> bool:
-    return (
-        bags is not None
-        or carry_on is not None
-        or price_cap is not None
-        or bool(airlines)
-        or bool(exclude_airlines)
-        or bool(alliances)
-        or bool(exclude_alliances)
-        or bool(via)
-        or bool(exclude_via)
-        or bool(no_overnight)
-        or bool(require_overnight)
-        or depart_window is not None
-        or arrive_before is not None
-        or depart_after is not None
-        or max_layover_hours is not None
-        or min_layover_hours is not None
-        or max_duration_hours is not None
-    )
-
-
-def _one_or_many(reports: list[ExploreReport]) -> ExploreReport | tuple[ExploreReport, ...]:
-    if len(reports) == 1:
-        return reports[0]
-    return tuple(reports)
+def month_window(value: str, *, flag: str = "month") -> tuple[date, int]:
+    """First day of YYYY-MM and that month's length in days."""
+    try:
+        year_text, month_text = value.split("-", 1)
+        start = date(int(year_text), int(month_text), 1)
+    except ValueError as exc:
+        raise ValueError(f"{flag} must look like YYYY-MM") from exc
+    return start, calendar.monthrange(start.year, start.month)[1]
 
 
 def _rank_explore_destinations(
@@ -184,160 +112,6 @@ def _rank_explore_destinations(
         return (row.price is None, fare, row.iata)
 
     return tuple(sorted(dests, key=sort_key))
-
-
-def _explore_for_origin(
-    client: ExploreSource,
-    origin: str,
-    start: date,
-    *,
-    days: int,
-    top: int,
-    adults: int,
-    children: int,
-    infants_in_seat: int,
-    infants_on_lap: int,
-    cabin: FlightCabin,
-    max_stops: int,
-    bags: Optional[int],
-    carry_on: Optional[int],
-    price_cap: Optional[int],
-    airlines: Optional[Sequence[str]],
-    exclude_airlines: Optional[Sequence[str]],
-    alliances: Optional[Sequence[str]],
-    exclude_alliances: Optional[Sequence[str]],
-    parsed_via: Optional[tuple[str, ...]],
-    parsed_exclude_via: Optional[tuple[str, ...]],
-    parsed_no_overnight: Optional[tuple[str, ...]],
-    parsed_require_overnight: Optional[tuple[str, ...]],
-    parsed_exclude_airports: Optional[tuple[str, ...]],
-    parsed_include_airports: Optional[tuple[str, ...]],
-    parsed_exclude_regions: Optional[tuple[str, ...]],
-    depart_window: Optional[Tuple[int, int]],
-    arrive_before: Optional[int],
-    depart_after: Optional[int],
-    max_layover_hours: Optional[float],
-    min_layover_hours: Optional[float],
-    max_duration_hours: Optional[float],
-    drop_unpriced: bool,
-    nearby_label: Optional[str],
-    currency: str,
-    country: Optional[str],
-    sort: FlightSort,
-    baggage_buffer: int,
-    report_progress: Callable[[str], None],
-) -> ExploreReport:
-    nearby = f" ({nearby_label})" if nearby_label else ""
-    report_progress(
-        f"explore: from {origin} on {start.isoformat()} (top {top} catalog dests that day){nearby}"
-    )
-    started = time.perf_counter()
-    error: Optional[SearchError] = None
-    destinations: tuple[ExploreDestination, ...] = ()
-    try:
-        places = tuple(
-            client.fetch_explore(
-                origin,
-                start,
-                adults=adults,
-                cabin=cabin,
-                children=children,
-                infants_in_seat=infants_in_seat,
-                infants_on_lap=infants_on_lap,
-            )
-        )
-    except Exception as exc:
-        error = classify_failure(exc)
-        places = ()
-    allowed = frozenset(parsed_include_airports or ())
-    blocked = frozenset(parsed_exclude_airports or ())
-    if allowed:
-        places = tuple(place for place in places if place.iata in allowed)
-    if blocked:
-        places = tuple(place for place in places if place.iata not in blocked)
-    if parsed_exclude_regions:
-        places = tuple(
-            place
-            for place in places
-            if not dest_blocked_by_exclude_regions(place.iata, parsed_exclude_regions)
-        )
-    priced: list[ExploreDestination] = []
-    typical_cache: dict = {}
-    for index, place in enumerate(places[:top]):
-        report_progress(f"[{index + 1}/{min(top, len(places))}] pricing {place.iata}")
-        cheapest, compare, shop = _cheapest_shop(
-            client,
-            origin=origin,
-            destination=place.iata,
-            departure_date=start,
-            max_stops=max_stops,
-            adults=adults,
-            children=children,
-            infants_in_seat=infants_in_seat,
-            infants_on_lap=infants_on_lap,
-            cabin=cabin,
-            bags=bags,
-            carry_on=carry_on,
-            price_cap=price_cap,
-            airlines=airlines,
-            exclude_airlines=exclude_airlines,
-            alliances=alliances,
-            exclude_alliances=exclude_alliances,
-            via=parsed_via,
-            exclude_via=parsed_exclude_via,
-            no_overnight=parsed_no_overnight,
-            require_overnight=parsed_require_overnight,
-            depart_window=depart_window,
-            arrive_before=arrive_before,
-            depart_after=depart_after,
-            max_layover_hours=max_layover_hours,
-            min_layover_hours=min_layover_hours,
-            max_duration_hours=max_duration_hours,
-            baggage_buffer=baggage_buffer,
-            sort=sort,
-        )
-        price = cheapest.price if cheapest is not None else None
-        if drop_unpriced and price is None:
-            continue
-        dest = ExploreDestination(
-            iata=place.iata,
-            city=place.city,
-            country=place.country,
-            price=price,
-            duration_hours=cheapest.duration_hours if cheapest is not None else None,
-            departure=(
-                cheapest.departure
-                if cheapest is not None and _clock_minutes(cheapest.departure) is not None
-                else None
-            ),
-            arrival=(
-                cheapest.arrival
-                if cheapest is not None and _clock_minutes(cheapest.arrival) is not None
-                else None
-            ),
-            stops_compare=compare,
-            google_flights_url=google_flights_url(shop, currency=currency, country=country),
-            baggage_buffer=(cheapest.baggage_buffer if cheapest is not None else None),
-        )
-        if price is not None:
-            summary = _calendar_summary_from_source(client, shop, typical_cache)
-            if summary is not None:
-                dest = with_typical_dest(dest, summary.median_price)
-        priced.append(dest)
-    destinations = _rank_explore_destinations(priced, sort)
-    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return ExploreReport(
-        searched_at=datetime.now(timezone.utc),
-        origin=origin,
-        start_date=start,
-        days=days,
-        destinations=destinations,
-        fetch_backend="explore",
-        fetch_ms=fetch_ms,
-        error=error,
-        nearby_label=nearby_label,
-        currency=currency,
-    )
 
 
 def search_explore(
@@ -387,51 +161,41 @@ def search_explore(
         raise ValueError("top must be positive")
     if top > MAX_EXPLORE_TOP:
         raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
-    if sort not in FLIGHT_SORTS:
-        raise ValueError(
-            "sort must be 'ranked', 'fare', 'price', 'duration', 'departure', or 'arrival'"
-        )
+    validate_sort(sort)
     if price_cap is not None and price_cap <= 0:
         raise ValueError("price_cap must be positive")
-    validate_layover_hours(
+    filters = parse_offer_filters(
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
         max_duration_hours=max_duration_hours,
+        depart_window=depart_window,
+        arrive_before=arrive_before,
+        depart_after=depart_after,
+        via=via,
+        exclude_via=exclude_via,
+        no_overnight=no_overnight,
+        require_overnight=require_overnight,
     )
-    parsed_via, parsed_exclude_via = _parse_via_pair(via, exclude_via)
-    parsed_no_overnight, parsed_require_overnight = parse_overnight_lists(
-        no_overnight, require_overnight
+    parsed_exclude_airports = parse_code_list(exclude_airports, role="exclude-airports")
+    parsed_include_airports = parse_code_list(include_airports, role="include-airports")
+    parsed_exclude_regions = (
+        parse_exclude_regions(",".join(exclude_regions)) if exclude_regions else None
     )
-    parsed_exclude_airports = _parse_exclude_airports(exclude_airports)
-    parsed_include_airports = _parse_include_airports(include_airports)
-    parsed_exclude_regions = _parse_exclude_regions(exclude_regions)
     origin = origin.strip().upper()
     if not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
     currency = resolve_quote_currency(currency, origin)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
-    if baggage_buffer < 0:
-        raise ValueError("baggage buffer must not be negative")
     report_progress = progress or (lambda _: None)
-    drop_unpriced = _named_shop_filters(
-        bags=bags,
-        carry_on=carry_on,
-        price_cap=price_cap,
-        airlines=airlines,
-        exclude_airlines=exclude_airlines,
-        alliances=alliances,
-        exclude_alliances=exclude_alliances,
-        via=parsed_via,
-        exclude_via=parsed_exclude_via,
-        no_overnight=parsed_no_overnight,
-        require_overnight=parsed_require_overnight,
-        depart_window=depart_window,
-        arrive_before=arrive_before,
-        depart_after=depart_after,
-        max_layover_hours=max_layover_hours,
-        min_layover_hours=min_layover_hours,
-        max_duration_hours=max_duration_hours,
+    drop_unpriced = (
+        bags is not None
+        or carry_on is not None
+        or price_cap is not None
+        or bool(airlines or exclude_airlines or alliances or exclude_alliances)
+        or filters.named
     )
+    allowed = frozenset(parsed_include_airports or ())
+    blocked = frozenset(parsed_exclude_airports or ())
     origins = expand_nearby_origins(origin, nearby=nearby, exclude_airports=parsed_exclude_airports)
     if not origins:
         return ExploreReport(
@@ -445,158 +209,134 @@ def search_explore(
             currency=currency,
         )
     client = source or GoogleFlightsHttpSource(currency=currency, country=country, proxy=proxy)
-    reports: list[ExploreReport] = []
-    try:
-        for code, label in origins:
-            reports.append(
-                _explore_for_origin(
-                    client,
+
+    def explore_origin(code: str, nearby_label: Optional[str]) -> ExploreReport:
+        suffix = f" ({nearby_label})" if nearby_label else ""
+        report_progress(
+            f"explore: from {code} on {start.isoformat()} "
+            f"(top {top} catalog dests that day){suffix}"
+        )
+        started = time.perf_counter()
+        error: Optional[SearchError] = None
+        try:
+            places = tuple(
+                client.fetch_explore(
                     code,
                     start,
-                    days=days,
-                    top=top,
                     adults=adults,
+                    cabin=cabin,
                     children=children,
                     infants_in_seat=infants_in_seat,
                     infants_on_lap=infants_on_lap,
-                    cabin=cabin,
-                    max_stops=max_stops,
-                    bags=bags,
-                    carry_on=carry_on,
-                    price_cap=price_cap,
-                    airlines=airlines,
-                    exclude_airlines=exclude_airlines,
-                    alliances=alliances,
-                    exclude_alliances=exclude_alliances,
-                    parsed_via=parsed_via,
-                    parsed_exclude_via=parsed_exclude_via,
-                    parsed_no_overnight=parsed_no_overnight,
-                    parsed_require_overnight=parsed_require_overnight,
-                    parsed_exclude_airports=parsed_exclude_airports,
-                    parsed_include_airports=parsed_include_airports,
-                    parsed_exclude_regions=parsed_exclude_regions,
-                    depart_window=depart_window,
-                    arrive_before=arrive_before,
-                    depart_after=depart_after,
-                    max_layover_hours=max_layover_hours,
-                    min_layover_hours=min_layover_hours,
-                    max_duration_hours=max_duration_hours,
-                    drop_unpriced=drop_unpriced,
-                    nearby_label=label,
-                    currency=currency,
-                    country=country,
-                    sort=sort,
-                    baggage_buffer=baggage_buffer,
-                    report_progress=report_progress,
                 )
             )
+        except Exception as exc:
+            error = classify_failure(exc)
+            places = ()
+        places = tuple(
+            place
+            for place in places
+            if (not allowed or place.iata in allowed)
+            and place.iata not in blocked
+            and not (
+                parsed_exclude_regions
+                and dest_blocked_by_exclude_regions(place.iata, parsed_exclude_regions)
+            )
+        )
+        chosen = places[:top]
+        shops = [
+            calendar_trip(
+                code,
+                place.iata,
+                start,
+                max_stops=max_stops,
+                adults=adults,
+                children=children,
+                infants_in_seat=infants_in_seat,
+                infants_on_lap=infants_on_lap,
+                cabin=cabin,
+                bags=bags,
+                carry_on=carry_on,
+                price_cap=price_cap,
+                airlines=airlines,
+                exclude_airlines=exclude_airlines,
+                alliances=alliances,
+                exclude_alliances=exclude_alliances,
+            )
+            for place in chosen
+        ]
+        typical_start, typical_end = _typical_window(start)
+        batch = None
+        fetch_batch = getattr(client, "fetch_many_with_calendar", None)
+        if callable(fetch_batch) and len(shops) > 1:
+            report_progress(f"pricing {len(shops)} dests on one multiplexed round-trip")
+            try:
+                batch = fetch_batch([(shop, typical_start, typical_end) for shop in shops])
+            except Exception:
+                batch = None
+        priced: list[ExploreDestination] = []
+        typical_cache: dict = {}
+        for index, (place, shop) in enumerate(zip(chosen, shops, strict=True)):
+            if batch is None:
+                report_progress(f"[{index + 1}/{len(chosen)}] pricing {place.iata}")
+                cards, calendar_days = _fetch_or_exception(client, shop), None
+            else:
+                cards, calendar_days = batch[index]
+            cheapest, compare = _cheapest_shop(
+                cards, shop, filters, baggage_buffer=baggage_buffer, sort=sort
+            )
+            if drop_unpriced and cheapest is None:
+                continue
+            dest = ExploreDestination(
+                iata=place.iata,
+                city=place.city,
+                country=place.country,
+                price=cheapest.price if cheapest is not None else None,
+                duration_hours=cheapest.duration_hours if cheapest is not None else None,
+                departure=owned_clock(cheapest.departure) if cheapest is not None else None,
+                arrival=owned_clock(cheapest.arrival) if cheapest is not None else None,
+                stops_compare=compare,
+                google_flights_url=google_flights_url(shop, currency=currency, country=country),
+                baggage_buffer=cheapest.baggage_buffer if cheapest is not None else None,
+            )
+            if cheapest is not None:
+                summary = (
+                    _calendar_summary_from_source(client, shop, typical_cache)
+                    if batch is None
+                    else _summary_from_calendar_days(calendar_days, typical_start, typical_end)
+                )
+                if summary is not None:
+                    dest = with_typical_dest(dest, summary.median_price)
+            priced.append(dest)
+        return ExploreReport(
+            searched_at=datetime.now(timezone.utc),
+            origin=code,
+            start_date=start,
+            days=days,
+            destinations=_rank_explore_destinations(priced, sort),
+            fetch_backend="explore",
+            fetch_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            error=error,
+            nearby_label=nearby_label,
+            currency=currency,
+        )
+
+    try:
+        return one_or_many([explore_origin(code, label) for code, label in origins])
     finally:
         client.close()
-    return _one_or_many(reports)
-
-
-def write_explore_report_atomic(report: ExploreReport, destination: Path) -> None:
-    write_json_atomic(report.to_dict(), destination)
-
-
-def write_explore_reports_atomic(reports: Sequence[ExploreReport], destination: Path) -> None:
-    owned = tuple(reports)
-    if len(owned) == 1:
-        write_explore_report_atomic(owned[0], destination)
-        return
-    write_json_atomic({"queries": [row.to_dict() for row in owned]}, destination)
 
 
 def _cheapest_shop(
-    source: ExploreSource,
+    cards: Sequence[RawFlightCard] | BaseException,
+    query: Trip,
+    filters: OfferFilters,
     *,
-    origin: str,
-    destination: str,
-    departure_date: date,
-    max_stops: int,
-    adults: int,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-    cabin: FlightCabin,
-    bags: Optional[int] = None,
-    carry_on: Optional[int] = None,
-    price_cap: Optional[int] = None,
-    airlines: Optional[Sequence[str]] = None,
-    exclude_airlines: Optional[Sequence[str]] = None,
-    alliances: Optional[Sequence[str]] = None,
-    exclude_alliances: Optional[Sequence[str]] = None,
-    via: Optional[Sequence[str]] = None,
-    exclude_via: Optional[Sequence[str]] = None,
-    no_overnight: Optional[Sequence[str]] = None,
-    require_overnight: Optional[Sequence[str]] = None,
-    depart_window: Optional[Tuple[int, int]] = None,
-    arrive_before: Optional[int] = None,
-    depart_after: Optional[int] = None,
-    max_layover_hours: Optional[float] = None,
-    min_layover_hours: Optional[float] = None,
-    max_duration_hours: Optional[float] = None,
-    baggage_buffer: int = 0,
-    sort: FlightSort = "price",
-) -> tuple[Optional[FlightOffer], Optional[StopsCompare], FlightQuery]:
-    airline_codes = tuple(airlines) if airlines is not None else None
-    exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
-    alliance_names = tuple(alliances) if alliances is not None else None
-    exclude_alliance_names = tuple(exclude_alliances) if exclude_alliances is not None else None
-    query = FlightQuery(
-        origin=origin,
-        destination=destination,
-        departure_date=departure_date,
-        max_stops=max_stops,
-        adults=adults,
-        children=children,
-        infants_in_seat=infants_in_seat,
-        infants_on_lap=infants_on_lap,
-        cabin=cabin,
-        bags=bags,
-        carry_on=carry_on,
-        price_cap=price_cap,
-        airlines=airline_codes,
-        exclude_airlines=exclude_codes,
-        alliances=alliance_names,
-        exclude_alliances=exclude_alliance_names,
-    )
-    try:
-        cards = source.fetch(query)
-    except Exception:
-        return None, None, query
-    eligible = [
-        offer
-        for raw in cards
-        if (
-            offer := _normalize_offer(
-                raw,
-                max_stops,
-                baggage_buffer=baggage_buffer,
-                airlines=query.airlines,
-                exclude_airlines=query.exclude_airlines,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_layover_hours=max_layover_hours,
-                min_layover_hours=min_layover_hours,
-                max_duration_hours=max_duration_hours,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                bags=query.bags,
-                carry_on=query.carry_on,
-                price_cap=query.price_cap,
-            )
-        )
-        is not None
-    ]
-    if not eligible:
-        return None, None, query
+    baggage_buffer: int,
+    sort: FlightSort,
+) -> tuple[Optional[FlightOffer], Optional[StopsCompare]]:
+    if isinstance(cards, BaseException):
+        return None, None
+    eligible = offers_from_cards(cards, query, filters, baggage_buffer=baggage_buffer)
     cheapest = _cheapest_by_ranked(eligible) if sort == "ranked" else _cheapest_by_fare(eligible)
-    return (
-        cheapest,
-        compare_nonstop_vs_one_stop(eligible),
-        query,
-    )
+    return cheapest, compare_nonstop_vs_one_stop(eligible)

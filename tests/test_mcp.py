@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from viajante import mcp_handlers
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.mcp_handlers import (
     compare_awards_tool,
@@ -42,6 +43,9 @@ def _report(**payload: object) -> MagicMock:
 
 
 class McpHandlerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        mcp_handlers._CACHE.clear()
+
     def test_handlers_do_not_import_the_sdk(self) -> None:
         text = Path("src/viajante/mcp_handlers.py").read_text(encoding="utf-8")
         self.assertNotIn("from mcp", text)
@@ -1023,6 +1027,7 @@ class McpServerImportTests(unittest.TestCase):
                 "compare_awards",
                 "lookup_transfers",
                 "validate_itinerary",
+                "verify_answer",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))

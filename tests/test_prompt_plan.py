@@ -4,7 +4,7 @@ import unittest
 from datetime import date
 
 from viajante.airports import is_known_iata
-from viajante.flights import parse_flight_plan, plan_unit_count
+from viajante.flights import as_trips, parse_flight_plan
 from viajante.google_flights_rpc import build_shopping_inner
 from viajante.models import HotelQuery, MultiCity, RoundTrip, Trip
 from viajante.prompt_bench import PROMPT_BENCH_TODAY
@@ -326,7 +326,7 @@ class PromptPlanMediumTests(unittest.TestCase):
                 ("LGW", "YVR", date(2026, 10, 13)),
             ],
         )
-        self.assertEqual(plan_unit_count(parsed), 1)
+        self.assertEqual(len(as_trips(parsed)), 1)
 
     def test_any_london_airport_sets_nearby_and_keeps_heathrow(self) -> None:
         plan = plan_prompt("One-way BOS to any London airport on 2026-09-18. Do not invent a fare.")
