@@ -1,4 +1,4 @@
-# 1.3.1 metadata release proposal
+# 1.3.1 metadata release
 
 Prepared on 2026-10-02. Version 1.3.0 is published on PyPI and npm, and the
 published npx entry passed stdio smoke with all 15 tools and both local stay
@@ -23,12 +23,29 @@ and npm-availability fixes already merged into `main`.
 - Real checkout MCP stdio: exactly 15 tools; both local stay tools passed.
   No new travel-provider requests were made for this patch.
 
-## Pending approval and publication
+## Publication completed
 
-No v1.3.1 tag has been created or pushed. The prepared branch/PR is reviewable;
-publishing this new version requires explicit confirmation. After approval,
-merge with passing CI, tag the merge commit, and verify PyPI, npm, MCP Registry,
-and the published npx entry. The v1.3.0 tag remains unchanged.
+Version 1.3.1 and its tag were explicitly confirmed on 2026-10-02. PR #49
+merged into `4862283f802081376a69bdff86709c83f109a0de`; merge CI run
+`37005956186` passed Python 3.10–3.14, lint, and installed-wheel CLI/MCP smoke.
+Tag `v1.3.1` points to that merge commit. The v1.3.0 tag remains unchanged.
+
+Publish run [37006011348](https://github.com/felipebasurto/viajante/actions/runs/37006011348)
+completed all four jobs successfully: build, PyPI, npm, and MCP Registry.
+npm used the configured Trusted Publisher and signed provenance. The
+availability gate waited for npm propagation before registering the server.
+
+Authoritative public endpoints confirmed the PyPI wheel and sdist, npm version
+1.3.1 with the required `mcpName`, and MCP Registry version 1.3.1 with matching
+PyPI and npm transports. Real stdio smoke against both published `uvx` and
+`npx -y @viajante/mcp@1.3.1` entries returned exactly 15 tools;
+`plan_stay_blocks` and `split_stay_costs` passed synthetic roster and exact-cent
+assertions. No travel-provider calls were made for this metadata patch.
+The first `uvx` resolution used stale package-index metadata; `--refresh`
+resolved and installed the published version successfully.
+
+No version, merge, or tag decision remains pending. `main` and `develop` were
+synchronized after publication.
 
 Skiplagged live hotel search remains an upstream timeout; live room-rate smoke
 is still unverified. README follow-up and all provider evidence limitations
