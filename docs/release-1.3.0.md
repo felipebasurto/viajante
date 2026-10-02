@@ -67,9 +67,9 @@ route spec or `Trip` objects themselves.
 ## Publication decisions and follow-up
 
 The publish workflow runs on pushed `v*` tags. PyPI depends on the build;
-npm and MCP Registry both depend on PyPI and can run in parallel. The registry
-job takes its version from the tag; the built Python and npm versions come
-from the checked-in manifests, so they must match.
+npm follows PyPI; MCP Registry follows npm after the exact public version
+becomes available. The registry job takes its version from the tag; the built
+Python and npm versions come from the checked-in manifests, so they must match.
 
 Human confirmation is required for the final version and whether to merge
 `develop` into `main` first or tag the prepared `develop` commit as before.
@@ -118,5 +118,7 @@ The npm version became publicly available and the published npx entry passed
 stdio smoke (exactly 15 tools and both local stay tools). MCP Registry then
 reported that the npm package lacked required `mcpName` metadata. Version 1.3.0
 is available on PyPI and npm, but is not registered with both transports. Since
-published npm versions cannot be replaced, 1.3.1 is prepared as a metadata fix
-pending explicit version/tag confirmation. The v1.3.0 tag remains unchanged.
+published npm versions cannot be replaced, 1.3.1 was prepared as a metadata fix.
+After explicit confirmation, it was published successfully to PyPI, npm, and
+MCP Registry; see [the 1.3.1 results](release-1.3.1.md). The v1.3.0 tag remains
+unchanged.
