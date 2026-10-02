@@ -104,8 +104,9 @@ After configuring npm Trusted Publisher for `felipebasurto/viajante`, workflow
 `publish.yml`, with direct publish permission, npm accepted 1.3.0 with signed
 provenance in run `37003291748`. npm reported that processing could take a few
 minutes; MCP Registry initially rejected the version before it became visible.
-The npm job now waits up to 5 minutes for the exact public version before the
-registry job runs.
+The npm job now checks the exact public version up to 30 times, 10 seconds
+apart, before the registry job runs. Each read has a 10-second timeout and no
+HTTP retry.
 
 Published PyPI MCP smoke also passed: exactly 15 tools and both local stay tools.
 A single Skiplagged hotel retry after more than 30 minutes returned `fetch_failed`
