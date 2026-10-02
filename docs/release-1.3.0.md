@@ -85,3 +85,17 @@ README is intentionally untouched. Its owner should change “twelve tools” to
 MCP table, add CLI `hotel-rooms` and opt-in Skiplagged hotels, describe `stays`
 and `near`, and qualify mandatory hotel currency with the Skiplagged USD
 exception. Explain unsupported cancellation and provider room-capacity limits.
+
+## Publication attempt and recovery
+
+Version 1.3.0 and publication via `main` were confirmed on 2026-10-02. PR #46
+merged into `7732bfb`; both PR and merge CI passed Python 3.10–3.14 (1031 tests
+each), lint, and installed-wheel CLI/MCP smoke. Tag `v1.3.0` points to that
+merge commit. PyPI published its wheel and sdist successfully.
+
+Publish run `37001994541` failed at npm with `ENEEDAUTH`; no `NPM_TOKEN` secret
+was available. MCP Registry then rejected the missing npm version. The recovery
+workflow waits for npm before registering, removes an empty auth entry for OIDC,
+and accepts an existing `release_tag` via manual dispatch. It checks that the tag
+matches the npm version and that PyPI already contains the release; it skips
+building and publishing PyPI on recovery. The original tag remains unchanged.

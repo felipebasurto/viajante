@@ -4,9 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to resume npm and MCP Registry (PyPI is already published)"
+        required: true
+        type: string
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,12 +45,20 @@ jobs:
 
   npm:
     needs: pypi
+    if: ${{ !cancelled() && (needs.pypi.result == 'success' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     steps:
+      - name: Validate recovery tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -54,9 +69,12 @@ jobs:
         working-directory: npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           name=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
+          test "$RELEASE_TAG" = "v$version"
+          curl --fail --silent --show-error "https://pypi.org/pypi/viajante/$version/json" >/dev/null
           if npm view "$name@$version" version >/dev/null 2>&1; then
             echo "$name@$version already on npm; skip"
             exit 0
@@ -64,20 +82,28 @@ jobs:
           if [ -n "$NODE_AUTH_TOKEN" ]; then
             npm publish --access public
           else
+            # An empty setup-node auth entry can prevent npm from using OIDC.
+            npm config delete '//registry.npmjs.org/:_authToken' --location=user
+            unset NODE_AUTH_TOKEN
             npm publish --access public --provenance
           fi
 
   mcp-registry:
-    needs: pypi
+    needs: npm
+    if: ${{ !cancelled() && needs.npm.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - name: Set registry versions
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           jq --arg version "$version" \
             '.version = $version | .packages |= map(.version = $version)' \
             server.json > server.tmp
