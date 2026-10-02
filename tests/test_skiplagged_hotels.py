@@ -14,12 +14,14 @@ from viajante.models import (
     SearchErrorCode,
 )
 from viajante.skiplagged_hotels import (
+    SkiplaggedAmbiguousName,
     SkiplaggedHotelsSource,
     SkiplaggedNoHotels,
     SkiplaggedParseMiss,
     build_applied_filters,
     parse_rooms_report,
     parse_search_page,
+    resolve_hotel_id,
     search_hotel_rooms,
 )
 
@@ -265,6 +267,96 @@ class SkiplaggedRateLimitTests(unittest.TestCase):
         self.assertEqual(report.error.code, SearchErrorCode.BLOCKED)
         self.assertTrue(report.error.rate_limited)
         self.assertEqual(calls, ["initialize"])
+
+
+def _routing_rpc(search_result: dict, details_result: dict, calls: list):
+    """Answers sk_hotels_search and sk_hotel_details with the matching fake result."""
+
+    def rpc(url, payload, headers):
+        method = payload.get("method")
+        if method == "initialize":
+            return 200, {}, _sse({"jsonrpc": "2.0", "id": 1, "result": {}})
+        if method == "notifications/initialized":
+            return 202, {}, ""
+        calls.append(payload["params"])
+        name = payload["params"]["name"]
+        result = search_result if name == "sk_hotels_search" else details_result
+        return 200, {}, _sse({"jsonrpc": "2.0", "id": 2, "result": result})
+
+    return rpc
+
+
+class SkiplaggedNameLookupTests(unittest.TestCase):
+    DAY = (date(2026, 12, 1), date(2026, 12, 4))
+
+    def test_exact_name_ignoring_case_accents_and_punctuation_resolves_one_id(self) -> None:
+        rpc = _routing_rpc(_search_result(), {}, [])
+        found = resolve_hotel_id("CZECH  inn!", "Prague", *self.DAY, adults=3, rpc=rpc)
+        self.assertEqual(found, (25584, "Czech Inn"))
+
+    def test_no_match_lists_close_names_and_does_not_guess(self) -> None:
+        rpc = _routing_rpc(_search_result(), {}, [])
+        with self.assertRaises(SkiplaggedNoHotels) as ctx:
+            resolve_hotel_id("Czech Inne Hostel", "Prague", *self.DAY, adults=3, rpc=rpc)
+        message = str(ctx.exception)
+        self.assertIn("Closest returned: Czech Inn", message)
+        self.assertIn("Nothing was guessed", message)
+
+    def test_two_hotels_with_one_name_ask_for_the_id(self) -> None:
+        result = _search_result()
+        result["structuredContent"]["results"].append(_card(99, "CZECH INN", "Elsewhere 1", 2))
+        result["content"][0]["text"] += (
+            "\n| **CZECH INN**<br/>Elsewhere 1 | 2★ · 7.0/10 | $40 | $120 | — | "
+            "[View deal](https://skiplagged.com/hotel/99/x/2026-12-01) |"
+        )
+        with self.assertRaises(SkiplaggedAmbiguousName) as ctx:
+            resolve_hotel_id(
+                "Czech Inn", "Prague", *self.DAY, adults=3, rpc=_routing_rpc(result, {}, [])
+            )
+        self.assertIn("25584", str(ctx.exception))
+        self.assertIn("99", str(ctx.exception))
+
+    def test_search_hotel_rooms_by_name_resolves_then_fetches_the_rates(self) -> None:
+        calls: list = []
+        report = search_hotel_rooms(
+            None,
+            *self.DAY,
+            hotel_name="Czech Inn",
+            city="Prague",
+            adults=5,
+            rpc=_routing_rpc(_search_result(), _details_result(), calls),
+            sleep=lambda _: None,
+        )
+        self.assertIsNone(report.error)
+        self.assertEqual([c["name"] for c in calls], ["sk_hotels_search", "sk_hotel_details"])
+        self.assertEqual(calls[1]["arguments"]["hotelId"], 25584)
+        self.assertEqual((report.hotel_id, report.requested_name), ("25584", "Czech Inn"))
+
+    def test_unknown_name_is_a_typed_no_results_and_never_asks_for_details(self) -> None:
+        calls: list = []
+        report = search_hotel_rooms(
+            None,
+            *self.DAY,
+            hotel_name="Nowhere Lodge",
+            city="Prague",
+            rpc=_routing_rpc(_search_result(), _details_result(), calls),
+            sleep=lambda _: None,
+        )
+        self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
+        self.assertIsNone(report.hotel_id)
+        self.assertEqual([c["name"] for c in calls], ["sk_hotels_search"])
+
+    def test_naming_rules_fail_before_any_request(self) -> None:
+        for kwargs in (
+            {"hotel_id": None},
+            {"hotel_id": None, "hotel_name": "Czech Inn"},
+            {"hotel_id": 1, "hotel_name": "Czech Inn", "city": "Prague"},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    search_hotel_rooms(
+                        kwargs.pop("hotel_id"), *self.DAY, rpc=_fake_rpc({}, []), **kwargs
+                    )
 
 
 class SkiplaggedRoomsTests(unittest.TestCase):

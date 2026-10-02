@@ -554,22 +554,28 @@ def build_server():
 
     @server.tool()
     async def search_hotel_rooms(
-        hotel_id: int,
         check_in: str,
         check_out: str,
+        hotel_id: int | None = None,
+        hotel_name: str | None = None,
+        city: str | None = None,
         adults: int = 2,
         rooms: int = 1,
     ) -> dict:
         """Room rates for one Skiplagged hotel, for 1-3 finalists.
 
-        hotel_id is the provider_id of an offer from search_hotels with source
-        skiplagged. Each rate carries the provider's occupancy_limit,
-        refundable, free_cancellation and taxes_and_fees as listed. Quotes are
-        USD and are not converted. total_price is the whole stay for the party
-        and rooms searched. occupancy_limit is the provider's number for that
-        room type; it is not proof that your party fits across several rooms.
-        Rates come in provider order, not ranked. Skiplagged only: do not mix
-        these rows with Google or Booking prices.
+        Name the hotel by hotel_id (the provider_id of a search_hotels offer with
+        source skiplagged) or by hotel_name plus city. A name must match exactly
+        (case, accents and punctuation ignored); no match or several matches come
+        back as no_results listing what Skiplagged returned, never a guess. Use the
+        name form for a Google finalist: a Google price for a hostel can be a bed in
+        a dormitory, and these rates say what the room is.
+        Each rate carries the provider's occupancy_limit, refundable,
+        free_cancellation and taxes_and_fees as listed. Quotes are USD and are not
+        converted. total_price is the whole stay for the party and rooms searched.
+        occupancy_limit is the provider's number for that room type; it is not proof
+        that your party fits across several rooms. Rates come in provider order, not
+        ranked. Skiplagged only: do not mix these rows with Google or Booking prices.
         """
         return dict(
             await run_mcp_tool(
@@ -577,6 +583,8 @@ def build_server():
                 hotel_id,
                 check_in,
                 check_out,
+                hotel_name=hotel_name,
+                city=city,
                 adults=adults,
                 rooms=rooms,
             )

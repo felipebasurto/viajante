@@ -7,9 +7,11 @@ Viajante never converts and never merges these rows with another provider.
 
 from __future__ import annotations
 
+import difflib
 import random
 import re
 import time
+import unicodedata
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
@@ -54,6 +56,10 @@ _LINK = re.compile(r"\]\(([^)]+)\)")
 
 class SkiplaggedNoHotels(Exception):
     """The city did not match, or the city has no stays for these dates."""
+
+
+class SkiplaggedAmbiguousName(Exception):
+    """More than one Skiplagged hotel carries the requested name."""
 
 
 class SkiplaggedParseMiss(ValueError):
@@ -279,7 +285,7 @@ def parse_rooms_report(
 def _failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
         return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
-    if isinstance(exc, SkiplaggedNoHotels):
+    if isinstance(exc, (SkiplaggedNoHotels, SkiplaggedAmbiguousName)):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):
         return SearchError(
@@ -288,19 +294,82 @@ def _failure(exc: BaseException) -> SearchError:
     return SearchError(code=SearchErrorCode.FETCH_FAILED, message=str(exc) or type(exc).__name__)
 
 
-def search_hotel_rooms(
-    hotel_id: int,
+def _normalized_name(value: str) -> str:
+    ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_text.casefold()).split())
+
+
+def resolve_hotel_id(
+    name: str,
+    city: str,
     check_in: date,
     check_out: date,
     *,
+    adults: int,
+    rpc: RpcPost = _rpc_post,
+) -> tuple[int, str]:
+    """Skiplagged id of the one hotel in ``city`` whose name matches ``name`` exactly.
+
+    The match is on the normalized name only (case, accents and punctuation ignored). Zero or
+    several matches are typed errors that list what Skiplagged returned; nothing is guessed.
+    """
+    result = _call_mcp(
+        {
+            "city": city,
+            "checkin": check_in.isoformat(),
+            "checkout": check_out.isoformat(),
+            "numAdults": adults,
+            "numRooms": 1,
+            "limit": PAGE_LIMIT,
+            "sort": "price",
+        },
+        rpc=rpc,
+        tool=SKIPLAGGED_HOTELS_TOOL,
+    )
+    page = parse_search_page(result)
+    wanted = _normalized_name(name)
+    hits = [card for card in page.cards if _normalized_name(card.title) == wanted]
+    if len(hits) == 1 and hits[0].provider_id:
+        return int(hits[0].provider_id), hits[0].title
+    place = page.resolved_place or city
+    if hits:
+        listed = "; ".join(f"{card.provider_id} ({card.address or 'no address'})" for card in hits)
+        raise SkiplaggedAmbiguousName(
+            f"{len(hits)} Skiplagged hotels are named {name!r} in {place}: {listed}. "
+            "Pass the hotel id."
+        )
+    by_name = {_normalized_name(card.title): card.title for card in page.cards}
+    close = [by_name[key] for key in difflib.get_close_matches(wanted, by_name, n=5, cutoff=0.5)]
+    hint = f" Closest returned: {', '.join(close)}." if close else ""
+    raise SkiplaggedNoHotels(
+        f"No Skiplagged hotel named {name!r} among the {len(page.cards)} it returned for {place} "
+        f"on these dates (a hotel with no availability is not listed).{hint} Nothing was guessed."
+    )
+
+
+def search_hotel_rooms(
+    hotel_id: Optional[int],
+    check_in: date,
+    check_out: date,
+    *,
+    hotel_name: Optional[str] = None,
+    city: Optional[str] = None,
     adults: int = 2,
     rooms: int = 1,
     rpc: RpcPost = _rpc_post,
     sleep: Callable[[float], None] = time.sleep,
     random_gen: Any = None,
 ) -> HotelRoomsReport:
-    """Room rates for one Skiplagged hotel id. Failures come back as a typed error."""
-    if hotel_id <= 0:
+    """Room rates for one Skiplagged hotel, by id or by exact name in a city.
+
+    Failures come back as a typed error in the report.
+    """
+    if hotel_id is None:
+        if not (hotel_name and hotel_name.strip() and city and city.strip()):
+            raise ValueError("pass hotel_id, or hotel_name together with city")
+    elif hotel_name or city:
+        raise ValueError("pass hotel_id or hotel_name with city, not both")
+    elif hotel_id <= 0:
         raise ValueError("hotel_id must be positive")
     if check_out <= check_in:
         raise ValueError("check_out must be after check_in")
@@ -312,11 +381,16 @@ def search_hotel_rooms(
     started = time.perf_counter()
     error: Optional[SearchError] = None
     report: Optional[HotelRoomsReport] = None
+    resolved_id = hotel_id
     for attempt in range(MAX_ATTEMPTS):
         try:
+            if resolved_id is None:
+                resolved_id, _matched = resolve_hotel_id(
+                    hotel_name or "", city or "", check_in, check_out, adults=adults, rpc=rpc
+                )
             result = _call_mcp(
                 {
-                    "hotelId": hotel_id,
+                    "hotelId": resolved_id,
                     "checkin": check_in.isoformat(),
                     "checkout": check_out.isoformat(),
                     "numAdults": adults,
@@ -327,13 +401,14 @@ def search_hotel_rooms(
             )
             report = parse_rooms_report(
                 result,
-                hotel_id=str(hotel_id),
+                hotel_id=str(resolved_id),
                 check_in=check_in,
                 check_out=check_out,
                 adults=adults,
                 rooms=rooms,
                 searched_at=datetime.now(timezone.utc),
             )
+            report = replace(report, requested_name=hotel_name)
             break
         except Exception as exc:  # noqa: BLE001 - typed into the report below
             error = _failure(exc)
@@ -349,12 +424,13 @@ def search_hotel_rooms(
     if report is None:
         report = HotelRoomsReport(
             searched_at=datetime.now(timezone.utc),
-            hotel_id=str(hotel_id),
+            hotel_id=str(resolved_id) if resolved_id is not None else None,
             check_in=check_in,
             check_out=check_out,
             adults=adults,
             rooms=rooms,
             currency=SKIPLAGGED_HOTEL_CURRENCY,
+            requested_name=hotel_name,
             error=error,
         )
     return replace(report, fetch_ms=fetch_ms)

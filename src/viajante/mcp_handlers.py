@@ -558,10 +558,12 @@ def search_hotels_tool(
 
 @_cached
 def search_hotel_rooms_tool(
-    hotel_id: int,
+    hotel_id: Optional[int],
     check_in: str,
     check_out: str,
     *,
+    hotel_name: Optional[str] = None,
+    city: Optional[str] = None,
     adults: int = 2,
     rooms: int = 1,
 ) -> Mapping[str, object]:
@@ -570,7 +572,13 @@ def search_hotel_rooms_tool(
     _reject_past((check_in_date,), label="check-in")
     report = _with_search_lock(
         lambda: search_hotel_rooms(
-            hotel_id, check_in_date, check_out_date, adults=adults, rooms=rooms
+            hotel_id,
+            check_in_date,
+            check_out_date,
+            hotel_name=hotel_name,
+            city=city,
+            adults=adults,
+            rooms=rooms,
         )
     )
     return _owned(dict(report.to_dict()))

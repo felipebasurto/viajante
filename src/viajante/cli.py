@@ -1786,7 +1786,13 @@ def _run_hotel_rooms(args: argparse.Namespace) -> int:
         if check_in < date.today():
             raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
         report = search_hotel_rooms(
-            args.hotel_id, check_in, check_out, adults=args.adults, rooms=args.rooms
+            args.hotel_id,
+            check_in,
+            check_out,
+            hotel_name=args.name,
+            city=args.city,
+            adults=args.adults,
+            rooms=args.rooms,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1797,7 +1803,7 @@ def _run_hotel_rooms(args: argparse.Namespace) -> int:
 
 
 def _print_hotel_rooms_report(report) -> None:
-    name = report.name or f"hotel {report.hotel_id}"
+    name = report.name or report.requested_name or f"hotel {report.hotel_id}"
     print(
         f"\n=== {name}  {report.check_in.isoformat()} -> {report.check_out.isoformat()} "
         f"({report.adults} adult(s), {report.rooms} room(s)) ==="
@@ -2002,13 +2008,18 @@ def _build_parser() -> argparse.ArgumentParser:
     rooms = sub.add_parser(
         "hotel-rooms",
         help=(
-            "Room rates for one Skiplagged hotel id (USD): occupancy and refund flags. "
-            "Take the id from `hotels --source skiplagged` (provider_id in --save JSON)."
+            "Room rates for one Skiplagged hotel (USD): occupancy and refund flags. "
+            "Name it with --hotel-id (provider_id from `hotels --source skiplagged`) "
+            "or --name plus --city."
         ),
     )
-    rooms.add_argument("hotel_id", type=int, help="Skiplagged hotel id")
     rooms.add_argument("check_in", help="Check-in date (YYYY-MM-DD)")
     rooms.add_argument("check_out", help="Check-out date (YYYY-MM-DD)")
+    rooms.add_argument("--hotel-id", type=int, default=None, help="Skiplagged hotel id")
+    rooms.add_argument(
+        "--name", default=None, help="Exact hotel name (normalized match); needs --city"
+    )
+    rooms.add_argument("--city", default=None, help="City to look the name up in")
     rooms.add_argument("--adults", type=int, default=2, help="Number of adults (default 2)")
     rooms.add_argument("--rooms", type=int, default=1, help="Rooms, 1 to 5 (default 1)")
     _add_save_flag(rooms)

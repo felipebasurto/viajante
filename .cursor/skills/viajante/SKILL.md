@@ -29,7 +29,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | ±N around one date, then one shop | `search_flex` (`route`, `around`, `flex`) | `viajante flex` |
 | Dest triage from a named origin | `search_explore` (`origin`, `start` or `month`) | `viajante explore` |
 | Stay only | `search_hotels` (`location`, `check_in`, `check_out`, `currency`; default source google) | `viajante hotels` (CLI default source Booking) |
-| Room rates for one finalist (Skiplagged, USD) | `search_hotel_rooms` (`hotel_id`, `check_in`, `check_out`) | `viajante hotel-rooms` |
+| Room rates for one finalist (Skiplagged, USD) | `search_hotel_rooms` (`check_in`, `check_out`, then `hotel_id` or `hotel_name` + `city`) | `viajante hotel-rooms` |
 | Flights then hotel | `search_trip` (`routes`, `location`) | `viajante trip` |
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
@@ -63,8 +63,9 @@ Hotel evidence rules:
 - **House, villa, or casa:** call `search_hotels` with `entire_home=true`. A hotel list is not an answer to that ask. If it returns nothing, say so. Airbnb is not a viajante source.
 - **Property kind** is `place_types` (Google's own tags: `hotel`, `hostel`, `villa`, `apartment_complex`, ...) plus `class_label` ("3-star hotel"). A hotel search returns hostels, so read `place_types` before calling a result a hotel. Hostel prices are for the searched party as Google priced it; do not assume a private room.
 - **`resolved_place`** is the place Google resolved the query text to ("Jávea" resolves to "Xàbia"). `place_bounds` is its viewport (south, west, north, east). Google also returns neighbors (a Jávea search lists Dénia hotels). Compare each offer's `latitude`/`longitude` with `place_bounds` and say when an offer sits outside it. Do not relabel it as the requested town.
+- **A Google price for a hostel can be a bed in a dormitory.** Google carries no room type. Before calling a hostel offer private, run `search_hotel_rooms` by name for it and read the room titles.
 - **Policy claims** (parties, pets, minimum age) only from the offer's `details`. Otherwise say it was not checked.
-- **Skiplagged is an opt-in second source** (`source="skiplagged"`). USD only, so omit `currency` or pass USD and do the FX yourself. Up to 10 adults per search. It matches the city loosely: read `resolved_place` and say when it is not the place asked for. Its search rows carry no cancellation. For 1-3 finalists call `search_hotel_rooms` with the offer's `provider_id`, and read each rate's `occupancy_limit`, `refundable` and `free_cancellation` as listed. Never mix its rows with Google or Booking prices or compare them as one list.
+- **Skiplagged is an opt-in second source** (`source="skiplagged"`). USD only, so omit `currency` or pass USD and do the FX yourself. Up to 10 adults per search. It matches the city loosely: read `resolved_place` and say when it is not the place asked for. Its search rows carry no cancellation. For 1-3 finalists call `search_hotel_rooms` with the offer's `provider_id`, or with `hotel_name` + `city` for a Google finalist (exact name only; no match or several matches come back as `no_results`, never a guess), and read each rate's `occupancy_limit`, `refundable` and `free_cancellation` as listed. Never mix its rows with Google or Booking prices or compare them as one list.
 - **No background work.** Every MCP call is synchronous. Never say you are still looking or will report back. Call the tool now, or name the next step and wait. Do not offer an action no tool performs (cancelling a booking).
 - A changed constraint (hotels, then house, then hotels) is restated in one line before the next search.
 

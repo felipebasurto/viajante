@@ -191,7 +191,8 @@ Three sources, one loop (`hotels.py`):
   coordinates. It matches the city text loosely ("Costa Brava" matched Costa
   Mesa, California), so `resolved_place` carries the city slug Skiplagged
   actually searched. `hotel-rooms` / `search_hotel_rooms` fetches room-level
-  rates for one finalist: occupancy limit, refundable, free cancellation, taxes.
+  rates for one finalist, by id or by exact name plus city (so a Google finalist
+  can be checked): occupancy limit, refundable, free cancellation, taxes.
   Skiplagged rows are never mixed with Google or Booking rows.
 
 The loop keeps three things apart: what the caller *asked* for, which filter

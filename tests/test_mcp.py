@@ -740,7 +740,10 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_hotel_rooms", return_value=fake) as search:
             search_hotel_rooms_tool(25584, FUTURE, FUTURE_OUT, adults=5, rooms=2)
         self.assertEqual(search.call_args.args[0], 25584)
-        self.assertEqual(search.call_args.kwargs, {"adults": 5, "rooms": 2})
+        self.assertEqual(
+            search.call_args.kwargs,
+            {"hotel_name": None, "city": None, "adults": 5, "rooms": 2},
+        )
         with patch("viajante.mcp_handlers.search_hotel_rooms") as search:
             with self.assertRaises(ValueError):
                 search_hotel_rooms_tool(25584, "2020-01-01", "2020-01-04")

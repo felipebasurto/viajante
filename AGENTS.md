@@ -218,7 +218,8 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   caller splits a larger party) and no `--entire-home`. Skiplagged matches the
   city loosely, so `resolved_place` is the owned echo; a place that is not the
   one asked for was not searched. Search cards carry no cancellation. For 1-3
-  finalists `search_hotel_rooms` / `hotel-rooms` returns provider room rates
+  finalists `search_hotel_rooms` / `hotel-rooms` (by id, or by exact normalized
+  name plus city; no match or several is `no_results`, never a guess) returns provider room rates
   with `occupancy_limit`, `refundable`, `free_cancellation`; do not rank them or
   infer that a party fits across rooms from `occupancy_limit`.
 - Free cancellation is required by default. Only an explicit caller or CLI

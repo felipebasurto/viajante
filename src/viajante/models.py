@@ -2099,7 +2099,7 @@ class HotelRoomRate:
 @dataclass(frozen=True)
 class HotelRoomsReport:
     searched_at: datetime
-    hotel_id: str
+    hotel_id: Optional[str]
     check_in: date
     check_out: date
     adults: int
@@ -2108,6 +2108,7 @@ class HotelRoomsReport:
     provider: Literal["skiplagged"] = "skiplagged"
     price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
     schema_version: int = field(init=False, default=2)
+    requested_name: Optional[str] = None
     name: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -2132,6 +2133,7 @@ class HotelRoomsReport:
             "currency": self.currency,
             "price_basis": self.price_basis,
             "hotel_id": self.hotel_id,
+            "requested_name": self.requested_name,
             "name": self.name,
             "address": self.address,
             "city": self.city,
