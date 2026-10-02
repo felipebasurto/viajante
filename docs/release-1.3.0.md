@@ -99,3 +99,17 @@ workflow waits for npm before registering, removes an empty auth entry for OIDC,
 and accepts an existing `release_tag` via manual dispatch. It checks that the tag
 matches the npm version and that PyPI already contains the release; it skips
 building and publishing PyPI on recovery. The original tag remains unchanged.
+
+After configuring npm Trusted Publisher for `felipebasurto/viajante`, workflow
+`publish.yml`, with direct publish permission, npm accepted 1.3.0 with signed
+provenance in run `37003291748`. npm reported that processing could take a few
+minutes; MCP Registry initially rejected the version before it became visible.
+The npm job now checks the exact public version up to 30 times, 10 seconds
+apart, before the registry job runs. Each read has a 10-second timeout and no
+HTTP retry.
+
+Published PyPI MCP smoke also passed: exactly 15 tools and both local stay tools.
+A single Skiplagged hotel retry after more than 30 minutes returned `fetch_failed`
+with the provider error `Failed to fetch from hotel_search: timeout of 10000ms
+exceeded`. No further provider retry was made; room-rate live readiness remains
+unverified.

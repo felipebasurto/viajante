@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Release publishing can resume npm and MCP Registry from an existing tag without republishing PyPI. MCP Registry waits for npm, and token-free npm publishing removes setup-node's empty auth entry before using OIDC.
+- Release publishing can resume npm and MCP Registry from an existing tag without republishing PyPI. MCP Registry waits for the npm version to become publicly available, and token-free npm publishing removes setup-node's empty auth entry before using OIDC.
 
 ## [1.3.0] - 2026-10-02
 
