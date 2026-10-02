@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,15 +30,31 @@ from viajante.google_flights_rpc import (
     parse_calendar_body,
     parse_explore_body,
     parse_shopping_body,
+    rpc_error_status,
 )
-from viajante.models import FETCH_LANGUAGE, FETCH_LOCALE, FlightCabin, Trip
+from viajante.models import (
+    FETCH_LANGUAGE,
+    FETCH_LOCALE,
+    FlightCabin,
+    RawJourneyLeg,
+    RawLayover,
+    RawSegment,
+    Trip,
+)
+from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tests
+    NOT_SENT,
+    RATE_LIMIT_COOLDOWN_SECONDS,
+    RATE_LIMIT_MAX_COOLDOWN_SECONDS,
+    note_rate_limited,
+    rate_limit_advice,
+    rate_limit_status,
+)
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
 STATE_FILENAME = "pw_state_google.json"
 
 SCRAPE_LANGUAGE = FETCH_LANGUAGE
-SCRAPE_CURRENCY = "EUR"
 # Owned `tfu` blob that selects result tabs; not produced by encode_tfs.
 RESULT_TABS = "EgQIABABIgA"
 
@@ -87,6 +104,14 @@ TIME_SELECTOR = "span.mv1WYe div"
 DURATION_SELECTOR = "div.Ak5kof div"
 STOPS_SELECTOR = ".BbR8Ec .ogfYpf"
 PRICE_SELECTOR = ".YMlIz.FpEdX"
+# HTML fallback cards put the layover sentence on the link aria-label and the
+# flown slices on the Travel Impact Model URL. Both are owned card text.
+_ARIA_LAYOVER = re.compile(
+    r"Layover \(\d+ of \d+\) is an? (?:(\d+) hr(?: (\d+) min)?|(\d+) min) "
+    r"layover at .+? in ([^.]+)\.",
+    re.IGNORECASE,
+)
+_IMPACT_SLICE = re.compile(r"([A-Z]{3})-([A-Z]{3})-([A-Z0-9]{2,3})-(\d{1,4}[A-Z]?)-(\d{8})")
 
 CONSENT_SELECTORS = [
     'text="Accept all"',
@@ -121,14 +146,14 @@ class GoogleFlightsBlocked(RuntimeError):
 
 
 class GoogleFlightsRejected(RuntimeError):
-    """Shopping RPC rejected the query (unknown airport or invalid request)."""
+    """Shopping RPC rejected the query without an owned cause."""
 
 
 def build_search_params(
     trip: Trip,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
 ) -> dict[str, str]:
     params = {
@@ -146,7 +171,7 @@ def build_search_url(
     trip: Trip,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
 ) -> str:
     params = build_search_params(trip, html_lang=html_lang, currency=currency, country=country)
@@ -157,7 +182,7 @@ def build_itinerary_url(
     booking_token: str,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
 ) -> str:
     token = booking_token.strip()
@@ -173,7 +198,7 @@ def google_flights_url(
     trip: Trip,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
-    currency: str = SCRAPE_CURRENCY,
+    currency: str,
     country: Optional[str] = None,
     booking_token: Optional[str] = None,
 ) -> Optional[str]:
@@ -198,6 +223,56 @@ def _text_or_none(node) -> Optional[str]:
     return text or None
 
 
+def _aria_layover(label: str) -> tuple[Optional[str], Optional[float]]:
+    best_city: Optional[str] = None
+    best_hours: Optional[float] = None
+    for match in _ARIA_LAYOVER.finditer(label):
+        hours_text, mins_text, only_mins, city = match.groups()
+        if only_mins:
+            hours = int(only_mins) / 60.0
+        elif hours_text:
+            hours = int(hours_text) + (int(mins_text) / 60.0 if mins_text else 0.0)
+        else:
+            continue
+        if best_hours is None or hours > best_hours:
+            best_hours = hours
+            best_city = city.strip() or None
+    return best_city, best_hours
+
+
+def _impact_date(text: str) -> Optional[date]:
+    if len(text) != 8 or not text.isdigit():
+        return None
+    try:
+        return date(int(text[0:4]), int(text[4:6]), int(text[6:8]))
+    except ValueError:
+        return None
+
+
+def _impact_segments(item) -> tuple[RawSegment, ...]:
+    node = item.css_first("[data-travelimpactmodelwebsiteurl]")
+    if node is None:
+        return ()
+    url = node.attributes.get("data-travelimpactmodelwebsiteurl") or ""
+    segments: list[RawSegment] = []
+    for origin, dest, code, number, day in _IMPACT_SLICE.findall(url):
+        if not any(char.isalpha() for char in code):
+            continue
+        on = _impact_date(day)
+        if on is None:
+            continue
+        segments.append(
+            RawSegment(
+                origin=origin,
+                destination=dest,
+                flight_number=f"{code}{number}",
+                departure_date=on,
+                carrier=code,
+            )
+        )
+    return tuple(segments)
+
+
 def _extract_card(item) -> Optional[RawFlightCard]:
     price = _text_or_none(item.css_first(PRICE_SELECTOR))
     if price is None:
@@ -205,13 +280,43 @@ def _extract_card(item) -> Optional[RawFlightCard]:
     times = item.css(TIME_SELECTOR)
     departure = _text_or_none(times[0]) if len(times) > 0 else None
     arrival = _text_or_none(times[1]) if len(times) > 1 else None
+    duration = _text_or_none(item.css_first(DURATION_SELECTOR))
+    stops = _text_or_none(item.css_first(STOPS_SELECTOR))
+    label_node = item.css_first("[aria-label]")
+    label = ""
+    if label_node is not None:
+        label = label_node.attributes.get("aria-label") or ""
+    layover_city, layover_hours = _aria_layover(label)
+    segments = _impact_segments(item)
+    flight_numbers = (
+        tuple(segment.flight_number for segment in segments if segment.flight_number) or None
+    )
+    legs: tuple[RawJourneyLeg, ...] = ()
+    if segments or layover_city is not None or layover_hours is not None:
+        layovers: tuple[RawLayover, ...] = ()
+        if layover_city is not None or layover_hours is not None:
+            layovers = (RawLayover(city=layover_city, hours=layover_hours),)
+        legs = (
+            RawJourneyLeg(
+                departure=departure,
+                arrival=arrival,
+                duration=duration,
+                stops=stops,
+                segments=segments,
+                layovers=layovers,
+            ),
+        )
     return RawFlightCard(
         airline=_text_or_none(item.css_first(AIRLINE_SELECTOR)),
         departure=departure,
         arrival=arrival,
-        duration=_text_or_none(item.css_first(DURATION_SELECTOR)),
-        stops=_text_or_none(item.css_first(STOPS_SELECTOR)),
+        duration=duration,
+        stops=stops,
         price=price,
+        layover_city=layover_city,
+        layover_hours=layover_hours,
+        flight_numbers=flight_numbers,
+        legs=legs,
     )
 
 
@@ -237,7 +342,9 @@ def looks_blocked(html: str, final_url: str = "") -> bool:
     if any(marker in lowered_url for marker in BLOCK_URL_MARKERS):
         return True
     lowered = html.casefold()
-    return any(marker in lowered for marker in BLOCK_BODY_MARKERS)
+    return any(marker in lowered for marker in BLOCK_BODY_MARKERS) or (
+        rpc_error_status(html) is not None
+    )
 
 
 def _is_consent_interstitial(url: str) -> bool:
@@ -301,6 +408,46 @@ class SweepHttpResponse:
     status: int
     text: str
     url: str = ""
+    rate_limit: Optional[str] = None
+
+
+# ponytail: Google answers a throttled IP with a data-less wrb.fr envelope, status 13.
+RPC_THROTTLE_STATUS = 13
+
+
+def _retry_after_seconds(response: Any) -> Optional[float]:
+    headers = getattr(response, "headers", None) or {}
+    try:
+        return float(headers.get("retry-after") or headers.get("Retry-After"))
+    except (TypeError, ValueError):
+        return None
+
+
+class _CooldownClient:
+    """Answers every request with a local 429 while a recorded cooldown runs. No network."""
+
+    def __init__(self, state: Mapping[str, float]) -> None:
+        self._advice = rate_limit_advice(state, sent=False)
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+
+    def post(
+        self, url: str, *, data: str, headers: Mapping[str, str], timeout: float
+    ) -> SweepHttpResponse:
+        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+
+    def close(self) -> None:
+        return None
+
+
+COOLDOWN_UNCHECKED: Any = object()
+
+
+def cooldown_client(snapshot: Any) -> tuple[Any, Optional[_CooldownClient]]:
+    """Read the cooldown once per search; mid-search 429 replays keep the live session."""
+    state = rate_limit_status() if snapshot is COOLDOWN_UNCHECKED else snapshot
+    return state, (_CooldownClient(state) if state is not None else None)
 
 
 class SweepHttpClient(Protocol):
@@ -357,6 +504,7 @@ class ChromeSweepClient:
 
         curl_requests = _curl_requests()
         self._asyncio = asyncio
+        self._proxied = _normalize_proxy(proxy) is not None
         self._loop = asyncio.new_event_loop()
         self._session: Any = None
         self._error: Optional[BaseException] = None
@@ -426,7 +574,19 @@ class ChromeSweepClient:
             response, timeout
         ):
             response = await send()
-        return _as_sweep_response(response)
+        out = _as_sweep_response(response)
+        # ponytail: a proxy is another egress IP, so its limit does not pause direct searches.
+        if self._proxied:
+            return out
+        if out.status == 429:
+            state = note_rate_limited(_retry_after_seconds(response))
+            out = replace(out, rate_limit=rate_limit_advice(state))
+        elif out.status == 200 and rpc_error_status(out.text) == RPC_THROTTLE_STATUS:
+            state = note_rate_limited()
+            out = replace(
+                out, rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}")
+            )
+        return out
 
     async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
         return await self._exchange(
@@ -597,16 +757,29 @@ class _OpenerSweepClient:
         return None
 
 
-def _raise_if_blocked(status: int, body: str, final_url: str, fallback_url: str) -> None:
+def _raise_if_blocked(
+    status: int, body: str, final_url: str, fallback_url: str, advice: Optional[str] = None
+) -> None:
     if status in {403, 429, 503}:
-        raise GoogleFlightsBlocked(
-            f"Google Flights HTTP {status} from {fallback_url}",
-            status=status,
-        )
+        message = f"Google Flights HTTP {status} from {fallback_url}"
+        if status == 429 and advice:
+            message = advice if advice.startswith(NOT_SENT) else f"{message}. {advice}"
+        raise GoogleFlightsBlocked(message, status=status)
     if status >= 400:
         raise GoogleFlightsBlocked(
             f"Google Flights HTTP {status} from {final_url or fallback_url}",
             status=status,
+        )
+    rpc_status = rpc_error_status(body)
+    if rpc_status is not None:
+        if advice and rpc_status == RPC_THROTTLE_STATUS:
+            # status=429 so the caller treats it as a rate limit and does not replay or fall back.
+            raise GoogleFlightsBlocked(advice, status=429)
+        # Seen alongside google.com/sorry for the same IP while shopping still answers.
+        raise GoogleFlightsBlocked(
+            f"Google Flights answered with RPC error status {rpc_status} and no data "
+            f"from {fallback_url}. Google does this while throttling this IP; "
+            "wait before searching again."
         )
     if looks_blocked(body, final_url):
         raise GoogleFlightsBlocked(
@@ -670,7 +843,7 @@ def fetch_search_html(
 ) -> tuple[str, str]:
     if client is not None:
         response = client.get(url, timeout=timeout)
-        _raise_if_blocked(response.status, response.text, response.url, url)
+        _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
         return response.text, response.url
     if opener is not None:
         html, final_url, status = _opener_get(url, opener=opener, timeout=timeout)
@@ -716,9 +889,9 @@ def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     # Empty result lists and grounded empty-state copy both mean no flights.
     # Unknown shells without either signal are markup drift, except a tiny
     # shell which is a block, not a parse of a results page.
-    if _has_empty_state(parser) or parser.css_first("ul.Rk10dc") is not None:
-        observed = EMPTY_STATE_TEXT if _has_empty_state(parser) else ""
-        raise NoFlightsFound(observed)
+    empty_state = _has_empty_state(parser)
+    if empty_state or parser.css_first("ul.Rk10dc") is not None:
+        raise NoFlightsFound(EMPTY_STATE_TEXT if empty_state else "")
     n = len(html)
     if n < _SHORT_SHELL_CHARS:
         raise GoogleFlightsBlocked(
@@ -734,7 +907,7 @@ class GoogleFlightsHttpSource:
         self,
         *,
         html_lang: str = SCRAPE_LANGUAGE,
-        currency: str = SCRAPE_CURRENCY,
+        currency: str,
         country: Optional[str] = None,
         opener: Optional[Any] = None,
         client: Optional[SweepHttpClient] = None,
@@ -750,6 +923,7 @@ class GoogleFlightsHttpSource:
         self._timeout = timeout
         self._sleep = time.sleep if sleep is None else sleep
         self._proxy = _normalize_proxy(proxy)
+        self._cooldown = COOLDOWN_UNCHECKED
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency, country=country)
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
@@ -772,29 +946,18 @@ class GoogleFlightsHttpSource:
         jobs = [self._shopping_post(trip) for trip in trips]
         responses = dispatch_posts(client, jobs, timeout=self._timeout)
         results: list[tuple[RawFlightCard, ...] | BaseException] = []
-        retry_indexes: list[int] = []
-        rate_indexes: list[int] = []
-        for index, (trip, response) in enumerate(zip(trips, responses, strict=True)):
+        for trip, job, response in zip(trips, jobs, responses, strict=True):
             try:
-                results.append(self._cards_from_shopping_response(client, trip, response))
+                results.append(self._cards_from_shopping_response(client, trip, response, job.url))
             except BaseException as exc:
                 results.append(exc)
-                if _is_rate_limited_sweep_failure(exc):
-                    rate_indexes.append(index)
-                elif _is_retriable_sweep_failure(exc):
-                    retry_indexes.append(index)
-        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
-        if replay and SWEEP_RETRY_LIMIT >= 1:
-            if rate_indexes:
-                client = self._client_after_rate_limit()
-            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
-                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
-            retry_jobs = [jobs[index] for index in replay]
-            retried = dispatch_posts(client, retry_jobs, timeout=self._timeout)
+        client, replay = self._plan_replay(client, results)
+        if replay:
+            retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
             for index, response in zip(replay, retried, strict=True):
                 try:
                     results[index] = self._cards_from_shopping_response(
-                        client, trips[index], response
+                        client, trips[index], response, jobs[index].url
                     )
                 except BaseException as exc:
                     results[index] = exc
@@ -823,29 +986,21 @@ class GoogleFlightsHttpSource:
         results: list[
             tuple[tuple[RawFlightCard, ...] | BaseException, tuple[CompactCalendarDay, ...]]
         ] = []
-        retry_indexes: list[int] = []
-        rate_indexes: list[int] = []
         for index, (query, _start, _end) in enumerate(jobs):
             shop_resp = responses[2 * index]
             cal_resp = responses[2 * index + 1]
             try:
                 cards: tuple[RawFlightCard, ...] | BaseException = (
-                    self._cards_from_shopping_response(client, query, shop_resp)
+                    self._cards_from_shopping_response(
+                        client, query, shop_resp, posts[2 * index].url
+                    )
                 )
             except BaseException as exc:
                 cards = exc
-                if _is_rate_limited_sweep_failure(exc):
-                    rate_indexes.append(index)
-                elif _is_retriable_sweep_failure(exc):
-                    retry_indexes.append(index)
-            days = self._days_from_calendar_response(cal_resp, posts[2 * index + 1].url)
+            days = self._days_from_calendar_response(cal_resp)
             results.append((cards, days))
-        replay = sorted(set(rate_indexes) | set(retry_indexes)) if rate_indexes else retry_indexes
-        if replay and SWEEP_RETRY_LIMIT >= 1:
-            if rate_indexes:
-                client = self._client_after_rate_limit()
-            elif SWEEP_RETRY_BACKOFF_SECONDS > 0:
-                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+        client, replay = self._plan_replay(client, [cards for cards, _days in results])
+        if replay:
             retry_posts: list[SweepPost] = []
             for index in replay:
                 query, start, end = jobs[index]
@@ -857,16 +1012,38 @@ class GoogleFlightsHttpSource:
                 shop_resp = retried[2 * offset]
                 cal_resp = retried[2 * offset + 1]
                 try:
-                    cards = self._cards_from_shopping_response(client, query, shop_resp)
+                    cards = self._cards_from_shopping_response(
+                        client, query, shop_resp, retry_posts[2 * offset].url
+                    )
                 except BaseException as exc:
                     cards = exc
-                days = self._days_from_calendar_response(cal_resp, retry_posts[2 * offset + 1].url)
+                days = self._days_from_calendar_response(cal_resp)
                 results[index] = (cards, days)
         return results
 
     def reset(self) -> None:
         if self._injected_client is None and self._opener is None:
             reset_shared_chrome_sweep_client()
+
+    def _plan_replay(
+        self, client: SweepHttpClient, outcomes: Sequence[object]
+    ) -> tuple[SweepHttpClient, list[int]]:
+        """One replay of retriable failures; any 429 resets TLS and replays those too."""
+        failures = [(i, o) for i, o in enumerate(outcomes) if isinstance(o, BaseException)]
+        rate = [i for i, exc in failures if _is_rate_limited_sweep_failure(exc)]
+        retry = [
+            i
+            for i, exc in failures
+            if not _is_rate_limited_sweep_failure(exc) and _is_retriable_sweep_failure(exc)
+        ]
+        replay = sorted(rate + retry) if rate else retry
+        if not replay or SWEEP_RETRY_LIMIT < 1:
+            return client, []
+        if rate:
+            return self._client_after_rate_limit(), replay
+        if SWEEP_RETRY_BACKOFF_SECONDS > 0:
+            self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
+        return client, replay
 
     def _client_after_rate_limit(self) -> SweepHttpClient:
         self.reset()
@@ -883,6 +1060,10 @@ class GoogleFlightsHttpSource:
             return self._injected_client
         if self._opener is not None:
             return _OpenerSweepClient(self._opener)
+        if self._proxy is None:
+            self._cooldown, paused = cooldown_client(self._cooldown)
+            if paused is not None:
+                return paused
         return shared_chrome_sweep_client(proxy=self._proxy)
 
     def _retry_sweep(self, fn: Callable[[], Any]) -> Any:
@@ -939,44 +1120,77 @@ class GoogleFlightsHttpSource:
         posts = (self._shopping_post(query), self._calendar_post(query, start, end))
         shop_resp, cal_resp = dispatch_posts(client, posts, timeout=self._timeout)
         try:
-            cards = self._cards_from_shopping_response(client, query, shop_resp)
+            cards = self._cards_from_shopping_response(client, query, shop_resp, posts[0].url)
         except CompactParseMiss:
             cards = self._html_cards(client, query)
-        days = self._days_from_calendar_response(cal_resp, posts[1].url)
+        days = self._days_from_calendar_response(cal_resp)
         return cards, days
 
     def _fetch_compact(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
-        url, body = build_shopping_request(
-            trip,
-            html_lang=self._html_lang,
-            currency=self._currency,
-            country=self._country,
-        )
+        post = self._shopping_post(trip)
         try:
             response = client.post(
-                url, data=body, headers=SHOPPING_POST_HEADERS, timeout=self._timeout
+                post.url, data=post.data, headers=post.headers, timeout=self._timeout
             )
         except CompactParseMiss:
             raise
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
-        return self._cards_from_shopping_response(client, trip, response)
+        return self._cards_from_shopping_response(client, trip, response, post.url)
+
+    def fetch_selected(
+        self,
+        trip: Trip,
+        selections: Sequence[list[Any]],
+    ) -> list[tuple[RawFlightCard, ...] | BaseException]:
+        """Next-leg shopping for owned outbound slices. One miss does not drop the rest."""
+        if not selections:
+            return []
+        client = self._ensure_client()
+        posts = []
+        for selected in selections:
+            url, body = build_shopping_request(
+                trip,
+                html_lang=self._html_lang,
+                currency=self._currency,
+                country=self._country,
+                selected_flight=selected,
+            )
+            posts.append(SweepPost(url, body, SHOPPING_POST_HEADERS))
+        responses = dispatch_posts(client, posts, timeout=self._timeout)
+        parsed: list[tuple[RawFlightCard, ...] | BaseException] = []
+        for post, response in zip(posts, responses, strict=True):
+            try:
+                parsed.append(
+                    self._cards_from_shopping_response(
+                        client,
+                        trip,
+                        response,
+                        post.url,
+                        allow_html_fallback=False,
+                    )
+                )
+            except Exception as exc:
+                parsed.append(exc)
+        return parsed
 
     def _cards_from_shopping_response(
         self,
         client: SweepHttpClient,
         trip: Trip,
         response: SweepHttpResponse,
+        url: str,
+        *,
+        allow_html_fallback: bool = True,
     ) -> tuple[RawFlightCard, ...]:
-        url, _body = build_shopping_request(
-            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
-        )
         if (
             response.status in {403, 429}
             or response.status >= 500
             or looks_blocked(response.text, response.url)
         ):
-            _raise_if_blocked(response.status, response.text, response.url, url)
+            _raise_if_blocked(
+                response.status, response.text, response.url, url, response.rate_limit
+            )
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")
         try:
@@ -986,6 +1200,8 @@ class GoogleFlightsHttpSource:
         except ShoppingRejected as exc:
             raise GoogleFlightsRejected(str(exc)) from exc
         except CompactParseMiss:
+            if not allow_html_fallback:
+                raise
             return self._html_cards(client, trip)
 
     def _html_cards(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
@@ -996,19 +1212,12 @@ class GoogleFlightsHttpSource:
         return parse_http_flight_cards(html)
 
     def _days_from_calendar_response(
-        self,
-        response: SweepHttpResponse,
-        url: str,
+        self, response: SweepHttpResponse
     ) -> tuple[CompactCalendarDay, ...]:
+        """Typical side of a paired POST: a block, HTTP error, or miss is no typical, not a fail."""
+        if response.status >= 400 or looks_blocked(response.text, response.url):
+            return ()
         try:
-            if (
-                response.status in {403, 429, 503}
-                or looks_blocked(response.text, response.url)
-                or response.status >= 400
-            ):
-                if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
-                    _raise_if_blocked(response.status, response.text, response.url, url)
-                return ()
             return parse_calendar_body(response.text)
         except Exception:
             return ()
@@ -1074,7 +1283,9 @@ class GoogleFlightsHttpSource:
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
         if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
-            _raise_if_blocked(response.status, response.text, response.url, url)
+            _raise_if_blocked(
+                response.status, response.text, response.url, url, response.rate_limit
+            )
         if response.status >= 400:
             raise CompactParseMiss(f"shopping HTTP {response.status}")
         return response
@@ -1087,7 +1298,7 @@ class GoogleFlightsSource:
         session: Optional[ChromiumSession] = None,
         config: Optional[BrowserSessionConfig] = None,
         *,
-        currency: str = SCRAPE_CURRENCY,
+        currency: str,
         country: Optional[str] = None,
     ) -> None:
         self._config = config or BrowserSessionConfig(
@@ -1145,6 +1356,8 @@ class GoogleFlightsSource:
             page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
             if "consent.google" in page.url:
                 self._dismiss_consent(page)
+            if looks_blocked("", page.url):
+                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
             page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
             return page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
         finally:

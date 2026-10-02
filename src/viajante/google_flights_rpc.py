@@ -6,14 +6,13 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypeVar
 from urllib.parse import quote, urlencode
 
 from viajante.carriers import carrier_filter_payload, shopping_carrier_codes
 from viajante.models import (
     FETCH_LANGUAGE,
     FlightCabin,
-    MultiCity,
     RawJourneyLeg,
     RawLayover,
     RawSegment,
@@ -21,6 +20,7 @@ from viajante.models import (
     Trip,
 )
 from viajante.parsers import normalize_clock
+from viajante.tfs import CABIN_SEAT, TRIP_ONE_WAY, trip_kind_code
 
 SHOPPING_RESULTS_URL = (
     "https://www.google.com/_/FlightsFrontendUi/data/"
@@ -30,23 +30,19 @@ CALENDAR_GRID_URL = (
     "https://www.google.com/_/FlightsFrontendUi/data/"
     "travel.frontend.flights.FlightsFrontendService/GetCalendarGrid"
 )
+CALENDAR_GRAPH_URL = (
+    "https://www.google.com/_/FlightsFrontendUi/data/"
+    "travel.frontend.flights.FlightsFrontendService/GetCalendarGraph"
+)
 EXPLORE_DESTINATIONS_URL = (
     "https://www.google.com/_/FlightsFrontendUi/data/"
     "travel.frontend.flights.FlightsFrontendService/GetExploreDestinations"
 )
 
-_SEAT: Mapping[FlightCabin, int] = {
-    "economy": 1,
-    "premium-economy": 2,
-    "business": 3,
-    "first": 4,
-}
-_TRIP_ONE_WAY = 2
-_TRIP_ROUND_TRIP = 1
-_TRIP_MULTI_CITY = 3
 _SEGMENT_OUTBOUND = 3
 _SEGMENT_RETURN = 1
 _ANTI_XSSI = ")]}'"
+_T = TypeVar("_T")
 # viajante max_stops -> shopping segment[3]. TFS field 5 stays the viajante integer.
 _SHOPPING_STOPS: Mapping[int, int] = {0: 1, 1: 2, 2: 3}
 # Compact fare blocks put a [checked, carry_on] pair after the booking token.
@@ -103,14 +99,6 @@ def shopping_stop_code(max_stops: int) -> int:
         return _SHOPPING_STOPS[max_stops]
     except KeyError:
         raise ValueError("max_stops must be 0, 1, or 2") from None
-
-
-def _shopping_trip_kind(trip: Trip) -> int:
-    if isinstance(trip, RoundTrip):
-        return _TRIP_ROUND_TRIP
-    if isinstance(trip, MultiCity):
-        return _TRIP_MULTI_CITY
-    return _TRIP_ONE_WAY
 
 
 def _segment_classifier(trip: Trip, index: int) -> int:
@@ -171,7 +159,7 @@ def _constraints_from_segments(
     *,
     adults: int,
     cabin: FlightCabin,
-    trip_kind: int = _TRIP_ONE_WAY,
+    trip_kind: int = TRIP_ONE_WAY,
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     children: int = 0,
@@ -184,7 +172,7 @@ def _constraints_from_segments(
         trip_kind,
         None,
         [],
-        _SEAT[cabin],
+        CABIN_SEAT[cabin],
         _occupancy_slot(
             adults=adults,
             children=children,
@@ -229,16 +217,16 @@ def build_search_constraints(
         infants_in_seat=trip.infants_in_seat,
         infants_on_lap=trip.infants_on_lap,
         cabin=trip.cabin,
-        trip_kind=_shopping_trip_kind(trip),
+        trip_kind=trip_kind_code(trip),
         bags=trip.bags,
         carry_on=trip.carry_on,
     )
 
 
-def build_shopping_inner(trip: Trip, token: Optional[str] = None) -> list[Any]:
+def build_shopping_inner(trip: Trip, *, selected_flight: Any = None) -> list[Any]:
     return [
-        [None, None, None, token],
-        build_search_constraints(trip),
+        [None, None, None, None],
+        build_search_constraints(trip, selected_flight=selected_flight),
         0,
         1,
         0,
@@ -276,11 +264,12 @@ def build_shopping_request(
     trip: Trip,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     country: Optional[str] = None,
+    selected_flight: Any = None,
 ) -> tuple[str, str]:
     url = f"{SHOPPING_RESULTS_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
-    return url, _rpc_body(build_shopping_inner(trip))
+    return url, _rpc_body(build_shopping_inner(trip, selected_flight=selected_flight))
 
 
 def build_calendar_inner(
@@ -288,8 +277,20 @@ def build_calendar_inner(
     start: date,
     end: date,
 ) -> list[Any]:
+    """One-way stays on GetCalendarGrid: `[None, constraints, [start, end]]`.
+
+    Packaged RT is GetCalendarGraph: `[window, None, [nights, nights]]` plus a
+    trailing itinerary `1`. Grid with only an outbound window is the one-way
+    shape; Google ErrorResponse-rejects that for RT. A 31-day Grid return
+    window is 31×31 cells (cap 200), so dates/typical cannot use Grid for RT.
+    """
     constraints = build_search_constraints(trip)
-    return [None, constraints, [start.isoformat(), end.isoformat()]]
+    window = [start.isoformat(), end.isoformat()]
+    if not isinstance(trip, RoundTrip):
+        return [None, constraints, window]
+    constraints.append(1)
+    nights = (trip.return_date - trip.departure_date).days
+    return [None, constraints, window, None, [nights, nights]]
 
 
 def build_calendar_request(
@@ -298,10 +299,11 @@ def build_calendar_request(
     end: date,
     *,
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     country: Optional[str] = None,
 ) -> tuple[str, str]:
-    url = f"{CALENDAR_GRID_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
+    base = CALENDAR_GRAPH_URL if isinstance(trip, RoundTrip) else CALENDAR_GRID_URL
+    url = f"{base}?{urlencode(_rpc_params(html_lang, currency, country))}"
     return url, _rpc_body(build_calendar_inner(trip, start, end))
 
 
@@ -340,7 +342,7 @@ def build_explore_request(
     adults: int = 1,
     cabin: FlightCabin = "economy",
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     country: Optional[str] = None,
     children: int = 0,
     infants_in_seat: int = 0,
@@ -368,18 +370,22 @@ SHOPPING_POST_HEADERS = {
 }
 
 
-def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightCard, ...]:
+def _wrb_json(text: str, *, kind: str) -> Any:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
+            "Google Flights rejected this query; the provider did not identify the cause."
         )
-    payload = _first_wrb_data(text)
+    payload = first_wrb_data(text)
     if payload is None:
-        raise CompactParseMiss("no wrb.fr shopping payload")
+        raise CompactParseMiss(f"no wrb.fr {kind} payload")
     try:
-        data = json.loads(payload)
+        return json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr data is not JSON") from exc
+        raise CompactParseMiss(f"wrb.fr {kind} data is not JSON") from exc
+
+
+def parse_shopping_body(text: str, *, currency: str) -> tuple[RawFlightCard, ...]:
+    data = _wrb_json(text, kind="shopping")
     if not isinstance(data, list):
         raise CompactParseMiss("wrb.fr data is not a list")
     items = _collect_itineraries(data)
@@ -395,7 +401,24 @@ def parse_shopping_body(text: str, *, currency: str = "EUR") -> tuple[RawFlightC
     return cards
 
 
-def _first_wrb_data(text: str) -> Optional[str]:
+def _wrb_data_string(obj: object) -> Optional[str]:
+    if (
+        isinstance(obj, list)
+        and obj
+        and isinstance(obj[0], list)
+        and obj[0]
+        and obj[0][0] == "wrb.fr"
+    ):
+        obj = obj[0]
+    if isinstance(obj, list) and len(obj) >= 3 and obj[0] == "wrb.fr" and isinstance(obj[2], str):
+        return obj[2]
+    return None
+
+
+def first_wrb_data(
+    text: str, extract: Callable[[object], Optional[_T]] = _wrb_data_string
+) -> Optional[_T]:
+    """First wrb.fr envelope ``extract`` accepts, across length-prefixed or bare JSON chunks."""
     body = text.lstrip()
     if body.startswith(_ANTI_XSSI):
         body = body[len(_ANTI_XSSI) :].lstrip()
@@ -419,7 +442,7 @@ def _first_wrb_data(text: str) -> Optional[str]:
                 except json.JSONDecodeError:
                     idx = newline + 1
                     continue
-                found = _wrb_data_string(obj)
+                found = extract(obj)
                 if found is not None:
                     return found
                 idx = newline + 1 + size
@@ -428,22 +451,26 @@ def _first_wrb_data(text: str) -> Optional[str]:
             obj, _ = decoder.raw_decode(body, idx)
         except json.JSONDecodeError:
             break
-        return _wrb_data_string(obj)
+        return extract(obj)
     return None
 
 
-def _wrb_data_string(obj: object) -> Optional[str]:
-    if (
-        isinstance(obj, list)
-        and obj
-        and isinstance(obj[0], list)
-        and obj[0]
-        and obj[0][0] == "wrb.fr"
-    ):
+def _wrb_error_status(obj: object) -> Optional[int]:
+    if isinstance(obj, list) and obj and isinstance(obj[0], list):
         obj = obj[0]
-    if isinstance(obj, list) and len(obj) >= 3 and obj[0] == "wrb.fr" and isinstance(obj[2], str):
-        return obj[2]
+    if not (isinstance(obj, list) and len(obj) >= 6 and obj[0] == "wrb.fr" and obj[2] is None):
+        return None
+    status = obj[5]
+    if isinstance(status, list) and status and isinstance(status[0], int):
+        return status[0]
     return None
+
+
+def rpc_error_status(text: str) -> Optional[int]:
+    """Status code of a data-less wrb.fr error envelope (e.g. 13), else None."""
+    if not text.lstrip().startswith(_ANTI_XSSI) or _is_shopping_rejected(text):
+        return None
+    return first_wrb_data(text, _wrb_error_status)
 
 
 def _has_itinerary_slots(data: list[Any]) -> bool:
@@ -530,7 +557,7 @@ def _looks_like_itinerary(item: object) -> bool:
     return bool(_itinerary_journeys(item))
 
 
-def _itinerary_to_card(item: list[Any], *, currency: str = "EUR") -> Optional[RawFlightCard]:
+def _itinerary_to_card(item: list[Any], *, currency: str) -> Optional[RawFlightCard]:
     journeys = _itinerary_journeys(item)
     if not journeys:
         return None
@@ -647,7 +674,7 @@ def _bags_from_fare(block: object) -> tuple[Optional[int], Optional[int]]:
     return None, None
 
 
-def _price_text(block: object, *, currency: str = "EUR") -> Optional[str]:
+def _price_text(block: object, *, currency: str) -> Optional[str]:
     if not isinstance(block, list) or not block:
         return None
     first = block[0]
@@ -844,6 +871,16 @@ def _format_duration_minutes(minutes: int) -> str:
     return f"{mins} min"
 
 
+def _leg_date(value: object) -> Optional[date]:
+    parsed = _ymd(value)
+    if parsed is None or parsed[0] < 100:
+        return None
+    try:
+        return date(*parsed)
+    except ValueError:
+        return None
+
+
 def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
     legs = flight[2] if len(flight) > 2 else None
     if not isinstance(legs, list):
@@ -867,23 +904,15 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
                 arrival=_format_clock(leg[10] if len(leg) > 10 else None),
                 airline=airline,
                 flight_number=None if ident is None else f"{ident[0]}{ident[1]}",
+                departure_date=_leg_date(leg[20] if len(leg) > 20 else None),
+                carrier=None if ident is None else ident[0],
             )
         )
     return tuple(segments)
 
 
 def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
-    if _is_shopping_rejected(text):
-        raise ShoppingRejected(
-            "Google Flights rejected this route or date (unknown airport or invalid query)."
-        )
-    payload = _first_wrb_data(text)
-    if payload is None:
-        raise CompactParseMiss("no wrb.fr calendar payload")
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr calendar data is not JSON") from exc
+    data = _wrb_json(text, kind="calendar")
     if not isinstance(data, list) or len(data) < 2 or not isinstance(data[1], list):
         raise CompactParseMiss("calendar payload has no date rows")
     rows: list[CompactCalendarDay] = []
@@ -897,17 +926,7 @@ def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
 
 
 def parse_explore_body(text: str) -> tuple[CompactExplorePlace, ...]:
-    if _is_shopping_rejected(text):
-        raise ShoppingRejected(
-            "Google Flights rejected this origin or date (unknown airport or invalid query)."
-        )
-    payload = _first_wrb_data(text)
-    if payload is None:
-        raise CompactParseMiss("no wrb.fr explore payload")
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise CompactParseMiss("wrb.fr explore data is not JSON") from exc
+    data = _wrb_json(text, kind="explore")
     if not isinstance(data, list) or len(data) < 4 or not isinstance(data[3], list):
         raise CompactParseMiss("explore payload has no destination group")
     group = data[3][0] if data[3] else None
@@ -995,18 +1014,42 @@ def _airline_codes(flight: list[Any]) -> Optional[tuple[str, ...]]:
     return tuple(unique) or None
 
 
+def _carrier_code(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    code = value.strip().upper()
+    if not 2 <= len(code) <= 3 or not code.isalnum() or not any(char.isalpha() for char in code):
+        return None
+    return code
+
+
+def _flight_number_text(value: object) -> Optional[str]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        return None
+    if not text or not text[0].isdigit():
+        return None
+    if not text.isdigit() and not (text[:-1].isdigit() and text[-1].isalpha()):
+        return None
+    return text
+
+
 def _leg_ident(leg: object) -> Optional[tuple[str, str]]:
     if not isinstance(leg, list) or len(leg) <= 22:
         return None
     ident = leg[22]
     if not isinstance(ident, list) or len(ident) < 2:
         return None
-    code, number = ident[0], ident[1]
-    if not isinstance(code, str) or not isinstance(number, str):
+    code = _carrier_code(ident[0])
+    number = _flight_number_text(ident[1])
+    if code is None or number is None:
         return None
-    if not code.isalpha() or not number:
-        return None
-    return code.upper(), number
+    return code, number
 
 
 def _format_stops(legs: object) -> Optional[str]:

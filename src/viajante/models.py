@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
 from statistics import median
-from typing import Literal, Mapping, Optional, Sequence, Tuple, Union
+from typing import Literal, Mapping, Optional, Sequence, Tuple, Union, get_args
 
 from viajante.airports import is_known_iata
 
@@ -15,9 +15,9 @@ FETCH_LANGUAGE = "en"
 FETCH_LOCALE = "en-US"
 
 FlightCabin = Literal["economy", "premium-economy", "business", "first"]
-_CABINS: tuple[FlightCabin, ...] = ("economy", "premium-economy", "business", "first")
+_CABINS: tuple[FlightCabin, ...] = get_args(FlightCabin)
 VsTypical = Literal["below", "near", "above"]
-_VS_TYPICAL: tuple[VsTypical, ...] = ("below", "near", "above")
+_VS_TYPICAL: tuple[VsTypical, ...] = get_args(VsTypical)
 NEAR_TYPICAL_RATIO = 0.10
 
 
@@ -64,7 +64,7 @@ def _typical_json(
     typical: Optional[float],
     vs: Optional[VsTypical],
     pct: Optional[int],
-    currency: str = "EUR",
+    currency: str,
 ) -> dict[str, object]:
     if typical is None or vs is None or pct is None:
         return {}
@@ -80,7 +80,7 @@ def format_typical_deal(
     vs: Optional[VsTypical],
     typical: Optional[float],
     pct: Optional[int],
-    currency: str = "EUR",
+    currency: str,
 ) -> Optional[str]:
     """English one-liner, or None when typical is omitted."""
     if vs is None or typical is None or pct is None:
@@ -128,6 +128,11 @@ def _require_occupancy(
         raise ValueError("infants_on_lap cannot exceed adults")
 
 
+def _require_positive_amount(value: float, *, role: str) -> None:
+    if value <= 0:
+        raise ValueError(f"{role} must be positive")
+
+
 def _require_cabin(cabin: FlightCabin) -> None:
     if cabin not in _CABINS:
         raise ValueError(f"invalid cabin: {cabin!r}")
@@ -145,36 +150,6 @@ def _require_price_cap(value: Optional[int]) -> None:
         return
     if value <= 0:
         raise ValueError("price_cap must be positive")
-
-
-def _optional_bag_fields(bags: Optional[int], carry_on: Optional[int]) -> dict[str, int]:
-    payload: dict[str, int] = {}
-    if bags is not None:
-        payload["bags"] = bags
-    if carry_on is not None:
-        payload["carry_on"] = carry_on
-    return payload
-
-
-def _optional_price_cap_fields(price_cap: Optional[int]) -> dict[str, int]:
-    if price_cap is None:
-        return {}
-    return {"price_cap": price_cap}
-
-
-def _optional_occupancy_fields(
-    children: int,
-    infants_in_seat: int,
-    infants_on_lap: int,
-) -> dict[str, int]:
-    payload: dict[str, int] = {}
-    if children:
-        payload["children"] = children
-    if infants_in_seat:
-        payload["infants_in_seat"] = infants_in_seat
-    if infants_on_lap:
-        payload["infants_on_lap"] = infants_on_lap
-    return payload
 
 
 def normalize_currency(value: str) -> str:
@@ -214,22 +189,52 @@ def _require_alliances(names: Optional[Tuple[str, ...]], *, role: str) -> None:
             raise ValueError(f"invalid {role}: {name!r}")
 
 
-def _optional_carrier_fields(
-    airlines: Optional[Tuple[str, ...]],
-    exclude_airlines: Optional[Tuple[str, ...]],
-    alliances: Optional[Tuple[str, ...]],
-    exclude_alliances: Optional[Tuple[str, ...]],
-) -> dict[str, list[str]]:
-    payload: dict[str, list[str]] = {}
-    if airlines:
-        payload["airlines"] = list(airlines)
-    if exclude_airlines:
-        payload["exclude_airlines"] = list(exclude_airlines)
-    if alliances:
-        payload["alliances"] = list(alliances)
-    if exclude_alliances:
-        payload["exclude_alliances"] = list(exclude_alliances)
+def _require_shop_fields(trip: Trip) -> None:
+    _require_occupancy(
+        adults=trip.adults,
+        children=trip.children,
+        infants_in_seat=trip.infants_in_seat,
+        infants_on_lap=trip.infants_on_lap,
+    )
+    _require_cabin(trip.cabin)
+    _require_bag_count(trip.bags, role="bags")
+    _require_bag_count(trip.carry_on, role="carry_on")
+    _require_price_cap(trip.price_cap)
+    _require_airline_codes(trip.airlines, role="airlines")
+    _require_airline_codes(trip.exclude_airlines, role="exclude_airlines")
+    _require_alliances(trip.alliances, role="alliances")
+    _require_alliances(trip.exclude_alliances, role="exclude_alliances")
+
+
+def _shop_fields_json(trip: Trip) -> dict[str, object]:
+    """Named occupancy, bags, cap, and carrier lists. Zero, unset, or empty stays omitted."""
+    payload: dict[str, object] = {}
+    for key in ("children", "infants_in_seat", "infants_on_lap"):
+        if getattr(trip, key):
+            payload[key] = getattr(trip, key)
+    for key in ("bags", "carry_on", "price_cap"):
+        if getattr(trip, key) is not None:
+            payload[key] = getattr(trip, key)
+    for key in ("airlines", "exclude_airlines", "alliances", "exclude_alliances"):
+        if getattr(trip, key):
+            payload[key] = list(getattr(trip, key))
     return payload
+
+
+def _store_naive_utc(report: object) -> None:
+    searched_at = report.searched_at  # type: ignore[attr-defined]
+    if searched_at.tzinfo is not None:
+        naive = searched_at.astimezone(timezone.utc).replace(tzinfo=None)
+        object.__setattr__(report, "searched_at", naive)
+
+
+def _iso_z(value: datetime) -> str:
+    return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _store_nearby_label(obj: object) -> None:
+    label = obj.nearby_label  # type: ignore[attr-defined]
+    object.__setattr__(obj, "nearby_label", (label.strip() if label else None) or None)
 
 
 @dataclass(frozen=True)
@@ -275,24 +280,10 @@ class FlightQuery:
         destination = _normalize_iata(self.destination, role="destination")
         if self.max_stops not in (0, 1, 2):
             raise ValueError("max_stops must be 0, 1, or 2")
-        _require_occupancy(
-            adults=self.adults,
-            children=self.children,
-            infants_in_seat=self.infants_in_seat,
-            infants_on_lap=self.infants_on_lap,
-        )
-        _require_cabin(self.cabin)
-        _require_bag_count(self.bags, role="bags")
-        _require_bag_count(self.carry_on, role="carry_on")
-        _require_price_cap(self.price_cap)
-        _require_airline_codes(self.airlines, role="airlines")
-        _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
-        _require_alliances(self.alliances, role="alliances")
-        _require_alliances(self.exclude_alliances, role="exclude_alliances")
+        _require_shop_fields(self)
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
-        label = self.nearby_label.strip() if self.nearby_label else None
-        object.__setattr__(self, "nearby_label", label or None)
+        _store_nearby_label(self)
 
     @property
     def legs(self) -> Tuple[FlightLeg, ...]:
@@ -315,19 +306,7 @@ class FlightQuery:
             "adults": self.adults,
             "cabin": self.cabin,
         }
-        payload.update(
-            _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
-        )
-        payload.update(_optional_bag_fields(self.bags, self.carry_on))
-        payload.update(_optional_price_cap_fields(self.price_cap))
-        payload.update(
-            _optional_carrier_fields(
-                self.airlines,
-                self.exclude_airlines,
-                self.alliances,
-                self.exclude_alliances,
-            )
-        )
+        payload.update(_shop_fields_json(self))
         return payload
 
 
@@ -361,24 +340,10 @@ class RoundTrip:
             raise ValueError("return_date must be after departure_date")
         if self.max_stops not in (0, 1, 2):
             raise ValueError("max_stops must be 0, 1, or 2")
-        _require_occupancy(
-            adults=self.adults,
-            children=self.children,
-            infants_in_seat=self.infants_in_seat,
-            infants_on_lap=self.infants_on_lap,
-        )
-        _require_cabin(self.cabin)
-        _require_bag_count(self.bags, role="bags")
-        _require_bag_count(self.carry_on, role="carry_on")
-        _require_price_cap(self.price_cap)
-        _require_airline_codes(self.airlines, role="airlines")
-        _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
-        _require_alliances(self.alliances, role="alliances")
-        _require_alliances(self.exclude_alliances, role="exclude_alliances")
+        _require_shop_fields(self)
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
-        label = self.nearby_label.strip() if self.nearby_label else None
-        object.__setattr__(self, "nearby_label", label or None)
+        _store_nearby_label(self)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -391,19 +356,7 @@ class RoundTrip:
             "adults": self.adults,
             "cabin": self.cabin,
         }
-        payload.update(
-            _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
-        )
-        payload.update(_optional_bag_fields(self.bags, self.carry_on))
-        payload.update(_optional_price_cap_fields(self.price_cap))
-        payload.update(
-            _optional_carrier_fields(
-                self.airlines,
-                self.exclude_airlines,
-                self.alliances,
-                self.exclude_alliances,
-            )
-        )
+        payload.update(_shop_fields_json(self))
         return payload
 
     @property
@@ -436,20 +389,7 @@ class MultiCity:
         dates = [leg.departure_date for leg in self.legs]
         if dates != sorted(dates):
             raise ValueError("multi-city dates must be non-decreasing")
-        _require_occupancy(
-            adults=self.adults,
-            children=self.children,
-            infants_in_seat=self.infants_in_seat,
-            infants_on_lap=self.infants_on_lap,
-        )
-        _require_cabin(self.cabin)
-        _require_bag_count(self.bags, role="bags")
-        _require_bag_count(self.carry_on, role="carry_on")
-        _require_price_cap(self.price_cap)
-        _require_airline_codes(self.airlines, role="airlines")
-        _require_airline_codes(self.exclude_airlines, role="exclude_airlines")
-        _require_alliances(self.alliances, role="alliances")
-        _require_alliances(self.exclude_alliances, role="exclude_alliances")
+        _require_shop_fields(self)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -470,19 +410,7 @@ class MultiCity:
                 for leg in self.legs
             ],
         }
-        payload.update(
-            _optional_occupancy_fields(self.children, self.infants_in_seat, self.infants_on_lap)
-        )
-        payload.update(_optional_bag_fields(self.bags, self.carry_on))
-        payload.update(_optional_price_cap_fields(self.price_cap))
-        payload.update(
-            _optional_carrier_fields(
-                self.airlines,
-                self.exclude_airlines,
-                self.alliances,
-                self.exclude_alliances,
-            )
-        )
+        payload.update(_shop_fields_json(self))
         return payload
 
 
@@ -497,9 +425,11 @@ class RawSegment:
     arrival: Optional[str] = None
     airline: Optional[str] = None
     flight_number: Optional[str] = None
+    departure_date: Optional[date] = None
+    carrier: Optional[str] = None
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "origin": self.origin,
             "destination": self.destination,
             "departure": self.departure,
@@ -507,6 +437,11 @@ class RawSegment:
             "airline": self.airline,
             "flight_number": self.flight_number,
         }
+        if self.departure_date is not None:
+            payload["departure_date"] = self.departure_date.isoformat()
+        if self.carrier is not None:
+            payload["carrier"] = self.carrier
+        return payload
 
 
 @dataclass(frozen=True)
@@ -538,6 +473,216 @@ class RawJourneyLeg:
         }
 
 
+EvidenceKnowledge = Literal["known", "unknown"]
+UrlEvidenceKind = Literal["booking", "query", "none"]
+ConstraintStatus = Literal["pass", "fail", "unknown"]
+
+
+@dataclass(frozen=True)
+class EvidenceCompleteness:
+    """Facts an agent may safely derive from one owned offer."""
+
+    segment_airports: EvidenceKnowledge = "unknown"
+    segment_operators: EvidenceKnowledge = "unknown"
+    flight_numbers: EvidenceKnowledge = "unknown"
+    segment_clocks: EvidenceKnowledge = "unknown"
+    layovers: EvidenceKnowledge = "unknown"
+    baggage: EvidenceKnowledge = "unknown"
+
+    def to_dict(self) -> Mapping[str, str]:
+        return {
+            "segment_airports": self.segment_airports,
+            "segment_operators": self.segment_operators,
+            "flight_numbers": self.flight_numbers,
+            "segment_clocks": self.segment_clocks,
+            "layovers": self.layovers,
+            "baggage": self.baggage,
+        }
+
+
+@dataclass(frozen=True)
+class OfferEvidence:
+    """Immutable provenance copied with an offer when it leaves its report."""
+
+    evidence_id: str
+    query: Mapping[str, object]
+    currency: str = field(kw_only=True)
+    retrieved_at: datetime
+    fetch_backend: Optional[str]
+    query_url: Optional[str]
+    offer_url: Optional[str]
+    url_kind: UrlEvidenceKind
+    source: Literal["google_flights"] = "google_flights"
+
+    def __post_init__(self) -> None:
+        if not self.evidence_id.strip():
+            raise ValueError("evidence_id is required")
+        object.__setattr__(self, "currency", normalize_currency(self.currency))
+        if self.url_kind == "booking" and not self.offer_url:
+            raise ValueError("booking URL evidence needs an offer_url")
+        if self.url_kind == "query" and not self.query_url:
+            raise ValueError("query URL evidence needs a query_url")
+        if self.url_kind == "none" and (self.query_url or self.offer_url):
+            raise ValueError("none URL evidence cannot carry a URL")
+
+    def to_dict(self) -> Mapping[str, object]:
+        retrieved_at = self.retrieved_at
+        if retrieved_at.tzinfo is not None:
+            retrieved_at = retrieved_at.astimezone(timezone.utc).replace(tzinfo=None)
+        return {
+            "evidence_id": self.evidence_id,
+            "source": self.source,
+            "query": dict(self.query),
+            "currency": self.currency,
+            "retrieved_at": retrieved_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "fetch_backend": self.fetch_backend,
+            "query_url": self.query_url,
+            "offer_url": self.offer_url,
+            "url_kind": self.url_kind,
+        }
+
+
+@dataclass(frozen=True)
+class SearchCoverage:
+    """Completion within one declared finite scope, never a global proof."""
+
+    scope: Mapping[str, object]
+    attempted: int
+    succeeded: int
+    empty: int
+    failed: int
+    complete: bool
+    strategy: Literal["finite", "heuristic"] = "finite"
+    stopping_reason: str = "completed_scope"
+    unsearched: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        counts = (self.attempted, self.succeeded, self.empty, self.failed)
+        if any(value < 0 for value in counts):
+            raise ValueError("coverage counts must not be negative")
+        if self.succeeded + self.empty + self.failed != self.attempted:
+            raise ValueError("coverage outcomes must equal attempted")
+        if not self.stopping_reason.strip():
+            raise ValueError("coverage stopping_reason is required")
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "scope": dict(self.scope),
+            "attempted": self.attempted,
+            "succeeded": self.succeeded,
+            "empty": self.empty,
+            "failed": self.failed,
+            "complete": self.complete,
+            "strategy": self.strategy,
+            "stopping_reason": self.stopping_reason,
+            "unsearched": self.unsearched,
+        }
+
+
+@dataclass(frozen=True)
+class ConstraintCheck:
+    constraint: str
+    status: ConstraintStatus
+    detail: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.constraint.strip():
+            raise ValueError("constraint name is required")
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "constraint": self.constraint,
+            "status": self.status,
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class ItineraryValidationReport:
+    validated_at: datetime
+    scenario: Mapping[str, object]
+    checks: Tuple[ConstraintCheck, ...]
+    legs: Tuple[Mapping[str, object], ...]
+    feasible: Optional[bool]
+    currency: Optional[str]
+    fare_total: Optional[float]
+    ranked_total: Optional[float]
+    offer_row_count: int
+    journey_leg_count: int
+    segment_count: Optional[int]
+    trip_span_days: Optional[int]
+    violations: Tuple[str, ...] = ()
+    unknown: Tuple[str, ...] = ()
+    relaxations: Tuple[Mapping[str, object], ...] = ()
+    schema_version: int = field(init=False, default=2)
+
+    def __post_init__(self) -> None:
+        if min(self.offer_row_count, self.journey_leg_count) < 0:
+            raise ValueError("itinerary counts must not be negative")
+        if self.segment_count is not None and self.segment_count < 0:
+            raise ValueError("segment_count must not be negative")
+        if self.trip_span_days is not None and self.trip_span_days < 0:
+            raise ValueError("trip_span_days must not be negative")
+        statuses = {check.status for check in self.checks}
+        expected = False if "fail" in statuses else None if "unknown" in statuses else True
+        if self.feasible is not expected:
+            raise ValueError("feasible must aggregate check statuses")
+
+    def to_dict(self) -> Mapping[str, object]:
+        validated_at = self.validated_at
+        if validated_at.tzinfo is not None:
+            validated_at = validated_at.astimezone(timezone.utc).replace(tzinfo=None)
+        return {
+            "schema_version": self.schema_version,
+            "validated_at": validated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "scenario": dict(self.scenario),
+            "relaxations": [dict(item) for item in self.relaxations],
+            "feasible": self.feasible,
+            "currency": self.currency,
+            "fare_total": self.fare_total,
+            "ranked_total": self.ranked_total,
+            "offer_row_count": self.offer_row_count,
+            "journey_leg_count": self.journey_leg_count,
+            "segment_count": self.segment_count,
+            "trip_span_days": self.trip_span_days,
+            "violations": list(self.violations),
+            "unknown": list(self.unknown),
+            "checks": [check.to_dict() for check in self.checks],
+            "legs": [dict(leg) for leg in self.legs],
+        }
+
+
+def _offer_completeness(
+    legs: Sequence[RawJourneyLeg],
+    *,
+    stops_count: Optional[int],
+    checked_bags: Optional[int],
+    carry_on: Optional[int],
+) -> EvidenceCompleteness:
+    segments = tuple(segment for leg in legs for segment in leg.segments)
+
+    def known(predicate: bool) -> EvidenceKnowledge:
+        return "known" if predicate else "unknown"
+
+    layovers_known = stops_count == 0 or (
+        stops_count is not None
+        and stops_count > 0
+        and sum(len(leg.layovers) for leg in legs) >= stops_count
+    )
+    return EvidenceCompleteness(
+        segment_airports=known(
+            bool(segments) and all(segment.origin and segment.destination for segment in segments)
+        ),
+        segment_operators=known(bool(segments) and all(segment.airline for segment in segments)),
+        flight_numbers=known(bool(segments) and all(segment.flight_number for segment in segments)),
+        segment_clocks=known(
+            bool(segments) and all(segment.departure and segment.arrival for segment in segments)
+        ),
+        layovers=known(layovers_known),
+        baggage=known(checked_bags is not None or carry_on is not None),
+    )
+
+
 @dataclass(frozen=True)
 class FlightOffer:
     airline: Optional[str]
@@ -564,27 +709,16 @@ class FlightOffer:
     cheapest: Optional[float] = None
     checked_bags: Optional[int] = None
     carry_on: Optional[int] = None
+    evidence: Optional[OfferEvidence] = None
+    completeness: Optional[EvidenceCompleteness] = None
 
     def __post_init__(self) -> None:
-        if self.price <= 0:
-            raise ValueError("price must be positive")
+        _require_positive_amount(self.price, role="price")
         if self.baggage_buffer < 0:
             raise ValueError("baggage_buffer must not be negative")
         if self.baggage_buffer > 0 and not self.needs_bag_verify:
             raise ValueError("a baggage buffer only applies to a carrier flagged for verification")
-        have_typical = (
-            self.typical is None,
-            self.vs_typical is None,
-            self.vs_typical_pct is None,
-        )
-        if len(set(have_typical)) != 1:
-            raise ValueError(
-                "typical, vs_typical, and vs_typical_pct must all be set or all omitted"
-            )
-        if self.typical is not None and self.typical <= 0:
-            raise ValueError("typical must be positive")
-        if self.vs_typical is not None and self.vs_typical not in _VS_TYPICAL:
-            raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
+        _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
         if (self.cheapest_date is None) != (self.cheapest is None):
             raise ValueError("cheapest_date and cheapest must both be set or both omitted")
         if self.cheapest is not None and self.cheapest <= 0:
@@ -610,11 +744,22 @@ class FlightOffer:
                     ),
                 ),
             )
+        if self.completeness is None:
+            object.__setattr__(
+                self,
+                "completeness",
+                _offer_completeness(
+                    self.legs,
+                    stops_count=self.stops_count,
+                    checked_bags=self.checked_bags,
+                    carry_on=self.carry_on,
+                ),
+            )
 
-    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+    def typical_deal(self, currency: str) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         lead = self.legs[0]
         two_stop = self.stops_count is not None and self.stops_count >= 2
         payload: dict[str, object] = {
@@ -638,6 +783,8 @@ class FlightOffer:
             "baggage_buffer": self.baggage_buffer,
             "needs_bag_verify": self.needs_bag_verify,
             "legs": [leg.to_dict() for leg in self.legs],
+            "evidence": self.evidence.to_dict() if self.evidence else None,
+            "completeness": self.completeness.to_dict() if self.completeness else None,
         }
         if self.google_flights_url:
             payload["google_flights_url"] = self.google_flights_url
@@ -668,8 +815,7 @@ class StopsCompareSide:
     layover_hours: Optional[float] = None
 
     def __post_init__(self) -> None:
-        if self.price <= 0:
-            raise ValueError("price must be positive")
+        _require_positive_amount(self.price, role="price")
         if self.stops_count not in (0, 1):
             raise ValueError("stops_count must be 0 or 1")
 
@@ -738,15 +884,20 @@ class SearchErrorCode(str, Enum):
     MARKUP_DRIFT = "markup_drift"
     FETCH_FAILED = "fetch_failed"
     BROWSER_UNAVAILABLE = "browser_unavailable"
+    CURRENCY_MISMATCH = "currency_mismatch"
 
 
 @dataclass(frozen=True)
 class SearchError:
     code: SearchErrorCode
     message: str
+    rate_limited: bool = False
 
-    def to_dict(self) -> Mapping[str, str]:
-        return {"code": self.code.value, "message": self.message}
+    def to_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {"code": self.code.value, "message": self.message}
+        if self.rate_limited:
+            payload["rate_limited"] = True
+        return payload
 
 
 @dataclass(frozen=True)
@@ -765,7 +916,7 @@ class QuerySuccess:
         if self.eligible_count < len(self.offers):
             raise ValueError("eligible_count must be >= number of offers")
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         query = dict(self.query.to_dict())
         if self.google_flights_url:
             query["google_flights_url"] = self.google_flights_url
@@ -804,32 +955,49 @@ QueryResult = Union[QuerySuccess, QueryFailure]
 FetchBackend = Literal["sweep", "detail", "sweep_then_detail"]
 
 
+def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
+    succeeded = sum(isinstance(result, QuerySuccess) for result in results)
+    empty = sum(
+        isinstance(result, QueryFailure) and result.error.code == SearchErrorCode.NO_RESULTS
+        for result in results
+    )
+    failed = len(results) - succeeded - empty
+    return SearchCoverage(
+        scope={"kind": "submitted_queries", "size": len(results)},
+        attempted=len(results),
+        succeeded=succeeded,
+        empty=empty,
+        failed=failed,
+        complete=True,
+        unsearched="queries outside the submitted finite scope",
+    )
+
+
 @dataclass(frozen=True)
 class SearchReport:
     searched_at: datetime
     queries: Tuple[QueryResult, ...]
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     fetch_backend: Optional[FetchBackend] = None
     fetch_ms: Optional[int] = None
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
-        if self.searched_at.tzinfo is not None:
-            object.__setattr__(
-                self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
-            )
+        _store_naive_utc(self)
+        if self.coverage is None:
+            object.__setattr__(self, "coverage", _query_coverage(self.queries))
 
     def to_dict(self) -> Mapping[str, object]:
         return {
             "schema_version": self.schema_version,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "currency": self.currency,
             "locale": self.locale,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "queries": [
                 result.to_dict(currency=self.currency)
                 if isinstance(result, QuerySuccess)
@@ -935,10 +1103,10 @@ class DatePriceRow:
         ):
             raise ValueError("shop duration/clocks require an owned day fare")
 
-    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+    def typical_deal(self, currency: str) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "date": self.departure_date.isoformat(),
             "price": self.price,
@@ -974,8 +1142,8 @@ class DateCalendarReport:
     start_date: date
     end_date: date
     days: Tuple[DatePriceRow, ...]
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     trip: DateTripKind = "one-way"
     nights: Optional[int] = None
     fetch_backend: Optional[str] = "calendar"
@@ -983,17 +1151,12 @@ class DateCalendarReport:
     google_flights_url: Optional[str] = None
     nearby_label: Optional[str] = None
     summary: Optional[DateCalendarSummary] = field(init=False, default=None)
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
-        if self.searched_at.tzinfo is not None:
-            object.__setattr__(
-                self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
-            )
-        label = self.nearby_label.strip() if self.nearby_label else None
-        object.__setattr__(self, "nearby_label", label or None)
+        _store_naive_utc(self)
+        _store_nearby_label(self)
         object.__setattr__(
             self,
             "summary",
@@ -1005,11 +1168,37 @@ class DateCalendarReport:
             "days",
             tuple(_stamp_date_row_typical(row, typical) for row in self.days),
         )
+        if self.coverage is None:
+            succeeded = sum(row.status == "ok" and row.price is not None for row in self.days)
+            empty = sum(row.status == "empty" for row in self.days)
+            failed = len(self.days) - succeeded - empty
+            expected = (self.end_date - self.start_date).days + 1
+            coverage_complete = len({row.departure_date for row in self.days}) == expected
+            object.__setattr__(
+                self,
+                "coverage",
+                SearchCoverage(
+                    scope={
+                        "kind": "date_window",
+                        "from": self.start_date.isoformat(),
+                        "to": self.end_date.isoformat(),
+                    },
+                    attempted=len(self.days),
+                    succeeded=succeeded,
+                    empty=empty,
+                    failed=failed,
+                    complete=coverage_complete,
+                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    unsearched=(
+                        None if coverage_complete else "dates missing from the requested window"
+                    ),
+                ),
+            )
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "schema_version": self.schema_version,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "currency": self.currency,
             "locale": self.locale,
             "origin": self.origin,
@@ -1019,6 +1208,7 @@ class DateCalendarReport:
             "trip": self.trip,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "days": [row.to_dict(self.currency) for row in self.days],
         }
         if self.nights is not None:
@@ -1051,8 +1241,8 @@ class FlexSearchReport:
     stops_compare: Optional[StopsCompare] = None
     typical: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     trip: DateTripKind = "one-way"
     nights: Optional[int] = None
     fetch_backend: Optional[FlexFetchBackend] = "calendar"
@@ -1060,7 +1250,8 @@ class FlexSearchReport:
     google_flights_url: Optional[str] = None
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.flex_days < 1:
@@ -1071,19 +1262,42 @@ class FlexSearchReport:
             raise ValueError(f"invalid vs_typical: {self.vs_typical!r}")
         if self.vs_typical is not None and self.typical is None:
             raise ValueError("vs_typical requires typical")
-        if self.searched_at.tzinfo is not None:
+        _store_naive_utc(self)
+        _store_nearby_label(self)
+        if self.coverage is None:
+            succeeded = sum(row.status == "ok" and row.price is not None for row in self.days)
+            empty = sum(row.status == "empty" for row in self.days)
+            failed = len(self.days) - succeeded - empty
+            expected = (self.end_date - self.start_date).days + 1
+            coverage_complete = len({row.departure_date for row in self.days}) == expected
             object.__setattr__(
                 self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
+                "coverage",
+                SearchCoverage(
+                    scope={
+                        "kind": "flex_window",
+                        "around": self.around.isoformat(),
+                        "from": self.start_date.isoformat(),
+                        "to": self.end_date.isoformat(),
+                    },
+                    attempted=len(self.days),
+                    succeeded=succeeded,
+                    empty=empty,
+                    failed=failed,
+                    complete=coverage_complete,
+                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    unsearched=(
+                        None
+                        if coverage_complete
+                        else "dates missing from the requested flex window"
+                    ),
+                ),
             )
-        label = self.nearby_label.strip() if self.nearby_label else None
-        object.__setattr__(self, "nearby_label", label or None)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "schema_version": self.schema_version,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "currency": self.currency,
             "locale": self.locale,
             "origin": self.origin,
@@ -1098,6 +1312,7 @@ class FlexSearchReport:
             "vs_typical": self.vs_typical,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "days": [row.to_dict(self.currency) for row in self.days],
             "offers": [offer.to_dict(self.currency) for offer in self.offers],
         }
@@ -1143,10 +1358,10 @@ class ExploreDestination:
         if self.price is None and self.baggage_buffer is not None:
             raise ValueError("baggage buffer requires an owned dest fare")
 
-    def typical_deal(self, currency: str = "EUR") -> Optional[str]:
+    def typical_deal(self, currency: str) -> Optional[str]:
         return format_typical_deal(self.vs_typical, self.typical, self.vs_typical_pct, currency)
 
-    def to_dict(self, currency: str = "EUR") -> Mapping[str, object]:
+    def to_dict(self, currency: str) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "iata": self.iata,
             "city": self.city,
@@ -1176,29 +1391,48 @@ class ExploreReport:
     start_date: date
     days: int
     destinations: Tuple[ExploreDestination, ...]
+    currency: str = field(kw_only=True)
     locale: str = "en"
-    currency: str = "EUR"
     fetch_backend: Optional[str] = "explore"
     fetch_ms: Optional[int] = None
     google_flights_url: Optional[str] = None
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
-    schema_version: int = field(init=False, default=1)
+    coverage: Optional[SearchCoverage] = None
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
-        if self.searched_at.tzinfo is not None:
+        _store_naive_utc(self)
+        _store_nearby_label(self)
+        if self.coverage is None:
+            succeeded = sum(row.price is not None for row in self.destinations)
+            empty = len(self.destinations) - succeeded
+            failed = int(self.error is not None)
             object.__setattr__(
                 self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
+                "coverage",
+                SearchCoverage(
+                    scope={
+                        "kind": "explore_shortlist",
+                        "origin": self.origin,
+                        "from": self.start_date.isoformat(),
+                        "days": self.days,
+                    },
+                    attempted=len(self.destinations) + failed,
+                    succeeded=succeeded,
+                    empty=empty,
+                    failed=failed,
+                    complete=False,
+                    strategy="heuristic",
+                    stopping_reason="shortlist_limit",
+                    unsearched="destinations outside the provider shortlist and local top limit",
+                ),
             )
-        label = self.nearby_label.strip() if self.nearby_label else None
-        object.__setattr__(self, "nearby_label", label or None)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "schema_version": self.schema_version,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "currency": self.currency,
             "locale": self.locale,
             "origin": self.origin,
@@ -1206,6 +1440,7 @@ class ExploreReport:
             "days": self.days,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "destinations": [row.to_dict(self.currency) for row in self.destinations],
         }
         if self.google_flights_url:
@@ -1285,25 +1520,38 @@ class RawHotelCard:
     rating: Optional[str]
     details: str
     link: Optional[str]
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    review_count: Optional[int] = None
+    place_types: Tuple[str, ...] = ()
+    class_label: Optional[str] = None
+    priced_adults: Optional[int] = None
+    provider_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class HotelPage:
     cards: Tuple[RawHotelCard, ...]
+    resolved_place: Optional[str] = None
+    place_bounds: Optional[Tuple[float, float, float, float]] = None
+    search_url: Optional[str] = None
 
 
-HotelProvider = Literal["booking.com", "google-hotels"]
+HotelProvider = Literal["booking.com", "google-hotels", "skiplagged"]
 
 
 @dataclass(frozen=True)
 class AppliedHotelFilters:
     chips: Tuple[str, ...]
     url: str
+    # Requested filters this source cannot apply or check (it returns no evidence for them).
+    not_applied: Tuple[str, ...] = ()
 
     def to_dict(self) -> Mapping[str, object]:
         return {
             "chips": list(self.chips),
             "url": self.url,
+            "not_applied": list(self.not_applied),
         }
 
 
@@ -1323,13 +1571,21 @@ class HotelOffer:
     bathrooms: Optional[int]
     beds: Optional[int]
     link: Optional[str]
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    review_count: Optional[int] = None
+    sleeps: Optional[int] = None
+    place_types: Tuple[str, ...] = ()
+    class_label: Optional[str] = None
+    priced_adults: Optional[int] = None
+    provider_id: Optional[str] = None
+    distance_km: Optional[float] = None
 
     def __post_init__(self) -> None:
         title = self.title.strip()
         if not title:
             raise ValueError("title must not be blank")
-        if self.total_price <= 0:
-            raise ValueError("total_price must be positive")
+        _require_positive_amount(self.total_price, role="total_price")
         if self.rating_score is not None and not 0.0 <= self.rating_score <= 10.0:
             raise ValueError("rating_score must be between 0.0 and 10.0")
         object.__setattr__(self, "title", title)
@@ -1350,6 +1606,15 @@ class HotelOffer:
             "bathrooms": self.bathrooms,
             "beds": self.beds,
             "link": self.link,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "review_count": self.review_count,
+            "sleeps": self.sleeps,
+            "place_types": list(self.place_types),
+            "class_label": self.class_label,
+            "priced_adults": self.priced_adults,
+            "provider_id": self.provider_id,
+            "distance_km": self.distance_km,
         }
 
 
@@ -1360,6 +1625,8 @@ class HotelQuerySuccess:
     raw_count: int
     eligible_count: int
     offers: Tuple[HotelOffer, ...]
+    resolved_place: Optional[str] = None
+    place_bounds: Optional[Tuple[float, float, float, float]] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -1375,6 +1642,8 @@ class HotelQuerySuccess:
             "applied": self.applied.to_dict(),
             "raw_count": self.raw_count,
             "eligible_count": self.eligible_count,
+            "resolved_place": self.resolved_place,
+            "place_bounds": list(self.place_bounds) if self.place_bounds else None,
             "offers": [offer.to_dict() for offer in self.offers],
         }
 
@@ -1398,41 +1667,79 @@ class HotelQueryFailure:
 HotelQueryResult = Union[HotelQuerySuccess, HotelQueryFailure]
 
 
-HotelFetchBackend = Literal["booking", "google"]
+HotelFetchBackend = Literal["booking", "google", "skiplagged"]
 
 
 @dataclass(frozen=True)
 class HotelSearchReport:
     searched_at: datetime
     queries: Tuple[HotelQueryResult, ...]
+    currency: str = field(kw_only=True)
     locale: str = FETCH_LANGUAGE
-    currency: str = "EUR"
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
     provider: HotelProvider = "booking.com"
     price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
     fetch_backend: Optional[HotelFetchBackend] = None
     fetch_ms: Optional[int] = None
+    # A point the caller named; offers carry their straight-line distance to it.
+    near: Optional[Tuple[float, float]] = None
 
     def __post_init__(self) -> None:
-        if self.searched_at.tzinfo is not None:
-            object.__setattr__(
-                self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
-            )
+        _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
         return {
             "schema_version": self.schema_version,
             "provider": self.provider,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "currency": self.currency,
             "locale": self.locale,
             "price_basis": self.price_basis,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "near": {"lat": self.near[0], "lng": self.near[1]} if self.near else None,
+            "property_matrix": _property_matrix(self.queries),
             "queries": [result.to_dict() for result in self.queries],
         }
+
+
+def _property_key(offer: "HotelOffer") -> Tuple[str, str]:
+    return (
+        " ".join(offer.title.split()).casefold(),
+        " ".join((offer.address or "").split()).casefold(),
+    )
+
+
+def _property_matrix(
+    queries: Tuple["HotelQueryResult", ...],
+) -> Optional[list[Mapping[str, object]]]:
+    """Each property seen in a multi-stay search with its total per stay, or null where absent.
+
+    Built only from the offers each stay returned (its ``top``), so a null means "not among
+    them", not "unavailable". Rows are sorted by name so the order carries no price signal.
+    Nothing is ranked or chosen.
+    """
+    if len(queries) < 2:
+        return None
+    rows: dict[Tuple[str, str], dict] = {}
+    for index, result in enumerate(queries):
+        if not isinstance(result, HotelQuerySuccess):
+            continue
+        for offer in result.offers:
+            row = rows.setdefault(
+                _property_key(offer),
+                {
+                    "title": offer.title,
+                    "address": offer.address,
+                    "latitude": offer.latitude,
+                    "longitude": offer.longitude,
+                    "distance_km": offer.distance_km,
+                    "prices": [None] * len(queries),
+                },
+            )
+            if row["prices"][index] is None or offer.total_price < row["prices"][index]:
+                row["prices"][index] = offer.total_price
+    return [rows[key] for key in sorted(rows)]
 
 
 @dataclass(frozen=True)
@@ -1473,23 +1780,18 @@ class TripSearchReport:
     flights: SearchReport
     hotels: HotelSearchReport
     trip_total: Optional[TripTotal] = None
+    currency: str = field(kw_only=True)
     locale: str = FETCH_LANGUAGE
-    currency: str = "EUR"
     fetch_ms: Optional[int] = None
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
-        if self.searched_at.tzinfo is not None:
-            object.__setattr__(
-                self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
-            )
+        _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "schema_version": self.schema_version,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "currency": self.currency,
             "locale": self.locale,
             "fetch_ms": self.fetch_ms,
@@ -1520,18 +1822,13 @@ def _require_evidence(value: str) -> EvidenceLevel:
     return value  # type: ignore[return-value]
 
 
-def _require_positive_amount(value: float, *, role: str) -> None:
-    if value <= 0:
-        raise ValueError(f"{role} must be positive")
-
-
 @dataclass(frozen=True)
 class HiddenCityOffer:
     origin: str
     destination: str
     departure_date: date
     price: float
-    currency: str
+    currency: str = field(kw_only=True)
     evidence: EvidenceLevel
     source: str = HIDDEN_CITY_SOURCE
     airline: Optional[str] = None
@@ -1602,7 +1899,7 @@ class HiddenCityReport:
     warnings: Tuple[str, ...] = HIDDEN_CITY_WARNINGS
     source: str = HIDDEN_CITY_SOURCE
     locale: str = FETCH_LANGUAGE
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
@@ -1614,17 +1911,12 @@ class HiddenCityReport:
             "currency",
             normalize_currency(self.currency) if self.currency else None,
         )
-        if self.searched_at.tzinfo is not None:
-            object.__setattr__(
-                self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
-            )
+        _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "schema_version": self.schema_version,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "source": self.source,
             "locale": self.locale,
             "origin": self.origin,
@@ -1734,7 +2026,7 @@ class PointsBalance:
 
 @dataclass(frozen=True)
 class TransferPath:
-    currency: str
+    currency: str = field(kw_only=True)
     program: str
     ratio: float
     points_needed: int
@@ -1791,7 +2083,7 @@ class AwardCompareReport:
     currency: Optional[str] = None
     cpp_cents: Optional[float] = None
     locale: str = FETCH_LANGUAGE
-    schema_version: int = field(init=False, default=1)
+    schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
         if self.cash_price is not None:
@@ -1804,17 +2096,12 @@ class AwardCompareReport:
         if self.award.currency and currency and self.award.currency != currency:
             raise ValueError("award currency and cash currency must match")
         object.__setattr__(self, "currency", currency)
-        if self.searched_at.tzinfo is not None:
-            object.__setattr__(
-                self,
-                "searched_at",
-                self.searched_at.astimezone(timezone.utc).replace(tzinfo=None),
-            )
+        _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
             "schema_version": self.schema_version,
-            "searched_at": self.searched_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "searched_at": _iso_z(self.searched_at),
             "locale": self.locale,
             "award": dict(self.award.to_dict()),
             "transfer_paths": [path.to_dict() for path in self.transfer_paths],
@@ -1827,3 +2114,198 @@ class AwardCompareReport:
         if self.cpp_cents is not None:
             payload["cpp_cents"] = self.cpp_cents
         return payload
+
+
+@dataclass(frozen=True)
+class HotelRoomRate:
+    """One bookable room rate as the provider listed it. Never ranked or merged."""
+
+    title: str
+    total_price: float
+    price_per_night: Optional[float]
+    taxes_and_fees: Optional[float]
+    occupancy_limit: Optional[int]
+    refundable: Optional[bool]
+    free_cancellation: Optional[bool]
+    bed_types: Tuple[str, ...]
+    booking_link: Optional[str]
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "title": self.title,
+            "total_price": self.total_price,
+            "price_per_night": self.price_per_night,
+            "taxes_and_fees": self.taxes_and_fees,
+            "occupancy_limit": self.occupancy_limit,
+            "refundable": self.refundable,
+            "free_cancellation": self.free_cancellation,
+            "bed_types": list(self.bed_types),
+            "booking_link": self.booking_link,
+        }
+
+
+@dataclass(frozen=True)
+class HotelRoomsReport:
+    searched_at: datetime
+    hotel_id: Optional[str]
+    check_in: date
+    check_out: date
+    adults: int
+    rooms: int
+    currency: str = field(kw_only=True)
+    provider: Literal["skiplagged"] = "skiplagged"
+    price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
+    schema_version: int = field(init=False, default=2)
+    requested_name: Optional[str] = None
+    name: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    star_rating: Optional[float] = None
+    review_rating: Optional[float] = None
+    review_count: Optional[int] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    link: Optional[str] = None
+    rates: Tuple[HotelRoomRate, ...] = ()
+    error: Optional[SearchError] = None
+    fetch_ms: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        _store_naive_utc(self)
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "provider": self.provider,
+            "searched_at": _iso_z(self.searched_at),
+            "currency": self.currency,
+            "price_basis": self.price_basis,
+            "hotel_id": self.hotel_id,
+            "requested_name": self.requested_name,
+            "name": self.name,
+            "address": self.address,
+            "city": self.city,
+            "star_rating": self.star_rating,
+            "review_rating": self.review_rating,
+            "review_count": self.review_count,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "link": self.link,
+            "check_in": self.check_in.isoformat(),
+            "check_out": self.check_out.isoformat(),
+            "adults": self.adults,
+            "rooms": self.rooms,
+            "rates": [rate.to_dict() for rate in self.rates],
+            "error": self.error.to_dict() if self.error else None,
+            "fetch_ms": self.fetch_ms,
+        }
+
+
+@dataclass(frozen=True)
+class StayBlock:
+    """Consecutive nights with the same people. Pure bookkeeping, never advice."""
+
+    check_in: date
+    check_out: date
+    people: Tuple[str, ...]
+
+    @property
+    def nights(self) -> int:
+        return (self.check_out - self.check_in).days
+
+    @property
+    def headcount(self) -> int:
+        return len(self.people)
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "check_in": self.check_in.isoformat(),
+            "check_out": self.check_out.isoformat(),
+            "nights": self.nights,
+            "headcount": self.headcount,
+            "people": list(self.people),
+        }
+
+
+@dataclass(frozen=True)
+class StayBlocksReport:
+    blocks: Tuple[StayBlock, ...]
+    people: Tuple[str, ...]
+    person_nights: int
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "blocks": [block.to_dict() for block in self.blocks],
+            "people": list(self.people),
+            "nights": sum(block.nights for block in self.blocks),
+            "person_nights": self.person_nights,
+        }
+
+
+@dataclass(frozen=True)
+class StayShare:
+    stay: str
+    nights: int
+    total: float
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {"stay": self.stay, "nights": self.nights, "total": self.total}
+
+
+@dataclass(frozen=True)
+class PersonCost:
+    name: str
+    nights: int
+    fee: float
+    total: float
+    shares: Tuple[StayShare, ...]
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "name": self.name,
+            "nights": self.nights,
+            "fee": self.fee,
+            "total": self.total,
+            "shares": [share.to_dict() for share in self.shares],
+        }
+
+
+@dataclass(frozen=True)
+class SplitStay:
+    name: str
+    check_in: date
+    check_out: date
+    total: float
+    person_nights: int
+    rate_per_person_night: float
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "name": self.name,
+            "check_in": self.check_in.isoformat(),
+            "check_out": self.check_out.isoformat(),
+            "nights": (self.check_out - self.check_in).days,
+            "total": self.total,
+            "person_nights": self.person_nights,
+            "rate_per_person_night": self.rate_per_person_night,
+        }
+
+
+@dataclass(frozen=True)
+class StayCostSplit:
+    currency: str
+    stays: Tuple[SplitStay, ...]
+    people: Tuple[PersonCost, ...]
+    total: float
+    unallocated_nights: Tuple[date, ...]
+    fee_per_person_night: Optional[float] = None
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "currency": self.currency,
+            "fee_per_person_night": self.fee_per_person_night,
+            "stays": [stay.to_dict() for stay in self.stays],
+            "people": [person.to_dict() for person in self.people],
+            "total": self.total,
+            "unallocated_nights": [day.isoformat() for day in self.unallocated_nights],
+        }

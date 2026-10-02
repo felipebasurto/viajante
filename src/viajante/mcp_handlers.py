@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import calendar
+import functools
 import threading
+import time
 from datetime import date
 from typing import Mapping, Optional, Sequence
 
@@ -17,10 +18,17 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.explore import DEFAULT_EXPLORE_TOP, search_explore, validate_explore_window
+from viajante.evidence import failure_codes, record
+from viajante.explore import (
+    DEFAULT_EXPLORE_TOP,
+    month_window,
+    search_explore,
+    validate_explore_window,
+)
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
+    as_trips,
     expand_nearby_trips,
     parse_depart_window,
     parse_flight_plan,
@@ -29,8 +37,8 @@ from viajante.flights import (
     parse_via_airports,
     search_flights,
 )
-from viajante.hotels import HotelSourceName, search_hotels
-from viajante.models import FlightCabin, HotelQuery, MultiCity, RoundTrip, Trip
+from viajante.hotels import HotelSourceName, resolve_hotel_currency, search_hotels
+from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
     award_offer_from_mapping,
     compare_award,
@@ -38,28 +46,19 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    HOTEL_CURRENCY_REQUIRED,
     first_origin_iata,
     resolve_quote_and_buffer,
-    resolve_quote_currency,
 )
 from viajante.skiplagged import search_hidden_city
+from viajante.skiplagged_hotels import search_hotel_rooms
+from viajante.stays import plan_stay_blocks, split_stay_costs
+from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
+from viajante.validate import validate_itinerary
 
 _SEARCH_LOCK = threading.Lock()
-
-
-def _as_trips(plan: object) -> tuple[Trip, ...]:
-    if isinstance(plan, (RoundTrip, MultiCity)):
-        return (plan,)
-    return tuple(plan)  # type: ignore[arg-type]
-
-
-def _payload_from_reports(result: object) -> dict:
-    reports = result if isinstance(result, tuple) else (result,)
-    if len(reports) == 1:
-        return dict(reports[0].to_dict())
-    return {"queries": [dict(row.to_dict()) for row in reports]}
+CACHE_SECONDS = 300.0
+_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -78,19 +77,36 @@ def _with_search_lock(fn):
         _SEARCH_LOCK.release()
 
 
-def _month_start(value: str) -> date:
-    try:
-        year_text, month_text = value.split("-", 1)
-        year, month = int(year_text), int(month_text)
-        return date(year, month, 1)
-    except ValueError as exc:
-        raise ValueError("month must look like YYYY-MM") from exc
+def _owned(payload: dict) -> dict:
+    record(payload)
+    return payload
+
+
+def _cached(fn):
+    """Replay an identical successful search for CACHE_SECONDS instead of asking Google again."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = (fn.__name__, repr((args, sorted(kwargs.items()))))
+        now = time.monotonic()
+        hit = _CACHE.get(key)
+        if hit is not None and now - hit[0] < CACHE_SECONDS:
+            return {**hit[1], "cached": True}
+        result = fn(*args, **kwargs)
+        if not failure_codes(result):
+            for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
+                del _CACHE[stale]
+            _CACHE[key] = (now, result)
+        return result
+
+    return wrapper
 
 
 def lookup_airports_tool(query: str, *, limit: int = 20) -> list[Mapping[str, str]]:
     return [row.to_dict() for row in lookup_airports(query, limit=limit)]
 
 
+@_cached
 def search_flights_tool(
     routes: Sequence[str],
     *,
@@ -142,7 +158,7 @@ def search_flights_tool(
         carry_on=carry_on,
         price_cap=price_cap,
     )
-    trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
+    trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
@@ -175,9 +191,10 @@ def search_flights_tool(
             proxy=proxy,
         )
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
+@_cached
 def search_dates_tool(
     route: str,
     start: str,
@@ -221,7 +238,6 @@ def search_dates_tool(
     start_date = date.fromisoformat(start)
     end_date = date.fromisoformat(end)
     validate_date_window(start_date, end_date)
-    _reject_past((start_date,))
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
@@ -265,9 +281,10 @@ def search_dates_tool(
             proxy=proxy,
         )
     )
-    return _payload_from_reports(report)
+    return _owned(reports_payload(report))
 
 
+@_cached
 def search_flex_tool(
     route: str,
     around: str,
@@ -310,8 +327,7 @@ def search_flex_tool(
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
-    start, _end = flex_window(around_date, flex)
-    _reject_past((around_date, start), label="around")
+    flex_window(around_date, flex)
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
@@ -356,9 +372,10 @@ def search_flex_tool(
             proxy=proxy,
         )
     )
-    return _payload_from_reports(report)
+    return _owned(reports_payload(report))
 
 
+@_cached
 def search_explore_tool(
     origin: str,
     start: Optional[str] = None,
@@ -402,14 +419,12 @@ def search_explore_tool(
     if month and start:
         raise ValueError("use either month or start, not both")
     if month:
-        start_date = _month_start(month)
-        days = calendar.monthrange(start_date.year, start_date.month)[1]
+        start_date, days = month_window(month)
     else:
         if not start:
             raise ValueError("start or month is required")
         start_date = date.fromisoformat(start)
     validate_explore_window(start_date, days)
-    _reject_past((start_date,))
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
     report = _with_search_lock(
         lambda: search_explore(
@@ -451,13 +466,74 @@ def search_explore_tool(
             proxy=proxy,
         )
     )
-    return _payload_from_reports(report)
+    return _owned(reports_payload(report))
 
 
+MAX_HOTEL_STAYS = 8
+
+
+def _hotel_queries(
+    location: Optional[str],
+    check_in: Optional[str],
+    check_out: Optional[str],
+    stays: Optional[Sequence[Mapping[str, object]]],
+    *,
+    adults: int,
+    rooms: int,
+    min_rating: Optional[float],
+    entire_home: bool,
+    free_cancellation: bool,
+) -> tuple[HotelQuery, ...]:
+    if stays is None:
+        specs: Sequence[Mapping[str, object]] = (
+            {"location": location, "check_in": check_in, "check_out": check_out},
+        )
+    else:
+        if location is not None or check_in is not None or check_out is not None:
+            raise ValueError("pass either location/check_in/check_out or stays, not both")
+        if not stays:
+            raise ValueError("stays must not be empty")
+        if len(stays) > MAX_HOTEL_STAYS:
+            raise ValueError(f"stays is limited to {MAX_HOTEL_STAYS} per call")
+        specs = stays
+    queries = []
+    for index, spec in enumerate(specs):
+        unknown = set(spec) - {"location", "check_in", "check_out", "adults", "rooms"}
+        if unknown:
+            raise ValueError(f"stay {index + 1}: unknown keys {sorted(unknown)}")
+        place, start, end = spec.get("location"), spec.get("check_in"), spec.get("check_out")
+        if not (isinstance(place, str) and isinstance(start, str) and isinstance(end, str)):
+            raise ValueError(f"stay {index + 1}: location, check_in and check_out are required")
+        check_in_date = date.fromisoformat(start)
+        _reject_past((check_in_date,), label="check-in")
+        queries.append(
+            HotelQuery(
+                place,
+                check_in_date,
+                date.fromisoformat(end),
+                adults=int(spec.get("adults", adults)),  # type: ignore[call-overload]
+                rooms=int(spec.get("rooms", rooms)),  # type: ignore[call-overload]
+                min_rating=min_rating,
+                entire_home=entire_home,
+                free_cancellation=free_cancellation,
+            )
+        )
+    return tuple(queries)
+
+
+def _near_point(near: Optional[Mapping[str, float]]) -> Optional[tuple[float, float]]:
+    if near is None:
+        return None
+    if not isinstance(near, Mapping) or set(near) != {"lat", "lng"}:
+        raise ValueError("near must be {lat, lng}")
+    return (near["lat"], near["lng"])
+
+
+@_cached
 def search_hotels_tool(
-    location: str,
-    check_in: str,
-    check_out: str,
+    location: Optional[str] = None,
+    check_in: Optional[str] = None,
+    check_out: Optional[str] = None,
     *,
     adults: int = 2,
     rooms: int = 1,
@@ -467,29 +543,59 @@ def search_hotels_tool(
     free_cancellation: bool = True,
     source: HotelSourceName = "google",
     currency: Optional[str] = None,
+    stays: Optional[Sequence[Mapping[str, object]]] = None,
+    near: Optional[Mapping[str, float]] = None,
 ) -> Mapping[str, object]:
     if source == "google" and min_rating is not None and min_rating > 5:
         raise ValueError("min_rating must be at most 5 with source google")
-    currency = resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
-    check_in_date = date.fromisoformat(check_in)
-    check_out_date = date.fromisoformat(check_out)
-    _reject_past((check_in_date,), label="check-in")
-    query = HotelQuery(
+    currency = resolve_hotel_currency(source, currency)
+    queries = _hotel_queries(
         location,
-        check_in_date,
-        check_out_date,
+        check_in,
+        check_out,
+        stays,
         adults=adults,
         rooms=rooms,
         min_rating=min_rating,
         entire_home=entire_home,
         free_cancellation=free_cancellation,
     )
+    near_point = _near_point(near)
     report = _with_search_lock(
-        lambda: search_hotels((query,), top=top, source=source, currency=currency)
+        lambda: search_hotels(queries, top=top, source=source, currency=currency, near=near_point)
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
+@_cached
+def search_hotel_rooms_tool(
+    hotel_id: Optional[int],
+    check_in: str,
+    check_out: str,
+    *,
+    hotel_name: Optional[str] = None,
+    city: Optional[str] = None,
+    adults: int = 2,
+    rooms: int = 1,
+) -> Mapping[str, object]:
+    check_in_date = date.fromisoformat(check_in)
+    check_out_date = date.fromisoformat(check_out)
+    _reject_past((check_in_date,), label="check-in")
+    report = _with_search_lock(
+        lambda: search_hotel_rooms(
+            hotel_id,
+            check_in_date,
+            check_out_date,
+            hotel_name=hotel_name,
+            city=city,
+            adults=adults,
+            rooms=rooms,
+        )
+    )
+    return _owned(dict(report.to_dict()))
+
+
+@_cached
 def search_trip_tool(
     routes: Sequence[str],
     location: str,
@@ -547,7 +653,7 @@ def search_trip_tool(
         carry_on=carry_on,
         price_cap=price_cap,
     )
-    trips = expand_nearby_trips(_as_trips(plan), nearby=nearby)
+    trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
@@ -604,9 +710,10 @@ def search_trip_tool(
             hotel_source=source,
         )
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
+@_cached
 def search_hidden_city_tool(
     route: str,
     departure: str,
@@ -616,7 +723,10 @@ def search_hidden_city_tool(
     top: int = DEFAULT_TOP,
     currency: Optional[str] = None,
 ) -> Mapping[str, object]:
-    """Skiplagged MCP search. Opt-in. Does not mix Google Flights results."""
+    """Skiplagged MCP search. Opt-in. Does not mix Google Flights results.
+
+    Named currency is a keep. Skiplagged cards are USD; omit or pass USD.
+    """
     origin, destination = parse_route_pair(route)
     departure_date = date.fromisoformat(departure)
     back = date.fromisoformat(return_date) if return_date else None
@@ -632,7 +742,7 @@ def search_hidden_city_tool(
             currency=currency,
         )
     )
-    return dict(report.to_dict())
+    return _owned(reports_payload(report))
 
 
 def compare_awards_tool(
@@ -667,3 +777,31 @@ def lookup_transfers_tool(
         "points": points,
         "transfer_paths": [path.to_dict() for path in paths],
     }
+
+
+def plan_stay_blocks_tool(roster: Mapping[str, Sequence[str]]) -> Mapping[str, object]:
+    """Local: consecutive nights with the same people, as check-in/check-out blocks."""
+    return dict(plan_stay_blocks(roster).to_dict())
+
+
+def split_stay_costs_tool(
+    stays: Sequence[Mapping[str, object]],
+    roster: Mapping[str, Sequence[str]],
+    currency: str,
+    *,
+    fee_per_person_night: Optional[float] = None,
+) -> Mapping[str, object]:
+    """Local: split each stay's total among the people who sleep there, by nights."""
+    report = split_stay_costs(
+        stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
+    )
+    return _owned(dict(report.to_dict()))
+
+
+def validate_itinerary_tool(
+    legs: Sequence[Mapping[str, object]],
+    constraints: Mapping[str, object],
+    *,
+    currency: Optional[str] = None,
+) -> Mapping[str, object]:
+    return dict(validate_itinerary(legs, constraints, currency=currency).to_dict())

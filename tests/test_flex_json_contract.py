@@ -31,6 +31,7 @@ REPORT_KEYS = {
     "vs_typical",
     "fetch_backend",
     "fetch_ms",
+    "coverage",
     "days",
     "offers",
 }
@@ -92,6 +93,7 @@ def _report() -> FlexSearchReport:
         offers=(_offer(),),
         fetch_backend="calendar_then_sweep",
         fetch_ms=800,
+        currency="EUR",
     )
 
 
@@ -112,6 +114,7 @@ class FlexJsonContractTests(unittest.TestCase):
             start_date=date(2026, 9, 12),
             end_date=date(2026, 9, 18),
             days=(),
+            currency="EUR",
         )
         data = report.to_dict()
         self.assertEqual(set(data), REPORT_KEYS)
@@ -121,7 +124,7 @@ class FlexJsonContractTests(unittest.TestCase):
         self.assertIsNone(data["vs_typical"])
 
     def test_declared_constants_are_stable(self) -> None:
-        self.assertEqual(self.data["schema_version"], 1)
+        self.assertEqual(self.data["schema_version"], 2)
         self.assertEqual(self.data["currency"], "EUR")
         self.assertEqual(self.data["locale"], "en")
         self.assertEqual(self.data["origin"], "BOS")
@@ -150,6 +153,7 @@ class FlexJsonContractTests(unittest.TestCase):
             end_date=date(2026, 9, 15),
             days=(),
             fetch_backend="calendar",
+            currency="EUR",
         )
         data = report.to_dict()
         self.assertIsNone(data["chosen_date"])
@@ -169,6 +173,7 @@ class FlexJsonContractTests(unittest.TestCase):
             end_date=date(2026, 9, 15),
             days=(),
             error=SearchError(code=SearchErrorCode.REJECTED, message="rejected"),
+            currency="EUR",
         )
         data = report.to_dict()
         self.assertEqual(set(data["error"]), {"code", "message"})
@@ -212,6 +217,7 @@ class FlexJsonContractTests(unittest.TestCase):
             offers=(_offer(),),
             stops_compare=compare,
             fetch_backend="calendar_then_sweep",
+            currency="EUR",
         ).to_dict()
         self.assertEqual(set(data), REPORT_KEYS | {"stops_compare"})
         self.assertEqual(set(data["stops_compare"]), {"nonstop", "one_stop"})
@@ -229,6 +235,7 @@ class FlexJsonContractTests(unittest.TestCase):
             end_date=date(2026, 9, 15),
             days=(),
             stops_compare=StopsCompare(nonstop=StopsCompareSide.from_offer(_offer())),
+            currency="EUR",
         )
         data = report.to_dict()
         self.assertEqual(set(data["stops_compare"]), {"nonstop"})
@@ -246,6 +253,7 @@ class FlexJsonContractTests(unittest.TestCase):
             days=(),
             offers=(_offer(),),
             google_flights_url="https://www.google.com/travel/flights?tfs=flex",
+            currency="EUR",
         ).to_dict()
         self.assertEqual(set(data), REPORT_KEYS | {"google_flights_url"})
         self.assertEqual(
@@ -261,6 +269,7 @@ class FlexJsonContractTests(unittest.TestCase):
             start_date=date(2026, 9, 9),
             end_date=date(2026, 9, 15),
             days=(),
+            currency="EUR",
         ).to_dict()
         self.assertEqual(set(miss), REPORT_KEYS)
         self.assertNotIn("google_flights_url", miss)

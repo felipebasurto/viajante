@@ -18,7 +18,6 @@ from viajante.hotels import (
     _rank_offers,
     _run_search,
     search_hotels,
-    write_hotel_report_atomic,
 )
 from viajante.models import (
     AppliedHotelFilters,
@@ -39,6 +38,7 @@ from viajante.orchestration import (
     REQUEST_DELAY_SECONDS,
     REQUEST_JITTER_SECONDS,
 )
+from viajante.storage import reports_payload, write_json_atomic
 
 ScriptedResponse = Union[HotelPage, Exception]
 
@@ -349,6 +349,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(3),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         self.assertIsInstance(report.queries[0], HotelQuerySuccess)
@@ -373,6 +374,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(7),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         self.assertEqual(len(source.fetch_calls), MAX_ATTEMPTS)
@@ -402,6 +404,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -425,6 +428,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -447,6 +451,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(11),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         self.assertEqual(sleeps, [expected])
@@ -462,6 +467,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
             progress=lines.append,
+            currency="EUR",
         )
         self.assertEqual(
             lines,
@@ -481,6 +487,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -511,6 +518,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -530,6 +538,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
         )
 
         result = report.queries[0]
@@ -561,6 +570,7 @@ class HotelOrchestrationTests(unittest.TestCase):
                 sleep=lambda _: None,
                 random_gen=Random(0),
                 now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+                currency="EUR",
             )
 
         result = report.queries[0]
@@ -579,9 +589,9 @@ class HotelOrchestrationTests(unittest.TestCase):
         }
 
         with self.assertRaises(ValueError):
-            _run_search((), top=8, **kwargs)
+            _run_search((), top=8, **kwargs, currency="EUR")
         with self.assertRaises(ValueError):
-            _run_search((query(),), top=0, **kwargs)
+            _run_search((query(),), top=0, **kwargs, currency="EUR")
 
         self.assertEqual(source.fetch_calls, [])
 
@@ -617,6 +627,7 @@ class HotelOrchestrationTests(unittest.TestCase):
                 url="https://www.google.com/travel/search",
             ),
             delay_seconds=lambda _: 0.0,
+            currency="EUR",
         )
         self.assertEqual(report.provider, "google-hotels")
         self.assertEqual(report.locale, "en")
@@ -634,6 +645,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
             provider="google-hotels",
+            currency="EUR",
         )
         self.assertEqual(len(source.fetch_calls), 1)
         self.assertEqual(sleeps, [])
@@ -652,6 +664,7 @@ class HotelOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 10, 0, 0),
             provider="google-hotels",
+            currency="EUR",
         )
         self.assertEqual(len(source.fetch_calls), 1)
         result = report.queries[0]
@@ -685,27 +698,16 @@ class HotelOrchestrationTests(unittest.TestCase):
         self.assertTrue(source.closed)
         self.assertIsInstance(report.queries[0], HotelQueryFailure)
 
-    def test_report_writer_delegates_to_atomic_storage(self) -> None:
-        report = HotelSearchReport(
-            searched_at=datetime(2026, 8, 10, 10, 0, 0),
-            queries=(),
-        )
-        destination = Path("hotels.json")
-
-        with patch("viajante.hotels.write_json_atomic") as writer:
-            write_hotel_report_atomic(report, destination)
-
-        writer.assert_called_once_with(report.to_dict(), destination)
-
     def test_report_writer_produces_json_atomically(self) -> None:
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 10, 10, 0, 0),
             queries=(),
+            currency="EUR",
         )
 
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp) / "nested" / "hotels.json"
-            write_hotel_report_atomic(report, destination)
+            write_json_atomic(reports_payload(report), destination)
 
             self.assertTrue(destination.exists())
             self.assertFalse(destination.with_suffix(".json.tmp").exists())
@@ -735,3 +737,110 @@ class HotelOrchestrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _located(title: str, price: str, lat: float | None, lng: float | None) -> RawHotelCard:
+    return RawHotelCard(
+        title=title,
+        address=f"{title} street",
+        total_price=price,
+        rating=None,
+        details="",
+        link=None,
+        latitude=lat,
+        longitude=lng,
+    )
+
+
+def _two_stays(first: Sequence[RawHotelCard], second: Sequence[RawHotelCard], **kwargs):
+    source = FakeSource([HotelPage(cards=tuple(first)), HotelPage(cards=tuple(second))])
+    return _run_search(
+        (
+            query(check_in=date(2026, 12, 3), check_out=date(2026, 12, 4), adults=5),
+            query(check_in=date(2026, 12, 4), check_out=date(2026, 12, 6), adults=4),
+        ),
+        top=8,
+        source=source,
+        sleep=lambda _: None,
+        delay_seconds=lambda _: 0.0,
+        random_gen=Random(1),
+        now=lambda: datetime(2026, 10, 2, 10, 0, 0),
+        currency="EUR",
+        **kwargs,
+    )
+
+
+class HotelDistanceTests(unittest.TestCase):
+    OLD_TOWN = (50.0875, 14.4213)
+
+    def test_distance_is_great_circle_km_to_the_named_point(self) -> None:
+        from viajante.hotels import _distance_km
+
+        # One degree of latitude is about 111.2 km.
+        self.assertAlmostEqual(_distance_km((50.0, 14.0), 51.0, 14.0), 111.2, delta=0.3)
+        self.assertEqual(_distance_km(self.OLD_TOWN, *self.OLD_TOWN), 0.0)
+
+    def test_offers_carry_distance_only_when_a_point_is_named_and_coordinates_exist(self) -> None:
+        cards = [_located("Near", "100 €", 50.0875, 14.4313), _located("Blind", "90 €", None, None)]
+        named = _two_stays(cards, cards, near=self.OLD_TOWN)
+        offers = {o.title: o for o in named.queries[0].offers}
+        self.assertAlmostEqual(offers["Near"].distance_km, 0.71, delta=0.05)
+        self.assertIsNone(offers["Blind"].distance_km)
+        self.assertEqual(named.to_dict()["near"], {"lat": 50.0875, "lng": 14.4213})
+        unnamed = _two_stays(cards, cards)
+        self.assertIsNone(unnamed.queries[0].offers[0].distance_km)
+        self.assertIsNone(unnamed.to_dict()["near"])
+
+    def test_a_bad_point_fails_before_any_request(self) -> None:
+        with patch("viajante.hotels.GoogleHotelsSource") as source:
+            for bad in ((91.0, 0.0), (0.0, 181.0), (True, 1.0)):
+                with self.subTest(near=bad):
+                    with self.assertRaises(ValueError):
+                        search_hotels((query(),), source="google", currency="EUR", near=bad)
+        source.assert_not_called()
+
+
+class PropertyMatrixTests(unittest.TestCase):
+    def test_each_property_lists_its_price_per_stay_with_null_where_absent(self) -> None:
+        a1, b1 = _located("Alpha", "100 €", 50.1, 14.4), _located("Beta", "80 €", 50.1, 14.4)
+        a2, c2 = _located("Alpha", "210 €", 50.1, 14.4), _located("Gamma", "150 €", 50.1, 14.4)
+        matrix = _two_stays([a1, b1], [a2, c2]).to_dict()["property_matrix"]
+        self.assertEqual(
+            [(row["title"], row["prices"]) for row in matrix],
+            [("Alpha", [100.0, 210.0]), ("Beta", [80.0, None]), ("Gamma", [None, 150.0])],
+        )
+
+    def test_rows_are_sorted_by_name_not_by_price(self) -> None:
+        cheap, dear = _located("Cheap", "50 €", 50.1, 14.4), _located("Dear", "500 €", 50.1, 14.4)
+        matrix = _two_stays([dear, cheap], [dear]).to_dict()["property_matrix"]
+        self.assertEqual([row["title"] for row in matrix], ["Cheap", "Dear"])
+
+    def test_a_single_stay_has_no_matrix(self) -> None:
+        report = _run_search(
+            (query(),),
+            top=8,
+            source=FakeSource([HotelPage(cards=(card(),))]),
+            sleep=lambda _: None,
+            random_gen=Random(1),
+            now=lambda: datetime(2026, 10, 2, 10, 0, 0),
+            currency="EUR",
+        )
+        self.assertIsNone(report.to_dict()["property_matrix"])
+
+    def test_a_failed_stay_leaves_its_column_null(self) -> None:
+        source = FakeSource([HotelPage(cards=(_located("Alpha", "100 €", None, None),))])
+        source.responses += [EmptyHotelResults()] * MAX_ATTEMPTS
+        report = _run_search(
+            (
+                query(check_in=date(2026, 12, 3), check_out=date(2026, 12, 4)),
+                query(check_in=date(2026, 12, 4), check_out=date(2026, 12, 6)),
+            ),
+            top=8,
+            source=source,
+            sleep=lambda _: None,
+            delay_seconds=lambda _: 0.0,
+            random_gen=Random(1),
+            now=lambda: datetime(2026, 10, 2, 10, 0, 0),
+            currency="EUR",
+        )
+        self.assertEqual(report.to_dict()["property_matrix"][0]["prices"], [100.0, None])

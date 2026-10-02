@@ -5,7 +5,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -27,12 +27,30 @@ def playwright_available() -> bool:
     return True
 
 
+def chromium_installed() -> bool:
+    """True when Playwright can launch its Chromium binary. Does not download it."""
+    if not playwright_available():
+        return False
+    try:
+        pw = _sync_playwright().start()
+    except Exception:
+        return False
+    try:
+        executable = Path(pw.chromium.executable_path)
+    except Exception:
+        return False
+    finally:
+        with contextlib.suppress(Exception):
+            pw.stop()
+    return executable.is_file()
+
+
 @dataclass(frozen=True)
 class BrowserSessionConfig:
     state_filename: str
     locale: str
     html_lang: str
-    currency: str = "EUR"
+    currency: str = field(kw_only=True)
     country: Optional[str] = None
     viewport: Optional[Mapping[str, int]] = None
     user_agent: Optional[str] = None

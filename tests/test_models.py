@@ -281,9 +281,10 @@ class ModelTests(unittest.TestCase):
                     ),
                 ),
             ),
+            currency="EUR",
         )
         data = report.to_dict()
-        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["schema_version"], 2)
         self.assertEqual(data["currency"], "EUR")
         self.assertEqual(data["locale"], "en")
         self.assertEqual(data["queries"][0]["status"], "error")
@@ -294,11 +295,13 @@ class ModelTests(unittest.TestCase):
 class ReportTimestampTests(unittest.TestCase):
     def test_offset_aware_timestamps_are_converted_to_real_utc(self) -> None:
         madrid = datetime(2026, 8, 10, 9, 0, 0, tzinfo=timezone(timedelta(hours=2)))
-        report = SearchReport(searched_at=madrid, queries=())
+        report = SearchReport(searched_at=madrid, queries=(), currency="EUR")
         self.assertEqual(report.to_dict()["searched_at"], "2026-08-10T07:00:00Z")
 
     def test_naive_timestamps_are_treated_as_utc(self) -> None:
-        report = SearchReport(searched_at=datetime(2026, 8, 10, 9, 0, 0), queries=())
+        report = SearchReport(
+            searched_at=datetime(2026, 8, 10, 9, 0, 0), queries=(), currency="EUR"
+        )
         self.assertEqual(report.to_dict()["searched_at"], "2026-08-10T09:00:00Z")
 
 
@@ -341,10 +344,10 @@ class BaggageInvariantTests(unittest.TestCase):
             checked_bags=1,
             carry_on=1,
         )
-        data = known.to_dict()
+        data = known.to_dict(currency="EUR")
         self.assertEqual(data["checked_bags"], 1)
         self.assertEqual(data["carry_on"], 1)
-        omitted = self._offer(baggage_buffer=0, needs_verify=True).to_dict()
+        omitted = self._offer(baggage_buffer=0, needs_verify=True).to_dict(currency="EUR")
         self.assertNotIn("checked_bags", omitted)
         self.assertNotIn("carry_on", omitted)
 
@@ -570,9 +573,10 @@ class HotelModelTests(unittest.TestCase):
                     ),
                 ),
             ),
+            currency="EUR",
         )
         data = report.to_dict()
-        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["schema_version"], 2)
         self.assertEqual(data["provider"], "booking.com")
         self.assertEqual(data["currency"], "EUR")
         self.assertEqual(data["locale"], "en")

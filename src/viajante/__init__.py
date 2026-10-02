@@ -9,7 +9,9 @@ from viajante.models import (
     AwardCompareReport,
     AwardOffer,
     CancellationEvidence,
+    ConstraintCheck,
     DateCalendarReport,
+    EvidenceCompleteness,
     ExploreReport,
     FlexSearchReport,
     FlightLeg,
@@ -17,12 +19,15 @@ from viajante.models import (
     HiddenCityReport,
     HotelQuery,
     HotelSearchReport,
+    ItineraryValidationReport,
     MultiCity,
+    OfferEvidence,
     PointsBalance,
     PropertyTypeEvidence,
     QueryFailure,
     QuerySuccess,
     RoundTrip,
+    SearchCoverage,
     SearchError,
     SearchErrorCode,
     SearchReport,
@@ -30,15 +35,17 @@ from viajante.models import (
     TripSearchReport,
 )
 from viajante.points import compare_award, load_award_offer, transfer_paths
-from viajante.prompt_plan import plan_prompt
 from viajante.skiplagged import search_hidden_city
 from viajante.trip import search_trip
+from viajante.validate import validate_itinerary
 
 __all__ = [
     "AwardCompareReport",
     "AwardOffer",
     "CancellationEvidence",
+    "ConstraintCheck",
     "DateCalendarReport",
+    "EvidenceCompleteness",
     "ExploreReport",
     "FlexSearchReport",
     "FlightLeg",
@@ -46,12 +53,15 @@ __all__ = [
     "HiddenCityReport",
     "HotelQuery",
     "HotelSearchReport",
+    "ItineraryValidationReport",
     "MultiCity",
+    "OfferEvidence",
     "PointsBalance",
     "PropertyTypeEvidence",
     "QueryFailure",
     "QuerySuccess",
     "RoundTrip",
+    "SearchCoverage",
     "SearchError",
     "SearchErrorCode",
     "SearchReport",
@@ -61,7 +71,6 @@ __all__ = [
     "get_flights",
     "load_award_offer",
     "lookup_airports",
-    "plan_prompt",
     "search_dates",
     "search_explore",
     "search_flex",
@@ -70,4 +79,5 @@ __all__ = [
     "search_hotels",
     "search_trip",
     "transfer_paths",
+    "validate_itinerary",
 ]

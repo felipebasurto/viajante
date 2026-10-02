@@ -226,17 +226,21 @@ class ParserTests(unittest.TestCase):
         cases = [
             (
                 "2 bedrooms · 1 bathroom · 3 beds",
-                {"bedrooms": 2, "bathrooms": 1, "beds": 3},
+                {"bedrooms": 2, "bathrooms": 1, "beds": 3, "sleeps": None},
             ),
             (
                 "2 dormitorios · 1 baño · 3 camas",
-                {"bedrooms": None, "bathrooms": None, "beds": None},
+                {"bedrooms": None, "bathrooms": None, "beds": None, "sleeps": None},
             ),
             (
                 "1 bedroom · 1 bathroom",
-                {"bedrooms": 1, "bathrooms": 1, "beds": None},
+                {"bedrooms": 1, "bathrooms": 1, "beds": None, "sleeps": None},
             ),
-            ("", {"bedrooms": None, "bathrooms": None, "beds": None}),
+            (
+                "Entire apartment. Sleeps 3. 1 bedroom. 2 beds",
+                {"bedrooms": 1, "bathrooms": None, "beds": 2, "sleeps": 3},
+            ),
+            ("", {"bedrooms": None, "bathrooms": None, "beds": None, "sleeps": None}),
         ]
         for text, want in cases:
             with self.subTest(text=text):

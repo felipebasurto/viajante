@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Callable, Literal, Optional, Protocol, Sequence, Tuple
 
 from viajante.booking import (
@@ -65,7 +65,18 @@ from viajante.parsers import (
     parse_unit_hints,
 )
 from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
-from viajante.storage import default_state_dir, write_json_atomic
+from viajante.skiplagged import SkiplaggedRateLimited
+from viajante.skiplagged_hotels import (
+    SKIPLAGGED_HOTEL_CURRENCY,
+    SkiplaggedHotelsSource,
+    SkiplaggedNoHotels,
+    SkiplaggedParseMiss,
+    validate_search_party,
+)
+from viajante.skiplagged_hotels import (
+    build_applied_filters as build_skiplagged_filters,
+)
+from viajante.storage import default_state_dir
 
 
 class _HotelSource(Protocol):
@@ -106,7 +117,41 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         bathrooms=hints["bathrooms"],
         beds=hints["beds"],
         link=card.link,
+        latitude=card.latitude,
+        longitude=card.longitude,
+        review_count=card.review_count,
+        sleeps=hints["sleeps"],
+        place_types=card.place_types,
+        class_label=card.class_label,
+        priced_adults=card.priced_adults,
+        provider_id=card.provider_id,
     )
+
+
+def _distance_km(near: Tuple[float, float], latitude: float, longitude: float) -> float:
+    """Straight-line (great-circle) kilometres, to 0.01 km."""
+    lat1, lng1, lat2, lng2 = map(math.radians, (near[0], near[1], latitude, longitude))
+    half = (
+        math.sin((lat2 - lat1) / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin((lng2 - lng1) / 2) ** 2
+    )
+    return round(2 * 6371.0088 * math.asin(math.sqrt(half)), 2)
+
+
+def _with_distance(offer: HotelOffer, near: Optional[Tuple[float, float]]) -> HotelOffer:
+    if near is None or offer.latitude is None or offer.longitude is None:
+        return offer
+    return replace(offer, distance_km=_distance_km(near, offer.latitude, offer.longitude))
+
+
+def validate_near(near: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    if near is None:
+        return None
+    lat, lng = near
+    ok = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lat, lng))
+    if not (ok and -90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ValueError("near must be a latitude (-90 to 90) and longitude (-180 to 180)")
+    return (float(lat), float(lng))
 
 
 def _is_eligible(offer: HotelOffer, query: HotelQuery) -> bool:
@@ -164,6 +209,15 @@ def _rank_offers(
 
 
 def _classify_hotel_failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, SkiplaggedRateLimited):
+        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+    if isinstance(exc, SkiplaggedNoHotels):
+        return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
+    if isinstance(exc, SkiplaggedParseMiss):
+        return SearchError(
+            code=SearchErrorCode.MARKUP_DRIFT,
+            message="Skiplagged hotel parse missed.",
+        )
     if isinstance(exc, EmptyHotelResults):
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
@@ -177,7 +231,8 @@ def _classify_hotel_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, HotelsBlocked):
         return SearchError(
             code=SearchErrorCode.BLOCKED,
-            message="Google Hotels blocked the sweep.",
+            message=str(exc) if exc.rate_limited else "Google Hotels blocked the sweep.",
+            rate_limited=exc.rate_limited,
         )
     if isinstance(exc, HotelsParseMiss):
         return SearchError(
@@ -196,13 +251,14 @@ def _run_search(
     random_gen: random.Random,
     now: Callable[[], datetime],
     html_lang: str = FETCH_LANGUAGE,
-    currency: str = "EUR",
+    currency: str,
     progress: Optional[Callable[[str], None]] = None,
     provider: HotelProvider = "booking.com",
     applied_filters: Optional[Callable[..., AppliedHotelFilters]] = None,
     delay_seconds: Optional[Callable[[random.Random], float]] = None,
-    fetch_backend: Optional[Literal["booking", "google"]] = None,
+    fetch_backend: Optional[Literal["booking", "google", "skiplagged"]] = None,
     fetch_ms: Optional[int] = None,
+    near: Optional[Tuple[float, float]] = None,
 ) -> HotelSearchReport:
     if not queries:
         raise ValueError("at least one query is required")
@@ -226,7 +282,9 @@ def _run_search(
             try:
                 page = source.fetch(query, applied, fetch_limit)
                 normalized = tuple(
-                    offer for raw in page.cards if (offer := _normalize_card(raw)) is not None
+                    _with_distance(offer, near)
+                    for raw in page.cards
+                    if (offer := _normalize_card(raw)) is not None
                 )
                 eligible = tuple(offer for offer in normalized if _is_eligible(offer, query))
                 rank_limit = max(top, len(eligible))
@@ -236,10 +294,12 @@ def _run_search(
                 )
                 outcome = HotelQuerySuccess(
                     query=query,
-                    applied=applied,
+                    applied=(replace(applied, url=page.search_url) if page.search_url else applied),
                     raw_count=len(page.cards),
                     eligible_count=len(ranked),
                     offers=ranked[:top],
+                    resolved_place=page.resolved_place,
+                    place_bounds=page.place_bounds,
                 )
                 break
             except Exception as exc:
@@ -250,11 +310,10 @@ def _run_search(
                 if attempt + 1 < MAX_ATTEMPTS:
                     sleep(retry_backoff_seconds(attempt, random_gen))
         if outcome is None:
-            default_message = (
-                "Google Hotels search failed."
-                if provider == "google-hotels"
-                else "Booking.com hotel search failed."
-            )
+            default_message = {
+                "google-hotels": "Google Hotels search failed.",
+                "skiplagged": "Skiplagged hotel search failed.",
+            }.get(provider, "Booking.com hotel search failed.")
             outcome = HotelQueryFailure(
                 query=query,
                 applied=applied,
@@ -276,10 +335,48 @@ def _run_search(
         provider=provider,
         fetch_backend=fetch_backend,
         fetch_ms=fetch_ms,
+        near=near,
     )
 
 
-HotelSourceName = Literal["booking", "google"]
+HotelSourceName = Literal["booking", "google", "skiplagged"]
+
+
+def resolve_hotel_currency(source: str, currency: Optional[str]) -> str:
+    """Named ISO 4217, except Skiplagged where an unnamed currency is its USD."""
+    if source == "skiplagged" and (currency is None or not str(currency).strip()):
+        return SKIPLAGGED_HOTEL_CURRENCY
+    return resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
+
+
+def _skiplagged_currency_mismatch(
+    queries: Sequence[HotelQuery], currency: str
+) -> HotelSearchReport:
+    error = SearchError(
+        code=SearchErrorCode.CURRENCY_MISMATCH,
+        message=(
+            f"Skiplagged hotel quotes are {SKIPLAGGED_HOTEL_CURRENCY}; {currency} was named. "
+            "Viajante does not convert. Omit currency or pass USD."
+        ),
+    )
+    return HotelSearchReport(
+        searched_at=datetime.now(timezone.utc),
+        queries=tuple(
+            HotelQueryFailure(
+                query=query,
+                applied=build_skiplagged_filters(
+                    query, html_lang=FETCH_LANGUAGE, currency=SKIPLAGGED_HOTEL_CURRENCY
+                ),
+                error=error,
+            )
+            for query in queries
+        ),
+        locale=FETCH_LANGUAGE,
+        currency=SKIPLAGGED_HOTEL_CURRENCY,
+        provider="skiplagged",
+        fetch_backend="skiplagged",
+        fetch_ms=0,
+    )
 
 
 def search_hotels(
@@ -289,24 +386,39 @@ def search_hotels(
     progress: Optional[Callable[[str], None]] = None,
     source: HotelSourceName = "booking",
     currency: Optional[str] = None,
+    near: Optional[Tuple[float, float]] = None,
 ) -> HotelSearchReport:
+    near = validate_near(near)
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
         raise ValueError("top must be positive")
-    if source not in ("booking", "google"):
-        raise ValueError("source must be booking or google")
+    if source not in ("booking", "google", "skiplagged"):
+        raise ValueError("source must be booking, google, or skiplagged")
     if source == "google" and any(
         query.min_rating is not None and query.min_rating > 5 for query in queries
     ):
         raise ValueError("min_rating must be at most 5 with source google")
-    currency = resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
+    if source == "skiplagged":
+        for query in queries:
+            validate_search_party(query.adults, query.rooms)
+            if query.entire_home:
+                raise ValueError("entire_home is not supported with source skiplagged")
+    currency = resolve_hotel_currency(source, currency)
+    if source == "skiplagged" and currency != SKIPLAGGED_HOTEL_CURRENCY:
+        return _skiplagged_currency_mismatch(queries, currency)
     if source == "google":
         hotel_source: _HotelSource = GoogleHotelsSource(currency=currency)
         provider: HotelProvider = "google-hotels"
         applied_filters = build_google_filters
         delay_seconds = sweep_inter_query_delay_seconds
-        fetch_backend: Literal["booking", "google"] = "google"
+        fetch_backend: Literal["booking", "google", "skiplagged"] = "google"
+    elif source == "skiplagged":
+        hotel_source = SkiplaggedHotelsSource()
+        provider = "skiplagged"
+        applied_filters = build_skiplagged_filters
+        delay_seconds = sweep_inter_query_delay_seconds
+        fetch_backend = "skiplagged"
     else:
         if not playwright_available():
             failure = classify_failure(ModuleNotFoundError("No module named 'playwright'"))
@@ -350,15 +462,9 @@ def search_hotels(
             applied_filters=applied_filters,
             delay_seconds=delay_seconds,
             fetch_backend=fetch_backend,
+            near=near,
         )
     finally:
         hotel_source.close()
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return replace(report, fetch_ms=fetch_ms)
-
-
-def write_hotel_report_atomic(
-    report: HotelSearchReport,
-    destination: Path,
-) -> None:
-    write_json_atomic(report.to_dict(), destination)

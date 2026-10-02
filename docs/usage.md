@@ -215,6 +215,7 @@ parsed fields. The report types and JSON fields are defined in
 | Error code | Meaning |
 | --- | --- |
 | `no_results` | The search returned no results. |
+| `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
 | `rejected` | The provider rejected the request. |
 | `blocked` | The provider blocked access or presented a challenge. |
 | `markup_drift` | The response could not be read in the expected format. |
@@ -261,11 +262,9 @@ for result in hotels.queries:
         print(result.error)
 ```
 
-`get_flights` also accepts natural-language flight requests through
-`plan_prompt`. The planner copies supported, explicit constraints into a query;
-it does not choose an unspecified origin or invent a destination. For other
-search types, use `search_dates`, `search_flex`, `search_explore`, or
-`search_trip`.
+`get_flights` takes a route spec or trip objects, not prose. Turning a request
+into a route is the calling agent's job. For other search types, use
+`search_dates`, `search_flex`, `search_explore`, or `search_trip`.
 
 See the exported types in [`viajante.__init__`](../src/viajante/__init__.py)
 for the Python interface.

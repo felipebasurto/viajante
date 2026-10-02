@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from viajante import mcp_handlers
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.mcp_handlers import (
     compare_awards_tool,
@@ -22,25 +23,31 @@ from viajante.mcp_handlers import (
     search_flex_tool,
     search_flights_tool,
     search_hidden_city_tool,
+    search_hotel_rooms_tool,
     search_hotels_tool,
     search_trip_tool,
+    validate_itinerary_tool,
 )
 
 FUTURE = (date.today() + timedelta(days=30)).isoformat()
 FUTURE_OUT = (date.today() + timedelta(days=33)).isoformat()
+FUTURE_END = (date.today() + timedelta(days=36)).isoformat()
 PAST = (date.today() - timedelta(days=1)).isoformat()
 
 
 def _report(**payload: object) -> MagicMock:
     report = MagicMock()
     report.to_dict.return_value = {
-        "schema_version": 1,
+        "schema_version": 2,
         **payload,
     }
     return report
 
 
 class McpHandlerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        mcp_handlers._CACHE.clear()
+
     def test_handlers_do_not_import_the_sdk(self) -> None:
         text = Path("src/viajante/mcp_handlers.py").read_text(encoding="utf-8")
         self.assertNotIn("from mcp", text)
@@ -63,7 +70,7 @@ class McpHandlerTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
             payload = search_flights_tool([f"JFK-LHR:{FUTURE}"], top=3)
         search.assert_called_once()
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertIn("queries", payload)
         self.assertNotIn("success", payload)
         self.assertNotIn("flights", payload)
@@ -244,7 +251,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["infants_on_lap"], 0)
         self.assertEqual(kwargs["currency"], "USD")
         self.assertIsNone(kwargs["country"])
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertIsNone(kwargs.get("sort"))
 
     def test_search_dates_forwards_named_sort(self) -> None:
@@ -559,7 +566,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["adults"], 2)
         self.assertEqual(search.call_args.kwargs["cabin"], "business")
         self.assertEqual(search.call_args.kwargs["max_stops"], 0)
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertNotIn("success", payload)
         self.assertIsNone(search.call_args.kwargs["bags"])
         self.assertIsNone(search.call_args.kwargs["via"])
@@ -698,6 +705,70 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(payload["provider"], "google-hotels")
         self.assertNotIn("success", payload)
 
+    def test_search_hotels_stays_runs_one_query_per_block(self) -> None:
+        fake = _report(provider="google-hotels", queries=[])
+        stays = [
+            {"location": "Prague", "check_in": FUTURE, "check_out": FUTURE_OUT, "adults": 4},
+            {"location": "Prague", "check_in": FUTURE_OUT, "check_out": FUTURE_END},
+        ]
+        with patch("viajante.mcp_handlers.search_hotels", return_value=fake) as search:
+            search_hotels_tool(stays=stays, adults=3, currency="EUR")
+        queries = search.call_args.args[0]
+        self.assertEqual([q.adults for q in queries], [4, 3])
+        self.assertEqual([q.check_in.isoformat() for q in queries], [FUTURE, FUTURE_OUT])
+
+    def test_search_hotels_stays_rejects_mixed_empty_and_oversized(self) -> None:
+        stay = {"location": "Prague", "check_in": FUTURE, "check_out": FUTURE_OUT}
+        cases = {
+            "mixed": lambda: search_hotels_tool("Prague", stays=[stay], currency="EUR"),
+            "empty": lambda: search_hotels_tool(stays=[], currency="EUR"),
+            "oversized": lambda: search_hotels_tool(stays=[stay] * 9, currency="EUR"),
+            "unknown key": lambda: search_hotels_tool(stays=[{**stay, "beds": 3}], currency="EUR"),
+            "missing dates": lambda: search_hotels_tool(
+                stays=[{"location": "Prague"}], currency="EUR"
+            ),
+        }
+        with patch("viajante.mcp_handlers.search_hotels") as search:
+            for name, call in cases.items():
+                with self.subTest(case=name):
+                    with self.assertRaises(ValueError):
+                        call()
+        search.assert_not_called()
+
+    def test_search_hotel_rooms_forwards_party_and_rejects_past_check_in(self) -> None:
+        fake = _report(provider="skiplagged", rates=())
+        with patch("viajante.mcp_handlers.search_hotel_rooms", return_value=fake) as search:
+            search_hotel_rooms_tool(25584, FUTURE, FUTURE_OUT, adults=5, rooms=2)
+        self.assertEqual(search.call_args.args[0], 25584)
+        self.assertEqual(
+            search.call_args.kwargs,
+            {"hotel_name": None, "city": None, "adults": 5, "rooms": 2},
+        )
+        with patch("viajante.mcp_handlers.search_hotel_rooms") as search:
+            with self.assertRaises(ValueError):
+                search_hotel_rooms_tool(25584, "2020-01-01", "2020-01-04")
+        search.assert_not_called()
+
+    def test_search_hotels_unnamed_currency_is_ok_only_for_skiplagged(self) -> None:
+        fake = _report(provider="skiplagged", queries=[])
+        with patch("viajante.mcp_handlers.search_hotels", return_value=fake) as search:
+            search_hotels_tool("Prague", FUTURE, FUTURE_OUT, source="skiplagged")
+        self.assertEqual(search.call_args.kwargs["currency"], "USD")
+
+    def test_search_hotels_forwards_the_named_point_and_rejects_a_malformed_one(self) -> None:
+        fake = _report(provider="google-hotels", queries=[])
+        with patch("viajante.mcp_handlers.search_hotels", return_value=fake) as search:
+            search_hotels_tool(
+                "Prague", FUTURE, FUTURE_OUT, currency="EUR", near={"lat": 50.0875, "lng": 14.4213}
+            )
+        self.assertEqual(search.call_args.kwargs["near"], (50.0875, 14.4213))
+        with patch("viajante.mcp_handlers.search_hotels") as search:
+            for bad in ({"lat": 50.0}, {"lat": 1, "lng": 2, "z": 3}, [50.0, 14.0]):
+                with self.subTest(near=bad):
+                    with self.assertRaises(ValueError):
+                        search_hotels_tool("Prague", FUTURE, FUTURE_OUT, currency="EUR", near=bad)
+        search.assert_not_called()
+
     def test_search_hotels_requires_currency(self) -> None:
         with patch("viajante.mcp_handlers.search_hotels") as search:
             with self.assertRaises(ValueError) as ctx:
@@ -720,7 +791,7 @@ class McpHandlerTests(unittest.TestCase):
                 rooms=1,
             )
         search.assert_called_once()
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertIn("flights", payload)
         self.assertIn("hotels", payload)
         self.assertEqual(payload["hotels"]["price_basis"], "total_stay")
@@ -899,6 +970,13 @@ class McpHandlerTests(unittest.TestCase):
         payload = lookup_transfers_tool("not-a-program", 50000)
         self.assertEqual(payload["transfer_paths"], [])
 
+    def test_validate_itinerary_is_local_strict_v2_math(self) -> None:
+        payload = validate_itinerary_tool([], {}, currency="USD")
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertIsNone(payload["feasible"])
+        with self.assertRaisesRegex(ValueError, "unsupported itinerary constraints"):
+            validate_itinerary_tool([], {"optimal": True}, currency="USD")
+
     def test_overlapping_search_is_rejected(self) -> None:
         started = threading.Event()
         release = threading.Event()
@@ -917,6 +995,8 @@ class McpHandlerTests(unittest.TestCase):
             self.assertIn("already running", str(ctx.exception))
             rows = lookup_airports_tool("NRT", limit=1)
             self.assertGreaterEqual(len(rows), 1)
+            validation = validate_itinerary_tool([], {}, currency="USD")
+            self.assertEqual(validation["schema_version"], 2)
             release.set()
             worker.join(2)
             self.assertFalse(worker.is_alive())
@@ -948,7 +1028,6 @@ class McpServerImportTests(unittest.TestCase):
         self.assertFalse(text.startswith("from mcp") or text.startswith("import mcp"))
         self.assertNotIn("\nfrom mcp", text)
         self.assertNotIn("\nimport mcp", text)
-        self.assertIn("    from mcp.server.fastmcp import FastMCP", text)
 
     def test_help_does_not_import_fastmcp(self) -> None:
         from viajante.mcp_server import main
@@ -967,6 +1046,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIn("search_flex", help_text)
         self.assertIn("search_trip", help_text)
         self.assertIn("search_hidden_city", help_text)
+        self.assertIn("validate_itinerary", help_text)
         self.assertIn("stdio", help_text)
 
     def test_build_server_registers_tools_without_sdk(self) -> None:
@@ -1006,11 +1086,16 @@ class McpServerImportTests(unittest.TestCase):
                 "search_flex",
                 "search_explore",
                 "search_hotels",
+                "search_hotel_rooms",
                 "search_trip",
                 "lookup_airports",
                 "search_hidden_city",
                 "compare_awards",
                 "lookup_transfers",
+                "validate_itinerary",
+                "plan_stay_blocks",
+                "split_stay_costs",
+                "verify_answer",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))

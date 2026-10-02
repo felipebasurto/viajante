@@ -14,6 +14,7 @@ from viajante.dates import (
     MAX_DATE_WINDOW_DAYS,
     MAX_FLEX_DAYS,
     _rank_date_rows,
+    _row_from_day_error,
     calendar_trip,
     cheapest_priced_day,
     flex_window,
@@ -32,7 +33,9 @@ from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactParseMiss,
     build_calendar_inner,
+    build_calendar_request,
     build_shopping_inner,
+    build_shopping_request,
     parse_calendar_body,
 )
 from viajante.models import (
@@ -48,14 +51,13 @@ from viajante.models import (
     SearchErrorCode,
     owned_calendar_summary,
 )
-from viajante.prompt_bench import PROMPT_BENCH_TODAY
 from viajante.typical import MIN_DAILY_PRICES, typical_from_daily_prices
 
 
 class _FrozenDate(date):
     @classmethod
     def today(cls) -> date:
-        return PROMPT_BENCH_TODAY
+        return date(2026, 8, 20)
 
 
 _patchers: list[object] = []
@@ -268,8 +270,11 @@ class CalendarParseTests(unittest.TestCase):
         )
         inner = build_calendar_inner(trip, date(2026, 11, 1), date(2026, 11, 30))
         self.assertEqual(inner[2], ["2026-11-01", "2026-11-30"])
+        self.assertIsNone(inner[3])
+        self.assertEqual(inner[4], [5, 5])
         self.assertEqual(inner[1][2], 1)
         self.assertEqual(inner[1][5], 3)
+        self.assertEqual(inner[1][-1], 1)
         segments = inner[1][13]
         self.assertEqual(len(segments), 2)
         self.assertEqual(segments[0][6], "2026-11-01")
@@ -278,6 +283,36 @@ class CalendarParseTests(unittest.TestCase):
         self.assertEqual(segments[0][1], [[["LHR", 0]]])
         self.assertEqual(segments[1][0], [[["LHR", 0]]])
         self.assertEqual(segments[1][1], [[["BOS", 0]]])
+
+    def test_rt_calendar_request_is_graph_stay_not_one_way_grid(self) -> None:
+        """LHR-BKK RT nights=14 bags=1: calendar is Graph+stay, shopping is Results."""
+        trip = calendar_trip("LHR", "BKK", date(2026, 11, 6), nights=14, bags=1)
+        start, end = date(2026, 11, 6), date(2026, 11, 30)
+        cal_url, _body = build_calendar_request(trip, start, end, currency="GBP", country="GB")
+        shop_url, _shop_body = build_shopping_request(trip, currency="GBP", country="GB")
+        inner = build_calendar_inner(trip, start, end)
+        shop = build_shopping_inner(trip)
+        self.assertIn("GetCalendarGraph", cal_url)
+        self.assertNotIn("GetCalendarGrid", cal_url)
+        self.assertIn("GetShoppingResults", shop_url)
+        self.assertIn("curr=GBP", cal_url)
+        self.assertIn("gl=GB", cal_url)
+        self.assertEqual(inner[2], ["2026-11-06", "2026-11-30"])
+        self.assertIsNone(inner[3])
+        self.assertEqual(inner[4], [14, 14])
+        self.assertEqual(inner[1][2], shop[1][2])
+        self.assertEqual(inner[1][10], [1, 0])
+        self.assertEqual(inner[1][10], shop[1][10])
+        self.assertEqual(inner[1][13], shop[1][13])
+        self.assertEqual(len(inner[1]), len(shop[1]) + 1)
+        self.assertEqual(inner[1][-1], 1)
+        ow = FlightQuery("LHR", "BKK", date(2026, 11, 6), bags=1)
+        ow_url, _ = build_calendar_request(ow, start, end, currency="GBP", country="GB")
+        ow_inner = build_calendar_inner(ow, start, end)
+        self.assertIn("GetCalendarGrid", ow_url)
+        self.assertNotIn("GetCalendarGraph", ow_url)
+        self.assertEqual(len(ow_inner), 3)
+        self.assertEqual(ow_inner[1][10], [1, 0])
 
 
 class DateSearchTests(unittest.TestCase):
@@ -307,7 +342,16 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(report.days[1].error.code, SearchErrorCode.REJECTED)
         self.assertIsNone(report.days[0].typical)
         self.assertIsNone(report.days[0].vs_typical)
-        self.assertNotIn("typical", report.days[0].to_dict())
+        self.assertNotIn("typical", report.days[0].to_dict(currency="EUR"))
+
+    def test_rejected_day_is_an_error_not_empty_inventory(self) -> None:
+        row = _row_from_day_error(
+            date(2026, 9, 1),
+            GoogleFlightsRejected("provider rejection"),
+            None,
+        )
+        self.assertEqual(row.status, "error")
+        self.assertEqual(row.error.code, SearchErrorCode.REJECTED)
 
     def test_calendar_miss_falls_back_to_per_day_sweep(self) -> None:
         source = FakeCalendarSource(
@@ -400,7 +444,7 @@ class DateSearchTests(unittest.TestCase):
         )
         self.assertEqual([row.price for row in report.days], [90.0, 40.0])
         self.assertIsNone(report.days[0].duration_hours)
-        self.assertNotIn("duration_hours", report.days[0].to_dict())
+        self.assertNotIn("duration_hours", report.days[0].to_dict(currency="EUR"))
 
     def test_duration_sort_keeps_compact_cells_after_shopped_hours(self) -> None:
         rows = (
@@ -422,7 +466,7 @@ class DateSearchTests(unittest.TestCase):
             [date(2026, 9, 3), date(2026, 9, 2), date(2026, 9, 1)],
         )
         self.assertIsNone(ranked[2].duration_hours)
-        self.assertNotIn("duration_hours", ranked[2].to_dict())
+        self.assertNotIn("duration_hours", ranked[2].to_dict(currency="EUR"))
 
     def test_named_duration_sort_reorders_two_shopped_days(self) -> None:
         source = FakeCalendarSource(
@@ -476,8 +520,8 @@ class DateSearchTests(unittest.TestCase):
         )
         self.assertIsNone(report.days[0].duration_hours)
         self.assertIsNone(report.days[1].duration_hours)
-        self.assertNotIn("duration_hours", report.days[0].to_dict())
-        self.assertNotIn("duration_hours", report.days[1].to_dict())
+        self.assertNotIn("duration_hours", report.days[0].to_dict(currency="EUR"))
+        self.assertNotIn("duration_hours", report.days[1].to_dict(currency="EUR"))
         self.assertNotEqual(report.days[0].duration_hours, 0.0)
         self.assertNotEqual(report.days[1].duration_hours, 0.0)
 
@@ -661,11 +705,11 @@ class CalendarPresentationTests(unittest.TestCase):
         self.assertEqual(report.days[2].vs_typical_pct, -17)
         self.assertEqual(report.days[2].typical, 81.0)
         self.assertEqual(report.days[3].vs_typical, "above")
-        self.assertEqual(report.days[0].typical_deal(), "near typical 81 € (0%)")
-        payload = report.days[2].to_dict()
+        self.assertEqual(report.days[0].typical_deal(currency="EUR"), "near typical 81 € (0%)")
+        payload = report.days[2].to_dict(currency="EUR")
         self.assertEqual(payload["typical"], 81.0)
         self.assertEqual(payload["vs_typical"], "below")
-        self.assertNotIn("typical", report.days[1].to_dict())
+        self.assertNotIn("typical", report.days[1].to_dict(currency="EUR"))
 
     def test_search_dates_omits_summary_when_the_grid_is_thin(self) -> None:
         source = FakeCalendarSource(
@@ -682,11 +726,11 @@ class CalendarPresentationTests(unittest.TestCase):
             self.assertIsNone(row.typical)
             self.assertIsNone(row.vs_typical)
             self.assertIsNone(row.vs_typical_pct)
-            self.assertIsNone(row.typical_deal())
-            self.assertNotIn("typical", row.to_dict())
-            self.assertNotIn("vs_typical", row.to_dict())
-            self.assertNotIn("vs_typical_pct", row.to_dict())
-            self.assertNotIn("typical_deal", row.to_dict())
+            self.assertIsNone(row.typical_deal(currency="EUR"))
+            self.assertNotIn("typical", row.to_dict(currency="EUR"))
+            self.assertNotIn("vs_typical", row.to_dict(currency="EUR"))
+            self.assertNotIn("vs_typical_pct", row.to_dict(currency="EUR"))
+            self.assertNotIn("typical_deal", row.to_dict(currency="EUR"))
 
     def test_empty_calendar_omits_the_typical_triple(self) -> None:
         source = FakeCalendarSource(())
@@ -697,7 +741,7 @@ class CalendarPresentationTests(unittest.TestCase):
             self.assertEqual(row.status, "empty")
             self.assertIsNone(row.typical)
             self.assertIsNone(row.vs_typical)
-            self.assertNotIn("typical", row.to_dict())
+            self.assertNotIn("typical", row.to_dict(currency="EUR"))
 
     def test_thin_report_does_not_keep_an_invented_typical(self) -> None:
         report = DateCalendarReport(
@@ -715,13 +759,14 @@ class CalendarPresentationTests(unittest.TestCase):
                     vs_typical_pct=-96,
                 ),
             ),
+            currency="EUR",
         )
         self.assertIsNone(report.summary)
         self.assertEqual(report.days[0].price, 40.0)
         self.assertIsNone(report.days[0].typical)
         self.assertIsNone(report.days[0].vs_typical)
         self.assertIsNone(report.days[0].vs_typical_pct)
-        self.assertNotIn("typical", report.days[0].to_dict())
+        self.assertNotIn("typical", report.days[0].to_dict(currency="EUR"))
 
     def test_empty_row_rejects_typical(self) -> None:
         with self.assertRaises(ValueError):
@@ -2952,7 +2997,7 @@ class StopsCompareShopParityTests(unittest.TestCase):
         payload = report.to_dict()["stops_compare"]
         self.assertEqual(payload["nonstop"]["price"], 88.0)
         self.assertEqual(payload["one_stop"]["price"], 49.0)
-        self.assertNotIn("stops_compare", report.days[0].to_dict())
+        self.assertNotIn("stops_compare", report.days[0].to_dict(currency="EUR"))
 
     def test_flex_calendar_miss_and_empty_window_omit_compare(self) -> None:
         miss = search_flex(
@@ -3074,11 +3119,11 @@ class StopsCompareShopParityTests(unittest.TestCase):
         self.assertEqual(report.days[0].price, 45.0)
         self.assertIsNone(report.days[0].stops_compare)
         self.assertIsNone(report.days[1].stops_compare)
-        self.assertNotIn("stops_compare", report.days[0].to_dict())
+        self.assertNotIn("stops_compare", report.days[0].to_dict(currency="EUR"))
         self.assertNotIn("stops_compare", report.to_dict())
         cell = DatePriceRow(departure_date=date(2026, 9, 1), price=45.0, stops_count=0)
         self.assertIsNone(cell.stops_compare)
-        self.assertNotIn("stops_compare", cell.to_dict())
+        self.assertNotIn("stops_compare", cell.to_dict(currency="EUR"))
 
     def test_dates_sweep_stamps_compare_from_that_day_shop(self) -> None:
         source = FakeCalendarSource(
@@ -3113,7 +3158,7 @@ class StopsCompareShopParityTests(unittest.TestCase):
         assert second is not None
         self.assertEqual(second.nonstop.price, 38.0)
         self.assertIsNone(second.one_stop)
-        self.assertEqual(set(report.days[1].to_dict()["stops_compare"]), {"nonstop"})
+        self.assertEqual(set(report.days[1].to_dict(currency="EUR")["stops_compare"]), {"nonstop"})
         self.assertNotIn("stops_compare", report.to_dict())
 
     def test_dates_sweep_omits_block_when_both_buckets_empty(self) -> None:
@@ -3136,7 +3181,7 @@ class StopsCompareShopParityTests(unittest.TestCase):
         self.assertEqual(report.days[0].price, 314.0)
         self.assertEqual(report.days[0].stops_count, 2)
         self.assertIsNone(report.days[0].stops_compare)
-        self.assertNotIn("stops_compare", report.days[0].to_dict())
+        self.assertNotIn("stops_compare", report.days[0].to_dict(currency="EUR"))
 
     def test_flex_cli_prints_compare(self) -> None:
         source = _flex_shop_source(
@@ -3207,7 +3252,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         payload = report.to_dict()
         self.assertEqual(payload["google_flights_url"], expected_query)
         self.assertEqual(payload["offers"][0]["google_flights_url"], expected_offer)
-        self.assertNotIn("booking_token", report.days[0].to_dict())
+        self.assertNotIn("booking_token", report.days[0].to_dict(currency="EUR"))
 
     def test_flex_calendar_only_stamps_query_url_from_around_date(self) -> None:
         miss = search_flex(
@@ -3234,7 +3279,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertIsNone(report.google_flights_url)
         self.assertNotIn("google_flights_url", report.to_dict())
         self.assertIsNone(report.offers[0].google_flights_url)
-        self.assertNotIn("google_flights_url", report.offers[0].to_dict())
+        self.assertNotIn("google_flights_url", report.offers[0].to_dict(currency="EUR"))
         self.assertEqual(report.offers[0].booking_token, "tok")
 
     def test_dates_compact_stamps_query_url_without_inventing_a_token(self) -> None:
@@ -3253,13 +3298,13 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
             report.days[0].google_flights_url, google_flights_url(seed, currency="USD")
         )
         self.assertEqual(report.days[1].google_flights_url, google_flights_url(day, currency="USD"))
-        self.assertNotIn("booking_token", report.days[0].to_dict())
+        self.assertNotIn("booking_token", report.days[0].to_dict(currency="EUR"))
         self.assertNotIn("booking_token=", report.days[0].google_flights_url or "")
         self.assertNotIn("booking_token=", report.google_flights_url or "")
         cell = DatePriceRow(departure_date=date(2026, 9, 1), price=45.0)
         self.assertIsNone(cell.google_flights_url)
-        self.assertNotIn("google_flights_url", cell.to_dict())
-        self.assertNotIn("booking_token", cell.to_dict())
+        self.assertNotIn("google_flights_url", cell.to_dict(currency="EUR"))
+        self.assertNotIn("booking_token", cell.to_dict(currency="EUR"))
 
     def test_dates_sweep_stamps_shop_query_url_without_inventing_a_token(self) -> None:
         source = FakeCalendarSource(
@@ -3272,7 +3317,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertEqual(report.fetch_backend, "sweep")
         self.assertEqual(report.google_flights_url, expected)
         self.assertEqual(report.days[0].google_flights_url, expected)
-        self.assertNotIn("booking_token", report.days[0].to_dict())
+        self.assertNotIn("booking_token", report.days[0].to_dict(currency="EUR"))
         self.assertNotIn("booking_token=", report.days[0].google_flights_url or "")
 
     def test_dates_omits_url_when_encode_cannot_run(self) -> None:
@@ -3282,7 +3327,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertIsNone(report.google_flights_url)
         self.assertNotIn("google_flights_url", report.to_dict())
         self.assertIsNone(report.days[0].google_flights_url)
-        self.assertNotIn("google_flights_url", report.days[0].to_dict())
+        self.assertNotIn("google_flights_url", report.days[0].to_dict(currency="EUR"))
 
     def test_flex_cli_prints_owned_url(self) -> None:
         source = _flex_shop_source(_card(booking_token="tok"))
@@ -3384,8 +3429,8 @@ class DatesBaggageBufferTests(unittest.TestCase):
         self.assertEqual(report.days[1].price, 90.0)
         self.assertIsNone(report.days[0].baggage_buffer)
         self.assertIsNone(report.days[1].baggage_buffer)
-        self.assertNotIn("baggage_buffer", report.days[0].to_dict())
-        self.assertNotIn("needs_bag_verify", report.days[0].to_dict())
+        self.assertNotIn("baggage_buffer", report.days[0].to_dict(currency="EUR"))
+        self.assertNotIn("needs_bag_verify", report.days[0].to_dict(currency="EUR"))
         self.assertEqual(source.fetch_calls, 0)
 
     def test_cli_forwards_named_buffer_and_rejects_negative(self) -> None:

@@ -14,6 +14,7 @@ from viajante.flights import (
     _overnight_from_owned_clocks,
     _rank_offers,
     _run_search,
+    as_trips,
     classify_failure,
     compare_nonstop_vs_one_stop,
     drop_excluded_airport_trips,
@@ -30,7 +31,6 @@ from viajante.flights import (
     parse_overnight_lists,
     parse_route_specs,
     parse_via_airports,
-    plan_unit_count,
     resolve_fetch_mode,
     search_flights,
 )
@@ -217,6 +217,8 @@ class FailureClassificationTests(unittest.TestCase):
         error = classify_failure(GoogleFlightsRejected("unknown airport"))
         self.assertEqual(error.code, SearchErrorCode.REJECTED)
         self.assertIn("rejected", error.message.casefold())
+        self.assertIn("did not identify the cause", error.message)
+        self.assertNotIn("unknown airport", error.message)
 
     def test_missing_chromium_is_reported_as_browser_unavailable(self) -> None:
         error = classify_failure(
@@ -252,6 +254,7 @@ class NonRetriableFailureTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
+            currency="EUR",
         )
         return report.queries[0], source, sleeps
 
@@ -318,6 +321,7 @@ class ProgressTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             progress=lines.append,
+            currency="EUR",
         )
         self.assertIn("[1/2] JFK -> LHR 2026-09-01", lines)
         self.assertIn("[2/2] JFK -> CDG 2026-09-02", lines)
@@ -349,6 +353,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            currency="EUR",
         )
 
         self.assertEqual(source.reset_calls, MAX_ATTEMPTS)
@@ -372,6 +377,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 9, 0, 0),
             retry_backoff=lambda _attempt, _rng: 0.0,
+            currency="EUR",
         )
         self.assertEqual(source.fetch_calls, MAX_ATTEMPTS)
         self.assertEqual(source.reset_calls, MAX_ATTEMPTS)
@@ -413,6 +419,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             sleep=sleeps.append,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            currency="EUR",
         )
         self.assertEqual(source.batch_calls, 1)
         self.assertEqual(source.reset_calls, 0)
@@ -453,7 +460,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert offer is not None
         self.assertEqual(offer.baggage_buffer, 0)
         self.assertTrue(offer.needs_bag_verify)
-        self.assertNotIn("checked_bags", offer.to_dict())
+        self.assertNotIn("checked_bags", offer.to_dict(currency="EUR"))
 
     def test_parse_flight_plan_keeps_bags_unset_by_default(self) -> None:
         plan = parse_flight_plan(["JFK-LHR:2026-09-01"], max_stops=1, bags=1, carry_on=1)
@@ -520,6 +527,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             sleep=lambda _: None,
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
+            currency="EUR",
         )
         outcome = report.queries[0]
         self.assertIsInstance(outcome, QuerySuccess)
@@ -527,7 +535,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(outcome.eligible_count, 0)
         self.assertEqual(outcome.offers, ())
         self.assertIsNone(outcome.stops_compare)
-        self.assertNotIn("stops_compare", outcome.to_dict())
+        self.assertNotIn("stops_compare", outcome.to_dict(currency="EUR"))
 
     def test_rank_dedupe_and_baggage(self) -> None:
         offers = (
@@ -643,7 +651,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             max_stops=1,
         )
         self.assertIsInstance(plan, tuple)
-        self.assertEqual(plan_unit_count(plan), 2)
+        self.assertEqual(len(as_trips(plan)), 2)
 
     def test_parse_flight_plan_rt(self) -> None:
         plan = parse_flight_plan(
@@ -657,7 +665,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(plan.origin, "LAX")
         self.assertEqual(plan.destination, "NRT")
         self.assertEqual(plan.adults, 2)
-        self.assertEqual(plan_unit_count(plan), 1)
+        self.assertEqual(len(as_trips(plan)), 1)
         with self.assertRaises(ValueError):
             parse_flight_plan(["JFK-LHR:2026-09-01"], trip="rt", max_stops=1)
         with self.assertRaises(ValueError):
@@ -697,7 +705,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(plan.adults, 2)
         self.assertEqual(plan.children, 1)
-        self.assertEqual(plan_unit_count(plan), 1)
+        self.assertEqual(len(as_trips(plan)), 1)
         mirrored = parse_flight_plan(
             ["YVR-LHR:2026-10-09:2026-10-13"],
             trip="rt",
@@ -909,7 +917,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(plan, MultiCity)
         self.assertEqual(len(plan.legs), 2)
         self.assertEqual(plan.legs[1].origin, "LHR")
-        self.assertEqual(plan_unit_count(plan), 1)
+        self.assertEqual(len(as_trips(plan)), 1)
         with self.assertRaises(ValueError):
             parse_flight_plan(["JFK-LHR:2026-09-01"], trip="multi", max_stops=1)
         with self.assertRaises(ValueError):
@@ -956,9 +964,61 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(result.google_flights_url, expected_query)
         self.assertEqual(result.offers[0].google_flights_url, expected_offer)
         self.assertIn("booking_token=tok", result.offers[0].google_flights_url or "")
+        evidence = result.offers[0].evidence
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertEqual(evidence.query, query.to_dict())
+        self.assertEqual(evidence.currency, "EUR")
+        self.assertEqual(evidence.fetch_backend, "sweep")
+        self.assertEqual(evidence.query_url, expected_query)
+        self.assertEqual(evidence.offer_url, expected_offer)
+        self.assertEqual(evidence.url_kind, "booking")
+        self.assertTrue(evidence.evidence_id.startswith("gf_"))
         payload = report.to_dict()
         self.assertEqual(payload["queries"][0]["query"]["google_flights_url"], expected_query)
         self.assertEqual(payload["queries"][0]["offers"][0]["google_flights_url"], expected_offer)
+        self.assertEqual(payload["coverage"]["attempted"], 1)
+        self.assertTrue(payload["coverage"]["complete"])
+        self.assertEqual(payload["coverage"]["strategy"], "finite")
+        self.assertIn("outside", payload["coverage"]["unsearched"])
+
+    def test_offer_completeness_does_not_invent_segments(self) -> None:
+        aggregate = _normalize_offer(card(), 1)
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.completeness.segment_airports, "unknown")
+        self.assertEqual(aggregate.completeness.segment_operators, "unknown")
+        self.assertEqual(aggregate.completeness.segment_clocks, "unknown")
+
+        detailed = _normalize_offer(
+            card(
+                legs=(
+                    RawJourneyLeg(
+                        departure="08:00",
+                        arrival="12:00",
+                        segments=(
+                            RawSegment(
+                                origin="JFK",
+                                destination="LHR",
+                                departure="08:00",
+                                arrival="12:00",
+                                airline="BA",
+                                flight_number="BA178",
+                            ),
+                        ),
+                    ),
+                ),
+                checked_bags=1,
+            ),
+            1,
+        )
+        self.assertIsNotNone(detailed)
+        assert detailed is not None
+        self.assertEqual(detailed.completeness.segment_airports, "known")
+        self.assertEqual(detailed.completeness.segment_operators, "known")
+        self.assertEqual(detailed.completeness.flight_numbers, "known")
+        self.assertEqual(detailed.completeness.segment_clocks, "known")
+        self.assertEqual(detailed.completeness.baggage, "known")
 
     def test_search_closes_source(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
@@ -987,6 +1047,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             inter_query_delay=sweep_inter_query_delay_seconds,
+            currency="EUR",
         )
         self.assertEqual(sleeps, [0.0])
 
@@ -1027,11 +1088,13 @@ class FlightsOrchestrationTests(unittest.TestCase):
         detail = FakeSource({("JFK", "LHR", "2026-09-01", 1): (card(airline="Iberia"),)})
         lines: list[str] = []
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=sweep):
-            with patch("viajante.flights.GoogleFlightsSource", return_value=detail):
-                report = search_flights((query,), top=1, fetch="sweep", progress=lines.append)
+            with patch("viajante.flights.chromium_installed", return_value=True):
+                with patch("viajante.flights.GoogleFlightsSource", return_value=detail):
+                    report = search_flights((query,), top=1, fetch="sweep", progress=lines.append)
         self.assertEqual(report.fetch_backend, "sweep_then_detail")
         self.assertIsInstance(report.queries[0], QuerySuccess)
         self.assertEqual(report.queries[0].offers[0].airline, "Iberia")
+        self.assertEqual(report.queries[0].offers[0].evidence.fetch_backend, "detail")
         self.assertTrue(any("falling back to detail" in line for line in lines))
         self.assertTrue(sweep.closed)
         self.assertTrue(detail.closed)
@@ -1047,13 +1110,168 @@ class FlightsOrchestrationTests(unittest.TestCase):
         )
         detail = FakeSource({("LAX", "ICN", "2026-09-22", 1): (card(airline="Korean Air"),)})
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=sweep):
-            with patch("viajante.flights.GoogleFlightsSource", return_value=detail) as detail_ctor:
-                report = search_flights((ok, empty), top=1, fetch="sweep")
+            with patch("viajante.flights.chromium_installed", return_value=True):
+                with patch(
+                    "viajante.flights.GoogleFlightsSource", return_value=detail
+                ) as detail_ctor:
+                    report = search_flights((ok, empty), top=1, fetch="sweep")
         self.assertEqual(report.fetch_backend, "sweep_then_detail")
         self.assertEqual(report.queries[0].offers[0].airline, "Vueling")
         self.assertEqual(report.queries[1].offers[0].airline, "Korean Air")
         self.assertEqual(detail.fetch_calls, 1)
         detail_ctor.assert_called_once()
+
+    def test_sweep_fallback_without_chromium_keeps_the_sweep_error(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+        sweep = FakeSource(
+            {
+                ("JFK", "LHR", "2026-09-01", 1): GoogleFlightsBlocked(
+                    "short unknown shell (89 chars)"
+                )
+            }
+        )
+        lines: list[str] = []
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=sweep):
+            with patch("viajante.flights.chromium_installed", return_value=False):
+                with patch("viajante.flights.GoogleFlightsSource") as detail:
+                    report = search_flights((query,), top=1, fetch="sweep", progress=lines.append)
+        detail.assert_not_called()
+        self.assertEqual(report.fetch_backend, "sweep")
+        self.assertIsInstance(report.queries[0], QueryFailure)
+        self.assertEqual(report.queries[0].error.code, SearchErrorCode.BLOCKED)
+        self.assertIn("short unknown shell", report.queries[0].error.message)
+        self.assertTrue(any("Detail is optional" in line for line in lines))
+
+    def test_priced_return_leg_attaches_only_a_unique_match(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2026, 12, 3), date(2026, 12, 9))
+        outbound = card(
+            airline="British Airways",
+            price="200 €",
+            departure="07:00",
+            arrival="09:30",
+            legs=(
+                RawJourneyLeg(
+                    departure="07:00",
+                    arrival="09:30",
+                    duration="2 hr 30 min",
+                    stops="Nonstop",
+                    segments=(
+                        RawSegment(
+                            origin="JFK",
+                            destination="LHR",
+                            departure="07:00",
+                            arrival="09:30",
+                            airline="British Airways",
+                            flight_number="BA178",
+                            departure_date=date(2026, 12, 3),
+                            carrier="BA",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        returning = card(
+            airline="British Airways",
+            price="200 €",
+            departure="18:10",
+            arrival="21:05",
+            legs=(
+                RawJourneyLeg(
+                    departure="18:10",
+                    arrival="21:05",
+                    duration="7 hr 55 min",
+                    stops="Nonstop",
+                    segments=(
+                        RawSegment(
+                            origin="LHR",
+                            destination="JFK",
+                            departure="18:10",
+                            arrival="21:05",
+                            airline="British Airways",
+                            flight_number="BA179",
+                            departure_date=date(2026, 12, 9),
+                            carrier="BA",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        source = FakeSource({("JFK", "LHR", "2026-12-03", 1): (outbound,)})
+        seen: list[object] = []
+
+        def fetch_selected(_trip, selections):
+            seen.extend(selections)
+            return [(returning,)]
+
+        source.fetch_selected = fetch_selected  # type: ignore[method-assign]
+        report = _run_search(
+            (trip,),
+            top=1,
+            source=source,
+            sleep=lambda _delay: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            inter_query_delay=lambda _rng: 0.0,
+            currency="EUR",
+        )
+        offer = report.queries[0].offers[0]
+        self.assertEqual(len(offer.legs), 2)
+        self.assertEqual(offer.legs[1].departure, "18:10")
+        self.assertEqual(offer.legs[1].segments[0].flight_number, "BA179")
+        self.assertEqual(
+            seen,
+            [[["JFK", "2026-12-03", "LHR", None, "BA", "178"]]],
+        )
+
+    def test_tied_return_prices_stay_unknown(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2026, 12, 3), date(2026, 12, 9))
+        outbound = card(
+            price="200 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="07:00",
+                    arrival="09:30",
+                    segments=(
+                        RawSegment(
+                            origin="JFK",
+                            destination="LHR",
+                            flight_number="BA178",
+                            departure_date=date(2026, 12, 3),
+                            carrier="BA",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        def same_price(departure: str) -> RawFlightCard:
+            return card(
+                price="200 €",
+                departure=departure,
+                legs=(
+                    RawJourneyLeg(
+                        departure=departure,
+                        arrival="21:00",
+                        segments=(RawSegment(origin="LHR", destination="JFK"),),
+                    ),
+                ),
+            )
+
+        source = FakeSource({("JFK", "LHR", "2026-12-03", 1): (outbound,)})
+        source.fetch_selected = lambda _trip, _selections: [  # type: ignore[method-assign]
+            (same_price("18:10"), same_price("20:10"))
+        ]
+        report = _run_search(
+            (trip,),
+            top=1,
+            source=source,
+            sleep=lambda _delay: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            inter_query_delay=lambda _rng: 0.0,
+            currency="EUR",
+        )
+        self.assertEqual(len(report.queries[0].offers[0].legs), 1)
 
     def test_rejected_sweep_query_does_not_open_chromium(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
@@ -1129,6 +1347,8 @@ class FetchModeTests(unittest.TestCase):
     def test_auto_is_detail_for_one_or_two_queries(self) -> None:
         self.assertEqual(resolve_fetch_mode("auto", 1), "detail")
         self.assertEqual(resolve_fetch_mode("auto", 2), "detail")
+        self.assertEqual(resolve_fetch_mode("auto", 1, packaged=True), "sweep")
+        self.assertEqual(resolve_fetch_mode("detail", 1, packaged=True), "detail")
 
     def test_auto_is_sweep_for_three_or_more(self) -> None:
         self.assertEqual(resolve_fetch_mode("auto", 3), "sweep")
@@ -1148,6 +1368,7 @@ class FetchModeTests(unittest.TestCase):
         ok = SearchReport(
             searched_at=datetime(2026, 8, 10),
             queries=(QuerySuccess(query=query, raw_count=2, eligible_count=1, offers=()),),
+            currency="EUR",
         )
         empty = SearchReport(
             searched_at=datetime(2026, 8, 10),
@@ -1157,6 +1378,7 @@ class FetchModeTests(unittest.TestCase):
                     error=classify_failure(NoFlightsFound()),
                 ),
             ),
+            currency="EUR",
         )
         self.assertFalse(any(_needs_detail_fallback(result) for result in ok.queries))
         self.assertTrue(any(_needs_detail_fallback(result) for result in empty.queries))
@@ -1216,45 +1438,10 @@ class GetFlightsTests(unittest.TestCase):
             get_flights(list(specs), fetch="sweep")
         self.assertEqual(search.call_args.args[0], parsed)
 
-    def test_prompt_uses_plan_prompt_named_route(self) -> None:
-        fake = SearchReport(
-            searched_at=datetime(2026, 8, 10),
-            currency="USD",
-            queries=(),
-        )
-        with patch("viajante.flights.search_flights", return_value=fake) as search:
-            get_flights("Flights JFK-LHR on 2026-10-01", fetch="sweep")
-        trips = search.call_args.args[0]
-        self.assertEqual(len(trips), 1)
-        self.assertEqual(trips[0].origin, "JFK")
-        self.assertEqual(trips[0].destination, "LHR")
-        self.assertEqual(trips[0].departure_date, date(2026, 10, 1))
-
-    def test_prompt_does_not_invent_iata(self) -> None:
+    def test_prose_is_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            get_flights("Flights XXX-LHR on 2026-10-01")
-        self.assertIn("invalid_iata", str(ctx.exception))
-
-    def test_non_flight_intent_names_the_public_function(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            get_flights("Explore cheap destinations from NRT starting 2026-10-01, 7 days")
-        self.assertIn("search_explore", str(ctx.exception))
-        with self.assertRaises(ValueError) as ctx:
-            get_flights("Price calendar JFK-LHR from 2026-10-01 to 2026-10-14")
-        self.assertIn("search_dates", str(ctx.exception))
-        with self.assertRaises(ValueError) as ctx:
-            get_flights("What is the IATA code for London airports?")
-        self.assertIn("lookup_airports", str(ctx.exception))
-
-    def test_prompt_copies_via_onto_search(self) -> None:
-        fake = SearchReport(
-            searched_at=datetime(2026, 8, 10),
-            currency="USD",
-            queries=(),
-        )
-        with patch("viajante.flights.search_flights", return_value=fake) as search:
-            get_flights("Flights JFK-SIN on 2026-11-03 via IST", fetch="sweep")
-        self.assertEqual(search.call_args.kwargs["via"], ("IST",))
+            get_flights("Flights JFK-LHR on 2026-10-01")
+        self.assertIn("route spec", str(ctx.exception))
 
     def test_proxy_is_forwarded(self) -> None:
         fake = SearchReport(
@@ -1266,7 +1453,7 @@ class GetFlightsTests(unittest.TestCase):
             get_flights("JFK-LHR:2026-10-01", proxy="http://127.0.0.1:8080")
         self.assertEqual(search.call_args.kwargs["proxy"], "http://127.0.0.1:8080")
 
-    def test_named_kwargs_overlay_prompt(self) -> None:
+    def test_named_kwargs_overlay_route_spec(self) -> None:
         fake = SearchReport(
             searched_at=datetime(2026, 8, 10),
             currency="USD",
@@ -1274,7 +1461,7 @@ class GetFlightsTests(unittest.TestCase):
         )
         with patch("viajante.flights.search_flights", return_value=fake) as search:
             get_flights(
-                "Flights JFK-LHR on 2026-10-15",
+                "JFK-LHR:2026-10-15",
                 adults=2,
                 children=1,
                 bags=1,
@@ -1290,21 +1477,6 @@ class GetFlightsTests(unittest.TestCase):
         self.assertEqual(trip.cabin, "business")
         self.assertEqual(trip.max_stops, 0)
         self.assertEqual(trip.price_cap, 500)
-
-    def test_unset_kwargs_leave_plan_occupancy(self) -> None:
-        fake = SearchReport(
-            searched_at=datetime(2026, 8, 10),
-            currency="USD",
-            queries=(),
-        )
-        with patch("viajante.flights.search_flights", return_value=fake) as search:
-            get_flights(
-                "Flights JFK-LHR on 2026-10-15 --adults 2 --cabin business",
-                fetch="sweep",
-            )
-        trip = search.call_args.args[0][0]
-        self.assertEqual(trip.adults, 2)
-        self.assertEqual(trip.cabin, "business")
 
     def test_named_kwargs_overlay_built_trip(self) -> None:
         fake = SearchReport(
@@ -1959,6 +2131,7 @@ class StopsCompareTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             baggage_buffer=0,
+            currency="EUR",
         )
         outcome = report.queries[0]
         self.assertIsInstance(outcome, QuerySuccess)
@@ -1971,7 +2144,7 @@ class StopsCompareTests(unittest.TestCase):
         self.assertEqual(compare.nonstop.price, 88.0)
         self.assertEqual(compare.one_stop.airline, "Air Europa")
         self.assertEqual(compare.one_stop.price, 69.0)
-        payload = outcome.to_dict()["stops_compare"]
+        payload = outcome.to_dict(currency="EUR")["stops_compare"]
         self.assertEqual(payload["nonstop"]["price"], 88.0)
         self.assertEqual(payload["one_stop"]["price"], 69.0)
         self.assertEqual(payload["one_stop"]["layover_city"], "Palma")
@@ -1994,6 +2167,7 @@ class StopsCompareTests(unittest.TestCase):
             random_gen=Random(0),
             now=lambda: datetime(2026, 8, 10),
             baggage_buffer=0,
+            currency="EUR",
         )
         outcome = report.queries[0]
         self.assertIsInstance(outcome, QuerySuccess)
@@ -2001,7 +2175,7 @@ class StopsCompareTests(unittest.TestCase):
         assert outcome.stops_compare.nonstop is not None
         self.assertEqual(outcome.stops_compare.nonstop.price, 88.0)
         self.assertIsNone(outcome.stops_compare.one_stop)
-        self.assertNotIn("one_stop", outcome.to_dict()["stops_compare"])
+        self.assertNotIn("one_stop", outcome.to_dict(currency="EUR")["stops_compare"])
 
 
 if __name__ == "__main__":

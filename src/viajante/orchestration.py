@@ -33,16 +33,15 @@ NON_RETRIABLE_CODES = frozenset(
 ERROR_MESSAGE_MAX_CHARS = 500
 BROWSER_INSTALL_HINT = (
     "Chromium is not available to Playwright. "
-    "Install viajante[browser] and run 'playwright install chromium'."
+    "Sweep does not need a browser. Detail is optional: "
+    "pip install 'viajante[browser]' && playwright install chromium."
 )
 
 
-def _clip_error_message(text: str, *, limit: int = ERROR_MESSAGE_MAX_CHARS) -> str:
-    if len(text) <= limit:
+def _clip_error_message(text: str) -> str:
+    if len(text) <= ERROR_MESSAGE_MAX_CHARS:
         return text
-    if limit <= 3:
-        return text[:limit]
-    return text[: limit - 3] + "..."
+    return text[: ERROR_MESSAGE_MAX_CHARS - 3] + "..."
 
 
 def classify_failure(exc: BaseException) -> SearchError:

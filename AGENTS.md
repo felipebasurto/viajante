@@ -5,8 +5,15 @@ the agent contract: where to edit, traps, and what must not be invented.
 `README.md` is owned elsewhere (do not edit it in a docs-cleanup).
 
 > **Authority:** this checkout (`git@github.com:felipebasurto/viajante.git`) is the source of truth.
-> The `cursor` remote (`origin.cursor.com/fil/viajante.git`) is a backup with expired credentials; it is not used for fetch/push.
-> `pyproject.toml` still lists `github.com/felipebasurto/viajante` as Homepage; do not treat that URL as the repo of record, and do not rewrite it from this markdown pass.
+
+## Design stance
+
+Viajante gives an agent superpowers; it does not replace the agent's judgment.
+It fetches owned provider evidence fast and refuses to guess. The calling agent
+reads the payload, weighs trade-offs, and recommends. Do not add summaries,
+"cheapest is X" lead lines, or recommendation prose to results; add evidence
+(a field the provider returned) or a primitive the agent can compose. See
+`docs/architecture.md`.
 
 ## Where to edit
 
@@ -18,6 +25,7 @@ the agent contract: where to edit, traps, and what must not be invented.
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
 - Google Hotels HTTP shortlist: `src/viajante/google_hotels.py`, `src/viajante/google_hotels_rpc.py`
 - Delays or retry classification: `src/viajante/orchestration.py`
+- Shared provider cooldown state: `src/viajante/ratelimit.py`
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
@@ -25,11 +33,8 @@ the agent contract: where to edit, traps, and what must not be invented.
 - Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
-- Graded prompt battery (quality contract): `src/viajante/prompt_plan.py`, `src/viajante/prompt_bench.py`
-- Loop protocol: `program.md` (humans edit this to steer)
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
-- Graded prompt corpus: `tests/prompts/`
 - Domain types or JSON keys: `src/viajante/models.py`
 - Typical vs same-route calendar median: `src/viajante/typical.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
@@ -39,23 +44,28 @@ the agent contract: where to edit, traps, and what must not be invented.
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
+- Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
+- Offline evidence-bound itinerary validation: `src/viajante/validate.py`
+- Offline stay blocks and per-person cost split: `src/viajante/stays.py`
+- MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
 
 `google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hidden_city`, `compare_awards`, `lookup_transfers`.
-Library: `get_flights` (route spec, trips, or NL via `plan_prompt`), plus the `search_*` functions. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. `compare_award` / `lookup_transfers` are local and do not invent seats.
+CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`.
+Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
-(or other) prompt is planner *input*, not product voice. No implied home hub.
+(or other) prompt is caller *input*, not product voice. No implied home hub.
 Currency is `--currency` / MCP `currency`, or inferred from a named origin
 airport's owned country (JFK USD, LHR GBP, NRT JPY, GRU BRL). Unproven
-asks (error: currency required). Hotels have no origin: currency is required.
+asks (error: currency required). Google and Booking hotels have no origin:
+currency is required. Opt-in Skiplagged hotels default to their owned USD quote.
 If country, destination, or currency is not proven (a city with several
 airports, “Europe”, unnamed origin, two possible currencies), ask or error.
 Unknown cannot prove include. Do not invent IATA, `gl`, or ISO 4217 from vibe.
@@ -79,6 +89,14 @@ rows use the full triple. Stamp rules live with the search loops (`flights.py`,
 catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
+
+Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.
+The URL evidence reproduces a query, not guaranteed current fare availability.
+Empty segments cannot prove segment count, operators, clocks, airport changes,
+or overnight constraints. Run `validate_itinerary` before calling an assembled
+route compliant. A fail is infeasible; unknown never becomes pass. Relaxed
+constraints are a separate scenario. Search `coverage` is bounded to its named
+scope and is not proof over unsearched routes, dates, gateways, or permutations.
 
 `--nearby` is opt-in same-city IATA (default off; open-jaw not rewritten; no
 invented codes). `--exclude-airports` / `--include-airports` are named owned
@@ -114,8 +132,8 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Two flight fetch modes, one public contract. Sweep: one Chrome TLS session
   (`curl_cffi`), HTTP/2 multiplex, owned shopping RPC, HTML fallback if compact
   parse misses. Detail: Playwright (`viajante[browser]`). `--fetch {auto,sweep,detail}`:
-  auto uses sweep for 3+ flight queries and detail for 1–2 when Playwright is
-  importable. Auto without Playwright stays on sweep. Sweep empty or `blocked` may
+  auto uses sweep for 3+ flight queries or any packaged RT/multi (only sweep
+  shops the next leg), and detail for other 1–2 when Playwright is importable. Auto without Playwright stays on sweep. Sweep empty or `blocked` may
   fall back to detail once (`fetch_backend: sweep_then_detail`) only when Playwright
   is installed; do not re-run successful sweep legs. Shopping `ErrorResponse` and
   owned markup drift fail without Chromium. Do not silently mix backends unless
@@ -131,9 +149,18 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
-  jobs. `no_results`, `rejected`, `blocked`, `markup_drift`, and
-  `browser_unavailable` do not get a Playwright second attempt. A calendar
-  `blocked` (including a short unknown HTML shell) stops that calendar; no
+  jobs. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
+  writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat limit up to 30 min, or
+  a named `Retry-After`). While it runs, new flight/hotel Google searches in any
+  process send nothing and fail `blocked` with `rate_limited: true`; a search
+  already running keeps its replay. Rate-limited failures do not fall back to
+  detail. MCP search tools replay an identical successful call for 5 min
+  (`cached: true`) instead of asking Google again. `no_results`, `rejected`, `blocked`,
+  `markup_drift`, and `browser_unavailable` do not get a Playwright second attempt.
+  A Skiplagged 429 does the same in `skiplagged-rate-limit.json` (`blocked`,
+  `rate_limited`, no retry, live calls paced 1s apart). A calendar
+  `blocked` (including a short unknown HTML shell, or a data-less wrb.fr
+  error envelope such as status 13) stops that calendar; no
   flex, shop, or browser recovery. Booking card-wait timeouts fail immediately.
   Do not hammer Booking after a challenge.
   `rejected` and `markup_drift` do not fall back to detail.
@@ -175,18 +202,22 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   satisfied. Do not drop one. Do not invent a one-stop. Overnight IST
   `keep_connect` is still `require_overnight ∪ via`. Contradiction keeps both
   overnight constraints.
-- The owned prompt→query planner (`src/viajante/prompt_plan.py`) copies **named**
-  occupancy, alliance, windows, clocks, layover/duration, via, overnight,
-  include/exclude airports, exclude-regions (explore), bags, `--price-cap`,
-  `--sort`, and `--baggage-buffer`. Unnamed stays unset. Around/±N is
-  `intent=flex`; cheapest week is `intent=dates`; packaged RT stays packaged.
-  Dest-list IATA and dest-like `prefer_airports` may copy onto explore include
-  only; origin / via / overnight must not become dest includes.
 - The low-cost carrier list is partial. Absence from it is not evidence that a
   fare includes a bag.
 
 ### Hotels
 
+- A multi-stay hotel search carries `property_matrix`: each property's total per
+  stay, null where it was not among that stay's returned offers (not proof of
+  unavailability), sorted by name, never ranked. `near` is a point the caller names;
+  offers with owned coordinates then carry a straight-line `distance_km`. No point is assumed.
+  MCP `stays` accepts up to 8 location/check_in/check_out objects with optional
+  adults and rooms, inheriting top-level occupancy when omitted. Google query
+  results carry owned `resolved_place` / `place_bounds`; offers may carry
+  `sleeps`, `place_types`, `class_label`, and `priced_adults`. A priced party
+  that differs from the ask does not prove a total for the requested party.
+  Google hostel totals may price dormitory beds: no room type is supplied.
+  Check finalists by exact name with `search_hotel_rooms` before calling them private.
 - Hotel prices are total-stay prices. Keep requested filters, applied chips, and
   observed card evidence distinct. `--source booking` (CLI default) is Playwright
   evidence; `--source google` is the HTTP shortlist. MCP hotel search defaults to
@@ -194,6 +225,18 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   non-property titles such as `closed`. Google Hotels HTTP uses the hotel search
   loop's 3 attempts with 8s backoff (same pace as Booking Playwright), not the
   flight-sweep 50 ms once-retry.
+- `--source skiplagged` is opt-in and never mixed with Google or Booking rows.
+  Its quotes are USD: an unnamed currency is USD, another named currency is
+  `currency_mismatch`, and nothing converts. At most 10 adults per search (the
+  caller splits a larger party), at most 9 rooms, and no `--entire-home`. Skiplagged matches the
+  city loosely, so `resolved_place` is the owned echo; a place that is not the
+  one asked for was not searched. Search cards carry no cancellation, so `applied.not_applied` stamps
+  `free_cancellation` and the CLI says so. For 1-3
+  finalists `search_hotel_rooms` / `hotel-rooms` (by id, or by exact normalized
+  name plus city; no match or several is `no_results`, never a guess) returns provider room rates
+  with `occupancy_limit`, `refundable`, `free_cancellation`, and `taxes_and_fees`
+  (at most 5 rooms per room-rate request); do not rank them or
+  infer that a party fits across rooms from `occupancy_limit`.
 - Free cancellation is required by default. Only an explicit caller or CLI
   opt-out may include non-refundable stays. If `oos=1` is applied and the card
   does not mention cancellation, print `filter applied; card silent` — do not
@@ -214,6 +257,19 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   lock). Child or infant occupancy is rejected (hotel occupancy is adults-only).
   Hotel `price_basis` stays `total_stay`. Never invent a fare or a stay.
 
+## Local stay arithmetic and known limits
+
+Known release limits: a data-less status 13 can have a cause other than throttling
+and pause Google searches for 2 minutes. Google base/tax/fee breakdown
+(`record[6][2][44]`, unconfirmed) and caller-named exchange rates remain outside
+this release pending evidence and a design decision.
+
+Local `plan_stay_blocks` groups consecutive nights with identical people, not
+just identical headcounts. `split_stay_costs` uses named currency and optional
+per-person nightly fee, allocates exact cents per stay only among its occupants,
+and reports uncovered roster nights as `unallocated_nights`. Neither fetches
+prices or converts currency.
+
 ## Tests
 
 Prefer the locked checkout workflow:
@@ -228,18 +284,7 @@ uv run viajante bench
 `viajante bench` is the offline gate: unittest + `ruff check` / `ruff format --check`,
 then `gate` and `score_ms` (`tests_ms` + owned `tests/bench/` parse). No Chromium.
 No live Google unless `VIAJANTE_BENCH_LIVE=1`; that extra `sweep_ms` is never the
-score. **Do not optimize `score_ms`.** Read `program.md` before a loop experiment.
-
-`viajante bench --prompts` (or `VIAJANTE_BENCH_PROMPTS=1`) is the graded prompt
-battery: the quality contract, not `score_ms`. Gate is suite + `fail:0`. Quality
-keep is `judge_mean` **strictly above** the last recorded kept run (numbers live
-in `program.md`; do not invent a mean). LLM-as-judge is opt-in
-(`VIAJANTE_BENCH_JUDGE=1`). Do not edit `JUDGE_SYSTEM_PROMPT`. Unset key prints
-`judge: skip` and invents no score. Never commit `.env` or secrets. A looping
-agent may not delete `tests/prompts/` to “win”. Do not silently gate insane/llm
-cases. `tests/prompts/holdout.jsonl` is a **human veto**, not in `manifest.json`;
-do not open it when choosing a hypothesis. `viajante bench --prompts --holdout`
-loads only that file.
+score. **Do not optimize `score_ms`.**
 
 `pip install -e .` still works; `uv` is the reproducible path. Tests are offline.
 They must not launch Chromium or use the network. CI runs the suite on Python
@@ -266,8 +311,9 @@ a common hub or leisure trunk or the Google payload suggests a through-fare,
 call `search_hidden_city` once with the same named route and date. Sequential
 (process lock). Do not mix Skiplagged and Google payloads. Skip when `bags`
 were named, and skip explore, dates, flex, and multi-city. Do not invent a
-beyond city. Lead with `hidden_city: true` rows; confirm on `booking_url`
-(do not scrape Skiplagged).
+beyond city. Omit hidden-city `currency` (Skiplagged cards are USD); do not
+copy a Google/origin quote keep (GBP, JPY, …). Lead with `hidden_city: true` rows; confirm on
+`booking_url` (do not scrape Skiplagged).
 
 When helping pick destinations (not a single named route/date), follow
 `.cursor/skills/viajante/SKILL.md` → **Destination triage**: shortlist by vibe

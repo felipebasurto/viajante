@@ -115,6 +115,7 @@ class ChromiumSessionTests(unittest.TestCase):
                     state_filename="pw_state_google.json",
                     locale="en-US",
                     html_lang="en",
+                    currency="EUR",
                 ),
             )
 
@@ -158,6 +159,7 @@ class ChromiumSessionTests(unittest.TestCase):
                     html_lang="de",
                     viewport={"width": 1280, "height": 900},
                     user_agent="TestAgent/1.0",
+                    currency="EUR",
                 ),
             )
             with patch("viajante.browser._sync_playwright", return_value=starter):
@@ -184,6 +186,7 @@ class ChromiumSessionTests(unittest.TestCase):
                     state_filename="pw_state_google.json",
                     locale="en-US",
                     html_lang="en",
+                    currency="EUR",
                 ),
             )
             image_route = FakeRoute("image")
@@ -202,6 +205,7 @@ class ChromiumSessionTests(unittest.TestCase):
                     locale="de-DE",
                     html_lang="de",
                     blocked_resource_types=frozenset({"image", "media"}),
+                    currency="EUR",
                 ),
             )
             font_route = FakeRoute("font")
@@ -223,6 +227,7 @@ class ChromiumSessionTests(unittest.TestCase):
                     state_filename="pw_state_google.json",
                     locale="en-US",
                     html_lang="en",
+                    currency="EUR",
                 ),
             )
             session._context = context
@@ -245,6 +250,7 @@ class ChromiumSessionTests(unittest.TestCase):
                     state_filename="pw_state_google.json",
                     locale="en-US",
                     html_lang="en",
+                    currency="EUR",
                 ),
             )
             session._context = context
