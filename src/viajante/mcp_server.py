@@ -21,6 +21,7 @@ from viajante.mcp_handlers import (
     search_flex_tool,
     search_flights_tool,
     search_hidden_city_tool,
+    search_hotel_rooms_tool,
     search_hotels_tool,
     search_trip_tool,
     validate_itinerary_tool,
@@ -41,7 +42,7 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
           (only for --fetch detail and Booking.com; extras must match the MCP env)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
-search_hotels, search_trip, lookup_airports, search_hidden_city,
+search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, verify_answer.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
@@ -78,6 +79,11 @@ lookup_transfers is a local partner table, not live award inventory.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
 missing segment, baggage, or fare facts.
+
+Every MCP call is synchronous: never say you are still searching or will
+report back; call the tool now or name the next step. Hotel location is one
+named place; ask rather than substitute a nearby town. Hotel total_price is
+for the whole party and stay, not per person.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -489,9 +495,9 @@ def build_server():
 
     @server.tool()
     async def search_hotels(
-        location: str,
-        check_in: str,
-        check_out: str,
+        location: str | None = None,
+        check_in: str | None = None,
+        check_out: str | None = None,
         adults: int = 2,
         rooms: int = 1,
         top: int = DEFAULT_TOP,
@@ -500,14 +506,33 @@ def build_server():
         free_cancellation: bool = True,
         source: str = "google",
         currency: str | None = None,
+        stays: list[dict] | None = None,
     ) -> dict:
-        """Hotel search. Currency is required (no origin airport).
+        """Hotel search. Currency is required (no origin airport) except source
+        skiplagged, whose quotes are USD (omit currency or pass USD).
 
         Quotes are in the requested ISO 4217 currency as the provider returned
         them. Viajante does not convert. The calling agent may convert for the
         user. Do not invent ISO 4217 from vibe. Google offers carry owned
         latitude, longitude, and review_count: weigh location and how many
         reviews back a rating yourself; the list is price order, not advice.
+
+        location is one named place. Ask when it is a typo, a region, or has
+        several candidate towns; never substitute a nearby town. total_price is
+        the whole stay for the whole searched party and every room, not per
+        person. The request carries adults and rooms only, so do not state a room
+        split. Vacation rentals (entire_home=true) carry sleeps, bedrooms and
+        beds; hotels do not. priced_adults is the party Google priced. place_types
+        and class_label say what a property is (a hotel search returns hostels).
+        resolved_place and place_bounds say where Google searched; neighbors
+        outside place_bounds are not the named place. entire_home=true is how a
+        house or villa is requested.
+
+        stays batches several stays in one call instead of location/check_in/
+        check_out: up to 8 objects with location, check_in, check_out and
+        optional adults and rooms (defaults come from the top-level values).
+        Use it for a headcount that changes by night: one stay per block of
+        equal headcount. Results come back as one query per stay.
         """
         return dict(
             await run_mcp_tool(
@@ -515,6 +540,7 @@ def build_server():
                 location,
                 check_in,
                 check_out,
+                stays=stays,
                 adults=adults,
                 rooms=rooms,
                 top=top,
@@ -523,6 +549,36 @@ def build_server():
                 free_cancellation=free_cancellation,
                 source=source,  # type: ignore[arg-type]
                 currency=currency,
+            )
+        )
+
+    @server.tool()
+    async def search_hotel_rooms(
+        hotel_id: int,
+        check_in: str,
+        check_out: str,
+        adults: int = 2,
+        rooms: int = 1,
+    ) -> dict:
+        """Room rates for one Skiplagged hotel, for 1-3 finalists.
+
+        hotel_id is the provider_id of an offer from search_hotels with source
+        skiplagged. Each rate carries the provider's occupancy_limit,
+        refundable, free_cancellation and taxes_and_fees as listed. Quotes are
+        USD and are not converted. total_price is the whole stay for the party
+        and rooms searched. occupancy_limit is the provider's number for that
+        room type; it is not proof that your party fits across several rooms.
+        Rates come in provider order, not ranked. Skiplagged only: do not mix
+        these rows with Google or Booking prices.
+        """
+        return dict(
+            await run_mcp_tool(
+                search_hotel_rooms_tool,
+                hotel_id,
+                check_in,
+                check_out,
+                adults=adults,
+                rooms=rooms,
             )
         )
 

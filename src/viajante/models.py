@@ -1523,14 +1523,21 @@ class RawHotelCard:
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     review_count: Optional[int] = None
+    place_types: Tuple[str, ...] = ()
+    class_label: Optional[str] = None
+    priced_adults: Optional[int] = None
+    provider_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class HotelPage:
     cards: Tuple[RawHotelCard, ...]
+    resolved_place: Optional[str] = None
+    place_bounds: Optional[Tuple[float, float, float, float]] = None
+    search_url: Optional[str] = None
 
 
-HotelProvider = Literal["booking.com", "google-hotels"]
+HotelProvider = Literal["booking.com", "google-hotels", "skiplagged"]
 
 
 @dataclass(frozen=True)
@@ -1564,6 +1571,11 @@ class HotelOffer:
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     review_count: Optional[int] = None
+    sleeps: Optional[int] = None
+    place_types: Tuple[str, ...] = ()
+    class_label: Optional[str] = None
+    priced_adults: Optional[int] = None
+    provider_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         title = self.title.strip()
@@ -1593,6 +1605,11 @@ class HotelOffer:
             "latitude": self.latitude,
             "longitude": self.longitude,
             "review_count": self.review_count,
+            "sleeps": self.sleeps,
+            "place_types": list(self.place_types),
+            "class_label": self.class_label,
+            "priced_adults": self.priced_adults,
+            "provider_id": self.provider_id,
         }
 
 
@@ -1603,6 +1620,8 @@ class HotelQuerySuccess:
     raw_count: int
     eligible_count: int
     offers: Tuple[HotelOffer, ...]
+    resolved_place: Optional[str] = None
+    place_bounds: Optional[Tuple[float, float, float, float]] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -1618,6 +1637,8 @@ class HotelQuerySuccess:
             "applied": self.applied.to_dict(),
             "raw_count": self.raw_count,
             "eligible_count": self.eligible_count,
+            "resolved_place": self.resolved_place,
+            "place_bounds": list(self.place_bounds) if self.place_bounds else None,
             "offers": [offer.to_dict() for offer in self.offers],
         }
 
@@ -1641,7 +1662,7 @@ class HotelQueryFailure:
 HotelQueryResult = Union[HotelQuerySuccess, HotelQueryFailure]
 
 
-HotelFetchBackend = Literal["booking", "google"]
+HotelFetchBackend = Literal["booking", "google", "skiplagged"]
 
 
 @dataclass(frozen=True)
@@ -2045,3 +2066,86 @@ class AwardCompareReport:
         if self.cpp_cents is not None:
             payload["cpp_cents"] = self.cpp_cents
         return payload
+
+
+@dataclass(frozen=True)
+class HotelRoomRate:
+    """One bookable room rate as the provider listed it. Never ranked or merged."""
+
+    title: str
+    total_price: float
+    price_per_night: Optional[float]
+    taxes_and_fees: Optional[float]
+    occupancy_limit: Optional[int]
+    refundable: Optional[bool]
+    free_cancellation: Optional[bool]
+    bed_types: Tuple[str, ...]
+    booking_link: Optional[str]
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "title": self.title,
+            "total_price": self.total_price,
+            "price_per_night": self.price_per_night,
+            "taxes_and_fees": self.taxes_and_fees,
+            "occupancy_limit": self.occupancy_limit,
+            "refundable": self.refundable,
+            "free_cancellation": self.free_cancellation,
+            "bed_types": list(self.bed_types),
+            "booking_link": self.booking_link,
+        }
+
+
+@dataclass(frozen=True)
+class HotelRoomsReport:
+    searched_at: datetime
+    hotel_id: str
+    check_in: date
+    check_out: date
+    adults: int
+    rooms: int
+    currency: str = field(kw_only=True)
+    provider: Literal["skiplagged"] = "skiplagged"
+    price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
+    schema_version: int = field(init=False, default=2)
+    name: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    star_rating: Optional[float] = None
+    review_rating: Optional[float] = None
+    review_count: Optional[int] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    link: Optional[str] = None
+    rates: Tuple[HotelRoomRate, ...] = ()
+    error: Optional[SearchError] = None
+    fetch_ms: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        _store_naive_utc(self)
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "provider": self.provider,
+            "searched_at": _iso_z(self.searched_at),
+            "currency": self.currency,
+            "price_basis": self.price_basis,
+            "hotel_id": self.hotel_id,
+            "name": self.name,
+            "address": self.address,
+            "city": self.city,
+            "star_rating": self.star_rating,
+            "review_rating": self.review_rating,
+            "review_count": self.review_count,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "link": self.link,
+            "check_in": self.check_in.isoformat(),
+            "check_out": self.check_out.isoformat(),
+            "adults": self.adults,
+            "rooms": self.rooms,
+            "rates": [rate.to_dict() for rate in self.rates],
+            "error": self.error.to_dict() if self.error else None,
+            "fetch_ms": self.fetch_ms,
+        }

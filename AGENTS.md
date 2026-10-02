@@ -44,6 +44,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
+- Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
 - Offline evidence-bound itinerary validation: `src/viajante/validate.py`
 - MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
@@ -53,8 +54,8 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `verify_answer`.
+CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `verify_answer`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, and `validate_itinerary` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -209,6 +210,15 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   non-property titles such as `closed`. Google Hotels HTTP uses the hotel search
   loop's 3 attempts with 8s backoff (same pace as Booking Playwright), not the
   flight-sweep 50 ms once-retry.
+- `--source skiplagged` is opt-in and never mixed with Google or Booking rows.
+  Its quotes are USD: an unnamed currency is USD, another named currency is
+  `currency_mismatch`, and nothing converts. At most 10 adults per search (the
+  caller splits a larger party) and no `--entire-home`. Skiplagged matches the
+  city loosely, so `resolved_place` is the owned echo; a place that is not the
+  one asked for was not searched. Search cards carry no cancellation. For 1-3
+  finalists `search_hotel_rooms` / `hotel-rooms` returns provider room rates
+  with `occupancy_limit`, `refundable`, `free_cancellation`; do not rank them or
+  infer that a party fits across rooms from `occupancy_limit`.
 - Free cancellation is required by default. Only an explicit caller or CLI
   opt-out may include non-refundable stays. If `oos=1` is applied and the card
   does not mention cancellation, print `filter applied; card silent` — do not

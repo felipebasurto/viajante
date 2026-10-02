@@ -37,7 +37,7 @@ from viajante.flights import (
     parse_via_airports,
     search_flights,
 )
-from viajante.hotels import HotelSourceName, search_hotels
+from viajante.hotels import HotelSourceName, resolve_hotel_currency, search_hotels
 from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
     award_offer_from_mapping,
@@ -46,12 +46,11 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    HOTEL_CURRENCY_REQUIRED,
     first_origin_iata,
     resolve_quote_and_buffer,
-    resolve_quote_currency,
 )
 from viajante.skiplagged import search_hidden_city
+from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
 from viajante.validate import validate_itinerary
@@ -469,11 +468,63 @@ def search_explore_tool(
     return _owned(reports_payload(report))
 
 
+MAX_HOTEL_STAYS = 8
+
+
+def _hotel_queries(
+    location: Optional[str],
+    check_in: Optional[str],
+    check_out: Optional[str],
+    stays: Optional[Sequence[Mapping[str, object]]],
+    *,
+    adults: int,
+    rooms: int,
+    min_rating: Optional[float],
+    entire_home: bool,
+    free_cancellation: bool,
+) -> tuple[HotelQuery, ...]:
+    if stays is None:
+        specs: Sequence[Mapping[str, object]] = (
+            {"location": location, "check_in": check_in, "check_out": check_out},
+        )
+    else:
+        if location is not None or check_in is not None or check_out is not None:
+            raise ValueError("pass either location/check_in/check_out or stays, not both")
+        if not stays:
+            raise ValueError("stays must not be empty")
+        if len(stays) > MAX_HOTEL_STAYS:
+            raise ValueError(f"stays is limited to {MAX_HOTEL_STAYS} per call")
+        specs = stays
+    queries = []
+    for index, spec in enumerate(specs):
+        unknown = set(spec) - {"location", "check_in", "check_out", "adults", "rooms"}
+        if unknown:
+            raise ValueError(f"stay {index + 1}: unknown keys {sorted(unknown)}")
+        place, start, end = spec.get("location"), spec.get("check_in"), spec.get("check_out")
+        if not (isinstance(place, str) and isinstance(start, str) and isinstance(end, str)):
+            raise ValueError(f"stay {index + 1}: location, check_in and check_out are required")
+        check_in_date = date.fromisoformat(start)
+        _reject_past((check_in_date,), label="check-in")
+        queries.append(
+            HotelQuery(
+                place,
+                check_in_date,
+                date.fromisoformat(end),
+                adults=int(spec.get("adults", adults)),  # type: ignore[call-overload]
+                rooms=int(spec.get("rooms", rooms)),  # type: ignore[call-overload]
+                min_rating=min_rating,
+                entire_home=entire_home,
+                free_cancellation=free_cancellation,
+            )
+        )
+    return tuple(queries)
+
+
 @_cached
 def search_hotels_tool(
-    location: str,
-    check_in: str,
-    check_out: str,
+    location: Optional[str] = None,
+    check_in: Optional[str] = None,
+    check_out: Optional[str] = None,
     *,
     adults: int = 2,
     rooms: int = 1,
@@ -483,17 +534,16 @@ def search_hotels_tool(
     free_cancellation: bool = True,
     source: HotelSourceName = "google",
     currency: Optional[str] = None,
+    stays: Optional[Sequence[Mapping[str, object]]] = None,
 ) -> Mapping[str, object]:
     if source == "google" and min_rating is not None and min_rating > 5:
         raise ValueError("min_rating must be at most 5 with source google")
-    currency = resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
-    check_in_date = date.fromisoformat(check_in)
-    check_out_date = date.fromisoformat(check_out)
-    _reject_past((check_in_date,), label="check-in")
-    query = HotelQuery(
+    currency = resolve_hotel_currency(source, currency)
+    queries = _hotel_queries(
         location,
-        check_in_date,
-        check_out_date,
+        check_in,
+        check_out,
+        stays,
         adults=adults,
         rooms=rooms,
         min_rating=min_rating,
@@ -501,9 +551,29 @@ def search_hotels_tool(
         free_cancellation=free_cancellation,
     )
     report = _with_search_lock(
-        lambda: search_hotels((query,), top=top, source=source, currency=currency)
+        lambda: search_hotels(queries, top=top, source=source, currency=currency)
     )
     return _owned(reports_payload(report))
+
+
+@_cached
+def search_hotel_rooms_tool(
+    hotel_id: int,
+    check_in: str,
+    check_out: str,
+    *,
+    adults: int = 2,
+    rooms: int = 1,
+) -> Mapping[str, object]:
+    check_in_date = date.fromisoformat(check_in)
+    check_out_date = date.fromisoformat(check_out)
+    _reject_past((check_in_date,), label="check-in")
+    report = _with_search_lock(
+        lambda: search_hotel_rooms(
+            hotel_id, check_in_date, check_out_date, adults=adults, rooms=rooms
+        )
+    )
+    return _owned(dict(report.to_dict()))
 
 
 @_cached

@@ -38,6 +38,17 @@ class SkiplaggedError(RuntimeError):
     """Skiplagged MCP request failed."""
 
 
+class SkiplaggedRateLimited(SkiplaggedError):
+    """Skiplagged answered HTTP 429. Retrying right away only extends the block."""
+
+
+def _check_status(status: int, what: str) -> None:
+    if status == 429:
+        raise SkiplaggedRateLimited(
+            f"Skiplagged MCP rate limited this {what} (HTTP 429). Wait before searching again."
+        )
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -110,6 +121,7 @@ def _handshake(rpc: RpcPost, url: str) -> str:
         },
     }
     status, headers, body = rpc(url, init_payload, _headers())
+    _check_status(status, "session")
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     _rpc_result(_sse_json(body))
@@ -117,6 +129,7 @@ def _handshake(rpc: RpcPost, url: str) -> str:
     notify = {"jsonrpc": "2.0", "method": "notifications/initialized"}
     headers = _headers(session_id=session_id or None)
     status, _notify_headers, _notify_body = rpc(url, notify, headers)
+    _check_status(status, "session")
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     return session_id
@@ -143,13 +156,14 @@ def _call_mcp(
     *,
     rpc: RpcPost,
     url: str = SKIPLAGGED_MCP_URL,
+    tool: str = SKIPLAGGED_FLIGHTS_TOOL,
 ) -> Any:
     session_id = _session_id(rpc, url)
     call_payload = {
         "jsonrpc": "2.0",
         "id": 2,
         "method": "tools/call",
-        "params": {"name": SKIPLAGGED_FLIGHTS_TOOL, "arguments": dict(arguments)},
+        "params": {"name": tool, "arguments": dict(arguments)},
     }
     status, _call_headers, body = rpc(url, call_payload, _headers(session_id=session_id or None))
     if status in {400, 404} and session_id:
@@ -158,6 +172,7 @@ def _call_mcp(
         status, _call_headers, body = rpc(
             url, call_payload, _headers(session_id=session_id or None)
         )
+    _check_status(status, "search")
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP search failed ({status}).")
     return _rpc_result(_sse_json(body))

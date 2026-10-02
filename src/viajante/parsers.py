@@ -227,6 +227,7 @@ def parse_lodging_kind(card_text: str | None, *, title: str | None = None) -> Lo
 # Pattern order is load-bearing: first pattern that matches anywhere wins.
 _BATHROOM_PATTERNS = (re.compile(r"(\d+)\s*bathrooms?"),)
 _BEDROOM_PATTERNS = (re.compile(r"(\d+)\s*bedrooms?"),)
+_SLEEPS_PATTERNS = (re.compile(r"sleeps\s+(\d+)"),)
 _BED_PATTERNS = (
     re.compile(r"(\d+)\s*beds\b"),
     re.compile(r"(\d+)\s*bed\b"),
@@ -247,4 +248,5 @@ def parse_unit_hints(card_text: str | None) -> dict[str, int | None]:
         "bedrooms": _first_int(text, _BEDROOM_PATTERNS),
         "bathrooms": _first_int(text, _BATHROOM_PATTERNS),
         "beds": _first_int(text, _BED_PATTERNS),
+        "sleeps": _first_int(text, _SLEEPS_PATTERNS),
     }

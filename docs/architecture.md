@@ -172,7 +172,7 @@ Only failures that can succeed on a second try are retried:
 
 ## Hotels
 
-Two sources, one loop (`hotels.py`):
+Three sources, one loop (`hotels.py`):
 
 - **Google Hotels** (MCP default): the `AtySUc` RPC on `batchexecute`, over the
   same Chrome-TLS session. Encode and parse live in `google_hotels_rpc.py`.
@@ -184,6 +184,15 @@ Two sources, one loop (`hotels.py`):
 - **Booking.com** (CLI default): Playwright, with chips in the URL and the
   card DOM parsed for cancellation, lodging kind, and unit counts. Slow on
   purpose; challenges are not hammered.
+- **Skiplagged** (opt-in, `--source skiplagged`): its public MCP over HTTP, no
+  key, no browser (`skiplagged_hotels.py`, transport shared with hidden-city).
+  Quotes are USD only; another named currency is `currency_mismatch` and nothing
+  is converted. Search returns a total and a 0–10 score but no cancellation or
+  coordinates. It matches the city text loosely ("Costa Brava" matched Costa
+  Mesa, California), so `resolved_place` carries the city slug Skiplagged
+  actually searched. `hotel-rooms` / `search_hotel_rooms` fetches room-level
+  rates for one finalist: occupancy limit, refundable, free cancellation, taxes.
+  Skiplagged rows are never mixed with Google or Booking rows.
 
 The loop keeps three things apart: what the caller *asked* for, which filter
 chips were *applied*, and what each card *says*. `filter applied; card silent`

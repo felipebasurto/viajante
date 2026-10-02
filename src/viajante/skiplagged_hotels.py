@@ -1,0 +1,360 @@
+"""Opt-in Skiplagged hotels over its public MCP. No Google or Booking mix-in.
+
+Skiplagged cards are USD. Search lists stays (total and rating only live in the
+tool's markdown table); details lists room rates with occupancy and refund flags.
+Viajante never converts and never merges these rows with another provider.
+"""
+
+from __future__ import annotations
+
+import random
+import re
+import time
+from dataclasses import replace
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
+from typing import Any, Callable, Optional
+
+from viajante.models import (
+    FETCH_LANGUAGE,
+    AppliedHotelFilters,
+    HotelPage,
+    HotelQuery,
+    HotelRoomRate,
+    HotelRoomsReport,
+    RawHotelCard,
+    SearchError,
+    SearchErrorCode,
+)
+from viajante.orchestration import MAX_ATTEMPTS, retry_backoff_seconds
+from viajante.skiplagged import (
+    SKIPLAGGED_MCP_URL,
+    RpcPost,
+    SkiplaggedError,
+    SkiplaggedRateLimited,
+    _call_mcp,
+    _rpc_post,
+)
+
+SKIPLAGGED_HOTELS_TOOL = "sk_hotels_search"
+SKIPLAGGED_HOTEL_DETAILS_TOOL = "sk_hotel_details"
+SKIPLAGGED_HOTEL_CURRENCY = "USD"
+SKIPLAGGED_HOTELS_URL = "https://skiplagged.com/hotels"
+MAX_SEARCH_ADULTS = 10
+MAX_SEARCH_ROOMS = 9
+MAX_DETAIL_ROOMS = 5
+PAGE_LIMIT = 100
+
+_SEARCH_SLUG = re.compile(r"/hotels/\d+/(.+?)-hotels/")
+_HOTEL_ID_IN_URL = re.compile(r"/hotel/(\d+)/")
+_RATING = re.compile(r"(\d+(?:\.\d+)?)\s*/\s*10")
+_MONEY = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)")
+_LINK = re.compile(r"\]\(([^)]+)\)")
+
+
+class SkiplaggedNoHotels(Exception):
+    """The city did not match, or the city has no stays for these dates."""
+
+
+class SkiplaggedParseMiss(ValueError):
+    """The tool answered but its table no longer matches the structured rows."""
+
+
+def build_applied_filters(
+    query: HotelQuery,
+    *,
+    html_lang: str = FETCH_LANGUAGE,
+    currency: str,
+) -> AppliedHotelFilters:
+    # Skiplagged takes no cancellation or type filter. Nothing is applied remotely.
+    del query, html_lang, currency
+    return AppliedHotelFilters(chips=(), url=SKIPLAGGED_HOTELS_URL)
+
+
+def validate_search_party(adults: int, rooms: int) -> None:
+    if adults > MAX_SEARCH_ADULTS:
+        raise ValueError(
+            f"source skiplagged takes at most {MAX_SEARCH_ADULTS} adults per search; "
+            "split the party into separate stays"
+        )
+    if rooms > MAX_SEARCH_ROOMS:
+        raise ValueError(f"source skiplagged takes at most {MAX_SEARCH_ROOMS} rooms per search")
+
+
+def _text(result: Any) -> str:
+    if not isinstance(result, dict):
+        return ""
+    content = result.get("content")
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        item["text"]
+        for item in content
+        if isinstance(item, dict) and isinstance(item.get("text"), str)
+    )
+
+
+def _check_error(result: Any) -> None:
+    if isinstance(result, dict) and result.get("isError"):
+        message = _text(result).strip() or "Skiplagged hotel tool error"
+        if "no matching city" in message.casefold():
+            raise SkiplaggedNoHotels(message)
+        raise SkiplaggedError(message)
+
+
+def _table_rows(text: str) -> dict[str, dict[str, Any]]:
+    """Per-hotel total and review score from the tool's markdown table, keyed by hotel id."""
+    rows: dict[str, dict[str, Any]] = {}
+    for line in text.splitlines():
+        if not line.startswith("| **"):
+            continue
+        cells = line.strip().removeprefix("| ").removesuffix(" |").split(" | ")
+        if len(cells) != 6:
+            continue
+        link = _LINK.search(cells[5])
+        hotel = _HOTEL_ID_IN_URL.search(link.group(1)) if link else None
+        total = _MONEY.search(cells[3])
+        if hotel is None or total is None:
+            continue
+        rating = _RATING.search(cells[1])
+        rows[hotel.group(1)] = {
+            "total": f"${total.group(1)}",
+            "rating": rating.group(1) if rating else None,
+        }
+    return rows
+
+
+def parse_search_page(result: Any) -> HotelPage:
+    _check_error(result)
+    structured = result.get("structuredContent") if isinstance(result, dict) else None
+    cards = structured.get("results") if isinstance(structured, dict) else None
+    if not isinstance(cards, list) or not cards:
+        raise SkiplaggedNoHotels("Skiplagged returned no hotels for this city and dates.")
+    table = _table_rows(_text(result))
+    if not table:
+        raise SkiplaggedParseMiss("hotel table did not match the structured results")
+    parsed: list[RawHotelCard] = []
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        hotel_id = str(card.get("id", "")).removeprefix("hotel_")
+        row = table.get(hotel_id)
+        name = card.get("name")
+        if row is None or not isinstance(name, str) or not name.strip():
+            continue
+        amenities = card.get("amenities")
+        stars = card.get("rating")
+        parsed.append(
+            RawHotelCard(
+                title=name,
+                address=card.get("location") if isinstance(card.get("location"), str) else None,
+                total_price=row["total"],
+                rating=row["rating"],
+                details=", ".join(a for a in amenities if isinstance(a, str))
+                if isinstance(amenities, list)
+                else "",
+                link=card.get("deepLink") if isinstance(card.get("deepLink"), str) else None,
+                class_label=stars.get("text") if isinstance(stars, dict) else None,
+                provider_id=hotel_id or None,
+            )
+        )
+    if not parsed:
+        raise SkiplaggedParseMiss("no structured hotel matched a priced table row")
+    url = structured.get("searchUrl") if isinstance(structured, dict) else None
+    slug = _SEARCH_SLUG.search(url) if isinstance(url, str) else None
+    return HotelPage(
+        cards=tuple(parsed),
+        resolved_place=slug.group(1) if slug else None,
+        search_url=url if isinstance(url, str) else None,
+    )
+
+
+class SkiplaggedHotelsSource:
+    """Hotel loop source over `sk_hotels_search`. USD only."""
+
+    def __init__(self, *, rpc: RpcPost = _rpc_post, url: str = SKIPLAGGED_MCP_URL) -> None:
+        self._rpc = rpc
+        self._url = url
+        self.config = SimpleNamespace(html_lang=FETCH_LANGUAGE, currency=SKIPLAGGED_HOTEL_CURRENCY)
+
+    def fetch(self, query: HotelQuery, applied: AppliedHotelFilters, limit: int) -> HotelPage:
+        del applied
+        validate_search_party(query.adults, query.rooms)
+        result = _call_mcp(
+            {
+                "city": query.location,
+                "checkin": query.check_in.isoformat(),
+                "checkout": query.check_out.isoformat(),
+                "numAdults": query.adults,
+                "numRooms": query.rooms,
+                "limit": max(1, min(limit, PAGE_LIMIT)),
+                "sort": "price",
+            },
+            rpc=self._rpc,
+            url=self._url,
+            tool=SKIPLAGGED_HOTELS_TOOL,
+        )
+        return parse_search_page(result)
+
+    def reset(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def _number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _flag(value: Any) -> Optional[bool]:
+    return value if isinstance(value, bool) else None
+
+
+def _rate(row: Any) -> Optional[HotelRoomRate]:
+    if not isinstance(row, dict):
+        return None
+    total = _number(row.get("totalPriceInDollars"))
+    title = row.get("title")
+    if total is None or total <= 0 or not isinstance(title, str) or not title.strip():
+        return None
+    limit = row.get("occupancyLimit")
+    beds = row.get("bedTypes")
+    link = row.get("bookingLink")
+    return HotelRoomRate(
+        title=title.strip(),
+        total_price=total,
+        price_per_night=_number(row.get("pricePerNightInDollars")),
+        taxes_and_fees=_number(row.get("taxesAndFeesInDollars")),
+        occupancy_limit=limit if isinstance(limit, int) and not isinstance(limit, bool) else None,
+        refundable=_flag(row.get("refundable")),
+        free_cancellation=_flag(row.get("freeCancellation")),
+        bed_types=tuple(b for b in beds if isinstance(b, str)) if isinstance(beds, list) else (),
+        booking_link=link if isinstance(link, str) else None,
+    )
+
+
+def parse_rooms_report(
+    result: Any,
+    *,
+    hotel_id: str,
+    check_in: date,
+    check_out: date,
+    adults: int,
+    rooms: int,
+    searched_at: datetime,
+) -> HotelRoomsReport:
+    _check_error(result)
+    detail = result.get("structuredContent") if isinstance(result, dict) else None
+    if not isinstance(detail, dict):
+        raise SkiplaggedParseMiss("hotel details had no structured content")
+    rates = tuple(rate for row in detail.get("rooms") or [] if (rate := _rate(row)) is not None)
+    if not rates:
+        raise SkiplaggedNoHotels("Skiplagged listed no bookable room rates for these dates.")
+    place = detail.get("location") if isinstance(detail.get("location"), dict) else {}
+    count = detail.get("reviewCount")
+    return HotelRoomsReport(
+        searched_at=searched_at,
+        hotel_id=hotel_id,
+        check_in=check_in,
+        check_out=check_out,
+        adults=adults,
+        rooms=rooms,
+        currency=SKIPLAGGED_HOTEL_CURRENCY,
+        name=detail.get("hotelName") if isinstance(detail.get("hotelName"), str) else None,
+        address=detail.get("address") if isinstance(detail.get("address"), str) else None,
+        city=detail.get("cityName") if isinstance(detail.get("cityName"), str) else None,
+        star_rating=_number(detail.get("starRating")),
+        review_rating=_number(detail.get("reviewRating")),
+        review_count=count if isinstance(count, int) and not isinstance(count, bool) else None,
+        latitude=_number(place.get("lat")),
+        longitude=_number(place.get("lng")),
+        link=detail.get("bookingLink") if isinstance(detail.get("bookingLink"), str) else None,
+        rates=rates,
+    )
+
+
+def _failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, SkiplaggedRateLimited):
+        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+    if isinstance(exc, SkiplaggedNoHotels):
+        return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
+    if isinstance(exc, SkiplaggedParseMiss):
+        return SearchError(
+            code=SearchErrorCode.MARKUP_DRIFT, message="Skiplagged hotel parse missed."
+        )
+    return SearchError(code=SearchErrorCode.FETCH_FAILED, message=str(exc) or type(exc).__name__)
+
+
+def search_hotel_rooms(
+    hotel_id: int,
+    check_in: date,
+    check_out: date,
+    *,
+    adults: int = 2,
+    rooms: int = 1,
+    rpc: RpcPost = _rpc_post,
+    sleep: Callable[[float], None] = time.sleep,
+    random_gen: Any = None,
+) -> HotelRoomsReport:
+    """Room rates for one Skiplagged hotel id. Failures come back as a typed error."""
+    if hotel_id <= 0:
+        raise ValueError("hotel_id must be positive")
+    if check_out <= check_in:
+        raise ValueError("check_out must be after check_in")
+    if adults <= 0 or adults > MAX_SEARCH_ADULTS:
+        raise ValueError(f"adults must be 1 to {MAX_SEARCH_ADULTS} with source skiplagged")
+    if rooms <= 0 or rooms > MAX_DETAIL_ROOMS:
+        raise ValueError(f"rooms must be 1 to {MAX_DETAIL_ROOMS} for hotel room rates")
+    random_gen = random_gen or random.Random()
+    started = time.perf_counter()
+    error: Optional[SearchError] = None
+    report: Optional[HotelRoomsReport] = None
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            result = _call_mcp(
+                {
+                    "hotelId": hotel_id,
+                    "checkin": check_in.isoformat(),
+                    "checkout": check_out.isoformat(),
+                    "numAdults": adults,
+                    "numRooms": rooms,
+                },
+                rpc=rpc,
+                tool=SKIPLAGGED_HOTEL_DETAILS_TOOL,
+            )
+            report = parse_rooms_report(
+                result,
+                hotel_id=str(hotel_id),
+                check_in=check_in,
+                check_out=check_out,
+                adults=adults,
+                rooms=rooms,
+                searched_at=datetime.now(timezone.utc),
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 - typed into the report below
+            error = _failure(exc)
+            if error.code in (
+                SearchErrorCode.NO_RESULTS,
+                SearchErrorCode.MARKUP_DRIFT,
+                SearchErrorCode.BLOCKED,
+            ):
+                break
+            if attempt + 1 < MAX_ATTEMPTS:
+                sleep(retry_backoff_seconds(attempt, random_gen))
+    fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
+    if report is None:
+        report = HotelRoomsReport(
+            searched_at=datetime.now(timezone.utc),
+            hotel_id=str(hotel_id),
+            check_in=check_in,
+            check_out=check_out,
+            adults=adults,
+            rooms=rooms,
+            currency=SKIPLAGGED_HOTEL_CURRENCY,
+            error=error,
+        )
+    return replace(report, fetch_ms=fetch_ms)

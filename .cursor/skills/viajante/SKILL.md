@@ -29,6 +29,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | ±N around one date, then one shop | `search_flex` (`route`, `around`, `flex`) | `viajante flex` |
 | Dest triage from a named origin | `search_explore` (`origin`, `start` or `month`) | `viajante explore` |
 | Stay only | `search_hotels` (`location`, `check_in`, `check_out`, `currency`; default source google) | `viajante hotels` (CLI default source Booking) |
+| Room rates for one finalist (Skiplagged, USD) | `search_hotel_rooms` (`hotel_id`, `check_in`, `check_out`) | `viajante hotel-rooms` |
 | Flights then hotel | `search_trip` (`routes`, `location`) | `viajante trip` |
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
@@ -52,6 +53,20 @@ After a named-route `search_flights` (one origin, one dest, ISO date), if the de
 | Explicit flights only | Flights only |
 
 Free-cancellation filter is on by default. A silent card is not proof of free cancellation. `--allow-non-refundable` only after explicit consent. User verifies the total on the provider before booking.
+
+Hotel evidence rules:
+
+- **Location is one named place.** A typo, a region ("Costa Brava", "Andalucía"), or several candidate towns: ask once and spell out the candidate. Never substitute a nearby town as a proxy. A result whose address is not the named place was not requested.
+- **`total_price` is the whole stay for the whole searched party and every room.** It is not per person. Do not divide it, and do not compare it with a booking made for another `adults`, `rooms`, or dates. A per-person figure is labeled arithmetic, and only when occupancy and nights match.
+- **The room split is unproven.** The request carries `adults` and `rooms` only. Say "searched as N adults, M rooms; confirm the sleeping arrangement on the provider". Do not write "4 triples" or "fits 12". The only capacity evidence is `sleeps`, `bedrooms`, and `beds`, and Google gives them for vacation rentals (`entire_home=true`), not for hotel rooms. `priced_adults` is the party Google priced; if it differs from the ask, the total is not for that party.
+- **A headcount that changes by night: ask the roster, do not infer it.** Group nights into blocks of equal headcount and search one stay per block (`stays` on `search_hotels`). Report blocks separately. Do not guess who dropped out.
+- **House, villa, or casa:** call `search_hotels` with `entire_home=true`. A hotel list is not an answer to that ask. If it returns nothing, say so. Airbnb is not a viajante source.
+- **Property kind** is `place_types` (Google's own tags: `hotel`, `hostel`, `villa`, `apartment_complex`, ...) plus `class_label` ("3-star hotel"). A hotel search returns hostels, so read `place_types` before calling a result a hotel. Hostel prices are for the searched party as Google priced it; do not assume a private room.
+- **`resolved_place`** is the place Google resolved the query text to ("Jávea" resolves to "Xàbia"). `place_bounds` is its viewport (south, west, north, east). Google also returns neighbors (a Jávea search lists Dénia hotels). Compare each offer's `latitude`/`longitude` with `place_bounds` and say when an offer sits outside it. Do not relabel it as the requested town.
+- **Policy claims** (parties, pets, minimum age) only from the offer's `details`. Otherwise say it was not checked.
+- **Skiplagged is an opt-in second source** (`source="skiplagged"`). USD only, so omit `currency` or pass USD and do the FX yourself. Up to 10 adults per search. It matches the city loosely: read `resolved_place` and say when it is not the place asked for. Its search rows carry no cancellation. For 1-3 finalists call `search_hotel_rooms` with the offer's `provider_id`, and read each rate's `occupancy_limit`, `refundable` and `free_cancellation` as listed. Never mix its rows with Google or Booking prices or compare them as one list.
+- **No background work.** Every MCP call is synchronous. Never say you are still looking or will report back. Call the tool now, or name the next step and wait. Do not offer an action no tool performs (cancelling a booking).
+- A changed constraint (hotels, then house, then hotels) is restated in one line before the next search.
 
 ## Fetch
 

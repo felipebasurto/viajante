@@ -41,7 +41,16 @@ QUERY_KEYS = {
     "nights",
 }
 APPLIED_KEYS = {"chips", "url"}
-SUCCESS_KEYS = {"status", "query", "applied", "raw_count", "eligible_count", "offers"}
+SUCCESS_KEYS = {
+    "status",
+    "query",
+    "applied",
+    "raw_count",
+    "eligible_count",
+    "resolved_place",
+    "place_bounds",
+    "offers",
+}
 FAILURE_KEYS = {"status", "query", "applied", "error"}
 OFFER_KEYS = {
     "title",
@@ -61,6 +70,11 @@ OFFER_KEYS = {
     "latitude",
     "longitude",
     "review_count",
+    "sleeps",
+    "place_types",
+    "class_label",
+    "priced_adults",
+    "provider_id",
 }
 ERROR_KEYS = {"code", "message"}
 FORBIDDEN_KEYS = {

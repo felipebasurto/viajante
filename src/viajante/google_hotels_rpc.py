@@ -7,7 +7,7 @@ from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
 from viajante.google_flights_rpc import first_wrb_data
-from viajante.models import FETCH_LANGUAGE, HotelQuery, RawHotelCard
+from viajante.models import FETCH_LANGUAGE, HotelPage, HotelQuery, RawHotelCard
 
 HOTELS_RPC_URL = "https://www.google.com/_/TravelFrontendUi/data/batchexecute"
 HOTELS_RPC_ID = "AtySUc"
@@ -133,6 +133,10 @@ HOTELS_POST_HEADERS = {
 
 
 def parse_hotels_body(text: str) -> tuple[RawHotelCard, ...]:
+    return parse_hotels_page(text).cards
+
+
+def parse_hotels_page(text: str) -> HotelPage:
     if _looks_blocked(text):
         raise HotelsBlocked("Google Hotels blocked the sweep")
     payload = first_wrb_data(text, _wrb_data)
@@ -141,7 +145,11 @@ def parse_hotels_body(text: str) -> tuple[RawHotelCard, ...]:
     records = _collect_hotel_records(payload)
     cards = tuple(card for record in records if (card := _record_to_card(record)) is not None)
     if cards:
-        return cards
+        return HotelPage(
+            cards=cards,
+            resolved_place=_resolved_place(records[0]),
+            place_bounds=_place_bounds(records[0]),
+        )
     if records:
         raise HotelsParseMiss("hotel records had no stay-total price")
     if _has_search_echo(payload):
@@ -273,7 +281,64 @@ def _record_to_card(record: list[Any]) -> Optional[RawHotelCard]:
         link=_link(record),
         **_coordinates(record),
         review_count=_review_count(record),
+        place_types=_place_types(record),
+        class_label=_class_label(record),
+        priced_adults=_priced_adults(record),
     )
+
+
+def _resolved_place(record: list[Any]) -> Optional[str]:
+    # The place Google resolved the query text to, not the property's own town.
+    try:
+        name = record[6][1][18][1]
+    except (IndexError, TypeError):
+        return None
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def _place_bounds(record: list[Any]) -> Optional[tuple[float, float, float, float]]:
+    try:
+        (south, west), (north, east) = record[6][1][16]
+    except (IndexError, TypeError, ValueError):
+        return None
+    values = (south, west, north, east)
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        return None
+    return (float(south), float(west), float(north), float(east))
+
+
+def _place_types(record: list[Any]) -> tuple[str, ...]:
+    # Google's own type tags (hotel, hostel, villa, ...); only the flagged ones.
+    try:
+        tags = record[2][31][0]
+    except (IndexError, TypeError):
+        return ()
+    if not isinstance(tags, list):
+        return ()
+    found = [
+        tag[0].removeprefix("gcid:")
+        for tag in tags
+        if isinstance(tag, list) and len(tag) >= 2 and isinstance(tag[0], str) and tag[1] is True
+    ]
+    return tuple(found)
+
+
+def _class_label(record: list[Any]) -> Optional[str]:
+    try:
+        label = record[3][0]
+    except (IndexError, TypeError):
+        return None
+    return label.strip() if isinstance(label, str) and label.strip() else None
+
+
+def _priced_adults(record: list[Any]) -> Optional[int]:
+    try:
+        adults = record[6][1][13][0]
+    except (IndexError, TypeError):
+        return None
+    if isinstance(adults, int) and not isinstance(adults, bool) and adults > 0:
+        return adults
+    return None
 
 
 def _coordinates(record: list[Any]) -> dict[str, Optional[float]]:
@@ -321,11 +386,24 @@ def _rating(record: list[Any]) -> Optional[str]:
 
 
 def _details(record: list[Any]) -> str:
+    parts: list[str] = []
     try:
         text = record[11][0]
     except (IndexError, TypeError):
-        return ""
-    return text.strip() if isinstance(text, str) else ""
+        text = None
+    if isinstance(text, str) and text.strip():
+        parts.append(text.strip())
+    # Vacation rentals carry "Entire apartment", "Sleeps 3", "1 bedroom" chips here.
+    try:
+        chips = record[10][3][1]
+    except (IndexError, TypeError):
+        chips = None
+    if isinstance(chips, list):
+        for chip in chips:
+            label = chip[0] if isinstance(chip, list) and chip else None
+            if isinstance(label, str) and label.strip():
+                parts.append(label.strip())
+    return ". ".join(parts)
 
 
 def _link(record: list[Any]) -> Optional[str]:

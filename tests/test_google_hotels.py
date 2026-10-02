@@ -16,6 +16,7 @@ from viajante.google_hotels_rpc import (
     build_hotels_inner,
     build_hotels_request,
     parse_hotels_body,
+    parse_hotels_page,
 )
 from viajante.hotels import _run_search
 from viajante.models import HotelQuery, HotelQuerySuccess
@@ -135,6 +136,44 @@ class HotelsEncodeTests(unittest.TestCase):
         self.assertTrue(body.startswith("f.req="))
         envelope = json.loads(unquote(body[len("f.req=") :]))
         self.assertEqual(envelope[0][0][0], "AtySUc")
+
+
+def _with_google_evidence(record: list) -> list:
+    """Slots seen in a live AtySUc capture: type tags, class, occupancy echo, place, chips."""
+    record = json.loads(json.dumps(record))
+    record[2] += [None] * (32 - len(record[2]))
+    record[2][31] = [[["gcid:hostel", True], ["gcid:hotel", False]]]
+    record[3] = ["2-star hotel"]
+    record[6][1] = record[6][1] or []
+    stay = record[6][1]
+    stay += [None] * (19 - len(stay))
+    stay[13] = [5, None, 3]
+    stay[16] = [[50.0, 14.3], [50.2, 14.6]]
+    stay[18] = [None, "Prague", "0xredacted"]
+    record[10] = [None, None, None, ["Essential info", [["Entire apartment"], ["Sleeps 5"]]]]
+    return record
+
+
+class HotelsEvidenceTests(unittest.TestCase):
+    def test_page_carries_type_class_occupancy_and_resolved_place(self) -> None:
+        body = _wrap_wrb(_search_payload(_with_google_evidence(_hotel_record())))
+        page = parse_hotels_page(body)
+        card = page.cards[0]
+        self.assertEqual(card.place_types, ("hostel",))
+        self.assertEqual(card.class_label, "2-star hotel")
+        self.assertEqual(card.priced_adults, 5)
+        self.assertEqual(page.resolved_place, "Prague")
+        self.assertEqual(page.place_bounds, (50.0, 14.3, 50.2, 14.6))
+        self.assertIn("Sleeps 5", card.details)
+
+    def test_missing_slots_stay_none_not_guessed(self) -> None:
+        page = parse_hotels_page(_wrap_wrb(_search_payload(_hotel_record())))
+        card = page.cards[0]
+        self.assertEqual(card.place_types, ())
+        self.assertIsNone(card.class_label)
+        self.assertIsNone(card.priced_adults)
+        self.assertIsNone(page.resolved_place)
+        self.assertIsNone(page.place_bounds)
 
 
 class HotelsParseTests(unittest.TestCase):

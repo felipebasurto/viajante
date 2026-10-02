@@ -28,14 +28,13 @@ from viajante.google_hotels_rpc import (
     HotelsRejected,
     _looks_blocked,
     build_hotels_request,
-    parse_hotels_body,
+    parse_hotels_page,
 )
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
     HotelPage,
     HotelQuery,
-    RawHotelCard,
 )
 
 HTTP_TIMEOUT_SECONDS = 30
@@ -96,16 +95,21 @@ class GoogleHotelsSource:
             )
             posts.append(SweepPost(url, body, HOTELS_POST_HEADERS))
         responses = dispatch_posts(client, posts, timeout=self._timeout)
-        cards = list(self._cards(responses[0], posts[0].url)[:limit])
+        first = self._page(responses[0], posts[0].url)
+        cards = list(first.cards[:limit])
         for post, response in zip(posts[1:], responses[1:], strict=True):
             try:
-                cards.extend(self._cards(response, post.url)[:limit])
+                cards.extend(self._page(response, post.url).cards[:limit])
             except (HotelsBlocked, HotelsParseMiss, EmptyHotelResults, HotelsRejected):
                 continue
-        return HotelPage(cards=tuple(cards))
+        return HotelPage(
+            cards=tuple(cards),
+            resolved_place=first.resolved_place,
+            place_bounds=first.place_bounds,
+        )
 
     @staticmethod
-    def _cards(response: SweepHttpResponse, url: str) -> tuple[RawHotelCard, ...]:
+    def _page(response: SweepHttpResponse, url: str) -> HotelPage:
         advice = response.rate_limit
         if response.status == 429 and advice:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
@@ -114,7 +118,7 @@ class GoogleHotelsSource:
             raise HotelsBlocked(f"Google Hotels HTTP {response.status} from {url}")
         if response.status >= 400:
             raise HotelsParseMiss(f"hotel HTTP {response.status}")
-        return parse_hotels_body(response.text)
+        return parse_hotels_page(response.text)
 
     def reset(self) -> None:
         if self._injected_client is None:

@@ -64,6 +64,17 @@ from viajante.parsers import (
     parse_unit_hints,
 )
 from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
+from viajante.skiplagged import SkiplaggedRateLimited
+from viajante.skiplagged_hotels import (
+    SKIPLAGGED_HOTEL_CURRENCY,
+    SkiplaggedHotelsSource,
+    SkiplaggedNoHotels,
+    SkiplaggedParseMiss,
+    validate_search_party,
+)
+from viajante.skiplagged_hotels import (
+    build_applied_filters as build_skiplagged_filters,
+)
 from viajante.storage import default_state_dir
 
 
@@ -108,6 +119,11 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         latitude=card.latitude,
         longitude=card.longitude,
         review_count=card.review_count,
+        sleeps=hints["sleeps"],
+        place_types=card.place_types,
+        class_label=card.class_label,
+        priced_adults=card.priced_adults,
+        provider_id=card.provider_id,
     )
 
 
@@ -166,6 +182,15 @@ def _rank_offers(
 
 
 def _classify_hotel_failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, SkiplaggedRateLimited):
+        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+    if isinstance(exc, SkiplaggedNoHotels):
+        return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
+    if isinstance(exc, SkiplaggedParseMiss):
+        return SearchError(
+            code=SearchErrorCode.MARKUP_DRIFT,
+            message="Skiplagged hotel parse missed.",
+        )
     if isinstance(exc, EmptyHotelResults):
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
@@ -204,7 +229,7 @@ def _run_search(
     provider: HotelProvider = "booking.com",
     applied_filters: Optional[Callable[..., AppliedHotelFilters]] = None,
     delay_seconds: Optional[Callable[[random.Random], float]] = None,
-    fetch_backend: Optional[Literal["booking", "google"]] = None,
+    fetch_backend: Optional[Literal["booking", "google", "skiplagged"]] = None,
     fetch_ms: Optional[int] = None,
 ) -> HotelSearchReport:
     if not queries:
@@ -239,10 +264,12 @@ def _run_search(
                 )
                 outcome = HotelQuerySuccess(
                     query=query,
-                    applied=applied,
+                    applied=(replace(applied, url=page.search_url) if page.search_url else applied),
                     raw_count=len(page.cards),
                     eligible_count=len(ranked),
                     offers=ranked[:top],
+                    resolved_place=page.resolved_place,
+                    place_bounds=page.place_bounds,
                 )
                 break
             except Exception as exc:
@@ -253,11 +280,10 @@ def _run_search(
                 if attempt + 1 < MAX_ATTEMPTS:
                     sleep(retry_backoff_seconds(attempt, random_gen))
         if outcome is None:
-            default_message = (
-                "Google Hotels search failed."
-                if provider == "google-hotels"
-                else "Booking.com hotel search failed."
-            )
+            default_message = {
+                "google-hotels": "Google Hotels search failed.",
+                "skiplagged": "Skiplagged hotel search failed.",
+            }.get(provider, "Booking.com hotel search failed.")
             outcome = HotelQueryFailure(
                 query=query,
                 applied=applied,
@@ -282,7 +308,44 @@ def _run_search(
     )
 
 
-HotelSourceName = Literal["booking", "google"]
+HotelSourceName = Literal["booking", "google", "skiplagged"]
+
+
+def resolve_hotel_currency(source: str, currency: Optional[str]) -> str:
+    """Named ISO 4217, except Skiplagged where an unnamed currency is its USD."""
+    if source == "skiplagged" and (currency is None or not str(currency).strip()):
+        return SKIPLAGGED_HOTEL_CURRENCY
+    return resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
+
+
+def _skiplagged_currency_mismatch(
+    queries: Sequence[HotelQuery], currency: str
+) -> HotelSearchReport:
+    error = SearchError(
+        code=SearchErrorCode.CURRENCY_MISMATCH,
+        message=(
+            f"Skiplagged hotel quotes are {SKIPLAGGED_HOTEL_CURRENCY}; {currency} was named. "
+            "Viajante does not convert. Omit currency or pass USD."
+        ),
+    )
+    return HotelSearchReport(
+        searched_at=datetime.now(timezone.utc),
+        queries=tuple(
+            HotelQueryFailure(
+                query=query,
+                applied=build_skiplagged_filters(
+                    query, html_lang=FETCH_LANGUAGE, currency=SKIPLAGGED_HOTEL_CURRENCY
+                ),
+                error=error,
+            )
+            for query in queries
+        ),
+        locale=FETCH_LANGUAGE,
+        currency=SKIPLAGGED_HOTEL_CURRENCY,
+        provider="skiplagged",
+        fetch_backend="skiplagged",
+        fetch_ms=0,
+    )
 
 
 def search_hotels(
@@ -297,19 +360,32 @@ def search_hotels(
         raise ValueError("at least one query is required")
     if top <= 0:
         raise ValueError("top must be positive")
-    if source not in ("booking", "google"):
-        raise ValueError("source must be booking or google")
+    if source not in ("booking", "google", "skiplagged"):
+        raise ValueError("source must be booking, google, or skiplagged")
     if source == "google" and any(
         query.min_rating is not None and query.min_rating > 5 for query in queries
     ):
         raise ValueError("min_rating must be at most 5 with source google")
-    currency = resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
+    if source == "skiplagged":
+        for query in queries:
+            validate_search_party(query.adults, query.rooms)
+            if query.entire_home:
+                raise ValueError("entire_home is not supported with source skiplagged")
+    currency = resolve_hotel_currency(source, currency)
+    if source == "skiplagged" and currency != SKIPLAGGED_HOTEL_CURRENCY:
+        return _skiplagged_currency_mismatch(queries, currency)
     if source == "google":
         hotel_source: _HotelSource = GoogleHotelsSource(currency=currency)
         provider: HotelProvider = "google-hotels"
         applied_filters = build_google_filters
         delay_seconds = sweep_inter_query_delay_seconds
-        fetch_backend: Literal["booking", "google"] = "google"
+        fetch_backend: Literal["booking", "google", "skiplagged"] = "google"
+    elif source == "skiplagged":
+        hotel_source = SkiplaggedHotelsSource()
+        provider = "skiplagged"
+        applied_filters = build_skiplagged_filters
+        delay_seconds = sweep_inter_query_delay_seconds
+        fetch_backend = "skiplagged"
     else:
         if not playwright_available():
             failure = classify_failure(ModuleNotFoundError("No module named 'playwright'"))

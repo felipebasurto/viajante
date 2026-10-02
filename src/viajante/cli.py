@@ -51,7 +51,7 @@ from viajante.flights import (
     search_flights,
 )
 from viajante.google_flights import google_flights_url
-from viajante.hotels import search_hotels
+from viajante.hotels import resolve_hotel_currency, search_hotels
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -85,12 +85,12 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    HOTEL_CURRENCY_REQUIRED,
     first_origin_iata,
     resolve_baggage_buffer,
     resolve_quote_currency,
 )
 from viajante.skiplagged import search_hidden_city
+from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.storage import reports_payload, write_json_atomic
 from viajante.trip import (
     format_trip_total,
@@ -395,8 +395,8 @@ def _validate_hotel_args(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
     queries = _build_hotel_queries(args)
-    args.currency = resolve_quote_currency(
-        getattr(args, "currency", None), None, missing=HOTEL_CURRENCY_REQUIRED
+    args.currency = resolve_hotel_currency(
+        getattr(args, "source", "booking"), getattr(args, "currency", None)
     )
     return queries
 
@@ -595,7 +595,9 @@ def _print_hotel_filters(
     provider: str = "booking.com",
 ) -> None:
     chips = "; ".join(applied.chips) if applied.chips else "(none)"
-    label = "Booking chips" if provider == "booking.com" else "Google chips"
+    label = {"booking.com": "Booking chips", "skiplagged": "Skiplagged chips"}.get(
+        provider, "Google chips"
+    )
     print(f"  Filters: {_format_hotel_filter_gloss(query)}")
     print(f"  {label}: {chips}")
 
@@ -765,7 +767,9 @@ def _print_hotel_report(report) -> None:
         elif isinstance(result, HotelQueryFailure):
             print(f"  ERROR: {result.error.message}")
     if any_success:
-        site = "Google Hotels" if report.provider == "google-hotels" else "Booking.com"
+        site = {"google-hotels": "Google Hotels", "skiplagged": "Skiplagged"}.get(
+            report.provider, "Booking.com"
+        )
         print(
             f"\nVerify the final total stay price and cancellation terms on {site} before booking."
         )
@@ -1110,10 +1114,11 @@ def _add_hotel_filter_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--source",
         default="booking",
-        choices=["booking", "google"],
+        choices=["booking", "google", "skiplagged"],
         help=(
             "Hotel source. booking is the Playwright evidence path (CLI default). "
-            "google is the HTTP shortlist (MCP default)."
+            "google is the HTTP shortlist (MCP default). skiplagged is the opt-in "
+            "Skiplagged MCP: USD only, up to 10 adults, no entire-home filter."
         ),
     )
 
@@ -1774,6 +1779,45 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_hotel_rooms(args: argparse.Namespace) -> int:
+    try:
+        check_in = date.fromisoformat(args.check_in)
+        check_out = date.fromisoformat(args.check_out)
+        if check_in < date.today():
+            raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
+        report = search_hotel_rooms(
+            args.hotel_id, check_in, check_out, adults=args.adults, rooms=args.rooms
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_hotel_rooms_report(report)
+    _save(args, report)
+    return 2 if report.error is not None else 0
+
+
+def _print_hotel_rooms_report(report) -> None:
+    name = report.name or f"hotel {report.hotel_id}"
+    print(
+        f"\n=== {name}  {report.check_in.isoformat()} -> {report.check_out.isoformat()} "
+        f"({report.adults} adult(s), {report.rooms} room(s)) ==="
+    )
+    if report.error is not None:
+        print(f"  ERROR: {report.error.message}")
+        return
+    for rate in report.rates:
+        refund = {True: "refundable", False: "non-refundable", None: "refund unknown"}[
+            rate.refundable
+        ]
+        free = {True: ", free cancellation", False: "", None: ""}[rate.free_cancellation]
+        limit = f"  up to {rate.occupancy_limit}" if rate.occupancy_limit is not None else ""
+        print(
+            f"  {format_money(rate.total_price, report.currency)} total stay  "
+            f"{rate.title}{limit}  ({refund}{free})"
+        )
+    print(f"\nQuotes are {report.currency} and are not converted. Verify on Skiplagged.")
+
+
 def _run_awards(args: argparse.Namespace) -> int:
     try:
         award = load_award_offer(Path(args.offer))
@@ -1954,6 +1998,20 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_save_flag(hotels)
+
+    rooms = sub.add_parser(
+        "hotel-rooms",
+        help=(
+            "Room rates for one Skiplagged hotel id (USD): occupancy and refund flags. "
+            "Take the id from `hotels --source skiplagged` (provider_id in --save JSON)."
+        ),
+    )
+    rooms.add_argument("hotel_id", type=int, help="Skiplagged hotel id")
+    rooms.add_argument("check_in", help="Check-in date (YYYY-MM-DD)")
+    rooms.add_argument("check_out", help="Check-out date (YYYY-MM-DD)")
+    rooms.add_argument("--adults", type=int, default=2, help="Number of adults (default 2)")
+    rooms.add_argument("--rooms", type=int, default=1, help="Rooms, 1 to 5 (default 1)")
+    _add_save_flag(rooms)
 
     trip = sub.add_parser(
         "trip",
@@ -2364,6 +2422,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_explore(args)
     if args.cmd == "airports":
         return _run_airports(args)
+    if args.cmd == "hotel-rooms":
+        return _run_hotel_rooms(args)
     if args.cmd == "hidden-city":
         return _run_hidden_city(args)
     if args.cmd == "awards":
