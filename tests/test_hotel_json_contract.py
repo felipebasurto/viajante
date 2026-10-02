@@ -40,7 +40,7 @@ QUERY_KEYS = {
     "free_cancellation",
     "nights",
 }
-APPLIED_KEYS = {"chips", "url"}
+APPLIED_KEYS = {"chips", "url", "not_applied"}
 SUCCESS_KEYS = {
     "status",
     "query",

@@ -218,7 +218,8 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   `currency_mismatch`, and nothing converts. At most 10 adults per search (the
   caller splits a larger party) and no `--entire-home`. Skiplagged matches the
   city loosely, so `resolved_place` is the owned echo; a place that is not the
-  one asked for was not searched. Search cards carry no cancellation. For 1-3
+  one asked for was not searched. Search cards carry no cancellation, so `applied.not_applied` stamps
+  `free_cancellation` and the CLI says so. For 1-3
   finalists `search_hotel_rooms` / `hotel-rooms` (by id, or by exact normalized
   name plus city; no match or several is `no_results`, never a guess) returns provider room rates
   with `occupancy_limit`, `refundable`, `free_cancellation`; do not rank them or

@@ -167,6 +167,20 @@ class SkiplaggedSearchParseTests(unittest.TestCase):
         self.assertEqual([card.title for card in page.cards], ["a&o Prague Rhea"])
 
 
+class SkiplaggedAppliedFilterTests(unittest.TestCase):
+    def test_free_cancellation_is_stamped_not_applied(self) -> None:
+        applied = build_applied_filters(QUERY, currency="USD")
+        self.assertEqual(applied.not_applied, ("free_cancellation",))
+        self.assertEqual(applied.chips, ())
+        self.assertEqual(applied.to_dict()["not_applied"], ["free_cancellation"])
+
+    def test_nothing_is_stamped_when_non_refundable_stays_are_allowed(self) -> None:
+        open_query = HotelQuery(
+            "Prague", date(2026, 12, 1), date(2026, 12, 4), free_cancellation=False
+        )
+        self.assertEqual(build_applied_filters(open_query, currency="USD").not_applied, ())
+
+
 class SkiplaggedSearchLoopTests(unittest.TestCase):
     def _run(self, source: SkiplaggedHotelsSource):
         return _run_search(

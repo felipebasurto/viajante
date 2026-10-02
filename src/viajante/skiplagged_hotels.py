@@ -72,9 +72,14 @@ def build_applied_filters(
     html_lang: str = FETCH_LANGUAGE,
     currency: str,
 ) -> AppliedHotelFilters:
-    # Skiplagged takes no cancellation or type filter. Nothing is applied remotely.
-    del query, html_lang, currency
-    return AppliedHotelFilters(chips=(), url=SKIPLAGGED_HOTELS_URL)
+    # Skiplagged takes no cancellation or type filter, and its search rows carry no
+    # cancellation evidence, so the free-cancellation request cannot drop or confirm anything.
+    del html_lang, currency
+    return AppliedHotelFilters(
+        chips=(),
+        url=SKIPLAGGED_HOTELS_URL,
+        not_applied=("free_cancellation",) if query.free_cancellation else (),
+    )
 
 
 def validate_search_party(adults: int, rooms: int) -> None:

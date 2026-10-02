@@ -1544,11 +1544,14 @@ HotelProvider = Literal["booking.com", "google-hotels", "skiplagged"]
 class AppliedHotelFilters:
     chips: Tuple[str, ...]
     url: str
+    # Requested filters this source cannot apply or check (it returns no evidence for them).
+    not_applied: Tuple[str, ...] = ()
 
     def to_dict(self) -> Mapping[str, object]:
         return {
             "chips": list(self.chips),
             "url": self.url,
+            "not_applied": list(self.not_applied),
         }
 
 

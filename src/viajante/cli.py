@@ -600,6 +600,9 @@ def _print_hotel_filters(
     )
     print(f"  Filters: {_format_hotel_filter_gloss(query)}")
     print(f"  {label}: {chips}")
+    if applied.not_applied:
+        names = ", ".join(applied.not_applied)
+        print(f"  Not applied by this source: {names} (rows carry no evidence for it)")
 
 
 def _format_cancellation_evidence(
