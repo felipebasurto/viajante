@@ -111,6 +111,9 @@ class GoogleHotelsSource:
     @staticmethod
     def _page(response: SweepHttpResponse, url: str) -> HotelPage:
         advice = response.rate_limit
+        if advice and response.status < 400:
+            # A data-less RPC status 13 envelope: the cooldown is already recorded.
+            raise HotelsBlocked(advice, rate_limited=True)
         if response.status == 429 and advice:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
             raise HotelsBlocked(message, rate_limited=True)

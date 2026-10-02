@@ -24,6 +24,12 @@ from viajante.models import (
     normalize_currency,
 )
 from viajante.parsers import parse_price
+from viajante.ratelimit import (
+    SKIPLAGGED_RATE_LIMIT_FILE,
+    note_rate_limited,
+    rate_limit_advice,
+    rate_limit_status,
+)
 
 SKIPLAGGED_MCP_URL = "https://mcp.skiplagged.com/mcp"
 SKIPLAGGED_FLIGHTS_TOOL = "sk_flights_search"
@@ -42,11 +48,50 @@ class SkiplaggedRateLimited(SkiplaggedError):
     """Skiplagged answered HTTP 429. Retrying right away only extends the block."""
 
 
-def _check_status(status: int, what: str) -> None:
-    if status == 429:
+# ponytail: Skiplagged publishes no quota. A burst of calls got an HTTP 429 on session start;
+# one second between live calls is a guess. Upgrade: learn it from observed recoveries.
+MIN_CALL_INTERVAL_SECONDS = 1.0
+_PACE_LOCK = threading.Lock()
+_LAST_CALL = [0.0]
+
+
+def _is_live(rpc: RpcPost) -> bool:
+    # Injected test transports skip the cooldown file and pacing so they never touch real state.
+    return rpc is _rpc_post
+
+
+def _guard_cooldown(rpc: RpcPost) -> None:
+    if not _is_live(rpc):
+        return
+    state = rate_limit_status(file=SKIPLAGGED_RATE_LIMIT_FILE)
+    if state is not None:
+        advice = rate_limit_advice(state, sent=False, provider="Skiplagged")
+        raise SkiplaggedRateLimited(advice)
+
+
+def _pace(rpc: RpcPost) -> None:
+    if not _is_live(rpc):
+        return
+    with _PACE_LOCK:
+        wait = _LAST_CALL[0] + MIN_CALL_INTERVAL_SECONDS - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_CALL[0] = time.monotonic()
+
+
+def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str]) -> None:
+    if status != 429:
+        return
+    try:
+        retry_after = float(headers.get("retry-after") or headers.get("Retry-After") or "")
+    except ValueError:
+        retry_after = None
+    if _is_live(rpc):
+        state = note_rate_limited(retry_after, file=SKIPLAGGED_RATE_LIMIT_FILE)
         raise SkiplaggedRateLimited(
-            f"Skiplagged MCP rate limited this {what} (HTTP 429). Wait before searching again."
+            rate_limit_advice(state, provider="Skiplagged", reason="HTTP 429")
         )
+    raise SkiplaggedRateLimited("Skiplagged is rate-limiting this machine (HTTP 429).")
 
 
 def _utc_now() -> datetime:
@@ -121,15 +166,15 @@ def _handshake(rpc: RpcPost, url: str) -> str:
         },
     }
     status, headers, body = rpc(url, init_payload, _headers())
-    _check_status(status, "session")
+    _check_status(status, rpc, headers)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     _rpc_result(_sse_json(body))
     session_id = headers.get("mcp-session-id") or headers.get("Mcp-Session-Id") or ""
     notify = {"jsonrpc": "2.0", "method": "notifications/initialized"}
     headers = _headers(session_id=session_id or None)
-    status, _notify_headers, _notify_body = rpc(url, notify, headers)
-    _check_status(status, "session")
+    status, notify_headers, _notify_body = rpc(url, notify, headers)
+    _check_status(status, rpc, notify_headers)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     return session_id
@@ -158,6 +203,8 @@ def _call_mcp(
     url: str = SKIPLAGGED_MCP_URL,
     tool: str = SKIPLAGGED_FLIGHTS_TOOL,
 ) -> Any:
+    _guard_cooldown(rpc)
+    _pace(rpc)
     session_id = _session_id(rpc, url)
     call_payload = {
         "jsonrpc": "2.0",
@@ -165,14 +212,14 @@ def _call_mcp(
         "method": "tools/call",
         "params": {"name": tool, "arguments": dict(arguments)},
     }
-    status, _call_headers, body = rpc(url, call_payload, _headers(session_id=session_id or None))
+    status, call_headers, body = rpc(url, call_payload, _headers(session_id=session_id or None))
+    _check_status(status, rpc, call_headers)
     if status in {400, 404} and session_id:
         _drop_session(rpc, url)
         session_id = _session_id(rpc, url)
         status, _call_headers, body = rpc(
             url, call_payload, _headers(session_id=session_id or None)
         )
-    _check_status(status, "search")
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP search failed ({status}).")
     return _rpc_result(_sse_json(body))

@@ -223,7 +223,8 @@ improvement loops.
   that drift shows up as `markup_drift` and not as a wrong fare.
 - **Throttling is a guess.** Google publishes no quota. The cooldown lengths
   are marked with `ponytail:` comments and should learn from real recoveries.
-  The RPC status-13 signal does not yet write the shared cooldown file.
+  A data-less RPC status 13 now writes the same cooldown (direct sessions only);
+  Skiplagged keeps its own `skiplagged-rate-limit.json` and a one-second pace.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import contextlib
-import json
-import math
 import re
 import threading
 import time
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
@@ -43,7 +41,14 @@ from viajante.models import (
     RawSegment,
     Trip,
 )
-from viajante.storage import default_state_dir, write_json_atomic
+from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tests
+    NOT_SENT,
+    RATE_LIMIT_COOLDOWN_SECONDS,
+    RATE_LIMIT_MAX_COOLDOWN_SECONDS,
+    note_rate_limited,
+    rate_limit_advice,
+    rate_limit_status,
+)
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
@@ -406,57 +411,8 @@ class SweepHttpResponse:
     rate_limit: Optional[str] = None
 
 
-RATE_LIMIT_FILE = "google-rate-limit.json"
-# ponytail: Google publishes no quota. The cooldown is a guess: 2 min, doubling per repeat
-# 429 up to 30 min, unless Retry-After names one. Upgrade: learn it from observed recoveries.
-RATE_LIMIT_COOLDOWN_SECONDS = 120.0
-RATE_LIMIT_MAX_COOLDOWN_SECONDS = 1800.0
-NOT_SENT = "Not sent. "
-
-
-def _read_rate_limit() -> Optional[dict]:
-    try:
-        state = json.loads((default_state_dir() / RATE_LIMIT_FILE).read_text(encoding="utf-8"))
-        return state if all(isinstance(state[k], (int, float)) for k in ("at", "until")) else None
-    except (OSError, ValueError, TypeError, KeyError):
-        return None
-
-
-def rate_limit_status(now: Optional[float] = None) -> Optional[dict]:
-    """The recorded Google cooldown for this machine while it runs, else None."""
-    state = _read_rate_limit()
-    current = time.time() if now is None else now
-    return state if state is not None and state["until"] > current else None
-
-
-def note_rate_limited(retry_after: Optional[float] = None, now: Optional[float] = None) -> dict:
-    """Record a real Google 429 in the state dir so the next search in any process waits."""
-    current = time.time() if now is None else now
-    previous = _read_rate_limit()
-    if previous is not None and previous["until"] > current:
-        return previous
-    cooldown = RATE_LIMIT_COOLDOWN_SECONDS
-    if retry_after is not None and retry_after > 0:
-        cooldown = retry_after
-    elif previous is not None and current < previous["until"] + previous.get("cooldown_s", 0):
-        cooldown = min(RATE_LIMIT_MAX_COOLDOWN_SECONDS, previous["cooldown_s"] * 2)
-    state = {"at": current, "until": current + cooldown, "cooldown_s": cooldown}
-    with contextlib.suppress(OSError):
-        write_json_atomic(state, default_state_dir() / RATE_LIMIT_FILE)
-    return state
-
-
-def rate_limit_advice(state: Mapping[str, float], *, sent: bool = True) -> str:
-    def clock(epoch: float) -> str:
-        return datetime.fromtimestamp(epoch, timezone.utc).strftime("%H:%M")
-
-    minutes = max(1, math.ceil((state["until"] - time.time()) / 60))
-    prefix = "" if sent else NOT_SENT
-    return (
-        f"{prefix}Google is rate-limiting this machine (HTTP 429 at {clock(state['at'])} UTC). "
-        f"Viajante pauses Google searches until {clock(state['until'])} UTC (~{minutes} min). "
-        "Tell the user to wait; do not retry or switch fetch mode."
-    )
+# ponytail: Google answers a throttled IP with a data-less wrb.fr envelope, status 13.
+RPC_THROTTLE_STATUS = 13
 
 
 def _retry_after_seconds(response: Any) -> Optional[float]:
@@ -619,10 +575,17 @@ class ChromeSweepClient:
         ):
             response = await send()
         out = _as_sweep_response(response)
-        # ponytail: a proxy is another egress IP, so its 429 does not pause direct searches.
-        if out.status == 429 and not self._proxied:
+        # ponytail: a proxy is another egress IP, so its limit does not pause direct searches.
+        if self._proxied:
+            return out
+        if out.status == 429:
             state = note_rate_limited(_retry_after_seconds(response))
             out = replace(out, rate_limit=rate_limit_advice(state))
+        elif out.status == 200 and rpc_error_status(out.text) == RPC_THROTTLE_STATUS:
+            state = note_rate_limited()
+            out = replace(
+                out, rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}")
+            )
         return out
 
     async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
@@ -809,14 +772,9 @@ def _raise_if_blocked(
         )
     rpc_status = rpc_error_status(body)
     if rpc_status is not None:
-        # Seen alongside google.com/sorry for the same IP while shopping still answers.
-        raise GoogleFlightsBlocked(
-            f"Google Flights answered with RPC error status {rpc_status} and no data "
-            f"from {fallback_url}. Google does this while throttling this IP; "
-            "wait before searching again."
-        )
-    rpc_status = rpc_error_status(body)
-    if rpc_status is not None:
+        if advice and rpc_status == RPC_THROTTLE_STATUS:
+            # status=429 so the caller treats it as a rate limit and does not replay or fall back.
+            raise GoogleFlightsBlocked(advice, status=429)
         # Seen alongside google.com/sorry for the same IP while shopping still answers.
         raise GoogleFlightsBlocked(
             f"Google Flights answered with RPC error status {rpc_status} and no data "

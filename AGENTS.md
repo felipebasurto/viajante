@@ -147,14 +147,16 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
-  jobs. A real direct (unproxied) Google 429 also writes `google-rate-limit.json` in
-  the state dir: a guessed cooldown (2 min, doubling per repeat 429 up to 30 min, or
+  jobs. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
+  writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat 429 up to 30 min, or
   a named `Retry-After`). While it runs, new flight/hotel Google searches in any
   process send nothing and fail `blocked` with `rate_limited: true`; a search
   already running keeps its replay. Rate-limited failures do not fall back to
   detail. MCP search tools replay an identical successful call for 5 min
   (`cached: true`) instead of asking Google again. `no_results`, `rejected`, `blocked`,
-  `markup_drift`, and `browser_unavailable` do not get a Playwright second attempt. A calendar
+  `markup_drift`, and `browser_unavailable` do not get a Playwright second attempt.
+  A Skiplagged 429 does the same in `skiplagged-rate-limit.json` (`blocked`,
+  `rate_limited`, no retry, live calls paced 1s apart). A calendar
   `blocked` (including a short unknown HTML shell, or a data-less wrb.fr
  error envelope such as status 13) stops that calendar; no
   flex, shop, or browser recovery. Booking card-wait timeouts fail immediately.
