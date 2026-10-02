@@ -16,6 +16,7 @@ from viajante.mcp_handlers import (
     compare_awards_tool,
     lookup_airports_tool,
     lookup_transfers_tool,
+    plan_stay_blocks_tool,
     search_dates_tool,
     search_explore_tool,
     search_flex_tool,
@@ -24,6 +25,7 @@ from viajante.mcp_handlers import (
     search_hotel_rooms_tool,
     search_hotels_tool,
     search_trip_tool,
+    split_stay_costs_tool,
     validate_itinerary_tool,
 )
 
@@ -43,12 +45,14 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers, validate_itinerary, verify_answer.
+compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
+split_stay_costs, verify_answer.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
-validate_itinerary, and verify_answer may run during a search.
+validate_itinerary, plan_stay_blocks, split_stay_costs, and verify_answer may run
+during a search.
 
 Results are raw owned evidence, not a recommendation. You choose: read the
 payload, weigh price against duration, stops, clocks, and rating, and say why.
@@ -76,6 +80,8 @@ Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
 compare_awards is local points math from a named offer; it does not invent seats.
 lookup_transfers is a local partner table, not live award inventory.
+plan_stay_blocks and split_stay_costs are local arithmetic over a per-night roster
+the caller supplies; they never search, never convert money, never pick a stay.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
 missing segment, baggage, or fare facts.
@@ -777,6 +783,44 @@ def build_server():
                 legs,
                 constraints,
                 currency=currency,
+            )
+        )
+
+    @server.tool()
+    async def plan_stay_blocks(roster: dict[str, list[str]]) -> dict:
+        """Local: group consecutive nights with the same people into blocks.
+
+        roster maps each night (YYYY-MM-DD, the night that starts that day) to the
+        names sleeping. Nights must be consecutive. Each block gives check_in,
+        check_out, nights, headcount and people, so one search_hotels stay per block
+        can use headcount as adults. Never decides where anyone sleeps.
+        """
+        return dict(await run_lookup_tool(plan_stay_blocks_tool, roster))
+
+    @server.tool()
+    async def split_stay_costs(
+        stays: list[dict],
+        roster: dict[str, list[str]],
+        currency: str,
+        fee_per_person_night: float | None = None,
+    ) -> dict:
+        """Local: split each stay's total among the people who sleep there.
+
+        stays are {name, check_in, check_out, total}; roster is as for
+        plan_stay_blocks. A stay's rate is its total over the person-nights the
+        roster puts inside it, so someone who never sleeps there pays nothing toward
+        it. currency is named by the caller and never converted. fee_per_person_night
+        is a per-night charge the caller names (a city tax) added per person. Cents
+        are allocated so each stay sums exactly. Nights no stay covers come back as
+        unallocated_nights. Arithmetic only: it does not price or recommend a stay.
+        """
+        return dict(
+            await run_lookup_tool(
+                split_stay_costs_tool,
+                stays,
+                roster,
+                currency,
+                fee_per_person_night=fee_per_person_night,
             )
         )
 

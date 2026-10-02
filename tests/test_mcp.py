@@ -1079,6 +1079,8 @@ class McpServerImportTests(unittest.TestCase):
                 "compare_awards",
                 "lookup_transfers",
                 "validate_itinerary",
+                "plan_stay_blocks",
+                "split_stay_costs",
                 "verify_answer",
             ],
         )

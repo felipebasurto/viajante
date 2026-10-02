@@ -35,6 +35,8 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
 | Validate selected flight offers (local) | `validate_itinerary` (`legs`, `constraints`) | — |
+| Per-night roster into check-in/check-out blocks (local) | `plan_stay_blocks` (`roster`) | — |
+| Split stay totals by nights per person (local) | `split_stay_costs` (`stays`, `roster`, `currency`) | — |
 
 Do not brute-force a date matrix when dates/flex/explore exist. `search_trip` rejects children/infants (hotel occupancy is adults-only). Omit `trip_total` if either side misses, dates miss, or currencies differ.
 
@@ -59,7 +61,7 @@ Hotel evidence rules:
 - **Location is one named place.** A typo, a region ("Costa Brava", "Andalucía"), or several candidate towns: ask once and spell out the candidate. Never substitute a nearby town as a proxy. A result whose address is not the named place was not requested.
 - **`total_price` is the whole stay for the whole searched party and every room.** It is not per person. Do not divide it, and do not compare it with a booking made for another `adults`, `rooms`, or dates. A per-person figure is labeled arithmetic, and only when occupancy and nights match.
 - **The room split is unproven.** The request carries `adults` and `rooms` only. Say "searched as N adults, M rooms; confirm the sleeping arrangement on the provider". Do not write "4 triples" or "fits 12". The only capacity evidence is `sleeps`, `bedrooms`, and `beds`, and Google gives them for vacation rentals (`entire_home=true`), not for hotel rooms. `priced_adults` is the party Google priced; if it differs from the ask, the total is not for that party.
-- **A headcount that changes by night: ask the roster, do not infer it.** Group nights into blocks of equal headcount and search one stay per block (`stays` on `search_hotels`). Report blocks separately. Do not guess who dropped out.
+- **A headcount that changes by night: ask the roster, do not infer it.** Run `plan_stay_blocks` on the roster the user confirmed, then search one stay per block (`stays` on `search_hotels`, `adults` = the block's `headcount`). Report blocks separately. Do not guess who dropped out. To split what a group pays, run `split_stay_costs` with the chosen stays and the same roster instead of dividing by hand: each stay is shared only by the people who sleep in it, by their nights. It uses the currency and any per-night fee the user names and never converts.
 - **House, villa, or casa:** call `search_hotels` with `entire_home=true`. A hotel list is not an answer to that ask. If it returns nothing, say so. Airbnb is not a viajante source.
 - **Property kind** is `place_types` (Google's own tags: `hotel`, `hostel`, `villa`, `apartment_complex`, ...) plus `class_label` ("3-star hotel"). A hotel search returns hostels, so read `place_types` before calling a result a hotel. Hostel prices are for the searched party as Google priced it; do not assume a private room.
 - **`resolved_place`** is the place Google resolved the query text to ("Jávea" resolves to "Xàbia"). `place_bounds` is its viewport (south, west, north, east). Google also returns neighbors (a Jávea search lists Dénia hotels). Compare each offer's `latitude`/`longitude` with `place_bounds` and say when an offer sits outside it. Do not relabel it as the requested town.

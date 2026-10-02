@@ -26,6 +26,8 @@ _MONEY_KEYS = frozenset(
         "flight_fare",
         "hotel_stay",
         "baggage_buffer",
+        "fee",
+        "rate_per_person_night",
     }
 )
 _ISO_4217 = frozenset(_COUNTRY_CASH_CURRENCY.values()) | {"EUR", "USD"}

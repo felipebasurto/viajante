@@ -51,6 +51,7 @@ from viajante.quote import (
 )
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
+from viajante.stays import plan_stay_blocks, split_stay_costs
 from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
 from viajante.validate import validate_itinerary
@@ -766,6 +767,25 @@ def lookup_transfers_tool(
         "points": points,
         "transfer_paths": [path.to_dict() for path in paths],
     }
+
+
+def plan_stay_blocks_tool(roster: Mapping[str, Sequence[str]]) -> Mapping[str, object]:
+    """Local: consecutive nights with the same people, as check-in/check-out blocks."""
+    return dict(plan_stay_blocks(roster).to_dict())
+
+
+def split_stay_costs_tool(
+    stays: Sequence[Mapping[str, object]],
+    roster: Mapping[str, Sequence[str]],
+    currency: str,
+    *,
+    fee_per_person_night: Optional[float] = None,
+) -> Mapping[str, object]:
+    """Local: split each stay's total among the people who sleep there, by nights."""
+    report = split_stay_costs(
+        stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
+    )
+    return _owned(dict(report.to_dict()))
 
 
 def validate_itinerary_tool(
