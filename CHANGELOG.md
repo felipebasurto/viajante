@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-02
+
 ### Fixed
 
+- npm package metadata includes `mcpName`, required to register the npm transport with MCP Registry. Python and npm versions remain aligned; runtime tools and schemas are unchanged.
 - Release publishing can resume npm and MCP Registry from an existing tag without republishing PyPI. MCP Registry waits for the npm version to become publicly available, and token-free npm publishing removes setup-node's empty auth entry before using OIDC.
 
 ## [1.3.0] - 2026-10-02
@@ -98,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.3.0...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.3.1...develop
+[1.3.1]: https://github.com/felipebasurto/viajante/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/felipebasurto/viajante/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/felipebasurto/viajante/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/felipebasurto/viajante/compare/v1.1.2...v1.2.0

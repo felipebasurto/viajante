@@ -1,8 +1,8 @@
 # 1.3.0 release preparation
 
 Prepared on 2026-10-02 from `develop` at `8e69a35`. Version 1.3.0 is a
-proposal, not a published release. No tag was created or pushed, and `main`
-was not changed. The changelog date is the preparation date; update it if
+proposal at the preparation stage. No tag was created or pushed, and `main`
+was not changed during that stage. The changelog date is the preparation date; update it if
 publication happens later.
 
 ## Validation performed
@@ -113,3 +113,10 @@ A single Skiplagged hotel retry after more than 30 minutes returned `fetch_faile
 with the provider error `Failed to fetch from hotel_search: timeout of 10000ms
 exceeded`. No further provider retry was made; room-rate live readiness remains
 unverified.
+
+The npm version became publicly available and the published npx entry passed
+stdio smoke (exactly 15 tools and both local stay tools). MCP Registry then
+reported that the npm package lacked required `mcpName` metadata. Version 1.3.0
+is available on PyPI and npm, but is not registered with both transports. Since
+published npm versions cannot be replaced, 1.3.1 is prepared as a metadata fix
+pending explicit version/tag confirmation. The v1.3.0 tag remains unchanged.
