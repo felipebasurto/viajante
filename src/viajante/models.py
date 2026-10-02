@@ -1579,6 +1579,7 @@ class HotelOffer:
     class_label: Optional[str] = None
     priced_adults: Optional[int] = None
     provider_id: Optional[str] = None
+    distance_km: Optional[float] = None
 
     def __post_init__(self) -> None:
         title = self.title.strip()
@@ -1613,6 +1614,7 @@ class HotelOffer:
             "class_label": self.class_label,
             "priced_adults": self.priced_adults,
             "provider_id": self.provider_id,
+            "distance_km": self.distance_km,
         }
 
 
@@ -1679,6 +1681,8 @@ class HotelSearchReport:
     price_basis: Literal["total_stay"] = field(init=False, default="total_stay")
     fetch_backend: Optional[HotelFetchBackend] = None
     fetch_ms: Optional[int] = None
+    # A point the caller named; offers carry their straight-line distance to it.
+    near: Optional[Tuple[float, float]] = None
 
     def __post_init__(self) -> None:
         _store_naive_utc(self)
@@ -1693,8 +1697,49 @@ class HotelSearchReport:
             "price_basis": self.price_basis,
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
+            "near": {"lat": self.near[0], "lng": self.near[1]} if self.near else None,
+            "property_matrix": _property_matrix(self.queries),
             "queries": [result.to_dict() for result in self.queries],
         }
+
+
+def _property_key(offer: "HotelOffer") -> Tuple[str, str]:
+    return (
+        " ".join(offer.title.split()).casefold(),
+        " ".join((offer.address or "").split()).casefold(),
+    )
+
+
+def _property_matrix(
+    queries: Tuple["HotelQueryResult", ...],
+) -> Optional[list[Mapping[str, object]]]:
+    """Each property seen in a multi-stay search with its total per stay, or null where absent.
+
+    Built only from the offers each stay returned (its ``top``), so a null means "not among
+    them", not "unavailable". Rows are sorted by name so the order carries no price signal.
+    Nothing is ranked or chosen.
+    """
+    if len(queries) < 2:
+        return None
+    rows: dict[Tuple[str, str], dict] = {}
+    for index, result in enumerate(queries):
+        if not isinstance(result, HotelQuerySuccess):
+            continue
+        for offer in result.offers:
+            row = rows.setdefault(
+                _property_key(offer),
+                {
+                    "title": offer.title,
+                    "address": offer.address,
+                    "latitude": offer.latitude,
+                    "longitude": offer.longitude,
+                    "distance_km": offer.distance_km,
+                    "prices": [None] * len(queries),
+                },
+            )
+            if row["prices"][index] is None or offer.total_price < row["prices"][index]:
+                row["prices"][index] = offer.total_price
+    return [rows[key] for key in sorted(rows)]
 
 
 @dataclass(frozen=True)

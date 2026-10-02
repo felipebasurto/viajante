@@ -27,6 +27,8 @@ REPORT_KEYS = {
     "price_basis",
     "fetch_backend",
     "fetch_ms",
+    "near",
+    "property_matrix",
     "queries",
 }
 QUERY_KEYS = {
@@ -75,6 +77,7 @@ OFFER_KEYS = {
     "class_label",
     "priced_adults",
     "provider_id",
+    "distance_km",
 }
 ERROR_KEYS = {"code", "message"}
 FORBIDDEN_KEYS = {

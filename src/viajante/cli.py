@@ -391,10 +391,24 @@ def _build_hotel_queries(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
     return (HotelQuery(**shared, free_cancellation=not args.allow_non_refundable),)
 
 
+def _parse_near(raw: Optional[str]) -> Optional[Tuple[float, float]]:
+    if raw is None:
+        return None
+    parts = [part.strip() for part in raw.split(",")]
+    try:
+        lat, lng = (float(part) for part in parts) if len(parts) == 2 else (None, None)
+    except ValueError:
+        lat = lng = None
+    if lat is None or lng is None:
+        raise ValueError("--near must be LAT,LNG, e.g. 50.0875,14.4213")
+    return (lat, lng)
+
+
 def _validate_hotel_args(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
     queries = _build_hotel_queries(args)
+    args.near = _parse_near(getattr(args, "near", None))
     args.currency = resolve_hotel_currency(
         getattr(args, "source", "booking"), getattr(args, "currency", None)
     )
@@ -757,9 +771,10 @@ def _print_hotel_report(report) -> None:
                 if offer.review_count is not None:
                     rating += f" ({offer.review_count} reviews)"
                 address = f"  {offer.address}" if offer.address else ""
+                away = f"  {offer.distance_km:.1f} km away" if offer.distance_km is not None else ""
                 print(
                     f"  {format_money(offer.total_price, report.currency)} total stay  "
-                    f"rating {rating}  {offer.title}{address}"
+                    f"rating {rating}  {offer.title}{address}{away}"
                 )
                 _print_hotel_offer_details(offer, query=query, applied=result.applied)
             print(
@@ -832,6 +847,7 @@ def _run_hotels(args: argparse.Namespace) -> int:
         progress=lambda line: print(line, file=sys.stderr),
         source=getattr(args, "source", "booking"),
         currency=args.currency,
+        near=args.near,
     )
     _print_hotel_report(report)
 
@@ -1998,6 +2014,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Stays to show (default {DEFAULT_TOP})",
     )
     _add_hotel_filter_flags(hotels)
+    hotels.add_argument(
+        "--near",
+        default=None,
+        metavar="LAT,LNG",
+        help="A point you name; each stay with coordinates shows its straight-line distance to it",
+    )
     hotels.add_argument(
         "--compare-cancellation",
         action="store_true",

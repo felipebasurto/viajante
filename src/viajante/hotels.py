@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from dataclasses import replace
@@ -127,6 +128,32 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
     )
 
 
+def _distance_km(near: Tuple[float, float], latitude: float, longitude: float) -> float:
+    """Straight-line (great-circle) kilometres, to 0.01 km."""
+    lat1, lng1, lat2, lng2 = map(math.radians, (near[0], near[1], latitude, longitude))
+    half = (
+        math.sin((lat2 - lat1) / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin((lng2 - lng1) / 2) ** 2
+    )
+    return round(2 * 6371.0088 * math.asin(math.sqrt(half)), 2)
+
+
+def _with_distance(offer: HotelOffer, near: Optional[Tuple[float, float]]) -> HotelOffer:
+    if near is None or offer.latitude is None or offer.longitude is None:
+        return offer
+    return replace(offer, distance_km=_distance_km(near, offer.latitude, offer.longitude))
+
+
+def validate_near(near: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    if near is None:
+        return None
+    lat, lng = near
+    ok = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lat, lng))
+    if not (ok and -90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ValueError("near must be a latitude (-90 to 90) and longitude (-180 to 180)")
+    return (float(lat), float(lng))
+
+
 def _is_eligible(offer: HotelOffer, query: HotelQuery) -> bool:
     if query.min_rating is not None:
         if offer.rating_score is None or offer.rating_score < query.min_rating:
@@ -231,6 +258,7 @@ def _run_search(
     delay_seconds: Optional[Callable[[random.Random], float]] = None,
     fetch_backend: Optional[Literal["booking", "google", "skiplagged"]] = None,
     fetch_ms: Optional[int] = None,
+    near: Optional[Tuple[float, float]] = None,
 ) -> HotelSearchReport:
     if not queries:
         raise ValueError("at least one query is required")
@@ -254,7 +282,9 @@ def _run_search(
             try:
                 page = source.fetch(query, applied, fetch_limit)
                 normalized = tuple(
-                    offer for raw in page.cards if (offer := _normalize_card(raw)) is not None
+                    _with_distance(offer, near)
+                    for raw in page.cards
+                    if (offer := _normalize_card(raw)) is not None
                 )
                 eligible = tuple(offer for offer in normalized if _is_eligible(offer, query))
                 rank_limit = max(top, len(eligible))
@@ -305,6 +335,7 @@ def _run_search(
         provider=provider,
         fetch_backend=fetch_backend,
         fetch_ms=fetch_ms,
+        near=near,
     )
 
 
@@ -355,7 +386,9 @@ def search_hotels(
     progress: Optional[Callable[[str], None]] = None,
     source: HotelSourceName = "booking",
     currency: Optional[str] = None,
+    near: Optional[Tuple[float, float]] = None,
 ) -> HotelSearchReport:
+    near = validate_near(near)
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
@@ -429,6 +462,7 @@ def search_hotels(
             applied_filters=applied_filters,
             delay_seconds=delay_seconds,
             fetch_backend=fetch_backend,
+            near=near,
         )
     finally:
         hotel_source.close()

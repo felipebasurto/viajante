@@ -755,6 +755,20 @@ class McpHandlerTests(unittest.TestCase):
             search_hotels_tool("Prague", FUTURE, FUTURE_OUT, source="skiplagged")
         self.assertEqual(search.call_args.kwargs["currency"], "USD")
 
+    def test_search_hotels_forwards_the_named_point_and_rejects_a_malformed_one(self) -> None:
+        fake = _report(provider="google-hotels", queries=[])
+        with patch("viajante.mcp_handlers.search_hotels", return_value=fake) as search:
+            search_hotels_tool(
+                "Prague", FUTURE, FUTURE_OUT, currency="EUR", near={"lat": 50.0875, "lng": 14.4213}
+            )
+        self.assertEqual(search.call_args.kwargs["near"], (50.0875, 14.4213))
+        with patch("viajante.mcp_handlers.search_hotels") as search:
+            for bad in ({"lat": 50.0}, {"lat": 1, "lng": 2, "z": 3}, [50.0, 14.0]):
+                with self.subTest(near=bad):
+                    with self.assertRaises(ValueError):
+                        search_hotels_tool("Prague", FUTURE, FUTURE_OUT, currency="EUR", near=bad)
+        search.assert_not_called()
+
     def test_search_hotels_requires_currency(self) -> None:
         with patch("viajante.mcp_handlers.search_hotels") as search:
             with self.assertRaises(ValueError) as ctx:

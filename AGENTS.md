@@ -206,6 +206,10 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 
 ### Hotels
 
+- A multi-stay hotel search carries `property_matrix`: each property's total per
+  stay, null where it was not among that stay's returned offers (not proof of
+  unavailability), sorted by name, never ranked. `near` is a point the caller names;
+  offers then carry a straight-line `distance_km`. No point is assumed.
 - Hotel prices are total-stay prices. Keep requested filters, applied chips, and
   observed card evidence distinct. `--source booking` (CLI default) is Playwright
   evidence; `--source google` is the HTTP shortlist. MCP hotel search defaults to

@@ -521,6 +521,14 @@ def _hotel_queries(
     return tuple(queries)
 
 
+def _near_point(near: Optional[Mapping[str, float]]) -> Optional[tuple[float, float]]:
+    if near is None:
+        return None
+    if not isinstance(near, Mapping) or set(near) != {"lat", "lng"}:
+        raise ValueError("near must be {lat, lng}")
+    return (near["lat"], near["lng"])
+
+
 @_cached
 def search_hotels_tool(
     location: Optional[str] = None,
@@ -536,6 +544,7 @@ def search_hotels_tool(
     source: HotelSourceName = "google",
     currency: Optional[str] = None,
     stays: Optional[Sequence[Mapping[str, object]]] = None,
+    near: Optional[Mapping[str, float]] = None,
 ) -> Mapping[str, object]:
     if source == "google" and min_rating is not None and min_rating > 5:
         raise ValueError("min_rating must be at most 5 with source google")
@@ -551,8 +560,9 @@ def search_hotels_tool(
         entire_home=entire_home,
         free_cancellation=free_cancellation,
     )
+    near_point = _near_point(near)
     report = _with_search_lock(
-        lambda: search_hotels(queries, top=top, source=source, currency=currency)
+        lambda: search_hotels(queries, top=top, source=source, currency=currency, near=near_point)
     )
     return _owned(reports_payload(report))
 

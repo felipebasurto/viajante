@@ -513,6 +513,7 @@ def build_server():
         source: str = "google",
         currency: str | None = None,
         stays: list[dict] | None = None,
+        near: dict[str, float] | None = None,
     ) -> dict:
         """Hotel search. Currency is required (no origin airport) except source
         skiplagged, whose quotes are USD (omit currency or pass USD).
@@ -538,7 +539,13 @@ def build_server():
         check_out: up to 8 objects with location, check_in, check_out and
         optional adults and rooms (defaults come from the top-level values).
         Use it for a headcount that changes by night: one stay per block of
-        equal headcount. Results come back as one query per stay.
+        equal headcount. Results come back as one query per stay, and
+        property_matrix lists each property with its total per stay (null where it was
+        not among that stay's returned offers, which is not proof it is unavailable;
+        raise top to see more). Rows are sorted by name, never by price.
+
+        near is a point you name, {lat, lng}; each offer then carries distance_km, its
+        straight-line distance to it. No point is assumed.
         """
         return dict(
             await run_mcp_tool(
@@ -547,6 +554,7 @@ def build_server():
                 check_in,
                 check_out,
                 stays=stays,
+                near=near,
                 adults=adults,
                 rooms=rooms,
                 top=top,
