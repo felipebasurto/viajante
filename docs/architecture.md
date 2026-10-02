@@ -41,7 +41,7 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 12 tools. |
+| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 15 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
@@ -51,18 +51,24 @@ One library, three ways in:
 | `search_dates` | `dates` | Cheapest fare per day across a window (≤31 days). |
 | `search_flex` | `flex` | Cheapest day in ±N around a date, then one shop. |
 | `search_explore` | `explore` | Destinations from an origin, shortlist priced. |
-| `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP or Booking browser). |
+| `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP, Booking browser, or opt-in Skiplagged). |
+| `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
 | `search_trip` | `trip` | Flights then one hotel, plus a sum when both succeed. |
 | `search_hidden_city` | `hidden-city` | Skiplagged, opt-in, never mixed with Google evidence. |
 | `lookup_airports` | `airports` | Offline IATA lookup. |
 | `compare_awards` | `awards` | Award offer vs cash: cents per point, transfer paths. |
 | `lookup_transfers` | `points` | Local card-to-program transfer table. |
 | `validate_itinerary` | — | Local constraint check of selected offers. |
+| `plan_stay_blocks` | — | Local roster-to-stay blocks for consecutive nights with the same people. |
+| `split_stay_costs` | — | Local cost split per stay and person-night, with exact allocated cents. |
 | `verify_answer` | — | Local check of a draft reply against the search ledger. |
 
+The room-rate helper is in `viajante.skiplagged_hotels`; local stay arithmetic
+is in `viajante.stays`. These helpers are not re-exported from `viajante`.
+
 The MCP process holds one search lock: a second concurrent search fails
-immediately instead of queueing. Lookups and the two verifiers may run during
-a search. Identical successful searches within 5 minutes are replayed from an
+immediately instead of queueing. Lookups, local stay arithmetic, and the two
+verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
 
 ## How a flight search travels
@@ -123,7 +129,8 @@ exponential backoff) and optional (`viajante[browser]`). `--fetch auto` uses
 sweep for 3+ queries or any packaged round-trip/multi-city (only sweep can
 shop the return leg) and detail for other 1–2 query searches when Playwright
 is installed. If sweep comes back empty or blocked, auto may fall back to
-detail once and says so (`fetch_backend: sweep_then_detail`).
+detail once and says so (`fetch_backend: sweep_then_detail`). A rate-limited
+failure never falls back to detail.
 
 ### 5. From cards to offers
 
@@ -149,13 +156,15 @@ Every provider failure becomes a `SearchError` with a code: `no_results`,
 Only failures that can succeed on a second try are retried:
 
 - Sweep retries empty, drift, and 5xx once after 50 ms.
-- HTTP 429 resets the TLS session and writes a shared cooldown file in the
+- A direct HTTP 429 resets the TLS session and writes a shared cooldown file in the
   state dir (2 min, doubling to 30 min). While it runs, every Google search in
   any viajante process on the machine fails instantly with `Not sent.` and
-  `rate_limited: true`.
+  `rate_limited: true`. A named `Retry-After` takes precedence over the guessed
+  delay; a proxied response does not pause the machine's direct searches.
 - A data-less RPC error envelope (`["wrb.fr", null, …, [13]]`) is `blocked`,
-  not `markup_drift`. Google sends it when it is throttling the IP, often
-  while plain shopping still answers. The browser path detects
+  not `markup_drift`, and records that same cooldown for direct sessions.
+  Google Hotels also stamps `rate_limited: true`. This status is treated as
+  throttling evidence, though it can have another cause. The browser path detects
   `google.com/sorry` right away instead of waiting for result cards.
 
 ## Dates, flex, explore
@@ -177,7 +186,11 @@ Three sources, one loop (`hotels.py`):
 - **Google Hotels** (MCP default): the `AtySUc` RPC on `batchexecute`, over the
   same Chrome-TLS session. Encode and parse live in `google_hotels_rpc.py`.
   Each stay carries the total-stay price text, rating (0–5), review count,
-  latitude/longitude, and a Google link. Free cancellation and vacation-rental
+  latitude/longitude, and a Google link. Owned `place_types`, `class_label`, and
+  `priced_adults` distinguish property type and the party actually priced;
+  vacation-rental chips feed `details` and parsed sleeps, bedrooms, and beds.
+  Query results carry `resolved_place` and `place_bounds` from the provider.
+  Free cancellation and vacation-rental
   type go into the request. With a named `min_rating`, the price-sorted page
   and a relevance-sorted page ride the same multiplexed round-trip, because the
   cheapest page is mostly low-rated.
@@ -186,19 +199,48 @@ Three sources, one loop (`hotels.py`):
   purpose; challenges are not hammered.
 - **Skiplagged** (opt-in, `--source skiplagged`): its public MCP over HTTP, no
   key, no browser (`skiplagged_hotels.py`, transport shared with hidden-city).
-  Quotes are USD only; another named currency is `currency_mismatch` and nothing
-  is converted. Search returns a total and a 0–10 score but no cancellation or
+  Quotes are USD only (omit currency or name USD); another named currency is
+  `currency_mismatch` and nothing is converted. Search returns a total and a
+  0–10 score but no cancellation or
   coordinates. It matches the city text loosely ("Costa Brava" matched Costa
   Mesa, California), so `resolved_place` carries the city slug Skiplagged
   actually searched. `hotel-rooms` / `search_hotel_rooms` fetches room-level
   rates for one finalist, by id or by exact name plus city (so a Google finalist
   can be checked): occupancy limit, refundable, free cancellation, taxes.
-  Skiplagged rows are never mixed with Google or Booking rows.
+  Offers carry `provider_id`. Search supports at most 10 adults and 9 rooms,
+  and rejects `entire_home`; room-rate requests support up to 5 rooms. An exact
+  normalized name with no match or several matches returns `no_results`, never
+  a guessed id. Skiplagged rows are never mixed with Google or Booking rows.
+  HTTP 429 returns `blocked` with `rate_limited: true` without retries. Its
+  separate cooldown file and one-second call pace live in `ratelimit.py` and
+  `skiplagged.py`.
+
+MCP `stays` batches up to 8 hotel queries with their own location, dates,
+adults, and rooms (omitted occupancy inherits the top-level values). A
+multi-stay report adds `property_matrix`, matching normalized property title
+and address and listing each returned total in query order. Rows are sorted
+by name, never by price; a null means absent from that stay's returned offers,
+not unavailable. A named `near` point adds straight-line `distance_km` only
+when an offer has owned coordinates; it does not assume a location or change
+the price order.
 
 The loop keeps three things apart: what the caller *asked* for, which filter
 chips were *applied*, and what each card *says*. `filter applied; card silent`
-is a real state, not "free cancellation". Prices are always the total stay.
-Hotels have no origin airport, so currency is always required.
+is a real state, not "free cancellation". `applied.not_applied` names unsupported
+filters: Skiplagged's search cannot enforce the default free-cancellation ask.
+Prices are always the total stay. Google and Booking require a named currency;
+Skiplagged defaults to its owned USD quote.
+
+## Local stay arithmetic
+
+`stays.py` never fetches or recommends lodging. `plan_stay_blocks` takes a
+caller-confirmed roster for consecutive nights and groups identical people
+into check-in/check-out blocks (equal headcount alone is not enough).
+`split_stay_costs` divides each chosen stay's total among only its occupants,
+in proportion to their nights. It requires a named currency, accepts an
+optional named per-person nightly fee, and allocates leftover cents so each
+stay sums exactly. Uncovered roster nights are `unallocated_nights`; the
+tool does not price them.
 
 ## Money and geography
 
@@ -211,7 +253,7 @@ language.
 
 ## Testing
 
-~1,200 unit tests run offline in about a second: no network, no Chromium.
+Unit tests run offline: no network, no Chromium.
 They pin owned seams: request bytes, parse of recorded provider bodies,
 filters, ranking, JSON shape. `viajante bench` wraps the suite, ruff, and an
 owned parse corpus (`tests/bench/`) as a keep-or-revert gate for automated
@@ -226,6 +268,15 @@ improvement loops.
   are marked with `ponytail:` comments and should learn from real recoveries.
   A data-less RPC status 13 now writes the same cooldown (direct sessions only);
   Skiplagged keeps its own `skiplagged-rate-limit.json` and a one-second pace.
+  A status 13 unrelated to throttling can cause a 2-minute pause.
+- **Room capacity and type need confirmation.** Skiplagged's `occupancy_limit`
+  is the provider's number per room type, not proof that a party fits across
+  several rooms. Google hostel totals may price dormitory beds; Google gives
+  no room type. Check finalists by exact name with `search_hotel_rooms`, then
+  confirm the room and terms on the provider.
+- **Unconfirmed money fields stay out.** Google base/tax/fee breakdown
+  (`record[6][2][44]`) needs provider evidence. Caller-named exchange rates
+  need a design decision; neither is part of this release.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.

@@ -1,6 +1,6 @@
 {
   "name": "@viajante/mcp",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "npx front door for viajante (Python flight and hotel search). Runs uvx against PyPI.",
   "license": "MIT",
   "bin": {

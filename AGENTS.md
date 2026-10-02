@@ -25,6 +25,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
 - Google Hotels HTTP shortlist: `src/viajante/google_hotels.py`, `src/viajante/google_hotels_rpc.py`
 - Delays or retry classification: `src/viajante/orchestration.py`
+- Shared provider cooldown state: `src/viajante/ratelimit.py`
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
@@ -34,7 +35,6 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
-- Graded prompt corpus: `tests/prompts/`
 - Domain types or JSON keys: `src/viajante/models.py`
 - Typical vs same-route calendar median: `src/viajante/typical.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
@@ -64,7 +64,8 @@ English fetch. Prompts any language. Product voice is English. A Spanish
 (or other) prompt is caller *input*, not product voice. No implied home hub.
 Currency is `--currency` / MCP `currency`, or inferred from a named origin
 airport's owned country (JFK USD, LHR GBP, NRT JPY, GRU BRL). Unproven
-asks (error: currency required). Hotels have no origin: currency is required.
+asks (error: currency required). Google and Booking hotels have no origin:
+currency is required. Opt-in Skiplagged hotels default to their owned USD quote.
 If country, destination, or currency is not proven (a city with several
 airports, “Europe”, unnamed origin, two possible currencies), ask or error.
 Unknown cannot prove include. Do not invent IATA, `gl`, or ISO 4217 from vibe.
@@ -149,7 +150,7 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
   jobs. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
-  writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat 429 up to 30 min, or
+  writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat limit up to 30 min, or
   a named `Retry-After`). While it runs, new flight/hotel Google searches in any
   process send nothing and fail `blocked` with `rate_limited: true`; a search
   already running keeps its replay. Rate-limited failures do not fall back to
@@ -159,7 +160,7 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   A Skiplagged 429 does the same in `skiplagged-rate-limit.json` (`blocked`,
   `rate_limited`, no retry, live calls paced 1s apart). A calendar
   `blocked` (including a short unknown HTML shell, or a data-less wrb.fr
- error envelope such as status 13) stops that calendar; no
+  error envelope such as status 13) stops that calendar; no
   flex, shop, or browser recovery. Booking card-wait timeouts fail immediately.
   Do not hammer Booking after a challenge.
   `rejected` and `markup_drift` do not fall back to detail.
@@ -209,7 +210,14 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - A multi-stay hotel search carries `property_matrix`: each property's total per
   stay, null where it was not among that stay's returned offers (not proof of
   unavailability), sorted by name, never ranked. `near` is a point the caller names;
-  offers then carry a straight-line `distance_km`. No point is assumed.
+  offers with owned coordinates then carry a straight-line `distance_km`. No point is assumed.
+  MCP `stays` accepts up to 8 location/check_in/check_out objects with optional
+  adults and rooms, inheriting top-level occupancy when omitted. Google query
+  results carry owned `resolved_place` / `place_bounds`; offers may carry
+  `sleeps`, `place_types`, `class_label`, and `priced_adults`. A priced party
+  that differs from the ask does not prove a total for the requested party.
+  Google hostel totals may price dormitory beds: no room type is supplied.
+  Check finalists by exact name with `search_hotel_rooms` before calling them private.
 - Hotel prices are total-stay prices. Keep requested filters, applied chips, and
   observed card evidence distinct. `--source booking` (CLI default) is Playwright
   evidence; `--source google` is the HTTP shortlist. MCP hotel search defaults to
@@ -220,13 +228,14 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - `--source skiplagged` is opt-in and never mixed with Google or Booking rows.
   Its quotes are USD: an unnamed currency is USD, another named currency is
   `currency_mismatch`, and nothing converts. At most 10 adults per search (the
-  caller splits a larger party) and no `--entire-home`. Skiplagged matches the
+  caller splits a larger party), at most 9 rooms, and no `--entire-home`. Skiplagged matches the
   city loosely, so `resolved_place` is the owned echo; a place that is not the
   one asked for was not searched. Search cards carry no cancellation, so `applied.not_applied` stamps
   `free_cancellation` and the CLI says so. For 1-3
   finalists `search_hotel_rooms` / `hotel-rooms` (by id, or by exact normalized
   name plus city; no match or several is `no_results`, never a guess) returns provider room rates
-  with `occupancy_limit`, `refundable`, `free_cancellation`; do not rank them or
+  with `occupancy_limit`, `refundable`, `free_cancellation`, and `taxes_and_fees`
+  (at most 5 rooms per room-rate request); do not rank them or
   infer that a party fits across rooms from `occupancy_limit`.
 - Free cancellation is required by default. Only an explicit caller or CLI
   opt-out may include non-refundable stays. If `oos=1` is applied and the card
@@ -247,6 +256,19 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - `viajante trip` / MCP `search_trip` run flights then hotels sequentially (one
   lock). Child or infant occupancy is rejected (hotel occupancy is adults-only).
   Hotel `price_basis` stays `total_stay`. Never invent a fare or a stay.
+
+## Local stay arithmetic and known limits
+
+Known release limits: a data-less status 13 can have a cause other than throttling
+and pause Google searches for 2 minutes. Google base/tax/fee breakdown
+(`record[6][2][44]`, unconfirmed) and caller-named exchange rates remain outside
+this release pending evidence and a design decision.
+
+Local `plan_stay_blocks` groups consecutive nights with identical people, not
+just identical headcounts. `split_stay_costs` uses named currency and optional
+per-person nightly fee, allocates exact cents per stay only among its occupants,
+and reports uncovered roster nights as `unallocated_nights`. Neither fetches
+prices or converts currency.
 
 ## Tests
 

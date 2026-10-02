@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-02
+
 ### Added
 
+- MCP `search_hotels` accepts up to 8 `stays`, each with location, dates, and optional adults and rooms. Multi-stay reports carry `property_matrix`: each property's total per stay, sorted by name, never by price. A null means it was not among that stay's returned offers, not that it is unavailable.
+- Hotel `near` (`{lat, lng}` in MCP, `--near LAT,LNG` in CLI): offers with owned coordinates carry straight-line `distance_km` to the named point. No point is assumed.
+- Google Hotels evidence: offer `sleeps`, `place_types`, `class_label`, and `priced_adults`; query-result `resolved_place` and `place_bounds`. Vacation-rental chips feed `details`, allowing bedrooms, beds, and lodging kind to be parsed.
+- Opt-in hotel source `skiplagged` (MCP `source`, CLI `--source`): USD only, at most 10 adults and 9 rooms, no `entire_home`, never mixed with Google or Booking. Offers carry `provider_id`; `resolved_place` identifies the city actually searched when Skiplagged loosely resolves a place name.
+- MCP `search_hotel_rooms` / CLI `viajante hotel-rooms`: Skiplagged room rates with provider `occupancy_limit`, `refundable`, `free_cancellation`, and `taxes_and_fees`, in provider order. Select by hotel id or exact normalized name plus city; no match or several matches returns `no_results` with returned candidates when available, never a guessed match. Room-rate requests support up to 10 adults and 5 rooms.
+- Offline MCP `plan_stay_blocks` groups consecutive nights with the same people into stay blocks. `split_stay_costs` shares each stay only among its occupants by their nights, using a named currency and optional per-person nightly fee. Allocated cents sum exactly; uncovered nights are `unallocated_nights`. Neither tool fetches prices or converts currency.
+- Additive hotel JSON field `applied.not_applied` names filters a source cannot apply, including Skiplagged's unsupported free-cancellation search filter. Other additive hotel fields are `provider_id`, `distance_km`, report `near` / `property_matrix`, and the Google evidence fields above; no hotel JSON keys were renamed.
 - MCP `verify_answer`: flags amounts, currencies, IATA codes, ISO dates, and links in a draft reply that no search in this process returned.
-- Google rate-limit cooldown: a real HTTP 429 pauses Google searches on the machine (2 min doubling to 30 min); errors carry `rate_limited: true`. Identical successful MCP searches within 5 minutes return `cached: true`.
-- Google Hotels offers carry owned `latitude`, `longitude`, and `review_count`. A named `min_rating` also fetches the relevance-sorted page on the same multiplexed round-trip (Tokyo, 3 nights, min 4.5: 1 eligible stay before, 6 after).
+- Google rate-limit cooldown: a direct HTTP 429 pauses Google searches on the machine (2 min doubling to 30 min, or a named `Retry-After`); errors carry `rate_limited: true`. Identical successful MCP searches within 5 minutes return `cached: true`.
+- Google Hotels offers carry owned `latitude`, `longitude`, and `review_count`. A named `min_rating` also fetches the relevance-sorted page on the same multiplexed round-trip.
 - `docs/architecture.md`: how the request path, fetch modes, hotels, and failure taxonomy fit together.
 
 ### Changed
@@ -30,12 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A data-less wrb.fr error envelope (status 13, sent while Google throttles an IP) is `blocked`, not `markup_drift`.
+- A data-less Google wrb.fr status 13 envelope is `blocked` and now records the same cooldown as HTTP 429 for direct sessions only. Google Hotels reports `blocked` with `rate_limited: true`, rather than `rejected`. Shared provider cooldown state lives in `ratelimit.py`.
+- Skiplagged HTTP 429 is `blocked` with `rate_limited: true`, without retries. Its separate `skiplagged-rate-limit.json` pauses new calls; real calls are paced one second apart.
 - Detail fetch fails fast on `google.com/sorry` instead of waiting minutes for result cards.
-
 - `viajante hidden-city` and MCP `search_hidden_city`: Skiplagged cards are USD. A named keep that matches no owned card currency is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. Omit currency or pass USD; do not advertise EUR as a Skiplagged quote.
-- MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs (smoke 2026-09-17 LHR→BKK, nights=14, bags=1, nearby → 31/31 cells; cheapest owned 412 GBP on 2026-11-17). See `docs/smoke-2026-09-17.md`.
-- MCP `validate_itinerary` evidence-safe validator (PR #41 / issues #34–#40 on `develop`, not `main`): never reports `feasible=true` without owned provenance; incomplete evidence stays unknown/infeasible. Issues #34–#40 closed against the develop merge.
+- MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs. Historical smoke evidence is in `docs/smoke-2026-09-17.md`.
+- MCP `validate_itinerary`: never reports `feasible=true` without owned provenance; incomplete evidence stays unknown/infeasible.
+
+### Known limitations
+
+- Skiplagged quotes are USD and are never converted. A room type's `occupancy_limit` is the provider's number, not proof that a group fits across several rooms. Its search cannot apply free cancellation; confirm individual room terms.
+- Google hostel prices may be dormitory beds: Google supplies no room type. Check finalists by exact name with `search_hotel_rooms` and confirm the room on the provider before treating it as private.
+- A data-less status 13 may have another cause; its guessed cooldown can pause Google searches for 2 minutes even without a real rate limit.
+- Google base/tax/fee breakdown (`record[6][2][44]`, unconfirmed) and caller-named exchange rates remain outside this release, pending evidence and a design decision.
 
 ## [1.2.1] - 2026-09-11
 
@@ -78,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 First public release.
 
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.3.0...develop
+[1.3.0]: https://github.com/felipebasurto/viajante/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/felipebasurto/viajante/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/felipebasurto/viajante/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/felipebasurto/viajante/compare/v1.0.0...v1.1.2
