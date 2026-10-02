@@ -87,6 +87,20 @@ jobs:
             unset NODE_AUTH_TOKEN
             npm publish --access public --provenance
           fi
+      - name: Wait for npm registry availability
+        working-directory: npm
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          for attempt in $(seq 1 30); do
+            if [ "$(npm view "$name@$version" version 2>/dev/null)" = "$version" ]; then
+              exit 0
+            fi
+            echo "Waiting for $name@$version to become available ($attempt/30)"
+            sleep 10
+          done
+          echo "$name@$version is not available after waiting; skip MCP Registry publication" >&2
+          exit 1
 
   mcp-registry:
     needs: npm
