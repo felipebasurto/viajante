@@ -1645,7 +1645,7 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNone(_normalize_offer(nonstop, 1, via=("LIS",)))
         self.assertIsNone(_normalize_offer(silent, 1, via=("LIS",)))
 
-    def test_exclude_via_drops_known_layover_and_keeps_unknown(self) -> None:
+    def test_exclude_via_requires_owned_connection_locations(self) -> None:
         dxb = get_airport("DXB")
         assert dxb is not None
         city = card(
@@ -1671,7 +1671,7 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNone(_normalize_offer(city, 1, exclude_via=("DXB",)))
         self.assertIsNone(_normalize_offer(code, 1, exclude_via=("DXB",)))
         self.assertIsNotNone(_normalize_offer(other, 1, exclude_via=("DXB",)))
-        self.assertIsNotNone(_normalize_offer(silent, 1, exclude_via=("DXB",)))
+        self.assertIsNone(_normalize_offer(silent, 1, exclude_via=("DXB",)))
         self.assertIsNotNone(_normalize_offer(nonstop, 1, exclude_via=("DXB",)))
 
     def test_via_and_exclude_via_use_leg_layovers(self) -> None:
@@ -1703,7 +1703,7 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(with_legs, 2, via=("IST",)))
         self.assertIsNone(_normalize_offer(with_legs, 2, exclude_via=("IST",)))
         self.assertIsNone(_normalize_offer(with_legs, 2, via=("DXB",)))
-        self.assertIsNotNone(_normalize_offer(silent, 2, exclude_via=("IST",)))
+        self.assertIsNone(_normalize_offer(silent, 2, exclude_via=("IST",)))
 
     def test_parse_overnight_airports_accepts_any_and_known_iata(self) -> None:
         self.assertEqual(parse_overnight_airports("IST"), ("IST",))

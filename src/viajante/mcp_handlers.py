@@ -97,7 +97,7 @@ def _cached(fn):
         now = time.monotonic()
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
-            return {**hit[1], "cached": True}
+            return _owned({**hit[1], "cached": True})
         result = fn(*args, **kwargs)
         if not failure_codes(result):
             for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
@@ -512,13 +512,19 @@ def _hotel_queries(
             raise ValueError(f"stay {index + 1}: location, check_in and check_out are required")
         check_in_date = date.fromisoformat(start)
         _reject_past((check_in_date,), label="check-in")
+        party = {}
+        for name, default in (("adults", adults), ("rooms", rooms)):
+            value = spec.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"stay {index + 1}: {name} must be an integer")
+            party[name] = value
         queries.append(
             HotelQuery(
                 place,
                 check_in_date,
                 date.fromisoformat(end),
-                adults=int(spec.get("adults", adults)),  # type: ignore[call-overload]
-                rooms=int(spec.get("rooms", rooms)),  # type: ignore[call-overload]
+                adults=party["adults"],
+                rooms=party["rooms"],
                 min_rating=min_rating,
                 entire_home=entire_home,
                 free_cancellation=free_cancellation,

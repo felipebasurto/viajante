@@ -59,14 +59,6 @@ def stay_window_from_trips(trips: Sequence[Trip]) -> Optional[tuple[date, date]]
     return start, end
 
 
-def _route_key(query: Trip) -> tuple[str, str, str]:
-    if isinstance(query, MultiCity):
-        return ("multi", query.legs[0].origin, query.legs[-1].destination)
-    if isinstance(query, RoundTrip):
-        return ("rt", query.origin, query.destination)
-    return ("ow", query.origin, query.destination)
-
-
 def _city_or_code(code: str) -> str:
     airport = get_airport(code)
     if airport is None or not airport.city.strip():
@@ -74,12 +66,15 @@ def _city_or_code(code: str) -> str:
     return airport.city
 
 
-def _fare_group_key(query: Trip) -> tuple[str, str, str]:
-    """Nearby alternatives share a city pair so trip_total takes min, not a sum."""
-    if isinstance(query, MultiCity) or not getattr(query, "nearby_label", None):
-        return _route_key(query)
-    kind = "rt" if isinstance(query, RoundTrip) else "ow"
-    return (kind, _city_or_code(query.origin), _city_or_code(query.destination))
+def _fare_group_key(query: Trip) -> tuple[str, tuple[tuple[str, str, date], ...]]:
+    """Only nearby alternatives for the same dated journey share a minimum."""
+    airport = _city_or_code if getattr(query, "nearby_label", None) else lambda code: code
+    kind = (
+        "multi" if isinstance(query, MultiCity) else "rt" if isinstance(query, RoundTrip) else "ow"
+    )
+    return kind, tuple(
+        (airport(leg.origin), airport(leg.destination), leg.departure_date) for leg in query.legs
+    )
 
 
 def _cheapest_fare(result: QuerySuccess) -> Optional[float]:
@@ -107,7 +102,7 @@ def _owned_flight_fare(
         overlapping.append(result)
     if not overlapping:
         return None
-    by_route: dict[tuple[str, str, str], float] = {}
+    by_route: dict[tuple[str, tuple[tuple[str, str, date], ...]], float] = {}
     for result in overlapping:
         fare = _cheapest_fare(result)
         assert fare is not None

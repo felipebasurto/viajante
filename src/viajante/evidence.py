@@ -57,26 +57,29 @@ def clear() -> None:
 
 class _Owned:
     def __init__(self, payloads: Iterable[Mapping[str, object]]) -> None:
-        self.amounts: list[float] = []
+        self.amounts: list[tuple[float, Optional[str]]] = []
         self.currencies: set[str] = set()
         self.texts: set[str] = set()
         self.codes: set[str] = set()
         self.dates: set[str] = set()
         for payload in payloads:
-            self._walk(payload, None)
+            self._walk(payload, None, None)
 
-    def _walk(self, node: object, key: Optional[str]) -> None:
+    def _walk(self, node: object, key: Optional[str], currency: Optional[str]) -> None:
         if isinstance(node, Mapping):
+            if "currency" in node:
+                value = node["currency"]
+                currency = value.upper() if isinstance(value, str) else None
             for child_key, value in node.items():
-                self._walk(value, str(child_key))
+                self._walk(value, str(child_key), currency)
         elif isinstance(node, (list, tuple)):
             for value in node:
-                self._walk(value, key)
+                self._walk(value, key, currency)
         elif isinstance(node, bool) or node is None:
             return
         elif isinstance(node, (int, float)):
             if key in _MONEY_KEYS:
-                self.amounts.append(float(node))
+                self.amounts.append((float(node), currency))
         elif isinstance(node, str):
             self.texts.add(node)
             self.dates.update(_ISO_DATE.findall(node))
@@ -85,10 +88,13 @@ class _Owned:
             if not node.startswith("http"):
                 self.codes.update(_CODE.findall(node.upper()))
 
-    def owns_amount(self, value: float) -> bool:
+    def owns_amount(self, value: float, currency: Optional[str]) -> bool:
         # ponytail: rounding tolerance is max(1, 0.5%); a caller rounding a JPY fare to
         # the nearest thousand is flagged. Upgrade: per-currency minor-unit tolerance.
-        return any(abs(value - owned) <= max(1.0, owned * 0.005) for owned in self.amounts)
+        return any(
+            (currency is None or currency == code) and abs(value - owned) <= max(1.0, owned * 0.005)
+            for owned, code in self.amounts
+        )
 
 
 def verify_answer(answer: str) -> dict[str, object]:
@@ -132,7 +138,7 @@ def verify_answer(answer: str) -> dict[str, object]:
         checked += 1
         text = match.group(0).strip()
         value = float((match.group("a") or match.group("b")).replace(",", ""))
-        if not owned.owns_amount(value):
+        if not owned.owns_amount(value, code):
             flag("amount", text)
         if code is not None:
             money_codes.add(code)

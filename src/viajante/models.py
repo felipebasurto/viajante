@@ -658,25 +658,38 @@ def _offer_completeness(
     stops_count: Optional[int],
     checked_bags: Optional[int],
     carry_on: Optional[int],
+    expected_journeys: int,
 ) -> EvidenceCompleteness:
     segments = tuple(segment for leg in legs for segment in leg.segments)
+    journeys_complete = len(legs) == expected_journeys
+    segments_complete = journeys_complete and all(leg.segments for leg in legs)
 
     def known(predicate: bool) -> EvidenceKnowledge:
         return "known" if predicate else "unknown"
 
-    layovers_known = stops_count == 0 or (
-        stops_count is not None
-        and stops_count > 0
-        and sum(len(leg.layovers) for leg in legs) >= stops_count
+    layovers_known = journeys_complete and (
+        stops_count == 0
+        or (
+            stops_count is not None
+            and stops_count > 0
+            and sum(len(leg.layovers) for leg in legs) >= stops_count
+        )
     )
+    if len(legs) > 1:
+        layovers_known = journeys_complete and all(
+            leg.segments and len(leg.layovers) >= len(leg.segments) - 1 for leg in legs
+        )
     return EvidenceCompleteness(
         segment_airports=known(
-            bool(segments) and all(segment.origin and segment.destination for segment in segments)
+            segments_complete
+            and all(segment.origin and segment.destination for segment in segments)
         ),
-        segment_operators=known(bool(segments) and all(segment.airline for segment in segments)),
-        flight_numbers=known(bool(segments) and all(segment.flight_number for segment in segments)),
+        segment_operators=known(segments_complete and all(segment.airline for segment in segments)),
+        flight_numbers=known(
+            segments_complete and all(segment.flight_number for segment in segments)
+        ),
         segment_clocks=known(
-            bool(segments) and all(segment.departure and segment.arrival for segment in segments)
+            segments_complete and all(segment.departure and segment.arrival for segment in segments)
         ),
         layovers=known(layovers_known),
         baggage=known(checked_bags is not None or carry_on is not None),
@@ -745,6 +758,13 @@ class FlightOffer:
                 ),
             )
         if self.completeness is None:
+            expected_journeys = len(self.legs)
+            if self.evidence is not None:
+                query = self.evidence.query
+                if query.get("trip") == "rt":
+                    expected_journeys = 2
+                elif query.get("trip") == "multi":
+                    expected_journeys = len(query["legs"])
             object.__setattr__(
                 self,
                 "completeness",
@@ -753,6 +773,7 @@ class FlightOffer:
                     stops_count=self.stops_count,
                     checked_bags=self.checked_bags,
                     carry_on=self.carry_on,
+                    expected_journeys=expected_journeys,
                 ),
             )
 
@@ -1399,6 +1420,7 @@ class ExploreReport:
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
     coverage: Optional[SearchCoverage] = None
+    pricing_errors: Tuple[QueryFailure, ...] = field(default=(), kw_only=True)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
@@ -1406,8 +1428,12 @@ class ExploreReport:
         _store_nearby_label(self)
         if self.coverage is None:
             succeeded = sum(row.price is not None for row in self.destinations)
-            empty = len(self.destinations) - succeeded
-            failed = int(self.error is not None)
+            failed_destinations = {row.query.destination for row in self.pricing_errors}
+            empty = sum(
+                row.price is None and row.iata not in failed_destinations
+                for row in self.destinations
+            )
+            failed = len(self.pricing_errors) + int(self.error is not None)
             object.__setattr__(
                 self,
                 "coverage",
@@ -1418,7 +1444,7 @@ class ExploreReport:
                         "from": self.start_date.isoformat(),
                         "days": self.days,
                     },
-                    attempted=len(self.destinations) + failed,
+                    attempted=succeeded + empty + failed,
                     succeeded=succeeded,
                     empty=empty,
                     failed=failed,
@@ -1447,6 +1473,8 @@ class ExploreReport:
             payload["google_flights_url"] = self.google_flights_url
         if self.error is not None:
             payload["error"] = self.error.to_dict()
+        if self.pricing_errors:
+            payload["pricing_errors"] = [row.to_dict() for row in self.pricing_errors]
         return payload
 
 
