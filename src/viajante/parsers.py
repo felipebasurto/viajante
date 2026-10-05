@@ -189,7 +189,7 @@ def parse_cancellation_evidence(card_text: str | None) -> CancellationEvidence:
     return CancellationEvidence.UNKNOWN
 
 
-_ENTIRE_HOME = re.compile(r"entire\s+home|entire\s+apartment|whole\s+place")
+_ENTIRE_HOME = re.compile(r"entire\s+(?:home|apartment|cottage|villa)\b|whole\s+place")
 _NOT_ENTIRE_HOME = re.compile(r"private\s+room|shared\s+room|hotel\s+room")
 
 
@@ -204,7 +204,9 @@ def parse_property_type_evidence(card_text: str | None) -> PropertyTypeEvidence:
     return PropertyTypeEvidence.UNKNOWN
 
 
-_PRIVATE_ROOM = re.compile(r"private\s+room|shared\s+room")
+_PRIVATE_ROOM = re.compile(r"private\s+rooms?\b")
+_AMBIGUOUS_ROOM = re.compile(r"shared\s+rooms?\b|\bdorms?\b|\bdormitor(?:y|ies)\b")
+_NEGATED_PRIVATE_ROOM = re.compile(r"\b(?:no|not|without)\s+private\s+rooms?\b")
 _HOTEL_ROOM = re.compile(r"hotel\s+room")
 _TITLE_ENTIRE_HOME = re.compile(r"apartments?\b")
 
@@ -212,6 +214,8 @@ _TITLE_ENTIRE_HOME = re.compile(r"apartments?\b")
 def parse_lodging_kind(card_text: str | None, *, title: str | None = None) -> LodgingKind:
     text = (card_text or "").replace("\xa0", " ").lower()
     if text:
+        if _NEGATED_PRIVATE_ROOM.search(text) or _AMBIGUOUS_ROOM.search(text):
+            return LodgingKind.UNKNOWN
         if _PRIVATE_ROOM.search(text):
             return LodgingKind.PRIVATE_ROOM
         if _HOTEL_ROOM.search(text):

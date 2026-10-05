@@ -81,6 +81,7 @@ def build_applied_filters(
     return AppliedHotelFilters(
         chips=tuple(chips),
         url=f"{BOOKING_SEARCH_URL}?{urlencode(params)}",
+        url_context="stay",
     )
 
 

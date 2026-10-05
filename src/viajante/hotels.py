@@ -43,6 +43,7 @@ from viajante.models import (
     HotelQueryResult,
     HotelQuerySuccess,
     HotelSearchReport,
+    LodgingKind,
     PropertyTypeEvidence,
     RawHotelCard,
     SearchError,
@@ -101,7 +102,8 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
     total_price = parse_price(card.total_price)
     if total_price is None or total_price <= 0:
         return None
-    hints = parse_unit_hints(card.details)
+    evidence = card.details if card.unit_details is None else card.unit_details
+    hints = parse_unit_hints(evidence)
     return HotelOffer(
         title=card.title,
         address=card.address,
@@ -110,13 +112,18 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         rating=card.rating,
         rating_score=parse_rating(card.rating),
         details=card.details,
-        cancellation_evidence=parse_cancellation_evidence(card.details),
-        property_type_evidence=parse_property_type_evidence(card.details),
-        lodging_kind=parse_lodging_kind(card.details, title=card.title),
+        cancellation_evidence=parse_cancellation_evidence(evidence),
+        property_type_evidence=parse_property_type_evidence(evidence),
+        lodging_kind=parse_lodging_kind(
+            evidence, title=card.title if card.unit_details is None else None
+        ),
         bedrooms=hints["bedrooms"],
         bathrooms=hints["bathrooms"],
         beds=hints["beds"],
         link=card.link,
+        link_context=(card.link_context if card.link_context != "none" else "property")
+        if card.link
+        else "none",
         latitude=card.latitude,
         longitude=card.longitude,
         review_count=card.review_count,
@@ -130,12 +137,16 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
 
 def _distance_km(near: Tuple[float, float], latitude: float, longitude: float) -> float:
     """Straight-line (great-circle) kilometres, to 0.01 km."""
+    return round(_raw_distance_km(near, latitude, longitude), 2)
+
+
+def _raw_distance_km(near: Tuple[float, float], latitude: float, longitude: float) -> float:
     lat1, lng1, lat2, lng2 = map(math.radians, (near[0], near[1], latitude, longitude))
     half = (
         math.sin((lat2 - lat1) / 2) ** 2
         + math.cos(lat1) * math.cos(lat2) * math.sin((lng2 - lng1) / 2) ** 2
     )
-    return round(2 * 6371.0088 * math.asin(math.sqrt(half)), 2)
+    return 2 * 6371.0088 * math.asin(math.sqrt(min(1.0, max(0.0, half))))
 
 
 def _with_distance(offer: HotelOffer, near: Optional[Tuple[float, float]]) -> HotelOffer:
@@ -154,7 +165,43 @@ def validate_near(near: Optional[Tuple[float, float]]) -> Optional[Tuple[float, 
     return (float(lat), float(lng))
 
 
+def validate_max_distance(
+    value: Optional[float], near: Optional[Tuple[float, float]]
+) -> Optional[float]:
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError("max_distance_km must be a finite positive number")
+    if near is None:
+        raise ValueError("max_distance_km requires a named near point")
+    return float(value)
+
+
+def _within_radius(
+    offer: HotelOffer, near: Optional[Tuple[float, float]], radius: Optional[float]
+) -> bool:
+    if radius is None:
+        return True
+    if near is None or offer.latitude is None or offer.longitude is None:
+        return False
+    return _raw_distance_km(near, offer.latitude, offer.longitude) <= radius
+
+
 def _is_eligible(offer: HotelOffer, query: HotelQuery) -> bool:
+    if offer.priced_adults is not None and offer.priced_adults != query.adults:
+        return False
+    if (
+        (query.entire_home or offer.lodging_kind is LodgingKind.ENTIRE_HOME)
+        and query.rooms == 1
+        and offer.sleeps is not None
+        and offer.sleeps < query.adults
+    ):
+        return False
     if query.min_rating is not None:
         if offer.rating_score is None or offer.rating_score < query.min_rating:
             return False
@@ -259,7 +306,10 @@ def _run_search(
     fetch_backend: Optional[Literal["booking", "google", "skiplagged"]] = None,
     fetch_ms: Optional[int] = None,
     near: Optional[Tuple[float, float]] = None,
+    max_distance_km: Optional[float] = None,
 ) -> HotelSearchReport:
+    near = validate_near(near)
+    max_distance_km = validate_max_distance(max_distance_km, near)
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
@@ -286,7 +336,11 @@ def _run_search(
                     for raw in page.cards
                     if (offer := _normalize_card(raw)) is not None
                 )
-                eligible = tuple(offer for offer in normalized if _is_eligible(offer, query))
+                eligible = tuple(
+                    offer
+                    for offer in normalized
+                    if _is_eligible(offer, query) and _within_radius(offer, near, max_distance_km)
+                )
                 rank_limit = max(top, len(eligible))
                 ranked = _rank_offers(
                     eligible,
@@ -336,6 +390,7 @@ def _run_search(
         fetch_backend=fetch_backend,
         fetch_ms=fetch_ms,
         near=near,
+        max_distance_km=max_distance_km,
     )
 
 
@@ -387,8 +442,10 @@ def search_hotels(
     source: HotelSourceName = "booking",
     currency: Optional[str] = None,
     near: Optional[Tuple[float, float]] = None,
+    max_distance_km: Optional[float] = None,
 ) -> HotelSearchReport:
     near = validate_near(near)
+    max_distance_km = validate_max_distance(max_distance_km, near)
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
@@ -406,7 +463,11 @@ def search_hotels(
                 raise ValueError("entire_home is not supported with source skiplagged")
     currency = resolve_hotel_currency(source, currency)
     if source == "skiplagged" and currency != SKIPLAGGED_HOTEL_CURRENCY:
-        return _skiplagged_currency_mismatch(queries, currency)
+        return replace(
+            _skiplagged_currency_mismatch(queries, currency),
+            near=near,
+            max_distance_km=max_distance_km,
+        )
     if source == "google":
         hotel_source: _HotelSource = GoogleHotelsSource(currency=currency)
         provider: HotelProvider = "google-hotels"
@@ -440,6 +501,8 @@ def search_hotels(
                 provider="booking.com",
                 fetch_backend="booking",
                 fetch_ms=0,
+                near=near,
+                max_distance_km=max_distance_km,
             )
         hotel_source = BookingHotelsSource(default_state_dir(), currency=currency)
         provider = "booking.com"
@@ -463,6 +526,7 @@ def search_hotels(
             delay_seconds=delay_seconds,
             fetch_backend=fetch_backend,
             near=near,
+            max_distance_km=max_distance_km,
         )
     finally:
         hotel_source.close()

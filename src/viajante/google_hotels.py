@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Optional
-from urllib.parse import urlencode
 
 from viajante.google_flights import (
     COOLDOWN_UNCHECKED,
@@ -30,6 +30,7 @@ from viajante.google_hotels_rpc import (
     build_hotels_request,
     parse_hotels_page,
 )
+from viajante.google_hotels_url import hotel_navigation_params
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -51,12 +52,10 @@ def build_applied_filters(
         chips.append("free_cancellation=1")
     if query.entire_home:
         chips.append("property_type=vacation_rentals")
-    params = {
-        "q": f"{query.location} hotels",
-        "hl": html_lang,
-        "curr": currency,
-    }
-    return AppliedHotelFilters(chips=tuple(chips), url=f"{HOTELS_SEARCH_URL}?{urlencode(params)}")
+    params = hotel_navigation_params(query, currency=currency, html_lang=html_lang)
+    return AppliedHotelFilters(
+        chips=tuple(chips), url=f"{HOTELS_SEARCH_URL}?{params}", url_context="stay"
+    )
 
 
 class GoogleHotelsSource:
@@ -102,8 +101,14 @@ class GoogleHotelsSource:
                 cards.extend(self._page(response, post.url).cards[:limit])
             except (HotelsBlocked, HotelsParseMiss, EmptyHotelResults, HotelsRejected):
                 continue
+        params = hotel_navigation_params(query, currency=self._currency, html_lang=self._html_lang)
         return HotelPage(
-            cards=tuple(cards),
+            cards=tuple(
+                replace(card, link=f"{card.link}?{params}", link_context="stay")
+                if card.link
+                else card
+                for card in cards
+            ),
             resolved_place=first.resolved_place,
             place_bounds=first.place_bounds,
         )

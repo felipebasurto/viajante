@@ -24,6 +24,8 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
 - Google Hotels HTTP shortlist: `src/viajante/google_hotels.py`, `src/viajante/google_hotels_rpc.py`
+- Google Hotels navigation context: `src/viajante/google_hotels_url.py`
+- Executing package diagnostics: `src/viajante/runtime.py`
 - Delays or retry classification: `src/viajante/orchestration.py`
 - Shared provider cooldown state: `src/viajante/ratelimit.py`
 - Chromium session: `src/viajante/browser.py`
@@ -56,7 +58,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 ## Public contract
 
 CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -211,6 +213,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   stay, null where it was not among that stay's returned offers (not proof of
   unavailability), sorted by name, never ranked. `near` is a point the caller names;
   offers with owned coordinates then carry a straight-line `distance_km`. No point is assumed.
+  Optional `max_distance_km` / `--max-distance-km` requires that point, is finite
+  and positive, and excludes outside/unknown coordinates before ranking and `top`.
+  An empty shortlist is not proof of no availability in the radius.
   MCP `stays` accepts up to 8 location/check_in/check_out objects with optional
   adults and rooms, inheriting top-level occupancy when omitted. Google query
   results carry owned `resolved_place` / `place_bounds`; offers may carry
@@ -332,3 +337,41 @@ scripts or routes, reservation data, browser session files, or paths from a
 private repository. Origin-agnostic heuristic bands in the viajante skill are
 allowed; an origin-specific fare table is not. Live scrapes and personal trip
 JSON are not. Never invent a fare, typical, token, or via list.
+
+## Hotel planning and installation evidence
+
+Check `viajante --version` (1.4.0+) or MCP `get_runtime_info` before using a
+new feature. Hotel JSON carries `viajante_version`; schema 2 is additive.
+An npm MCP is pinned to its own Python version; it does not upgrade a separately
+installed uv tool. `uvx --from viajante` may reuse that installed tool. Refresh
+an explicit version or upgrade the installed tool; verify the executing version.
+
+Google navigation uses owned `record[20]` entity IDs, never `/travel/clk/hi`
+trackers. `link_context` and `applied.url_context` are stay/property/location/none.
+Stay means the searched dates, adults and rooms are encoded; it does not prove
+current fare, capacity, private room, refundable terms or availability.
+`verify_answer` checks provenance only, not URL reachability or travel feasibility.
+
+Google general descriptions remain in `details`, but cannot prove the priced
+unit's room type, capacity or cancellation. Only explicit unit chips feed those
+fields. Shared rooms, dorm/private mixes and negated private rooms are not private.
+Known `priced_adults` mismatches and insufficient single-unit capacity are excluded;
+unknown occupancy is an unverified shortlist candidate, not a verified party total.
+
+Use the latest confirmed nightly roster and `plan_stay_blocks`: same people,
+not just same headcount. Do not extend someone's final night to another stay's
+check-out. Retain `unallocated_nights` from `split_stay_costs`. Keep quotes and
+arithmetic estimates distinct; modifying dates/occupancy requires a new quote.
+Get replacement availability and terms before recommending cancellations.
+Removing dorm beds may remove exclusive use of the room. Respect room capacity,
+rejected requests and contradictory bathroom/bed information. Use exact local
+cancellation deadlines from the reservation; do not invent missing deadlines.
+A latest check-out time does not prove a flight transfer fits: verify route time
+and airport arrival margin. Preserve warnings in the final comparison.
+
+A browser permission denial, an HTTP empty click tracker, a provider challenge
+and a missing screenshot are different failures. Report the actual one. Use
+permitted read-only alternatives without bypassing a denial, and do not ask again
+for access already authorized. Never claim a screenshot was inspected if unreadable.
+Run hotel searches sequentially. In zsh, shared flags must be an array expanded as
+`"${flags[@]}"`, not a space-separated scalar. Use CLI help before launching a batch.

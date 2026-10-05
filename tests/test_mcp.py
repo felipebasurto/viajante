@@ -1081,6 +1081,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertEqual(
             server.tools,
             [
+                "get_runtime_info",
                 "search_flights",
                 "search_dates",
                 "search_flex",
@@ -1101,6 +1102,8 @@ class McpServerImportTests(unittest.TestCase):
         tools = dict(zip(server.tools, server.tool_functions, strict=True))
         self.assertIn("fetch", inspect.signature(tools["search_flights"]).parameters)
         self.assertNotIn("fetch", inspect.signature(tools["search_dates"]).parameters)
+        self.assertIn("max_distance_km", inspect.signature(tools["search_hotels"]).parameters)
+        self.assertEqual(tools["get_runtime_info"]()["hotel_schema_version"], 2)
 
 
 class McpWorkerTests(unittest.TestCase):

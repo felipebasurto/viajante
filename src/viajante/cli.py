@@ -51,7 +51,12 @@ from viajante.flights import (
     search_flights,
 )
 from viajante.google_flights import google_flights_url
-from viajante.hotels import resolve_hotel_currency, search_hotels
+from viajante.hotels import (
+    resolve_hotel_currency,
+    search_hotels,
+    validate_max_distance,
+    validate_near,
+)
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -89,6 +94,7 @@ from viajante.quote import (
     resolve_baggage_buffer,
     resolve_quote_currency,
 )
+from viajante.runtime import package_version
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.storage import reports_payload, write_json_atomic
@@ -408,7 +414,8 @@ def _validate_hotel_args(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
     queries = _build_hotel_queries(args)
-    args.near = _parse_near(getattr(args, "near", None))
+    args.near = validate_near(_parse_near(getattr(args, "near", None)))
+    args.max_distance_km = validate_max_distance(getattr(args, "max_distance_km", None), args.near)
     args.currency = resolve_hotel_currency(
         getattr(args, "source", "booking"), getattr(args, "currency", None)
     )
@@ -614,6 +621,7 @@ def _print_hotel_filters(
     )
     print(f"  Filters: {_format_hotel_filter_gloss(query)}")
     print(f"  {label}: {chips}")
+    print(f"  Search link context: {applied.url_context}")
     if applied.not_applied:
         names = ", ".join(applied.not_applied)
         print(f"  Not applied by this source: {names} (rows carry no evidence for it)")
@@ -670,6 +678,14 @@ def _print_hotel_offer_details(
     )
     print(f"    {cancellation}")
     print(f"    {_format_lodging_kind(offer.lodging_kind)}")
+    if offer.priced_adults is None:
+        print("    Priced party: unverified; confirm the total for the requested occupancy")
+    else:
+        print(f"    Priced party: {offer.priced_adults} adult(s)")
+    if offer.link:
+        print(
+            f"    Link context: {offer.link_context}; no guarantee of current price or availability"
+        )
     units = _format_unit_hints(offer)
     if units:
         print(f"    {units}")
@@ -764,8 +780,22 @@ def _print_hotel_report(report) -> None:
         _print_hotel_filters(query, result.applied, provider=report.provider)
         if isinstance(result, HotelQuerySuccess):
             any_success = True
+            if result.resolved_place:
+                print(f"  Resolved place: {result.resolved_place}")
+            if report.near:
+                print("  Distances are straight-line distances to the named near point")
+            if report.max_distance_km is not None:
+                print(
+                    f"  Maximum distance: {report.max_distance_km:g} km; "
+                    "unknown coordinates excluded"
+                )
             if not result.offers:
                 print("  (no eligible stays)")
+                if report.max_distance_km is not None:
+                    print(
+                        "  No returned offer proved the requested radius; "
+                        "not proof of unavailability"
+                    )
             for offer in result.offers:
                 rating = f"{offer.rating_score:.1f}" if offer.rating_score is not None else "-"
                 if offer.review_count is not None:
@@ -848,6 +878,7 @@ def _run_hotels(args: argparse.Namespace) -> int:
         source=getattr(args, "source", "booking"),
         currency=args.currency,
         near=args.near,
+        max_distance_km=args.max_distance_km,
     )
     _print_hotel_report(report)
 
@@ -1922,6 +1953,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=FLIGHTS_EXAMPLES,
     )
+    parser.add_argument("--version", action="version", version=f"viajante {package_version()}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     flights = sub.add_parser(
@@ -2019,6 +2051,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="LAT,LNG",
         help="A point you name; each stay with coordinates shows its straight-line distance to it",
+    )
+    hotels.add_argument(
+        "--max-distance-km",
+        type=float,
+        default=None,
+        help="Maximum straight-line distance; requires --near and excludes unknown coordinates",
     )
     hotels.add_argument(
         "--compare-cancellation",
