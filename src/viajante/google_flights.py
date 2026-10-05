@@ -1310,6 +1310,7 @@ class GoogleFlightsSource:
         )
         self._session = session or ChromiumSession(state_dir, self._config)
         self._http: Optional[GoogleFlightsHttpSource] = None
+        self._started = False
 
     @property
     def config(self) -> BrowserSessionConfig:
@@ -1351,6 +1352,11 @@ class GoogleFlightsSource:
             self._http = None
 
     def _fetch_html(self, url: str) -> str:
+        if not self._started:
+            state = rate_limit_status()
+            if state is not None:
+                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+            self._started = True
         page = self._session.new_page()
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
