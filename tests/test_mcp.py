@@ -10,7 +10,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from viajante import mcp_handlers
 from viajante.explore import DEFAULT_EXPLORE_TOP
@@ -1068,6 +1068,7 @@ class McpServerImportTests(unittest.TestCase):
 
         self.addCleanup(_drop_fakes)
 
+        from viajante import mcp_server
         from viajante.mcp_server import build_server
 
         server = build_server()
@@ -1104,6 +1105,56 @@ class McpServerImportTests(unittest.TestCase):
         self.assertNotIn("fetch", inspect.signature(tools["search_dates"]).parameters)
         self.assertIn("max_distance_km", inspect.signature(tools["search_hotels"]).parameters)
         self.assertEqual(tools["get_runtime_info"]()["hotel_schema_version"], 2)
+
+        # Exercise the registered adapters: every argument must reach the correct
+        # worker unchanged, with no incidental local variables or shape changes.
+        import asyncio
+
+        searches = {
+            "search_flights",
+            "search_dates",
+            "search_flex",
+            "search_explore",
+            "search_hotels",
+            "search_hotel_rooms",
+            "search_trip",
+            "search_hidden_city",
+        }
+
+        async def check_forwarding() -> None:
+            for name, function in tools.items():
+                if name == "get_runtime_info":
+                    continue
+                signature = inspect.signature(function)
+                named = {param: object() for param in signature.parameters}
+                runner = "run_mcp_tool" if name in searches else "run_lookup_tool"
+                response = [{"iata": "JFK"}] if name == "lookup_airports" else {"owned": True}
+                with (
+                    self.subTest(tool=name),
+                    patch(
+                        f"viajante.mcp_server.{runner}",
+                        new_callable=AsyncMock,
+                        return_value=response,
+                    ) as dispatch,
+                ):
+                    result = await function(**named)
+                    self.assertEqual(result, response)
+                    self.assertEqual(dispatch.await_args.kwargs, named)
+                    self.assertEqual(len(dispatch.await_args.args), 1)
+                    self.assertIs(dispatch.await_args.args[0], getattr(mcp_server, name + "_tool"))
+                    inspect.signature(dispatch.await_args.args[0]).bind(**named)
+                    dispatch.reset_mock()
+                    required = {
+                        key: named[key]
+                        for key, param in signature.parameters.items()
+                        if param.default is inspect.Parameter.empty
+                    }
+                    bound = signature.bind(**required)
+                    bound.apply_defaults()
+                    self.assertEqual(await function(**required), response)
+                    self.assertEqual(dispatch.await_args.kwargs, bound.arguments)
+
+        asyncio.run(check_forwarding())
 
 
 class McpWorkerTests(unittest.TestCase):

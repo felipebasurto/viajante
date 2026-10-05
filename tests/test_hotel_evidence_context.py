@@ -12,10 +12,10 @@ from urllib.parse import parse_qs, urlparse
 
 from test_google_hotels import _hotel_record, _search_payload, _wrap_wrb
 from test_hotels import FakeSource, _located, _two_stays, card, offer, query
-from viajante.cli import main
+from viajante.cli import _print_hotel_offer_details, main
 from viajante.google_flights import SweepHttpResponse
 from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
-from viajante.google_hotels_rpc import parse_hotels_body
+from viajante.google_hotels_rpc import parse_hotels_page
 from viajante.hotels import _is_eligible, _normalize_card, _raw_distance_km, search_hotels
 from viajante.mcp_handlers import search_hotels_tool
 from viajante.models import CancellationEvidence, HotelPage, LodgingKind, PropertyTypeEvidence
@@ -28,7 +28,7 @@ class HotelLinkContextTests(unittest.TestCase):
         for entity in (None, "", "Chbad/path", "https://other.example", "Chbad?x=1"):
             record = _hotel_record()
             record[20] = entity
-            raw = parse_hotels_body(_wrap_wrb(_search_payload(record)))[0]
+            raw = parse_hotels_page(_wrap_wrb(_search_payload(record))).cards[0]
             self.assertIsNone(raw.link)
             self.assertEqual(raw.link_context, "none")
 
@@ -36,7 +36,7 @@ class HotelLinkContextTests(unittest.TestCase):
         for entity in ("ChSynthetic", "CgSynthetic", "CiSynthetic"):
             record = _hotel_record()
             record[20] = entity
-            raw = parse_hotels_body(_wrap_wrb(_search_payload(record)))[0]
+            raw = parse_hotels_page(_wrap_wrb(_search_payload(record))).cards[0]
             self.assertEqual(raw.link, f"https://www.google.com/travel/hotels/entity/{entity}")
             self.assertEqual(raw.link_context, "property")
 
@@ -84,7 +84,7 @@ class HotelEvidenceRegressions(unittest.TestCase):
     def test_google_property_description_cannot_prove_unit_or_policy(self) -> None:
         record = _hotel_record(title="Synthetic Apartment Hostel")
         record[11] = ["Private rooms and dorms. Free cancellation. Sleeps 10. 4 beds."]
-        raw = parse_hotels_body(_wrap_wrb(_search_payload(record)))[0]
+        raw = parse_hotels_page(_wrap_wrb(_search_payload(record))).cards[0]
         normalized = _normalize_card(raw)
         self.assertIsNotNone(normalized)
         self.assertIn("Private rooms", normalized.details)
@@ -95,13 +95,67 @@ class HotelEvidenceRegressions(unittest.TestCase):
         self.assertIsNone(normalized.beds)
 
     def test_explicit_google_unit_chips_still_prove_capacity(self) -> None:
-        for kind in ("Entire cottage", "Entire villa"):
+        for kind in ("Entire cottage", "Entire villa", "Entire house"):
             raw = replace(
                 card(details="Property description"), unit_details=f"{kind}. Sleeps 3. 2 beds"
             )
             normalized = _normalize_card(raw)
             self.assertEqual(normalized.lodging_kind, LodgingKind.ENTIRE_HOME)
             self.assertEqual((normalized.sleeps, normalized.beds), (3, 2))
+            self.assertFalse(normalized.lodging_evidence_conflict)
+
+    def test_contradictory_room_title_and_entire_unit_remain_unverified(self) -> None:
+        for room in (
+            "Private Room",
+            "Shared Room",
+            "Hotel Room",
+            "Dormitory",
+            "Double or Twin Room",
+        ):
+            for entire in ("Entire cottage", "Entire house", "Entire apartment"):
+                with self.subTest(room=room, entire=entire):
+                    raw = replace(
+                        card(title=f"Example {room}", details=f"{entire}. Sleeps 3"),
+                        unit_details=f"{entire}. Sleeps 3",
+                    )
+                    normalized = _normalize_card(raw)
+                    payload = normalized.to_dict()
+                    self.assertEqual(payload["title"], raw.title)
+                    self.assertEqual(payload["details"], raw.details)
+                    self.assertTrue(payload["lodging_evidence_conflict"])
+                    self.assertEqual(payload["lodging_kind"], "unknown")
+                    self.assertEqual(payload["property_type_evidence"], "unknown")
+                    self.assertEqual(normalized.sleeps, 3)
+                    # Unknown stays are candidates, not proven entire homes.
+                    q = query(entire_home=True)
+                    self.assertTrue(_is_eligible(normalized, q))
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        _print_hotel_offer_details(
+                            normalized, query=q, applied=build_applied_filters(q, currency="EUR")
+                        )
+                    self.assertIn("Lodging: unknown", output.getvalue())
+                    self.assertIn("conflicting room and entire-home labels", output.getvalue())
+                    self.assertNotIn("Lodging: entire home", output.getvalue())
+                    self.assertNotIn("Lodging: private room", output.getvalue())
+
+    def test_description_or_private_bathroom_cannot_create_unit_conflict(self) -> None:
+        for title in ("Example Private Bathroom", "Example Apartment", "No private rooms"):
+            raw = replace(
+                card(title=title, details="Private rooms available. Entire cottage. Sleeps 3"),
+                unit_details="Entire cottage. Sleeps 3",
+            )
+            normalized = _normalize_card(raw)
+            self.assertFalse(normalized.lodging_evidence_conflict)
+            self.assertEqual(normalized.lodging_kind, LodgingKind.ENTIRE_HOME)
+
+    def test_conflicting_labels_within_unit_evidence_are_not_resolved_by_order(self) -> None:
+        for evidence in ("Private room. Entire house", "Entire house. Shared room"):
+            raw = replace(card(), unit_details=evidence)
+            normalized = _normalize_card(raw)
+            self.assertTrue(normalized.lodging_evidence_conflict)
+            self.assertEqual(normalized.property_type_evidence, PropertyTypeEvidence.UNKNOWN)
+            self.assertEqual(normalized.lodging_kind, LodgingKind.UNKNOWN)
 
     def test_known_party_and_single_unit_capacity_contradictions_are_excluded(self) -> None:
         q = query(adults=4)
