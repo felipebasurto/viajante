@@ -1368,8 +1368,9 @@ def _rank_offers(
     *,
     top: int,
     sort: FlightSort = "ranked",
+    preserve: bool = False,
 ) -> Tuple[FlightOffer, ...]:
-    rows = offers if sort != "ranked" else _hide_slow_connections(offers)
+    rows = offers if preserve or sort != "ranked" else _hide_slow_connections(offers)
 
     def sort_key(offer: FlightOffer) -> tuple[float, float]:
         if sort == "duration":
@@ -1393,7 +1394,7 @@ def _rank_offers(
             offer.stops_count,
             offer.duration_hours,
         )
-        if key in seen:
+        if key in seen and not preserve:
             continue
         seen.add(key)
         deduped.append(offer)
@@ -1693,6 +1694,8 @@ def _run_search(
     currency: str,
     fetch_backend: Optional[FetchBackend] = None,
     sort: FlightSort = "ranked",
+    selection: Literal["top", "pareto"] = "top",
+    _details_candidates: bool = False,
     inter_query_delay: Callable[[random.Random], float] = inter_query_delay_seconds,
     filters: OfferFilters = NO_OFFER_FILTERS,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
@@ -1703,15 +1706,68 @@ def _run_search(
 
     def _success_from_cards(trip: Trip, cards: Sequence[RawFlightCard]) -> QuerySuccess:
         eligible = offers_from_cards(cards, trip, filters, baggage_buffer=baggage_buffer)
-        ranked = _rank_offers(eligible, top=top, sort=sort)
+        metadata = None
+        if _details_candidates:
+            candidates = []
+            for raw in cards:
+                offer = _normalize_offer(raw, 2, baggage_buffer=baggage_buffer)
+                if offer is None:
+                    continue
+                named = {
+                    **vars(filters),
+                    "airlines": trip.airlines,
+                    "exclude_airlines": trip.exclude_airlines,
+                    "bags": trip.bags,
+                    "carry_on": trip.carry_on,
+                    "price_cap": trip.price_cap,
+                }
+                violations = [
+                    name
+                    for name, value in named.items()
+                    if value is not None and _normalize_offer(raw, 2, **{name: value}) is None
+                ]
+                if not _eligible_stops(raw.stops, _trip_max_stops(trip)):
+                    violations.append("max_stops")
+                buffer, verify = _bag_evidence(
+                    raw,
+                    raw.airline or "",
+                    baggage_buffer=baggage_buffer,
+                    requested=trip.bags is not None or trip.carry_on is not None,
+                )
+                candidates.append(
+                    replace(
+                        offer,
+                        baggage_buffer=buffer,
+                        needs_bag_verify=verify,
+                        refresh_filter_violations=tuple(violations),
+                    )
+                )
+            eligible = list(_attach_missing_legs(trip, tuple(candidates), source))
+            ranked = tuple(eligible)
+        elif selection == "pareto":
+            from viajante.selection import pareto_select
+
+            eligible = list(_attach_missing_legs(trip, tuple(eligible), source))
+            ranked, metadata = pareto_select(
+                eligible,
+                trip,
+                top=top,
+                order=lambda rows: _rank_offers(
+                    rows, top=max(1, len(rows)), sort=sort, preserve=True
+                ),
+            )
+        else:
+            ranked = _rank_offers(eligible, top=top, sort=sort)
         shown = _stamp_typical(trip, ranked, source, typical_cache)
-        shown = _attach_missing_legs(trip, shown, source)
+        if selection != "pareto" and not _details_candidates:
+            shown = _attach_missing_legs(trip, shown, source)
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),
             eligible_count=len(eligible),
             offers=shown,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
+            selection=metadata,
         )
 
     def _stamp(result: QueryResult) -> QueryResult:
@@ -1892,6 +1948,7 @@ def get_flights(
     baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
+    selection: Literal["top", "pareto"] = "top",
     fetch: FetchMode = "auto",
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
@@ -1923,6 +1980,7 @@ def get_flights(
         "baggage_buffer": baggage_buffer,
         "progress": progress,
         "sort": sort,
+        "selection": selection,
         "fetch": fetch,
         "max_layover_hours": max_layover_hours,
         "min_layover_hours": min_layover_hours,
@@ -2003,6 +2061,8 @@ def search_flights(
     baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
+    selection: Literal["top", "pareto"] = "top",
+    _details_candidates: bool = False,
     fetch: FetchMode = "auto",
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
@@ -2024,6 +2084,11 @@ def search_flights(
     country: Optional[str] = None,
     proxy: Optional[str] = None,
 ) -> SearchReport:
+    search_options = dict(locals())
+    search_options.pop("queries")
+    search_options.pop("_details_candidates")
+    if selection not in ("top", "pareto"):
+        raise ValueError("selection must be top or pareto")
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
@@ -2115,6 +2180,8 @@ def search_flights(
                 currency=source.config.currency,
                 fetch_backend=fetch_backend,
                 sort=sort,
+                selection=selection,
+                _details_candidates=_details_candidates,
                 inter_query_delay=inter_query_delay,
                 filters=filters,
                 retry_backoff=retry_backoff,
@@ -2154,4 +2221,4 @@ def search_flights(
             report = replace(report, queries=tuple(merged))
             backend = "sweep_then_detail"
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return replace(report, fetch_backend=backend, fetch_ms=fetch_ms)
+    return replace(report, fetch_backend=backend, fetch_ms=fetch_ms, search_options=search_options)

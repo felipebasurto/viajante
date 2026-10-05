@@ -48,7 +48,9 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
-- Offline evidence-bound itinerary validation: `src/viajante/validate.py`
+- Offline evidence-bound itinerary validation and UTC civil-time resolution: `src/viajante/validate.py`, `src/viajante/temporal.py`
+- Opt-in Pareto selection: `src/viajante/selection.py`
+- Flight and hotel finalist details: `src/viajante/details.py`
 - Offline stay blocks and per-person cost split: `src/viajante/stays.py`
 - MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
@@ -58,8 +60,8 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 ## Public contract
 
 CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
-Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `get_flight_details`, `get_hotel_details`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
+Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions, `get_flight_details`, `get_hotel_details`, and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
@@ -91,6 +93,30 @@ rows use the full triple. Stamp rules live with the search loops (`flights.py`,
 catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
+
+`selection=top` remains the flight default. Opt-in `pareto` compares owned price,
+duration and stops within one query/currency, after explicit filters. Package
+metrics require every journey. Unknown metrics and unproven baggage equivalence
+cannot establish dominance. Report frontier scope and budget truncation; do not
+claim global commercial superiority.
+
+MCP finalist `selection_id` references belong to this process and the bounded
+ledger. Unknown/evicted references fail before provider contact. Cached replay
+keeps the original timestamp and reference. Flight details refresh matches complete
+segment identity before truncation and local filters; price/token changes do not
+change identity. Keep old/new quotes and original filter violations separate.
+Hotel details room rates are separate Skiplagged USD quotes with original dates,
+adults and rooms. External lookup requires exact normalized name and a sufficiently
+identified city; unknown city is an input error. Never apply those rates' terms to
+the original Google/Booking price or infer combined room capacity.
+
+Segment arrival dates are provider-owned; IANA zones come from the airport catalogue.
+`arrival_deadline` is local to the final destination. `chronological` compares UTC
+instants. Missing or ambiguous/nonexistent civil times are unknown. Stay-day bounds
+count local dates only between an arrival and the next journey departure from that
+same airport; do not invent a stay after the final flight. Existing travel-window
+and local-clock constraints retain their meanings. Temporal order does not prove
+connection protection, immigration eligibility or adequate airport transfer margins.
 
 Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.
 The URL evidence reproduces a query, not guaranteed current fare availability.

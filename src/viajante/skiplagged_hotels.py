@@ -311,6 +311,7 @@ def resolve_hotel_id(
     check_out: date,
     *,
     adults: int,
+    rooms: int = 1,
     rpc: RpcPost = _rpc_post,
 ) -> tuple[int, str]:
     """Skiplagged id of the one hotel in ``city`` whose name matches ``name`` exactly.
@@ -324,7 +325,7 @@ def resolve_hotel_id(
             "checkin": check_in.isoformat(),
             "checkout": check_out.isoformat(),
             "numAdults": adults,
-            "numRooms": 1,
+            "numRooms": rooms,
             "limit": PAGE_LIMIT,
             "sort": "price",
         },
@@ -332,6 +333,14 @@ def resolve_hotel_id(
         tool=SKIPLAGGED_HOTELS_TOOL,
     )
     page = parse_search_page(result)
+    if page.resolved_place:
+        requested_city = _normalized_name(city.split(",", 1)[0])
+        resolved_city = _normalized_name(page.resolved_place)
+        if resolved_city != requested_city and not resolved_city.startswith(requested_city + " "):
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to {page.resolved_place!r}; "
+                "the requested city was not searched. Nothing was guessed."
+            )
     wanted = _normalized_name(name)
     hits = [card for card in page.cards if _normalized_name(card.title) == wanted]
     if len(hits) == 1 and hits[0].provider_id:
@@ -391,7 +400,13 @@ def search_hotel_rooms(
         try:
             if resolved_id is None:
                 resolved_id, _matched = resolve_hotel_id(
-                    hotel_name or "", city or "", check_in, check_out, adults=adults, rpc=rpc
+                    hotel_name or "",
+                    city or "",
+                    check_in,
+                    check_out,
+                    adults=adults,
+                    rooms=rooms,
+                    rpc=rpc,
                 )
             result = _call_mcp(
                 {

@@ -41,13 +41,15 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 16 tools. |
+| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 18 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
 | MCP tool | CLI | What it is |
 | --- | --- | --- |
 | `search_flights` | `flights` | Shop one or more routes (one-way, packaged RT, multi-city). |
+| `get_flight_details` | — | Finalist snapshot and optional exact-identity refresh. |
+| `get_hotel_details` | — | Finalist snapshot and optional separate Skiplagged room quotes. |
 | `search_dates` | `dates` | Cheapest fare per day across a window (≤31 days). |
 | `search_flex` | `flex` | Cheapest day in ±N around a date, then one shop. |
 | `search_explore` | `explore` | Destinations from an origin, shortlist priced. |
@@ -291,3 +293,59 @@ improvement loops.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.
+
+## Temporal evidence, Pareto and finalist details
+
+`RawSegment` retains the provider departure and arrival dates. The compact
+parser reads arrival slot 21, already used for layover arithmetic; airport
+zones come from the offline catalogue. Detail DOM cards can lack these
+facts. `completeness.segment_dates` and `segment_timezones` expose those gaps.
+`temporal.py` round-trips both folds of an IANA civil time through UTC. A
+missing zone, nonexistent spring-forward time or ambiguous fall-back time
+has no provable instant. `validate.py` compares UTC instants for chronology
+and the final destination-local deadline. Stay bounds use local date differences
+between journey arrival and the following departure at the same airport;
+no stay is inferred after the final flight. Existing travel-window and clock
+constraints retain their previous meanings. Ordering does not prove connection
+protection, immigration eligibility or sufficient transfer margins.
+
+`selection.py` compares price, elapsed duration and stops only within one
+query/currency after explicit filtering. A complete packaged itinerary uses
+the sum over all its journeys. Unknown metrics remain outside the comparison;
+unknown or different bag counts cannot establish dominance. Equal vectors
+remain. Pareto skips the slow-connection heuristic and retains distinct
+candidates. The top budget reserves cheapest, shortest and fewest-stop
+extremes in that order, followed by the sorted frontier and incomplete rows.
+This is a bounded comparison of the returned evidence, not commercial superiority.
+
+`details.py` reads original snapshots without a provider request. `SearchReport`
+retains original search options internally, outside JSON. Flex keeps its chosen
+shopping report internally; nested trip reports retain their flight/hotel
+contexts. A refresh uses the existing search flow, bypassing only MCP response
+cache; cooldown, retry and process-lock policies still apply. The internal
+candidate path matches before top, deduplication, slow-connection hiding and
+local filters. Each returned candidate records which original filters it
+fails. Matching requires every journey and every segment's airports, departure
+and arrival dates/clocks, airline, carrier and flight number, plus an unchanged
+query (occupancy, cabin and baggage requests included). Tokens and prices are
+excluded from identity. Incomplete, missing or multiple matches are inconclusive.
+Original quote, refresh result and uniquely matched new quote remain separate.
+
+`evidence.py` registers opaque offer references with the same 20-group retention
+as the ledger. Unknown/evicted ids fail before provider contact. The MCP cache
+retains at most 20 successful calls for five minutes, along with their original
+snapshots and reference contexts. Replay re-registers those contexts without
+changing timestamps or ids. Calendar cells and Explore catalog rows are not
+finalist offers and do not receive references.
+
+For hotels, Google/Booking provider ids are never passed as Skiplagged ids.
+External room lookup requires the exact normalized title and a named city
+that the offline catalogue identifies unambiguously in one country; an
+inconsistent provider-resolved place or ambiguous location is an input error.
+Skiplagged finalists use their own ids. Dates, adults and rooms are retained
+for both name resolution and room lookup. A contradictory Skiplagged city echo
+stops exact-name lookup before requesting room details. Original quotes and ordered room
+rates carry their own provider, currency, timestamp and occupancy. USD room
+conditions cannot prove terms of the original Google/Booking fare. Missing
+cancellation deadlines, contradictory units and unknown occupancy remain
+unverified. Room rates do not establish combined capacity across rooms.

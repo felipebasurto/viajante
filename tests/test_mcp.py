@@ -1084,6 +1084,8 @@ class McpServerImportTests(unittest.TestCase):
             [
                 "get_runtime_info",
                 "search_flights",
+                "get_flight_details",
+                "get_hotel_details",
                 "search_dates",
                 "search_flex",
                 "search_explore",
@@ -1112,6 +1114,8 @@ class McpServerImportTests(unittest.TestCase):
 
         searches = {
             "search_flights",
+            "get_flight_details",
+            "get_hotel_details",
             "search_dates",
             "search_flex",
             "search_explore",

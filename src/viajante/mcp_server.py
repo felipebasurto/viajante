@@ -7,13 +7,15 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Callable, Optional, Sequence, TypeVar
+from typing import Callable, Literal, Optional, Sequence, TypeVar
 
 from viajante.evidence import verify_answer as verify_answer_tool
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
 from viajante.mcp_handlers import (
     compare_awards_tool,
+    get_flight_details_tool,
+    get_hotel_details_tool,
     lookup_airports_tool,
     lookup_transfers_tool,
     plan_stay_blocks_tool,
@@ -45,7 +47,8 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
           (only for --fetch detail and Booking.com; extras must match the MCP env)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
-search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
+search_hotels, search_hotel_rooms, get_flight_details, get_hotel_details,
+search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
 No auth. One search at a time in this process. A second search while one is
@@ -167,6 +170,7 @@ def build_server():
         adults: int = 1,
         cabin: str = "economy",
         top: int = DEFAULT_TOP,
+        selection: Literal["top", "pareto"] = "top",
         fetch: str = "auto",
         airlines: str | None = None,
         exclude_airlines: str | None = None,
@@ -215,6 +219,24 @@ def build_server():
         (Skiplagged cards are USD); do not copy this Google quote currency.
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
+
+    @server.tool()
+    async def get_flight_details(selection_id: str, refresh: bool = False) -> dict:
+        """Read a process-local finalist snapshot. Refresh re-shops the exact query.
+
+        Matching requires complete segment identity; tokens and prices may change.
+        Original and new quotes stay separate. Unknown/evicted ids send nothing.
+        """
+        return dict(await run_mcp_tool(get_flight_details_tool, **locals()))
+
+    @server.tool()
+    async def get_hotel_details(selection_id: str, room_rates: bool = False) -> dict:
+        """Read a finalist snapshot; optional Skiplagged room quotes are separate USD evidence.
+
+        Exact name and an unambiguous city are required for external finalists.
+        Room conditions never attach to the original Google/Booking quote.
+        """
+        return dict(await run_mcp_tool(get_hotel_details_tool, **locals()))
 
     @server.tool()
     async def search_dates(

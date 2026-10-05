@@ -5,8 +5,9 @@ from __future__ import annotations
 import functools
 import threading
 import time
+from copy import deepcopy
 from datetime import date
-from typing import Mapping, Optional, Sequence
+from typing import Literal, Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
@@ -18,7 +19,8 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.evidence import failure_codes, record
+from viajante.details import get_flight_details, get_hotel_details
+from viajante.evidence import failure_codes, record, selected_reference, selection_records
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     month_window,
@@ -64,7 +66,8 @@ from viajante.validate import validate_itinerary
 
 _SEARCH_LOCK = threading.Lock()
 CACHE_SECONDS = 300.0
-_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+_CACHE: dict[tuple[str, str], tuple[float, dict, dict]] = {}
+_SELECTION_CONTEXT = threading.local()
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -83,8 +86,10 @@ def _with_search_lock(fn):
         _SEARCH_LOCK.release()
 
 
-def _owned(payload: dict) -> dict:
-    record(payload)
+def _owned(payload: dict, report=None) -> dict:
+    selections = selection_records(payload, report)
+    record(payload, selections=selections)
+    _SELECTION_CONTEXT.records = selections
     return payload
 
 
@@ -97,12 +102,19 @@ def _cached(fn):
         now = time.monotonic()
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
-            return {**hit[1], "cached": True}
+            result = {**deepcopy(hit[1]), "cached": True}
+            record(result, selections=hit[2])
+            return result
+        _SELECTION_CONTEXT.records = {}
         result = fn(*args, **kwargs)
+        selections = getattr(_SELECTION_CONTEXT, "records", {})
+        _SELECTION_CONTEXT.records = {}
         if not failure_codes(result):
-            for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
+            for stale in [k for k, (at, _, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
                 del _CACHE[stale]
-            _CACHE[key] = (now, result)
+            if len(_CACHE) >= 20:
+                del _CACHE[next(iter(_CACHE))]
+            _CACHE[key] = (now, deepcopy(result), selections)
         return result
 
     return wrapper
@@ -121,6 +133,7 @@ def search_flights_tool(
     adults: int = 1,
     cabin: FlightCabin = "economy",
     top: int = DEFAULT_TOP,
+    selection: Literal["top", "pareto"] = "top",
     fetch: str = "auto",
     airlines: Optional[str] = None,
     exclude_airlines: Optional[str] = None,
@@ -173,6 +186,7 @@ def search_flights_tool(
         lambda: search_flights(
             trips,
             top=top,
+            selection=selection,
             fetch=fetch,  # type: ignore[arg-type]
             airlines=parse_airline_codes(airlines),
             exclude_airlines=parse_airline_codes(exclude_airlines),
@@ -197,7 +211,7 @@ def search_flights_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _owned(reports_payload(report), report)
 
 
 @_cached
@@ -287,7 +301,7 @@ def search_dates_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _owned(reports_payload(report), report)
 
 
 @_cached
@@ -378,7 +392,7 @@ def search_flex_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _owned(reports_payload(report), report)
 
 
 @_cached
@@ -472,7 +486,7 @@ def search_explore_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _owned(reports_payload(report), report)
 
 
 MAX_HOTEL_STAYS = 8
@@ -579,7 +593,7 @@ def search_hotels_tool(
             max_distance_km=max_distance_km,
         )
     )
-    return _owned(reports_payload(report))
+    return _owned(reports_payload(report), report)
 
 
 @_cached
@@ -725,7 +739,7 @@ def search_trip_tool(
             hotel_source=source,
         )
     )
-    return _owned(reports_payload(report))
+    return _owned(reports_payload(report), report)
 
 
 @_cached
@@ -757,7 +771,7 @@ def search_hidden_city_tool(
             currency=currency,
         )
     )
-    return _owned(reports_payload(report))
+    return _owned(reports_payload(report), report)
 
 
 def compare_awards_tool(
@@ -820,3 +834,25 @@ def validate_itinerary_tool(
     currency: Optional[str] = None,
 ) -> Mapping[str, object]:
     return dict(validate_itinerary(legs, constraints, currency=currency).to_dict())
+
+
+def get_flight_details_tool(selection_id: str, *, refresh: bool = False) -> Mapping[str, object]:
+    report, query_index, offer_index = selected_reference(selection_id, "flight")
+
+    def action():
+        return get_flight_details(report, query_index, offer_index, refresh=refresh)
+
+    detail = _with_search_lock(action) if refresh else action()
+    detail["original_quote"]["offer"]["selection_id"] = selection_id
+    return record(detail)
+
+
+def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Mapping[str, object]:
+    report, query_index, offer_index = selected_reference(selection_id, "hotel")
+
+    def action():
+        return get_hotel_details(report, query_index, offer_index, room_rates=room_rates)
+
+    detail = _with_search_lock(action) if room_rates else action()
+    detail["original_quote"]["offer"]["selection_id"] = selection_id
+    return record(detail)

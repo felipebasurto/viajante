@@ -69,6 +69,7 @@ list and accepted values.
 | `--price-cap 500` | Remove returned fares above this amount in the quote currency. |
 | `--nearby` | Include known airports in the same city as the named origin or destination. |
 | `--include-airports LHR,LGW` / `--exclude-airports STN` | Restrict destinations or exclude origins and destinations; exclusions take priority. |
+| `--selection pareto` | Retain price/duration/stops alternatives with bounded selection metadata; default `top`. |
 | `--sort duration` | Order by `ranked`, `fare`/`price`, `duration`, `departure`, or `arrival`. |
 | `--baggage-buffer 30` | Add a ranking allowance for recognized low-cost carriers, in the quote currency. |
 
@@ -319,3 +320,96 @@ Unpinned `uvx` may reuse an old installed tool. Use `uv tool upgrade viajante`
 for that installation, or refresh an explicitly published version:
 `uvx --refresh --from 'viajante==VERSION' viajante --version`. Reload MCP after
 upgrading; confirm the executing version before using new parameters.
+
+## Verifiable times and diverse finalists
+
+Use Pareto when the caller wants alternatives on price, duration and stops:
+
+```bash
+viajante flights JFK-LHR:2026-11-15 --fetch sweep --selection pareto --top 3
+```
+
+`selection="pareto"` is also accepted by `get_flights`, `search_flights` and
+MCP `search_flights`. Explicit filters still apply. Comparison is limited to
+returned candidates in that query and currency, with equivalent known baggage.
+Incomplete metrics and unproven baggage equivalence cannot eliminate an offer.
+The budget first reserves cheapest, shortest and fewest-stop alternatives,
+then uses the requested sort on the frontier, then incomplete rows. Packaged
+metrics require every journey. `top` remains the default selection mode.
+
+Flight segments may include `arrival_date`, `departure_timezone` and
+`arrival_timezone`. Missing facts remain absent; completeness reports dates
+and zones as known/unknown. To validate selected rows locally:
+
+```python
+from viajante import get_flights, validate_itinerary
+
+report = get_flights("JFK-LHR:2026-11-15", fetch="sweep")
+result = report.to_dict()["queries"][0]
+selected = [{"status": "ok", "query": result["query"], "offer": result["offers"][0]}]
+validation = validate_itinerary(selected, {
+    "arrival_deadline": "2026-11-16T12:00",
+    "chronological": True,
+})
+```
+
+The deadline is interpreted in the final destination's local IANA zone.
+An explicit ISO offset must agree with that local time. Missing dates/zones,
+ambiguous or nonexistent DST times return unknown. `chronological` checks
+segment and selected-journey UTC order, including overlap. Optional
+`min_stay_days` and `max_stay_days` count local date differences between a
+journey arrival and the next journey departure from that same airport, including
+packaged journeys. They do not infer a stay after the final flight.
+`travel_start`/`travel_end` still bound query departure dates; `arrive_before`
+and `depart_after` still test the existing local-clock bounds. Chronology
+alone does not prove connection protection, immigration requirements or
+sufficient time to change airports. Unknown never means compliant.
+
+## Finalist details in MCP and Python
+
+MCP Google flight shopping offers and hotel offers receive an opaque
+`selection_id`. Flex shopping and nested trip offers also receive references.
+References belong to this process and expire when their ledger group is
+expelled from the last 20 groups. Unknown references fail without a request.
+Successful cache replay within five minutes retains the original reference
+and retrieval date and re-registers its snapshot when necessary.
+
+Call `get_flight_details(selection_id)` for the existing segments, baggage,
+links, age and unknown fields. `refresh=True` re-shops the original query;
+it bypasses the response cache and retains cooldowns, retries and the process
+lock. The original and new quotes are separate. Matching requires complete
+segment identities across all journeys and the same occupancy/cabin/baggage
+request. Tokens and prices may change. Incomplete identity, zero matches,
+multiple matches or missing original context are inconclusive; no similar
+flight substitutes for the selection. A unique match reports same-currency
+`price_change` and original `filter_violations` without hiding its new fare.
+Refund rules, extras and current availability remain unproven unless returned.
+
+Call `get_hotel_details(selection_id)` to inspect original evidence and its
+limits. With `room_rates=True`, Skiplagged room rates are a separate quote
+in `room_quotes`; `original_quote` keeps the Google/Booking/Skiplagged price.
+External finalists require exact normalized names and a named city identified
+unambiguously by the offline catalogue (for example `Prague` or `London, GB`). An ambiguous location or a different
+provider-resolved place raises an input error: repeat the hotel search with a
+sufficiently identified city. Skiplagged finalists use their own provider ids.
+Dates, adults and rooms are preserved, within the helper's limits (10 adults,
+5 rooms). No match, homonyms or provider failures preserve the original quote
+and return the helper's error. Rates remain in provider order and USD; their
+cancellation and occupancy evidence does not attach to the original fare or
+prove combined capacity. Missing cancellation deadlines remain unknown.
+
+The library uses the original typed report and zero-based query/offer indices:
+
+```python
+from viajante import get_flight_details, get_hotel_details
+
+snapshot = get_flight_details(report, 0, 0)
+refreshed = get_flight_details(report, 0, 0, refresh=True)
+hotel_snapshot = get_hotel_details(hotels, 0, 0)
+room_quotes = get_hotel_details(hotels, 0, 0, room_rates=True)
+```
+
+A serialized report can supply snapshot evidence, but flight refresh needs the
+original typed report's internal search context. There are no details CLI
+commands. Run provider searches sequentially and verify finalist prices and
+terms on the provider before booking.

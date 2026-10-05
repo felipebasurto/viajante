@@ -9,9 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Compact flight segments add owned `arrival_date` and catalogue IANA `departure_timezone` / `arrival_timezone`; completeness explicitly reports segment dates and zones. Local itinerary validation supports destination-local `arrival_deadline`, UTC `chronological` ordering and intervening `min_stay_days` / `max_stay_days`. Missing or ambiguous civil times remain unknown.
+- Opt-in flight `selection="pareto"` (library/MCP) and `--selection pareto` (CLI) retain diverse price/duration/stops alternatives within each query and currency. Equivalent known baggage is required for dominance; incomplete candidates remain. Selection metadata reports scope, frontier, incomplete candidates and budget truncation. Defaults stay `top`.
+- Process-local MCP offer `selection_id` references and `get_flight_details` / `get_hotel_details` tools. Flight refresh matches complete segment identities before filtering/truncation, keeps old and new quotes separate and reports price changes and filter violations. Hotel room rates use the existing Skiplagged helper as separate USD evidence. Library details use the original report and query/offer indices; no details CLI is added.
+- Cached MCP replay restores evicted finalist references while retaining the original retrieval time and ids. Ledger references and successful response caches are bounded to 20 report groups/entries.
+
 - Hotel schema 2 adds `lodging_evidence_conflict`, exposing explicit room/entire-unit contradictions while retaining the provider title and raw text. The CLI prints the conflicting labels as evidence.
 
 ### Fixed
+
+- Exact-name Skiplagged room lookup preserves requested rooms during name resolution and refuses an owned city echo that contradicts the requested city.
 
 - A room title that conflicts with an entire-home unit chip no longer proves an entire home. Both lodging kind and property type stay unknown; Google property descriptions still cannot prove the priced unit. Entire-house chips are recognized alongside cottage and villa chips.
 

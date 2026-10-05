@@ -10,7 +10,9 @@ from __future__ import annotations
 import re
 import threading
 from collections import deque
+from copy import deepcopy
 from typing import Iterable, Mapping, Optional
+from uuid import uuid4
 
 from viajante.airports import is_known_iata
 from viajante.quote import _COUNTRY_CASH_CURRENCY
@@ -19,6 +21,7 @@ LEDGER_SIZE = 20
 _MONEY_KEYS = frozenset(
     {
         "price",
+        "price_change",
         "typical",
         "cheapest",
         "total_price",
@@ -42,17 +45,89 @@ _MONEY = re.compile(
 
 _lock = threading.Lock()
 _ledger: deque[Mapping[str, object]] = deque(maxlen=LEDGER_SIZE)
+_selection_groups: deque[dict[str, object]] = deque(maxlen=LEDGER_SIZE)
+_selections: dict[str, object] = {}
 
 
-def record(payload: Mapping[str, object]) -> Mapping[str, object]:
+def selection_records(payload: Mapping[str, object], report=None) -> dict[str, object]:
+    """Attach opaque references to actual offers, never calendar/catalog cells."""
+    records = {}
+
+    def add_offers(result, query_index, typed, context):
+        for offer_index, offer in enumerate(result.get("offers", ())):
+            if not isinstance(offer, dict):
+                continue
+            kind = "hotel" if "total_price" in offer else "flight"
+            if kind == "flight" and "legs" not in offer:
+                continue
+            selection_id = offer.setdefault("selection_id", "sel_" + uuid4().hex)
+            snapshot = {
+                key: deepcopy(context.get(key))
+                for key in ("currency", "searched_at", "provider", "fetch_backend")
+            }
+            snapshot["queries"] = [deepcopy(result)]
+            records[selection_id] = (
+                kind,
+                typed or snapshot,
+                query_index if typed else 0,
+                offer_index,
+            )
+
+    def walk(node, context=None, typed=None):
+        if not isinstance(node, dict):
+            return
+        context = {**(context or {}), **node}
+        queries = node.get("queries")
+        if isinstance(queries, list):
+            for query_index, result in enumerate(queries):
+                if not isinstance(result, dict):
+                    continue
+                direct = typed if hasattr(typed, "queries") else None
+                add_offers(result, query_index, direct, context)
+                child = typed[query_index] if isinstance(typed, tuple) else None
+                walk(result, context, child)
+        # Flex owns actual shopping offers; the calendar cells remain reference-free.
+        if "offers" in node and "queries" not in node and "query" not in node:
+            shop = getattr(typed, "details_report", None)
+            for index, offer in enumerate(node["offers"]):
+                evidence = offer.get("evidence") or {}
+                query = evidence.get("query")
+                if query:
+                    selected = {"query": query, "offers": [offer]}
+                    add_offers(selected, 0, None, context)
+                    selection_id = offer["selection_id"]
+                    if shop is not None:
+                        records[selection_id] = ("flight", shop, 0, index)
+        for key in ("flights", "hotels"):
+            walk(node.get(key), context, getattr(typed, key, None))
+
+    walk(payload, typed=deepcopy(report))
+    return records
+
+
+def record(payload: Mapping[str, object], *, selections=None) -> Mapping[str, object]:
     with _lock:
-        _ledger.append(payload)
+        _ledger.append(deepcopy(payload))
+        _selection_groups.append(selections or {})
+        _selections.clear()
+        for group in _selection_groups:
+            _selections.update(group)
     return payload
+
+
+def selected_reference(selection_id: str, kind: str):
+    with _lock:
+        selected = _selections.get(selection_id)
+    if selected is None or selected[0] != kind:
+        raise ValueError("unknown or evicted selection_id for this process and tool")
+    return selected[1:]
 
 
 def clear() -> None:
     with _lock:
         _ledger.clear()
+        _selection_groups.clear()
+        _selections.clear()
 
 
 class _Owned:
@@ -76,7 +151,8 @@ class _Owned:
             return
         elif isinstance(node, (int, float)):
             if key in _MONEY_KEYS:
-                self.amounts.append(float(node))
+                amount = float(node)
+                self.amounts.append(abs(amount) if key == "price_change" else amount)
         elif isinstance(node, str):
             self.texts.add(node)
             self.dates.update(_ISO_DATE.findall(node))

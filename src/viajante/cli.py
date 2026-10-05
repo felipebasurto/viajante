@@ -581,6 +581,14 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                 _print_google_flights_url(query_url, indent="  ")
             if result.stops_compare is not None:
                 print(format_stops_compare(result.stops_compare, currency))
+            if result.selection is not None:
+                metadata = result.selection
+                print(
+                    "  Pareto: price, duration, stops within returned query/currency evidence; "
+                    f"frontier: {metadata['frontier_count']}; "
+                    f"incomplete: {metadata['incomplete_count']}; "
+                    f"budget truncated: {metadata['truncated']}"
+                )
             print(
                 f"  Raw: {result.raw_count}; "
                 f"eligible: {result.eligible_count}; "
@@ -853,6 +861,7 @@ def _run_flights(args: argparse.Namespace) -> int:
         baggage_buffer=args.baggage_buffer,
         progress=lambda line: print(line, file=sys.stderr),
         sort=args.sort,
+        selection=args.selection,
         fetch=args.fetch,
         currency=args.currency,
         country=args.country,
@@ -1989,6 +1998,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_TOP,
         help=f"Offers per query (default {DEFAULT_TOP})",
+    )
+    flights.add_argument(
+        "--selection",
+        choices=["top", "pareto"],
+        default="top",
+        help="Select diverse price/duration/stops alternatives (opt-in pareto)",
     )
     _add_baggage_buffer_flag(flights)
     flights.add_argument(

@@ -427,6 +427,9 @@ class RawSegment:
     flight_number: Optional[str] = None
     departure_date: Optional[date] = None
     carrier: Optional[str] = None
+    arrival_date: Optional[date] = None
+    departure_timezone: Optional[str] = None
+    arrival_timezone: Optional[str] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -439,6 +442,12 @@ class RawSegment:
         }
         if self.departure_date is not None:
             payload["departure_date"] = self.departure_date.isoformat()
+        if self.arrival_date is not None:
+            payload["arrival_date"] = self.arrival_date.isoformat()
+        if self.departure_timezone is not None:
+            payload["departure_timezone"] = self.departure_timezone
+        if self.arrival_timezone is not None:
+            payload["arrival_timezone"] = self.arrival_timezone
         if self.carrier is not None:
             payload["carrier"] = self.carrier
         return payload
@@ -488,6 +497,8 @@ class EvidenceCompleteness:
     segment_clocks: EvidenceKnowledge = "unknown"
     layovers: EvidenceKnowledge = "unknown"
     baggage: EvidenceKnowledge = "unknown"
+    segment_dates: EvidenceKnowledge = "unknown"
+    segment_timezones: EvidenceKnowledge = "unknown"
 
     def to_dict(self) -> Mapping[str, str]:
         return {
@@ -497,6 +508,8 @@ class EvidenceCompleteness:
             "segment_clocks": self.segment_clocks,
             "layovers": self.layovers,
             "baggage": self.baggage,
+            "segment_dates": self.segment_dates,
+            "segment_timezones": self.segment_timezones,
         }
 
 
@@ -678,6 +691,14 @@ def _offer_completeness(
         segment_clocks=known(
             bool(segments) and all(segment.departure and segment.arrival for segment in segments)
         ),
+        segment_dates=known(
+            bool(segments)
+            and all(segment.departure_date and segment.arrival_date for segment in segments)
+        ),
+        segment_timezones=known(
+            bool(segments)
+            and all(segment.departure_timezone and segment.arrival_timezone for segment in segments)
+        ),
         layovers=known(layovers_known),
         baggage=known(checked_bags is not None or carry_on is not None),
     )
@@ -711,6 +732,8 @@ class FlightOffer:
     carry_on: Optional[int] = None
     evidence: Optional[OfferEvidence] = None
     completeness: Optional[EvidenceCompleteness] = None
+
+    refresh_filter_violations: Tuple[str, ...] = field(default=(), repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _require_positive_amount(self.price, role="price")
@@ -908,6 +931,7 @@ class QuerySuccess:
     offers: Tuple[FlightOffer, ...]
     google_flights_url: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
+    selection: Optional[Mapping[str, object]] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -929,6 +953,8 @@ class QuerySuccess:
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.selection is not None:
+            payload["selection"] = dict(self.selection)
         return payload
 
 
@@ -982,6 +1008,7 @@ class SearchReport:
     fetch_backend: Optional[FetchBackend] = None
     fetch_ms: Optional[int] = None
     coverage: Optional[SearchCoverage] = None
+    search_options: Optional[Mapping[str, object]] = field(default=None, repr=False, compare=False)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
@@ -1251,6 +1278,7 @@ class FlexSearchReport:
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
     coverage: Optional[SearchCoverage] = None
+    details_report: Optional[SearchReport] = field(default=None, repr=False, compare=False)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
