@@ -168,7 +168,7 @@ def _search_trip_cards(
         patch("viajante.trip.search_hotels", return_value=hotels),
     ):
         report = search_trip(
-            (_sin_mel(),),
+            (FlightQuery("SIN", "MEL", date(2026, 11, 6)),),
             HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10)),
             fetch="sweep",
             baggage_buffer=0,
@@ -251,7 +251,7 @@ class TripJoinTests(unittest.TestCase):
         self.assertEqual(total.hotel_stay, 500)
         self.assertEqual(total.total, 1230)
 
-    def test_same_route_two_dates_uses_cheaper_day_not_sum(self) -> None:
+    def test_same_route_on_separate_dates_sums_each_requested_journey(self) -> None:
         first = FlightQuery("SIN", "MEL", date(2026, 11, 6))
         second = FlightQuery("SIN", "MEL", date(2026, 11, 7))
         flights = _flight_report(
@@ -274,7 +274,7 @@ class TripJoinTests(unittest.TestCase):
         total = owned_trip_total(flights, hotels)
         self.assertIsNotNone(total)
         assert total is not None
-        self.assertEqual(total.flight_fare, 300)
+        self.assertEqual(total.flight_fare, 700)
 
     def test_omits_when_hotel_offers_empty(self) -> None:
         flights = _flight_report(

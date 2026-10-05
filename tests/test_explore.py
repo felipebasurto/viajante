@@ -1008,7 +1008,14 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli.search_explore") as search,
             patch("viajante.cli._print_explore_report"),
         ):
-            search.return_value = SimpleNamespace(error=None, destinations=())
+            search.return_value = ExploreReport(
+                searched_at=datetime(2026, 9, 1),
+                origin="NRT",
+                start_date=date(2026, 9, 1),
+                days=7,
+                destinations=(),
+                currency="JPY",
+            )
             code = main(
                 [
                     "explore",
@@ -1084,7 +1091,14 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli.search_explore") as search,
             patch("viajante.cli._print_explore_report"),
         ):
-            search.return_value = SimpleNamespace(error=None, destinations=())
+            search.return_value = ExploreReport(
+                searched_at=datetime(2026, 9, 1),
+                origin="NRT",
+                start_date=date(2026, 9, 1),
+                days=7,
+                destinations=(),
+                currency="JPY",
+            )
             code = main(["explore", "NRT", "--from", "2026-09-01"])
         self.assertEqual(code, 0)
         kwargs = search.call_args.kwargs
@@ -1122,7 +1136,14 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli.search_explore") as search,
             patch("viajante.cli._print_explore_report"),
         ):
-            search.return_value = SimpleNamespace(error=None, destinations=())
+            search.return_value = ExploreReport(
+                searched_at=datetime(2026, 9, 1),
+                origin="NRT",
+                start_date=date(2026, 9, 1),
+                days=7,
+                destinations=(),
+                currency="JPY",
+            )
             code = main(["explore", "NRT", "--from", "2026-09-01", "--sort", "duration"])
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["sort"], "duration")
@@ -1164,7 +1185,14 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli.search_explore") as search,
             patch("viajante.cli._print_explore_report"),
         ):
-            search.return_value = SimpleNamespace(error=None, destinations=())
+            search.return_value = ExploreReport(
+                searched_at=datetime(2026, 9, 1),
+                origin="NRT",
+                start_date=date(2026, 9, 1),
+                days=7,
+                destinations=(),
+                currency="JPY",
+            )
             code = main(
                 [
                     "explore",
@@ -1193,7 +1221,14 @@ class ExploreCliTests(unittest.TestCase):
             patch("viajante.cli.search_explore") as search,
             patch("viajante.cli._print_explore_report"),
         ):
-            search.return_value = SimpleNamespace(error=None, destinations=())
+            search.return_value = ExploreReport(
+                searched_at=datetime(2026, 9, 1),
+                origin="NRT",
+                start_date=date(2026, 9, 1),
+                days=7,
+                destinations=(),
+                currency="JPY",
+            )
             code = main(
                 [
                     "explore",
@@ -1258,7 +1293,14 @@ class NearbyExploreTests(unittest.TestCase):
             patch("viajante.cli.search_explore") as search,
             patch("viajante.cli._print_explore_report"),
         ):
-            search.return_value = SimpleNamespace(error=None, destinations=())
+            search.return_value = ExploreReport(
+                searched_at=datetime(2026, 9, 1),
+                origin="NRT",
+                start_date=date(2026, 9, 1),
+                days=7,
+                destinations=(),
+                currency="JPY",
+            )
             err = io.StringIO()
             with patch("sys.stderr", err):
                 code = main(["explore", "LHR", "--from", "2026-09-15", "--nearby"])
@@ -2004,7 +2046,14 @@ class ExploreBaggageBufferTests(unittest.TestCase):
             patch("viajante.cli.search_explore") as search,
             patch("viajante.cli._print_explore_report"),
         ):
-            search.return_value = SimpleNamespace(error=None, destinations=())
+            search.return_value = ExploreReport(
+                searched_at=datetime(2026, 9, 1),
+                origin="NRT",
+                start_date=date(2026, 9, 1),
+                days=7,
+                destinations=(),
+                currency="JPY",
+            )
             code = main(
                 [
                     "explore",

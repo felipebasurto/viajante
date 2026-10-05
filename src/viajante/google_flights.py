@@ -67,22 +67,10 @@ SWEEP_RETRY_LIMIT = 1
 SWEEP_RETRY_BACKOFF_SECONDS = 0.05
 # Browser-like HTTP/2 stream cap. Dates fallback is at most 31 days.
 _SWEEP_STREAMS = 8
-# urllib / tests only. Production sweep uses impersonate="chrome", not this string.
-HTTP_USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
 HTTP_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
-# urllib fallback / tests only. Production sweep uses a Chrome TLS session.
-URLLIB_HEADERS = {
-    **HTTP_HEADERS,
-    "User-Agent": HTTP_USER_AGENT,
-    "Accept-Encoding": "gzip, deflate",
-}
-
 BLOCK_URL_MARKERS = ("consent.google", "/sorry/", "ipv4.google.com/sorry")
 BLOCK_BODY_MARKERS = (
     "our systems have detected unusual traffic",
@@ -375,32 +363,6 @@ def _consent_reject_form(html: str, final_url: str) -> Optional[tuple[str, dict[
         elif data.get("set_sc") == "true":
             accept = pair
     return reject or accept
-
-
-def _gzip():
-    # Live/deflate bodies only: unittest HTML fixtures are already decoded.
-    import gzip
-
-    return gzip
-
-
-def _stdlib_urllib():
-    # urllib path for fetch_search_html without a sweep client. Tests inject opener=
-    # or client=. Production sweep uses curl_cffi impersonate="chrome".
-    import ssl
-    import urllib.error
-    import urllib.request
-
-    return urllib.request, urllib.error, ssl
-
-
-def _decode_http_body(raw: bytes, content_encoding: str) -> str:
-    encoding = content_encoding.casefold()
-    if "gzip" in encoding or raw[:2] == b"\x1f\x8b":
-        raw = _gzip().decompress(raw)
-    elif "deflate" in encoding:
-        raw = _gzip().decompress(raw, wbits=-15)
-    return raw.decode("utf-8", errors="replace")
 
 
 @dataclass(frozen=True)
@@ -725,38 +687,6 @@ def dispatch_posts(
     ]
 
 
-@dataclass(frozen=True)
-class _OpenerRequest:
-    """Stand-in for urllib.request.Request so opener tests skip urllib.request."""
-
-    full_url: str
-    headers: Mapping[str, str]
-
-
-class _OpenerSweepClient:
-    """Test hook: urllib opener for HTML GET. POST is treated as a compact miss."""
-
-    def __init__(self, opener: Any) -> None:
-        self._opener = opener
-
-    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-        html, final_url, status = _opener_get(url, opener=self._opener, timeout=timeout)
-        return SweepHttpResponse(status=status, text=html, url=final_url)
-
-    def post(
-        self,
-        url: str,
-        *,
-        data: str,
-        headers: Mapping[str, str],
-        timeout: float,
-    ) -> SweepHttpResponse:
-        raise CompactParseMiss("opener client has no shopping POST")
-
-    def close(self) -> None:
-        return None
-
-
 def _raise_if_blocked(
     status: int, body: str, final_url: str, fallback_url: str, advice: Optional[str] = None
 ) -> None:
@@ -804,72 +734,18 @@ def _is_rate_limited_sweep_failure(exc: BaseException) -> bool:
     return isinstance(exc, GoogleFlightsBlocked) and exc.status == 429
 
 
-def _http_error_code(exc: BaseException) -> Optional[int]:
-    code = getattr(exc, "code", None)
-    return code if isinstance(code, int) else None
-
-
-def _opener_get(
-    url: str,
-    *,
-    opener: Any,
-    timeout: float,
-) -> tuple[str, str, int]:
-    request = _OpenerRequest(url, URLLIB_HEADERS)
-    try:
-        response = opener.open(request, timeout=timeout)
-        with response:
-            raw = response.read()
-            encoding = response.headers.get("Content-Encoding", "")
-            final_url = response.geturl()
-            status = getattr(response, "status", 200)
-    except Exception as exc:
-        code = _http_error_code(exc)
-        if code in {403, 429, 503}:
-            raise GoogleFlightsBlocked(
-                f"Google Flights HTTP {code} from {url}",
-                status=code,
-            ) from exc
-        raise
-    return _decode_http_body(raw, encoding), final_url, status
-
-
 def fetch_search_html(
     url: str,
     *,
-    opener: Optional[Any] = None,
     client: Optional[SweepHttpClient] = None,
     timeout: float = HTTP_TIMEOUT_SECONDS,
 ) -> tuple[str, str]:
-    if client is not None:
-        response = client.get(url, timeout=timeout)
-        _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
-        return response.text, response.url
-    if opener is not None:
-        html, final_url, status = _opener_get(url, opener=opener, timeout=timeout)
-        _raise_if_blocked(status, html, final_url, url)
-        return html, final_url
-    urllib_request, urllib_error, ssl_mod = _stdlib_urllib()
-    request = urllib_request.Request(url, headers=URLLIB_HEADERS)
-    try:
-        response = urllib_request.urlopen(
-            request, timeout=timeout, context=ssl_mod.create_default_context()
-        )
-        with response:
-            raw = response.read()
-            encoding = response.headers.get("Content-Encoding", "")
-            final_url = response.geturl()
-            status = getattr(response, "status", 200)
-    except urllib_error.HTTPError as exc:
-        if exc.code in {403, 429, 503}:
-            raise GoogleFlightsBlocked(
-                f"Google Flights HTTP {exc.code} from {url}",
-                status=exc.code,
-            ) from exc
-        raise
-    html = _decode_http_body(raw, encoding)
-    _raise_if_blocked(status, html, final_url, url)
-    return html, final_url
+    if client is None:
+        _, paused = cooldown_client(COOLDOWN_UNCHECKED)
+        client = paused or shared_chrome_sweep_client()
+    response = client.get(url, timeout=timeout)
+    _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
+    return response.text, response.url
 
 
 def parse_http_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
@@ -909,7 +785,6 @@ class GoogleFlightsHttpSource:
         html_lang: str = SCRAPE_LANGUAGE,
         currency: str,
         country: Optional[str] = None,
-        opener: Optional[Any] = None,
         client: Optional[SweepHttpClient] = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
         sleep: Optional[Callable[[float], None]] = None,
@@ -919,7 +794,6 @@ class GoogleFlightsHttpSource:
         self._currency = currency
         self._country = country
         self._injected_client = client
-        self._opener = opener
         self._timeout = timeout
         self._sleep = time.sleep if sleep is None else sleep
         self._proxy = _normalize_proxy(proxy)
@@ -1022,7 +896,7 @@ class GoogleFlightsHttpSource:
         return results
 
     def reset(self) -> None:
-        if self._injected_client is None and self._opener is None:
+        if self._injected_client is None:
             reset_shared_chrome_sweep_client()
 
     def _plan_replay(
@@ -1058,8 +932,6 @@ class GoogleFlightsHttpSource:
     def _ensure_client(self) -> SweepHttpClient:
         if self._injected_client is not None:
             return self._injected_client
-        if self._opener is not None:
-            return _OpenerSweepClient(self._opener)
         if self._proxy is None:
             self._cooldown, paused = cooldown_client(self._cooldown)
             if paused is not None:
@@ -1310,6 +1182,7 @@ class GoogleFlightsSource:
         )
         self._session = session or ChromiumSession(state_dir, self._config)
         self._http: Optional[GoogleFlightsHttpSource] = None
+        self._started = False
 
     @property
     def config(self) -> BrowserSessionConfig:
@@ -1351,6 +1224,11 @@ class GoogleFlightsSource:
             self._http = None
 
     def _fetch_html(self, url: str) -> str:
+        if not self._started:
+            state = rate_limit_status()
+            if state is not None:
+                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+            self._started = True
         page = self._session.new_page()
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)

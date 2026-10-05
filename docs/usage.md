@@ -77,6 +77,12 @@ details. Unknown details can remain in results for some filters, so inspect
 the returned fields when a constraint is essential. These filters do not turn
 a date-calendar cell or Explore catalog entry into a detailed flight offer.
 
+An airport exclusion needs owned locations for every connection; unknown
+connections are excluded from that filtered shortlist. Packaged round-trip and
+multi-city offers apply local filters to all returned journeys before selecting
+`--top`. Missing packaged journeys cannot prove named local filters or complete
+itinerary validation.
+
 `--bags N` and `--carry-on` ask Google Flights to price baggage. A baggage
 buffer is your own ranking allowance, not a provider fee. The list of low-cost
 carriers is partial, so absence from the list does not mean bags are included.
@@ -149,6 +155,12 @@ length; it does not compare every departure date in the month. Use `dates` or
 For an open-ended trip, start with a small destination shortlist on fixed
 dates, then compare nearby dates for the most promising routes.
 
+Pricing failures are separate from empty results: JSON includes additive
+`pricing_errors` with the affected query and provider error, and `coverage`
+counts each attempted destination. The CLI prints those failures and returns
+exit 2 when all pricing attempts fail, or exit 3 for mixed outcomes. MCP does
+not cache a report containing pricing failures as a successful search.
+
 ## Hotels
 
 Standalone hotel searches require `--currency`. Prices cover the entire stay.
@@ -213,6 +225,10 @@ Hotel dates are derived from the itinerary unless you specify them. A
 prices, their dates overlap, and their currencies match. It is the sum of
 the flight fare and hotel stay, not a reservation or a quote for every trip
 expense. Trip searches support adult occupancy only.
+
+Each requested dated flight journey contributes its cheapest owned fare.
+Only nearby airport alternatives for the same dated journey share a minimum;
+separate dates and different multi-city legs are not collapsed.
 
 ## Saving results and handling errors
 

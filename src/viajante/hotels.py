@@ -58,6 +58,7 @@ from viajante.orchestration import (
     sweep_inter_query_delay_seconds,
 )
 from viajante.parsers import (
+    has_lodging_evidence_conflict,
     parse_cancellation_evidence,
     parse_lodging_kind,
     parse_price,
@@ -104,6 +105,7 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         return None
     evidence = card.details if card.unit_details is None else card.unit_details
     hints = parse_unit_hints(evidence)
+    conflict = has_lodging_evidence_conflict(evidence, title=card.title)
     return HotelOffer(
         title=card.title,
         address=card.address,
@@ -113,10 +115,13 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         rating_score=parse_rating(card.rating),
         details=card.details,
         cancellation_evidence=parse_cancellation_evidence(evidence),
-        property_type_evidence=parse_property_type_evidence(evidence),
-        lodging_kind=parse_lodging_kind(
-            evidence, title=card.title if card.unit_details is None else None
-        ),
+        property_type_evidence=PropertyTypeEvidence.UNKNOWN
+        if conflict
+        else parse_property_type_evidence(evidence),
+        lodging_kind=LodgingKind.UNKNOWN
+        if conflict
+        else parse_lodging_kind(evidence, title=card.title if card.unit_details is None else None),
+        lodging_evidence_conflict=conflict,
         bedrooms=hints["bedrooms"],
         bathrooms=hints["bathrooms"],
         beds=hints["beds"],

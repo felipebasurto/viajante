@@ -217,9 +217,8 @@ def _call_mcp(
     if status in {400, 404} and session_id:
         _drop_session(rpc, url)
         session_id = _session_id(rpc, url)
-        status, _call_headers, body = rpc(
-            url, call_payload, _headers(session_id=session_id or None)
-        )
+        status, call_headers, body = rpc(url, call_payload, _headers(session_id=session_id or None))
+        _check_status(status, rpc, call_headers)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP search failed ({status}).")
     return _rpc_result(_sse_json(body))
@@ -554,6 +553,8 @@ def _offer_from_row(
 
 
 def _classify(exc: BaseException) -> SearchError:
+    if isinstance(exc, SkiplaggedRateLimited):
+        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
     if isinstance(exc, SkiplaggedError):
         message = str(exc) or "Skiplagged MCP request failed."
         folded = message.casefold()

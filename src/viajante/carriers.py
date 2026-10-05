@@ -99,17 +99,6 @@ def parse_alliances(text: Optional[str]) -> Optional[Tuple[str, ...]]:
     return _unique(names)
 
 
-def airline_names_longest_first() -> tuple[tuple[str, tuple[str, ...]], ...]:
-    names: dict[str, list[str]] = {}
-    for code, aliases in AIRLINE_CODE_ALIASES.items():
-        for alias in aliases:
-            names.setdefault(alias, []).append(code)
-    return tuple(
-        (name, tuple(codes))
-        for name, codes in sorted(names.items(), key=lambda item: len(item[0]), reverse=True)
-    )
-
-
 def shopping_carrier_codes(trip: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
     include = list(getattr(trip, "airlines", None) or ())
     include.extend(

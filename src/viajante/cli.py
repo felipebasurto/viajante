@@ -678,6 +678,8 @@ def _print_hotel_offer_details(
     )
     print(f"    {cancellation}")
     print(f"    {_format_lodging_kind(offer.lodging_kind)}")
+    if offer.lodging_evidence_conflict:
+        print("    Lodging evidence: conflicting room and entire-home labels")
     if offer.priced_adults is None:
         print("    Priced party: unverified; confirm the total for the requested occupancy")
     else:
@@ -1015,6 +1017,8 @@ def _print_explore_report(report: ExploreReport) -> None:
         f"({report.days}-day stay; dests priced on this date){nearby} ==="
     )
     _print_google_flights_url(report.google_flights_url, indent="  ")
+    for failure in report.pricing_errors:
+        print(f"  ERROR pricing {failure.query.destination}: {failure.error.message}")
     if report.error is not None and not report.destinations:
         print(f"  ERROR: {report.error.message}")
         return
@@ -1718,12 +1722,13 @@ def _run_explore(args: argparse.Namespace) -> int:
         **market,
     )
     reports = _as_report_tuple(result)
+    codes = []
     for report in reports:
         _print_explore_report(report)
+        failures = report.coverage.failed
+        codes.append(0 if not failures else 2 if failures == report.coverage.attempted else 3)
     _save(args, reports)
-    return _combine_exit_codes(
-        2 if report.error is not None and not report.destinations else 0 for report in reports
-    )
+    return _combine_exit_codes(codes)
 
 
 def _run_airports(args: argparse.Namespace) -> int:
