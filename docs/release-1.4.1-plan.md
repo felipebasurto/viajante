@@ -1,128 +1,97 @@
-# 1.4.1 backlog
+# 1.4.1 candidate: hotel evidence correction and cleanup
 
-Recorded on 2026-10-05 against released 1.4.0 (`dcab9fc`). These are planned
-changes, not implemented fixes or a publication decision. Version stamps stay
-at 1.4.0 until a release candidate is prepared.
+Implemented on 2026-10-05 from the 1.4.0 baseline (`dcab9fc`). All six
+version stamps are 1.4.1. The changelog remains Unreleased; this is a tested
+candidate, not a published version or a main-merge decision.
 
-## Priority: contradictory hotel unit evidence
+## Hotel evidence correction
 
-A live check of the published MCP found a property whose title explicitly
-described a private room, while its Google unit chip said `Entire cottage`.
-The offer carried `lodging_kind: entire_home` and
-`property_type_evidence: entire_home`, without exposing the contradiction.
-The chip proves what Google returned, not that the conflicting unit is an
-entire home.
+A provider title can explicitly describe a room while the unit chip says
+`Entire cottage`, `Entire house` or another entire-home type. Normalization
+now exposes the additive schema-2 boolean `lodging_evidence_conflict` and
+sets both `lodging_kind` and `property_type_evidence` to `unknown`.
 
-Relevant seams:
+- Original title and raw text remain available for the calling agent.
+- The CLI prints the conflicting room and entire-home labels as evidence.
+- Explicit private/shared/hotel/dormitory and common single/double/twin room
+  labels can contradict an entire-unit chip. A private bathroom alone cannot.
+- Entire-house chips are recognized alongside cottage, villa and home chips.
+- Google general descriptions still cannot prove the priced unit, capacity
+  or cancellation. Missing unit chips do not create invented conflicts.
+- Unknown candidates remain unverified; requesting `entire_home` alone does
+  not prove every returned candidate satisfies it.
 
-- `src/viajante/google_hotels_rpc.py`: provider title and `unit_details`.
-- `src/viajante/hotels.py`: `_normalize_card` isolates Google unit evidence
-  and currently omits the title when calling `parse_lodging_kind`.
-- `src/viajante/parsers.py`: property-type and lodging-kind evidence parsing.
-- `tests/test_hotel_evidence_context.py`: synthetic evidence regressions.
+Synthetic regressions cover contradictory titles, contradictions within unit
+chips, unambiguous units, description isolation, private bathrooms, preserved
+capacity evidence, JSON fields and CLI output. No live provider records or
+personal itinerary were added to the public tree.
 
-Acceptance criteria:
+## Completed cleanup
 
-- [ ] Detect explicit private/shared-room evidence that contradicts an
-  entire-home unit chip; ambiguous evidence must not become verified
-  `entire_home`.
-- [ ] Preserve the original title and raw evidence for the calling agent.
-  Any conflict field must be additive and factual, without recommendation
-  prose. Decide its exact shape during implementation.
-- [ ] Cover synthetic private-room/entire-cottage and private-room/entire-house
-  contradictions, plus unambiguous entire-home units.
-- [ ] Preserve description isolation: general property prose must not prove
-  the priced unit, cancellation, capacity or room privacy.
-- [ ] Keep unknown candidates explicitly unverified; requesting
-  `entire_home` alone never proves every returned candidate satisfies it.
-- [ ] Check both the JSON evidence and how the CLI displays an ambiguous unit.
+1. **MCP forwarding:** all 15 async tool adapters now use `**locals()`; the
+   direct `get_runtime_info` tool is unchanged. Tool signatures, defaults,
+   docstrings and return shapes are preserved, apart from documenting the new
+   evidence field. Search and lookup workers remain separate. Registered-tool
+   tests check the exact handler, worker, argument values and return shape
+   with both explicit arguments and defaults. Any future incidental locals
+   would fail those checks.
+2. **HTTP injection:** removed the redundant urllib/opener path and migrated
+   its two tests to `SweepHttpClient` fakes. The default HTML helper uses the
+   shared Chrome TLS client and respects cooldown before opening a session.
+   The existing compact/HTML, consent, empty/drift, retry and rate-limit tests
+   remain. A residual opener reference found during installed live testing
+   was removed from `reset`; a new regression covers shared versus injected
+   session resets.
+3. **Carrier helper:** removed `airline_names_longest_first`, with no in-repo
+   callers or supported top-level export.
+4. **Parser wrapper:** removed `parse_hotels_body` and migrated callers in
+   both hotel parser and evidence regression tests to `parse_hotels_page`.
+   Tests that expect an exception call the parser directly.
 
-Use synthetic fixtures such as `Example Private Room`; do not commit the live
-property record, prices, personal itinerary or HTTP captures.
+The removed helper imports and `opener` constructor keyword were outside
+supported top-level library exports. This does not assert compatibility with
+undocumented external imports. No dependencies, README, benchmark corpus or
+benchmark baseline were changed. Ignored bytecode residue remains outside
+product scope.
 
-## Separate cleanup work
+## Validation
 
-The supplied audit was checked against current source. All four proposals
-are recorded below; estimated line savings are not acceptance criteria.
+- Locked environment: 1,049 offline tests passed, Ruff lint/format passed,
+  and `viajante bench` returned `gate: ok`. No live requests ran in the suite.
+- Same-SDK comparison against 1.4.0 confirmed identical input/output schemas
+  and annotations for all 16 MCP tools. Hotel result JSON gains only the
+  documented additive evidence field.
+- Wheel and sdist built outside the checkout; strict Twine metadata checks
+  passed. The installed wheel reports 1.4.1 and reproduces the synthetic
+  contradiction as unknown with a conflict flag.
+- Actual installed-wheel stdio MCP passed the 16-tool and argument-name
+  checks, runtime diagnostics, changed-roster grouping and exact-cent split.
+- The packed npm 1.4.1 tarball passed actual stdio checks for all 16 tools and
+  local arithmetic. A private uvx bridge asserted its exact 1.4.1 Python pin
+  and dispatched the installed candidate wheel. This verifies the tarball
+  against the local wheel, not a public npm/PyPI 1.4.1 installation.
+- One bounded live Google Hotels search succeeded. Returned offers were
+  inside the named radius; Google omitted unit/party evidence in this response,
+  which stayed unknown. Replaying two previously captured explicit unit-label
+  contradictions through the installed normalizer marked them unknown/conflicted.
+- Two generated navigation URLs returned the correct nonempty property pages
+  with matching date and traveler controls, through the production Chrome TLS
+  HTML helper. This is HTTP evidence, not browser interaction.
+- A separate live flight request returned a data-less RPC status 13. After
+  the reset fix, MCP returned typed `blocked`/`rate_limited` evidence and a
+  cooldown, without the removed-attribute error. No live flight fare readiness
+  is claimed and no additional Google searches were sent after that block.
 
-### 1. Reduce MCP argument forwarding
+Raw captures, logs and test bridges stay outside this public checkout.
+Final price, room allocation, cancellation terms, browser UI interaction and
+Booking live navigation remain unverified by this change.
 
-There are 15 async tool adapters, plus the direct synchronous
-`get_runtime_info` tool. An AST and handler-signature check confirmed that
-the 15 adapters forward every parameter unchanged and their handlers accept
-those names as keywords.
+## Before publication
 
-- [ ] Consider the proposed `**locals()` reduction, or retain explicit
-  forwarding if it makes the public contract easier to maintain. The current
-  compatibility check does not make future local variables safe to forward.
-- [ ] Preserve each tool's signature, defaults, docstring and return shape;
-  `lookup_airports` does not use the same `dict(...)` wrapper as the others.
-- [ ] Preserve `run_mcp_tool` versus `run_lookup_tool`, the process search
-  lock, lookup concurrency, caching and evidence recording.
-- [ ] Verify forwarded values and the installed 16-tool MCP schema, not just
-  a reduction in source lines. `get_runtime_info` needs no forwarding change.
-
-### 2. Remove the redundant urllib/opener path
-
-All production calls to `fetch_search_html` in this checkout pass `client=`.
-Only two tests construct `GoogleFlightsHttpSource(opener=...)`, currently in
-`tests/test_google_flights.py:616` and `:642`.
-
-- [ ] Move those tests to a fake `SweepHttpClient` while preserving their
-  empty-versus-drift assertions and offline execution.
-- [ ] Remove the redundant opener adapter and stdlib GET/decode helpers only
-  after checking compatibility of the directly importable helper and source
-  constructor. No in-repo callers is not proof of no external callers.
-- [ ] Define the behavior of `fetch_search_html` without an injected client
-  before deleting its current default path.
-- [ ] Preserve HTTP failure classification, consent handling, compressed
-  response decoding through the production client, retry/cooldown behavior
-  and the compact-shopping-to-HTML fallback.
-
-Relevant file: `src/viajante/google_flights.py`. The audit's approximately
-120-line deletion is a proposal, not a measured or implemented change.
-
-### 3. Remove unused carrier helper
-
-`airline_names_longest_first` in `src/viajante/carriers.py` has no callers
-in this checkout.
-
-- [ ] Confirm it is outside the supported library exports and remove it if
-  that compatibility check holds.
-- [ ] Preserve carrier alias matching and shopping-code behavior.
-
-### 4. Remove the hotel parser convenience wrapper
-
-`parse_hotels_body` in `src/viajante/google_hotels_rpc.py` is the one-line
-`parse_hotels_page(text).cards` wrapper. Its in-repo callers are tests in both
-`tests/test_google_hotels.py` and `tests/test_hotel_evidence_context.py`.
-
-- [ ] Check import compatibility, then migrate every test caller before
-  removal.
-- [ ] Preserve card tuples and the existing empty/blocked/rejected/drift
-  exception assertions.
-
-## Excluded from this cleanup
-
-- Ignored `__pycache__` residue is local hygiene, not a tracked product bug.
-- Do not merge helpers merely because their names look similar: rounded and
-  raw distance helpers, and the clock parsers, guard different boundaries.
-- Preserve model/JSON contracts, `tests/bench/` and `bench-baseline.json`.
-- Leave `README.md` unchanged and add no dependencies for these cuts.
-- Do not claim a complete repo audit from this check: only the supplied four
-  findings and the observed hotel contradiction were reviewed here.
-
-## Gates before calling 1.4.1 ready
-
-- [ ] Locked offline suite, Ruff lint/format and `viajante bench` gate pass.
-- [ ] Focused synthetic conflict regressions and preserved HTTP failure tests
-  pass without network access or Chromium.
-- [ ] Installed wheel and npm wrapper retain all 16 tools, expected schemas,
-  return shapes and version diagnostics.
-- [ ] Repeat bounded live navigation, dates/party and radius checks. Record
-  HTTP evidence separately from browser interaction; a successful page fetch
-  does not verify booking terms or room allocation.
-- [ ] Align all six version stamps and write the changelog only when these
-  changes have actually landed in a release candidate.
-- [ ] Obtain a new release decision before main merge, tagging or publication;
+- Review this implementation and the PR's complete Python 3.10–3.14,
+  installed-wheel and lint CI results.
+- Make a new release decision before main merge, tagging or publication;
   the earlier approval covered 1.4.0.
+- When approved, finalize the changelog date, validate main, push the version
+  tag and follow PyPI → npm → MCP Registry publication and public-install
+  verification. Keep provider blocks distinct from package readiness.

@@ -15,7 +15,6 @@ from viajante.google_hotels_rpc import (
     HotelsRejected,
     build_hotels_inner,
     build_hotels_request,
-    parse_hotels_body,
     parse_hotels_page,
 )
 from viajante.hotels import _run_search
@@ -180,7 +179,7 @@ class HotelsEvidenceTests(unittest.TestCase):
 class HotelsParseTests(unittest.TestCase):
     def test_fixture_uses_the_stay_total_not_the_nightly(self) -> None:
         body = _wrap_wrb(_search_payload(_hotel_record()))
-        cards = parse_hotels_body(body)
+        cards = parse_hotels_page(body).cards
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0].title, "Plus Prague Hostel")
         self.assertEqual(cards[0].total_price, "€77")
@@ -190,19 +189,19 @@ class HotelsParseTests(unittest.TestCase):
         self.assertEqual(cards[0].link, "https://www.google.com/travel/hotels/entity/ChgIredacted")
 
     def test_card_carries_owned_coordinates_and_review_count(self) -> None:
-        card = parse_hotels_body(_wrap_wrb(_search_payload(_hotel_record())))[0]
+        card = parse_hotels_page(_wrap_wrb(_search_payload(_hotel_record()))).cards[0]
         self.assertEqual((card.latitude, card.longitude, card.review_count), (50.1, 14.4, 10))
 
     def test_missing_stay_total_is_a_parse_miss(self) -> None:
         record = _hotel_record()
         record[6][2][9] = None
         with self.assertRaises(HotelsParseMiss):
-            parse_hotels_body(_wrap_wrb(_search_payload(record)))
+            parse_hotels_page(_wrap_wrb(_search_payload(record)))
 
     def test_single_element_stay_total_slot_parses(self) -> None:
         record = _hotel_record()
         record[6][2][9] = ["€71"]
-        cards = parse_hotels_body(_wrap_wrb(_search_payload(record)))
+        cards = parse_hotels_page(_wrap_wrb(_search_payload(record))).cards
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0].total_price, "€71")
 
@@ -212,20 +211,20 @@ class HotelsParseTests(unittest.TestCase):
                 record = _hotel_record()
                 record[6][2][9] = slot
                 with self.assertRaises(HotelsParseMiss):
-                    parse_hotels_body(_wrap_wrb(_search_payload(record)))
+                    parse_hotels_page(_wrap_wrb(_search_payload(record)))
 
     def test_search_echo_without_hotels_is_empty(self) -> None:
         with self.assertRaises(EmptyHotelResults):
-            parse_hotels_body(_wrap_wrb([[[[9, []]]], [1, "Prague hotels"]]))
+            parse_hotels_page(_wrap_wrb([[[[9, []]]], [1, "Prague hotels"]]))
 
     def test_null_wrb_payload_is_rejected(self) -> None:
         frame = json.dumps([["wrb.fr", "AtySUc", None, None, None, 1]], separators=(",", ":"))
         with self.assertRaises(HotelsRejected):
-            parse_hotels_body(")]}'\n\n" + frame)
+            parse_hotels_page(")]}'\n\n" + frame)
 
     def test_unknown_shell_is_a_parse_miss(self) -> None:
         with self.assertRaises(HotelsParseMiss):
-            parse_hotels_body(_wrap_wrb(["not", "hotels"]))
+            parse_hotels_page(_wrap_wrb(["not", "hotels"]))
 
     def test_closed_title_is_not_a_property(self) -> None:
         body = _wrap_wrb(
@@ -234,7 +233,7 @@ class HotelsParseTests(unittest.TestCase):
                 _hotel_record(title="Plus Prague Hostel", stay_total="€95"),
             )
         )
-        cards = parse_hotels_body(body)
+        cards = parse_hotels_page(body).cards
         self.assertEqual([card.title for card in cards], ["Plus Prague Hostel"])
 
 

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Hotel schema 2 adds `lodging_evidence_conflict`, exposing explicit room/entire-unit contradictions while retaining the provider title and raw text. The CLI prints the conflicting labels as evidence.
+
+### Fixed
+
+- A room title that conflicts with an entire-home unit chip no longer proves an entire home. Both lodging kind and property type stay unknown; Google property descriptions still cannot prove the priced unit. Entire-house chips are recognized alongside cottage and villa chips.
+
+### Changed
+
+- Reduce all 15 async MCP adapters to parameter forwarding while preserving tool signatures, defaults, return shapes and search/lookup workers. The direct runtime tool is unchanged.
+- Remove unused internal carrier and hotel parser helpers and migrate parser tests to `parse_hotels_page(...).cards`.
+- Remove the redundant internal urllib/opener injection path. HTTP HTML fetches use the shared Chrome TLS client or an injected `SweepHttpClient`; the default path respects provider cooldown. The removed `opener` constructor keyword and parser wrapper were outside the supported library exports.
+
 ## [1.4.0] - 2026-10-05
 
 ### Added

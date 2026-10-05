@@ -132,10 +132,6 @@ HOTELS_POST_HEADERS = {
 }
 
 
-def parse_hotels_body(text: str) -> tuple[RawHotelCard, ...]:
-    return parse_hotels_page(text).cards
-
-
 def parse_hotels_page(text: str) -> HotelPage:
     if _looks_blocked(text):
         raise HotelsBlocked("Google Hotels blocked the sweep")

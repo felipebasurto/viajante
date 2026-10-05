@@ -1587,6 +1587,7 @@ class HotelOffer:
     provider_id: Optional[str] = None
     distance_km: Optional[float] = None
     link_context: Literal["stay", "property", "location", "none"] = "none"
+    lodging_evidence_conflict: bool = False
 
     def __post_init__(self) -> None:
         title = self.title.strip()
@@ -1609,6 +1610,7 @@ class HotelOffer:
             "cancellation_evidence": self.cancellation_evidence.value,
             "property_type_evidence": self.property_type_evidence.value,
             "lodging_kind": self.lodging_kind.value,
+            "lodging_evidence_conflict": self.lodging_evidence_conflict,
             "bedrooms": self.bedrooms,
             "bathrooms": self.bathrooms,
             "beds": self.beds,
