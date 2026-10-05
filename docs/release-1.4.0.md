@@ -34,6 +34,11 @@ README is owned elsewhere and remains unchanged.
 
 - Locked sync, 1043 offline unittests, Ruff lint/format and offline bench passed
   (`gate: ok`). No benchmark baseline changes or score optimization.
+- Strict Twine package-metadata checks passed for the built wheel and sdist.
+- [PR #51 CI](https://github.com/felipebasurto/viajante/actions/runs/37303928609)
+  passed all seven jobs: Python 3.10–3.14, lint, and installed-wheel distribution
+  smoke. The head verified there is `b99b5c3`; later documentation changes must
+  also finish CI before merging.
 - Synthetic regressions cover entity navigation and malformed IDs, provider
   description isolation, capacity/party contradictions, radius boundaries,
   filtering before top, invalid arguments before fetch, CLI/MCP forwarding,
@@ -67,3 +72,58 @@ tax/fee breakdown and lack of currency conversion remain unchanged.
 After approval and publication, refresh/reload the user's MCP and explicitly
 upgrade the separate CLI, then verify the executing 1.4.0 version on both.
 Public PyPI/npm/Registry checks belong to that separately authorized release.
+
+## Publication procedure
+
+The existing `.github/workflows/publish.yml` runs on a pushed `v*` tag. It builds
+wheel/sdist, publishes PyPI, publishes the npm wrapper pinned to that same Python
+version, waits for npm propagation, then registers both transports in MCP Registry.
+The latest 1.3.1 [publish run](https://github.com/felipebasurto/viajante/actions/runs/37006011348)
+completed all four jobs. PyPI uses the GitHub `pypi` environment and OIDC; npm's
+token-free path uses Trusted Publishing with provenance. That success establishes
+the previous configuration worked, not that future registry access is guaranteed.
+
+Preparation verified that v1.4.0 is absent from the remote Git tags and that the
+PyPI and npm 1.4.0 metadata endpoints return 404. Repeat these checks if another
+release or candidate change intervenes. Version stamps and `mcpName` are already
+aligned; the changelog entries remain under Unreleased until the release date.
+
+After explicit human approval:
+
+1. Confirm the approved PR head and all seven checks are green. Finalize the
+   changelog's 1.4.0 release date, then merge PR #51 into main using that exact
+   approved head. Recheck the resulting main commit and its CI.
+2. Create and push the annotated `v1.4.0` tag at that validated main commit.
+   Pushing the tag starts publication; it is not a preparation-only operation.
+3. Watch the publish workflow through build, PyPI, npm and MCP Registry. Verify
+   PyPI has both wheel and sdist, npm reports version 1.4.0 with the correct
+   `mcpName`, and Registry lists 1.4.0 with both transports.
+4. Test the public installations over real stdio with exactly 16 tools,
+   `get_runtime_info` reporting 1.4.0/schema 2, the radius parameter, and local
+   roster/cost-split calls. A successful upload alone does not complete release.
+5. Explicitly upgrade the separate CLI and refresh/reload the user's MCP. Check
+   both executing versions; an already running process does not update itself.
+
+Post-publication entry points:
+
+```bash
+uvx --refresh --from 'viajante==1.4.0' viajante --version
+uvx --refresh --from 'viajante[mcp]==1.4.0' viajante-mcp
+npx -y @viajante/mcp@1.4.0
+```
+
+If PyPI is already published but npm or Registry failed, inspect public metadata
+and the failed job first. The existing recovery dispatch resumes npm/Registry
+from the same tag without repeating the PyPI job:
+
+```bash
+gh workflow run publish.yml -f release_tag=v1.4.0
+```
+
+If PyPI itself failed, recover the failed tag run after checking which exact
+artifacts uploaded. Never retag a different commit or replace a published npm
+version. A content/metadata correction after publication needs a new version.
+
+Reference: [uv publishing](https://docs.astral.sh/uv/guides/package/),
+[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/),
+[PyPI Trusted Publishers](https://docs.pypi.org/trusted-publishers/).
