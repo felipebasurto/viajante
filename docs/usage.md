@@ -88,8 +88,9 @@ airports. Each expanded query carries `nearby_label` `metro NYC`, and
 `--exclude-airports` still removes members. Only a code you name expands: `JFK`
 searches `JFK` alone. Metro codes work on one-way and `--trip rt` routes in
 `flights` and `trip`, not on open-jaw or multi-city routes, and not in
-`dates`, `flex`, `explore` or `self-transfer`. A metro-expanded route is not
-expanded again by `--nearby`.
+`dates`, `flex`, `explore` or `self-transfer`. Combining `--nearby` with a metro code
+is an error, because expanding only the other side would drop part of the
+request. Name metros or airports on both sides instead (`NYC-LON`).
 
 Time, layover, duration, and price-cap filters operate on returned flight
 details. Unknown details can remain in results for some filters, so inspect

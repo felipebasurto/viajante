@@ -78,9 +78,15 @@ class MetroPlanTests(unittest.TestCase):
                 parse_flight_plan(specs, trip=kind, max_stops=1)
             self.assertIn("metro", str(caught.exception))
 
-    def test_nearby_does_not_fan_out_metro_members_again(self) -> None:
+    def test_nearby_with_a_metro_is_an_error_not_a_silent_partial_expand(self) -> None:
+        for spec in (f"NYC-MAD:{DAY}", f"NYC-LHR:{DAY}", f"NYC-LON:{DAY}"):
+            trips = parse_flight_plan([spec], max_stops=1)
+            with self.subTest(spec=spec), self.assertRaises(ValueError) as caught:
+                expand_nearby_trips(trips, nearby=True)
+            self.assertIn("--nearby", str(caught.exception))
+            self.assertIn("metro", str(caught.exception))
         trips = parse_flight_plan([f"NYC-MAD:{DAY}"], max_stops=1)
-        self.assertEqual(expand_nearby_trips(trips, nearby=True), trips)
+        self.assertEqual(expand_nearby_trips(trips, nearby=False), trips)
 
     def test_exclude_drops_members_and_the_legend_follows(self) -> None:
         trips = parse_flight_plan([f"NYC-MAD:{DAY}"], max_stops=1)

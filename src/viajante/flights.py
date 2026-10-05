@@ -349,12 +349,18 @@ def expand_nearby_trips(trips: Sequence[Trip], *, nearby: bool = False) -> Tuple
     """Fan out one-way and mirrored RT queries to owned same-city IATA.
 
     Default off. Packaged open-jaw / multi-city keeps every named airport
-    (LGW stays LGW). A trip that already carries a label (a metro member)
-    is an alternative already and is not fanned out again. Does not invent
-    codes or mix a mirrored RT into an open jaw.
+    (LGW stays LGW). Combining `nearby` with a named metro code is an error:
+    the metro already names its airports, and expanding only the other side
+    would silently drop part of the request. Does not invent codes or mix a
+    mirrored RT into an open jaw.
     """
     if not nearby:
         return tuple(trips)
+    if any(metro_codes_in_label(getattr(trip, "nearby_label", None)) for trip in trips):
+        raise ValueError(
+            "--nearby cannot be combined with a metro code; name airports or "
+            "metros on both sides (for example NYC-LON), not --nearby"
+        )
     expanded: list[Trip] = []
     for trip in trips:
         if isinstance(trip, (FlightQuery, RoundTrip)) and not trip.nearby_label:

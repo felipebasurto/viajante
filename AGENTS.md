@@ -142,8 +142,8 @@ scope and is not proof over unsearched routes, dates, gateways, or permutations.
 `--nearby` is opt-in same-city IATA (default off; open-jaw not rewritten; no
 invented codes). A metro code (`METRO_GROUPS` in `airports.py`) named on a
 one-way or `rt` flights/trip route expands to its members with `nearby_label`
-`metro XXX`; an airport never expands to its metro. Metro-expanded trips are not
-`--nearby` expanded again. Open-jaw and multi-city reject metro codes; dates,
+`metro XXX`; an airport never expands to its metro. `--nearby` with a named metro
+code is an error, never a partial expand. Open-jaw and multi-city reject metro codes; dates,
 flex, explore, hotels, self-transfer vias and hidden-city do not take them. Add
 a metro only when tests can confirm every member from the airport table. `--exclude-airports` / `--include-airports` are named owned
 IATA lists (same parse as via). Include is dests only, not origins. Exclude wins
