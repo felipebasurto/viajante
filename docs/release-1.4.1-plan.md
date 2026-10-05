@@ -1,8 +1,9 @@
 # 1.4.1 candidate: hotel evidence correction and cleanup
 
 Implemented on 2026-10-05 from the 1.4.0 baseline (`dcab9fc`). All six
-version stamps are 1.4.1. The changelog remains Unreleased; this is a tested
-candidate, not a published version or a main-merge decision.
+version stamps are 1.4.1. The original changelog was Unreleased; this was a tested
+candidate at the time of implementation. The combined release was explicitly
+authorized on 2026-10-05; see [the release record](release-1.4.1.md).
 
 ## Hotel evidence correction
 
@@ -90,8 +91,9 @@ Booking live navigation remain unverified by this change.
 
 - Review this implementation and the PR's complete Python 3.10–3.14,
   installed-wheel and lint CI results.
-- Make a new release decision before main merge, tagging or publication;
-  the earlier approval covered 1.4.0.
+- The user explicitly authorized the 1.4.1 release after PRs #50, #52 and #53
+  were reviewed and merged into develop. Changelog entries are now dated
+  2026-10-05. Main CI and publication checks follow in the release record.
 - When approved, finalize the changelog date, validate main, push the version
   tag and follow PyPI → npm → MCP Registry publication and public-install
   verification. Keep provider blocks distinct from package readiness.

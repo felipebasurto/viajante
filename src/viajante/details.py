@@ -165,6 +165,7 @@ def get_flight_details(
         filter_violations=list(fresh_result.offers[index].refresh_filter_violations),
     )
     if payload["currency"] == fresh.currency:
+        detail["currency"] = fresh.currency
         detail["price_change"] = round(new["price"] - offer["price"], 10)
     return detail
 

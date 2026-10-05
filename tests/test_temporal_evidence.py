@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
+from test_audit_regressions import FUTURE, _card, _search, _Source
 from viajante.google_flights_rpc import _segments_from_flight
-from viajante.models import FlightOffer, RawJourneyLeg, RawSegment
+from viajante.models import FlightOffer, RawJourneyLeg, RawSegment, RoundTrip
 from viajante.temporal import local_instant
 from viajante.validate import validate_itinerary
 
@@ -48,6 +49,23 @@ def check(rows, constraint, value):
 
 
 class TemporalEvidenceTests(unittest.TestCase):
+    def test_missing_return_does_not_prove_package_dates_or_timezones(self):
+        raw = RawSegment(
+            "JFK",
+            "LHR",
+            departure_date=FUTURE,
+            arrival_date=FUTURE,
+            departure_timezone="America/New_York",
+            arrival_timezone="Europe/London",
+        )
+        query = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
+        report = _search(
+            query, _Source([_card(legs=(RawJourneyLeg(None, None, segments=(raw,)),))])
+        )
+        completeness = report.queries[0].offers[0].completeness
+        self.assertEqual(completeness.segment_dates, "unknown")
+        self.assertEqual(completeness.segment_timezones, "unknown")
+
     def test_compact_segment_keeps_owned_dates_and_catalogue_zones(self):
         leg = [None] * 23
         leg[3], leg[6], leg[8], leg[10] = "JFK", "LHR", [22, 0], [10, 0]

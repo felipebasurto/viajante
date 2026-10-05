@@ -5,12 +5,20 @@ import random
 import unittest
 from contextlib import redirect_stdout
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from test_audit_regressions import FUTURE, _card, _connecting_return, _direct, _Source
 from viajante.cli import _build_parser, main
-from viajante.flights import _rank_offers, _run_search, get_flights, search_flights
+from viajante.flights import (
+    NO_OFFER_FILTERS,
+    OfferFilters,
+    _rank_offers,
+    _run_search,
+    get_flights,
+    search_flights,
+)
 from viajante.google_flights import RawFlightCard
 from viajante.models import (
     FlightOffer,
@@ -53,6 +61,60 @@ def select(offers, top=8, sort="ranked", trip=QUERY):
 
 
 class ParetoTests(unittest.TestCase):
+    def _packaged_search(self, source, *, filters=NO_OFFER_FILTERS, top=2):
+        trip = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
+        return _run_search(
+            [trip],
+            source=source,
+            top=top,
+            filters=filters,
+            selection="pareto",
+            sleep=lambda _: None,
+            random_gen=random.Random(0),
+            now=lambda: datetime(2099, 1, 1),
+            currency="USD",
+        ).queries[0]
+
+    def test_packaged_frontier_compares_candidates_beyond_top(self):
+        source = _Source(
+            [
+                _card(
+                    price=f"${price}",
+                    duration=f"{hours} hr",
+                    legs=(replace(_direct(), duration=f"{hours} hr"),),
+                )
+                for price, hours in [(100, 8), (200, 6), (300, 1)]
+            ]
+        )
+        seen = []
+
+        def selected(trip, selections):
+            rows = []
+            for slices in selections:
+                price = [100, 200, 300][len(seen)]
+                seen.append(slices)
+                rows.append((_card(price=f"${price}", legs=(_direct("LHR", "JFK"),)),))
+            return rows
+
+        source.fetch_selected = selected
+        result = self._packaged_search(source)
+        self.assertEqual(len(seen), 3)
+        self.assertEqual(result.selection["candidates_compared"], 3)
+        self.assertEqual([offer.price for offer in result.offers], [100, 300])
+
+    def test_packaged_pareto_applies_return_filters_before_selection(self):
+        source = _Source([_card(price="$100", legs=(_direct(),))])
+        source.fetch_selected = lambda trip, selections: [
+            (_card(price="$100", legs=(_connecting_return(trip.return_date),)),) for _ in selections
+        ]
+        accepted = self._packaged_search(
+            source, filters=OfferFilters(via=("BOS",), require_overnight=("BOS",))
+        )
+        self.assertEqual(len(accepted.offers), 1)
+        excluded = self._packaged_search(source, filters=OfferFilters(exclude_via=("BOS",)))
+        self.assertEqual(excluded.offers, ())
+        self.assertEqual(excluded.selection["candidates_compared"], 0)
+
     def test_extremes_reserve_budget_in_order(self):
         cheap, fast, direct = offer(100, 12, 2), offer(180, 3, 1), offer(200, 5, 0)
         dominated = offer(250, 13, 2)

@@ -7,6 +7,7 @@ from typing import Mapping, Optional, Sequence
 
 from viajante.flights import _clock_minutes, _overnight_from_owned_clocks
 from viajante.models import ConstraintCheck, ItineraryValidationReport, normalize_currency
+from viajante.parsers import parse_stops_count
 from viajante.temporal import local_instant, segment_instant
 
 _SUPPORTED_CONSTRAINTS = {
@@ -139,18 +140,46 @@ def _segments(offer: Mapping[str, object]) -> Optional[tuple[Mapping[str, object
     return tuple(segments)
 
 
+def _query_legs(query: Mapping[str, object]) -> Optional[tuple[Mapping[str, object], ...]]:
+    kind = query.get("trip", "one-way")
+    if kind == "multi":
+        value = query.get("legs")
+        if value is None:
+            return None
+        return tuple(
+            _mapping(item, role="query.legs[]") for item in _items(value, role="query.legs")
+        )
+    if kind == "rt":
+        return query, {
+            "origin": query.get("destination"),
+            "destination": query.get("origin"),
+            "departure_date": query.get("return_date"),
+        }
+    return (query,) if kind == "one-way" else None
+
+
+def _complete_journeys(query: Mapping[str, object], offer: Mapping[str, object]) -> bool:
+    expected = _query_legs(query)
+    observed = _journey_legs(offer)
+    return bool(expected and observed and len(expected) == len(observed))
+
+
 def _query_dates(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> Optional[tuple[date, ...]]:
     dates: list[date] = []
     for query, _offer in selected:
-        value = query.get("departure_date")
-        if not isinstance(value, str):
+        journeys = _query_legs(query)
+        if not journeys:
             return None
-        try:
-            dates.append(date.fromisoformat(value))
-        except ValueError:
-            return None
+        for journey in journeys:
+            value = journey.get("departure_date")
+            if not isinstance(value, str):
+                return None
+            try:
+                dates.append(date.fromisoformat(value))
+            except ValueError:
+                return None
     return tuple(dates)
 
 
@@ -282,13 +311,17 @@ def _segment_metrics(
 ) -> tuple[int, Optional[int], Optional[tuple[Mapping[str, object], ...]]]:
     journey_count = 0
     all_segments: list[Mapping[str, object]] = []
-    for _query, offer in selected:
+    complete = True
+    for query, offer in selected:
         journeys = _journey_legs(offer)
         journey_count += len(journeys or ())
         segments = _segments(offer)
-        if segments is None:
-            return journey_count, None, None
-        all_segments.extend(segments)
+        if segments is None or not _complete_journeys(query, offer):
+            complete = False
+        else:
+            all_segments.extend(segments)
+    if not complete:
+        return journey_count, None, None
     return journey_count, len(all_segments), tuple(all_segments)
 
 
@@ -404,30 +437,31 @@ def _layover_check(
     maximum: bool,
 ) -> ConstraintCheck:
     values: list[float] = []
-    connecting = False
-    for _query, offer in selected:
-        stops = offer.get("stops_count")
-        if isinstance(stops, int) and stops > 0:
-            connecting = True
+    for query, offer in selected:
+        if not _complete_journeys(query, offer):
+            return _status(constraint, "unknown", "journey evidence is incomplete")
         journeys = _journey_legs(offer)
-        if not journeys:
-            if connecting:
-                return _status(constraint, "unknown", "layover evidence is missing")
-            continue
         for journey in journeys:
+            text = journey.get("stops")
+            stops = parse_stops_count(text) if isinstance(text, str) else None
+            if stops is None and len(journeys) == 1:
+                stops = offer.get("stops_count")
+            if isinstance(stops, bool) or not isinstance(stops, int):
+                return _status(constraint, "unknown", "a journey stop count is missing")
             layovers = journey.get("layovers")
             if layovers is None:
-                if connecting:
+                if stops > 0:
                     return _status(constraint, "unknown", "layover evidence is missing")
                 continue
-            for raw in _items(layovers, role="offer.legs[].layovers"):
+            rows = _items(layovers, role="offer.legs[].layovers")
+            if len(rows) < stops:
+                return _status(constraint, "unknown", "layover evidence is incomplete")
+            for raw in rows:
                 row = _mapping(raw, role="offer.legs[].layovers[]")
                 hours = row.get("hours")
                 if isinstance(hours, bool) or not isinstance(hours, (int, float)):
                     return _status(constraint, "unknown", "layover hours are missing")
                 values.append(float(hours))
-    if connecting and not values:
-        return _status(constraint, "unknown", "layover hours are missing")
     for value in values:
         if (maximum and value > bound) or (not maximum and value < bound):
             return _status(constraint, "fail", f"layover {value:g}h violates the bound")
@@ -584,6 +618,16 @@ def validate_itinerary(
         selected, currency
     )
     checks.append(currency_check)
+    journeys_complete = all(_complete_journeys(query, offer) for query, offer in selected)
+    checks.append(
+        _status(
+            "journey_completeness",
+            "pass" if journeys_complete else "unknown",
+            "all queried journeys are present"
+            if journeys_complete
+            else "queried journeys are missing",
+        )
+    )
     journey_count, segment_count, segments = _segment_metrics(selected)
     dates = _query_dates(selected)
     required_count = None
@@ -599,7 +643,7 @@ def validate_itinerary(
                 f"selected {len(rows)} of {required_count} required rows",
             )
         )
-    complete = required_count is None or len(rows) == required_count
+    complete = journeys_complete and (required_count is None or len(rows) == required_count)
 
     if "travel_start" in scenario or "travel_end" in scenario:
         if "travel_start" not in scenario or "travel_end" not in scenario:

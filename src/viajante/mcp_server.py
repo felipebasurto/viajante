@@ -136,10 +136,23 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     if not _SEARCH_BUSY.acquire(blocking=False):
         raise ValueError(_SEARCH_BUSY_MESSAGE)
     loop = asyncio.get_running_loop()
+
+    def run() -> _T:
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _SEARCH_BUSY.release()
+
     try:
-        return await loop.run_in_executor(_SEARCH_EXECUTOR, partial(fn, *args, **kwargs))
-    finally:
+        future = loop.run_in_executor(_SEARCH_EXECUTOR, run)
+    except BaseException:
         _SEARCH_BUSY.release()
+        raise
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        raise
 
 
 async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:

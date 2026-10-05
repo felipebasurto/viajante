@@ -5,10 +5,12 @@ import tempfile
 import unittest
 from copy import deepcopy
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from test_audit_regressions import FUTURE, _connecting_return, _direct, _Source
+from test_audit_regressions import _card as _flight_card
 from test_skiplagged_hotels import _card, _details_result, _routing_rpc, _search_result
 from viajante import evidence, mcp_handlers
 from viajante.details import get_flight_details, get_hotel_details
@@ -20,6 +22,7 @@ from viajante.models import (
     QuerySuccess,
     RawJourneyLeg,
     RawSegment,
+    RoundTrip,
     SearchReport,
 )
 from viajante.ratelimit import note_rate_limited
@@ -111,6 +114,37 @@ def hotel(location="Prague", *, backend="google", currency="EUR", title="Czech I
 
 
 class FlightDetailsTests(unittest.TestCase):
+    def test_packaged_refresh_checks_filters_after_attaching_return(self):
+        query = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
+        source = _Source([_flight_card(price="$100", legs=(_direct(),))])
+        source.fetch_selected = lambda trip, selections: [
+            (_flight_card(price="$100", legs=(_connecting_return(trip.return_date),)),)
+            for _ in selections
+        ]
+        for selected, filters, expected in (
+            (
+                query,
+                {"via": ("BOS",), "require_overnight": ("BOS",), "max_duration_hours": 3},
+                {"max_duration_hours"},
+            ),
+            (
+                query,
+                {"exclude_via": ("BOS",), "max_duration_hours": 3},
+                {"exclude_via", "max_duration_hours"},
+            ),
+            (replace(query, max_stops=0), {"max_duration_hours": 20}, {"max_stops"}),
+        ):
+            with (
+                self.subTest(filters=filters),
+                patch("viajante.flights.GoogleFlightsHttpSource", return_value=source),
+                patch("viajante.flights.playwright_available", return_value=False),
+            ):
+                fresh = search_flights(
+                    [selected], fetch="sweep", _details_candidates=True, **filters
+                )
+            self.assertEqual(len(fresh.queries[0].offers), 1)
+            self.assertEqual(set(fresh.queries[0].offers[0].refresh_filter_violations), expected)
+
     def test_snapshot_is_offline_with_age_and_unknowns(self):
         with patch("viajante.details.search_flights") as search:
             result = get_flight_details(report(), 0, 0, now=datetime(2099, 1, 1, 0, 5))
@@ -402,6 +436,8 @@ class SelectionReferenceTests(unittest.TestCase):
         refresh.assert_called_once()
         self.assertEqual(result["price_change"], 20)
         self.assertTrue(evidence.verify_answer("Price change: USD 20.")["ok"])
+        evidence.record({"currency": "EUR", "price": 999})
+        self.assertFalse(evidence.verify_answer("Price change: EUR 20.")["ok"])
         mcp_handlers._SEARCH_LOCK.acquire()
         try:
             with self.assertRaisesRegex(ValueError, "already running"):

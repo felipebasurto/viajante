@@ -918,6 +918,30 @@ def _connection_tokens(raw: RawFlightCard) -> Tuple[str, ...]:
     return tuple(tokens)
 
 
+def _connections_complete(raw: RawFlightCard) -> bool:
+    """Owned locations for every connection, or an explicitly nonstop journey."""
+    if not raw.legs:
+        stops = parse_stops_count(raw.stops)
+        return stops == 0 or (stops == 1 and bool(raw.layover_city))
+    for leg in raw.legs:
+        stops = parse_stops_count(leg.stops)
+        if stops is None and len(raw.legs) == 1:
+            stops = parse_stops_count(raw.stops)
+        if stops is None:
+            return False
+        if stops == 0:
+            continue
+        if sum(bool(layover.city) for layover in leg.layovers) >= stops:
+            continue
+        if len(raw.legs) == 1 and stops == 1 and raw.layover_city:
+            continue
+        if len(leg.segments) != stops + 1 or not all(
+            segment.origin and segment.destination for segment in leg.segments
+        ):
+            return False
+    return True
+
+
 def _passes_via_filters(
     raw: RawFlightCard,
     *,
@@ -926,6 +950,8 @@ def _passes_via_filters(
 ) -> bool:
     if not via and not exclude_via:
         return True
+    if exclude_via and not _connections_complete(raw):
+        return False
     tokens = _connection_tokens(raw)
     if exclude_via and tokens:
         for code in exclude_via:
@@ -1040,6 +1066,8 @@ def _passes_overnight_filters(
     if require_overnight and not _satisfies_require_overnight(events, require_overnight):
         return False
     if no_overnight:
+        if not _connections_complete(raw):
+            return False
         if not events:
             stops = parse_stops_count(raw.stops)
             if stops is None or stops > 0:
@@ -1363,6 +1391,17 @@ def compare_nonstop_vs_one_stop(offers: Sequence[FlightOffer]) -> Optional[Stops
     )
 
 
+def _offer_sort_key(offer: FlightOffer, sort: FlightSort) -> tuple[float, float]:
+    if sort == "duration":
+        return (_duration_key(offer), offer.price)
+    if sort in ("departure", "arrival"):
+        minutes = _clock_minutes(getattr(offer, sort))
+        primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
+        return (primary, offer.price)
+    primary = offer.price if sort in ("fare", "price") else _effective_cost(offer)
+    return (primary, _duration_key(offer))
+
+
 def _rank_offers(
     offers: Sequence[FlightOffer],
     *,
@@ -1371,18 +1410,7 @@ def _rank_offers(
     preserve: bool = False,
 ) -> Tuple[FlightOffer, ...]:
     rows = offers if preserve or sort != "ranked" else _hide_slow_connections(offers)
-
-    def sort_key(offer: FlightOffer) -> tuple[float, float]:
-        if sort == "duration":
-            return (_duration_key(offer), offer.price)
-        if sort in ("departure", "arrival"):
-            minutes = _clock_minutes(getattr(offer, sort))
-            primary = float(minutes) if minutes is not None else UNKNOWN_DURATION_SORTS_LAST
-            return (primary, offer.price)
-        primary = offer.price if sort in ("fare", "price") else _effective_cost(offer)
-        return (primary, _duration_key(offer))
-
-    rows = sorted(rows, key=sort_key)
+    rows = sorted(rows, key=lambda offer: _offer_sort_key(offer, sort))
     seen: set[tuple] = set()
     deduped: list[FlightOffer] = []
     for offer in rows:
@@ -1540,6 +1568,7 @@ def _stamp_offer_evidence(
                     offer_url=offer_url,
                     url_kind=url_kind,
                 ),
+                completeness=None,
             )
         )
     return replace(result, offers=tuple(offers))
@@ -1657,6 +1686,55 @@ def _attach_missing_legs(
     return tuple(updated)
 
 
+def _passes_packaged_filters(
+    offer: FlightOffer, trip: Trip, filters: OfferFilters, *, check_stops: bool = True
+) -> bool:
+    if filters.named and len(offer.legs) != len(trip.legs):
+        return False
+    raw = RawFlightCard(
+        airline=offer.airline,
+        departure=offer.departure,
+        arrival=offer.arrival,
+        duration=offer.duration,
+        stops=offer.stops,
+        price=offer.price_text,
+        layover_city=offer.layover_city,
+        layover_hours=offer.layover_hours,
+        legs=offer.legs,
+    )
+    if not _passes_via_filters(raw, via=filters.via, exclude_via=filters.exclude_via):
+        return False
+    if not _passes_overnight_filters(
+        raw, no_overnight=filters.no_overnight, require_overnight=filters.require_overnight
+    ):
+        return False
+    per_journey = replace(filters, via=None, exclude_via=None, require_overnight=None)
+    for leg, query in zip(offer.legs, trip.legs, strict=False):
+        card = replace(
+            raw,
+            departure=leg.departure,
+            arrival=leg.arrival,
+            duration=leg.duration,
+            stops=leg.stops,
+            layover_city=None,
+            layover_hours=None,
+            legs=(leg,),
+        )
+        if (
+            _normalize_offer(card, query.max_stops if check_stops else 2, **vars(per_journey))
+            is None
+        ):
+            return False
+        for layover in leg.layovers:
+            if layover.hours is None:
+                continue
+            if filters.max_layover_hours is not None and layover.hours > filters.max_layover_hours:
+                return False
+            if filters.min_layover_hours is not None and layover.hours < filters.min_layover_hours:
+                return False
+    return True
+
+
 def _stamp_typical(
     trip: Trip,
     offers: Tuple[FlightOffer, ...],
@@ -1705,7 +1783,13 @@ def _run_search(
     typical_cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]] = {}
 
     def _success_from_cards(trip: Trip, cards: Sequence[RawFlightCard]) -> QuerySuccess:
-        eligible = offers_from_cards(cards, trip, filters, baggage_buffer=baggage_buffer)
+        packaged = len(trip.legs) > 1
+        initial_filters = (
+            replace(filters, via=None, exclude_via=None, no_overnight=None, require_overnight=None)
+            if packaged
+            else filters
+        )
+        eligible = offers_from_cards(cards, trip, initial_filters, baggage_buffer=baggage_buffer)
         metadata = None
         if _details_candidates:
             candidates = []
@@ -1714,7 +1798,7 @@ def _run_search(
                 if offer is None:
                     continue
                 named = {
-                    **vars(filters),
+                    **({} if packaged else vars(filters)),
                     "airlines": trip.airlines,
                     "exclude_airlines": trip.exclude_airlines,
                     "bags": trip.bags,
@@ -1726,7 +1810,7 @@ def _run_search(
                     for name, value in named.items()
                     if value is not None and _normalize_offer(raw, 2, **{name: value}) is None
                 ]
-                if not _eligible_stops(raw.stops, _trip_max_stops(trip)):
+                if not packaged and not _eligible_stops(raw.stops, _trip_max_stops(trip)):
                     violations.append("max_stops")
                 buffer, verify = _bag_evidence(
                     raw,
@@ -1743,24 +1827,51 @@ def _run_search(
                     )
                 )
             eligible = list(_attach_missing_legs(trip, tuple(candidates), source))
+            if packaged:
+                for index, offer in enumerate(eligible):
+                    violations = list(offer.refresh_filter_violations)
+                    for name, value in vars(filters).items():
+                        if value is not None and not _passes_packaged_filters(
+                            offer, trip, OfferFilters(**{name: value}), check_stops=False
+                        ):
+                            violations.append(name)
+                    if any(
+                        not _eligible_stops(leg.stops, query.max_stops)
+                        for leg, query in zip(offer.legs, trip.legs, strict=False)
+                    ):
+                        violations.append("max_stops")
+                    eligible[index] = replace(offer, refresh_filter_violations=tuple(violations))
             ranked = tuple(eligible)
-        elif selection == "pareto":
-            from viajante.selection import pareto_select
-
-            eligible = list(_attach_missing_legs(trip, tuple(eligible), source))
-            ranked, metadata = pareto_select(
-                eligible,
-                trip,
-                top=top,
-                order=lambda rows: _rank_offers(
-                    rows, top=max(1, len(rows)), sort=sort, preserve=True
-                ),
-            )
         else:
-            ranked = _rank_offers(eligible, top=top, sort=sort)
+            if packaged:
+                candidates = sorted(eligible, key=lambda offer: _offer_sort_key(offer, sort))
+                eligible = []
+                for start in range(0, len(candidates), top):
+                    completed = _attach_missing_legs(trip, candidates[start : start + top], source)
+                    eligible.extend(
+                        offer
+                        for offer in completed
+                        if _passes_packaged_filters(offer, trip, filters)
+                    )
+                    if (
+                        selection == "top"
+                        and len(_rank_offers(eligible, top=top, sort=sort)) >= top
+                    ):
+                        break
+            if selection == "pareto":
+                from viajante.selection import pareto_select
+
+                ranked, metadata = pareto_select(
+                    eligible,
+                    trip,
+                    top=top,
+                    order=lambda rows: _rank_offers(
+                        rows, top=max(1, len(rows)), sort=sort, preserve=True
+                    ),
+                )
+            else:
+                ranked = _rank_offers(eligible, top=top, sort=sort)
         shown = _stamp_typical(trip, ranked, source, typical_cache)
-        if selection != "pareto" and not _details_candidates:
-            shown = _attach_missing_legs(trip, shown, source)
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-05
+
 ### Added
 
 - Compact flight segments add owned `arrival_date` and catalogue IANA `departure_timezone` / `arrival_timezone`; completeness explicitly reports segment dates and zones. Local itinerary validation supports destination-local `arrival_deadline`, UTC `chronological` ordering and intervening `min_stay_days` / `max_stay_days`. Missing or ambiguous civil times remain unknown.
@@ -21,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exact-name Skiplagged room lookup preserves requested rooms during name resolution and refuses an owned city echo that contradicts the requested city.
 
 - A room title that conflicts with an entire-home unit chip no longer proves an entire home. Both lodging kind and property type stay unknown; Google property descriptions still cannot prove the priced unit. Entire-house chips are recognized alongside cottage and villa chips.
+- Itinerary validation includes return and multi-city dates and leaves missing packaged journeys, segment counts, and layover evidence unknown.
+- Packaged flight filters are checked after attaching the next journey and before final top selection. Unknown connection locations cannot prove airport exclusions.
+- Trip totals preserve separate dated journeys and full multi-city leg identities. Answer verification binds each amount to its owned currency and cached searches refresh the evidence ledger.
+- New detail searches respect Google's machine-wide cooldown. Skiplagged 429s preserve rate-limit flags and record cooldowns after session recovery.
+- Explore reports expose per-query pricing failures separately from empty results, retain accurate coverage, avoid caching failed pricing, and print failures with the appropriate CLI exit status.
+- MCP cancellation keeps the process busy until its worker finishes. Atomic writes use unique temporary files, and nested hotel stays reject non-integer occupancy instead of coercing it.
+- The locked PyJWT dependency is updated to 2.15.1 to address the dependency audit findings.
 
 ### Changed
 

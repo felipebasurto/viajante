@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Mapping
 
@@ -35,6 +36,17 @@ def write_json_atomic(payload: Mapping[str, object], destination: Path) -> None:
 
 def write_text_atomic(text: str, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp = destination.with_suffix(destination.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, destination)
+    stream = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=destination.parent,
+        prefix=destination.name + ".",
+        delete=False,
+    )
+    tmp = Path(stream.name)
+    try:
+        with stream:
+            stream.write(text)
+        os.replace(tmp, destination)
+    finally:
+        tmp.unlink(missing_ok=True)

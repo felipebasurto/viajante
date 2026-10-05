@@ -38,6 +38,8 @@ from viajante.models import (
     FlightCabin,
     FlightOffer,
     FlightQuery,
+    QueryFailure,
+    SearchCoverage,
     SearchError,
     StopsCompare,
     Trip,
@@ -275,6 +277,8 @@ def search_explore(
             except Exception:
                 batch = None
         priced: list[ExploreDestination] = []
+        pricing_errors: list[QueryFailure] = []
+        succeeded = empty = 0
         typical_cache: dict = {}
         for index, (place, shop) in enumerate(zip(chosen, shops, strict=True)):
             if batch is None:
@@ -285,6 +289,12 @@ def search_explore(
             cheapest, compare = _cheapest_shop(
                 cards, shop, filters, baggage_buffer=baggage_buffer, sort=sort
             )
+            if isinstance(cards, BaseException):
+                pricing_errors.append(QueryFailure(query=shop, error=classify_failure(cards)))
+            elif cheapest is None:
+                empty += 1
+            else:
+                succeeded += 1
             if drop_unpriced and cheapest is None:
                 continue
             dest = ExploreDestination(
@@ -317,6 +327,23 @@ def search_explore(
             fetch_backend="explore",
             fetch_ms=max(0, int((time.perf_counter() - started) * 1000)),
             error=error,
+            pricing_errors=tuple(pricing_errors),
+            coverage=SearchCoverage(
+                scope={
+                    "kind": "explore_shortlist",
+                    "origin": code,
+                    "from": start.isoformat(),
+                    "days": days,
+                },
+                attempted=len(chosen) + int(error is not None),
+                succeeded=succeeded,
+                empty=empty,
+                failed=len(pricing_errors) + int(error is not None),
+                complete=False,
+                strategy="heuristic",
+                stopping_reason="shortlist_limit",
+                unsearched="destinations outside the provider shortlist and local top limit",
+            ),
             nearby_label=nearby_label,
             currency=currency,
         )
