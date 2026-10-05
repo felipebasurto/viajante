@@ -1874,6 +1874,150 @@ class TripSearchReport:
         return payload
 
 
+SelfTransferStatus = Literal["ok", "unknown", "too_short", "too_long"]
+
+SELF_TRANSFER_WARNINGS: tuple[str, ...] = (
+    "Two separate tickets: a delay or cancellation on the first does not protect the second.",
+    "Checked bags are not through-checked; collect and re-check them at the via airport.",
+    "connection_minutes is measured from provider clocks, not an endorsed minimum.",
+    "Temporal order does not prove baggage recheck, immigration or transit feasibility.",
+)
+
+
+@dataclass(frozen=True)
+class SelfTransferPairing:
+    """Two owned one-way offers on separate tickets and the measured gap between them."""
+
+    first: FlightOffer
+    second: FlightOffer
+    connection_minutes: Optional[int]
+    same_airport: Optional[bool]
+    status: SelfTransferStatus
+    total_price: Optional[float] = None
+    currency: Optional[str] = None
+    protected: Literal[False] = field(init=False, default=False)
+    ticketing: Literal["separate_tickets"] = field(init=False, default="separate_tickets")
+
+    def __post_init__(self) -> None:
+        if self.connection_minutes is None and self.status != "unknown":
+            raise ValueError("an unmeasured connection must have status unknown")
+        if self.connection_minutes is not None and self.status == "unknown":
+            raise ValueError("a measured connection cannot have status unknown")
+        if (self.total_price is None) != (self.currency is None):
+            raise ValueError("total_price and currency must both be set or both omitted")
+        if self.currency is not None:
+            object.__setattr__(self, "currency", normalize_currency(self.currency))
+        if (
+            self.total_price is not None
+            and abs(self.total_price - (self.first.price + self.second.price)) > 1e-9
+        ):
+            raise ValueError("total_price must equal the two owned fares")
+
+    @property
+    def needs_bag_verify(self) -> bool:
+        return self.first.needs_bag_verify or self.second.needs_bag_verify
+
+    def to_dict(self, currency: str) -> Mapping[str, object]:
+        return {
+            "ticketing": self.ticketing,
+            "protected": self.protected,
+            "status": self.status,
+            "connection_minutes": self.connection_minutes,
+            "same_airport": self.same_airport,
+            "total_price": self.total_price,
+            "currency": self.currency,
+            "needs_bag_verify": self.needs_bag_verify,
+            "first": dict(self.first.to_dict(currency)),
+            "second": dict(self.second.to_dict(currency)),
+        }
+
+
+def _leg_coverage(result: QueryResult, role: str) -> SearchCoverage:
+    counts = _query_coverage((result,))
+    query = result.query
+    return SearchCoverage(
+        scope={
+            "kind": "self_transfer_leg",
+            "leg": role,
+            "origin": query.origin,
+            "destination": query.destination,
+            "departure_date": query.departure_date.isoformat(),
+        },
+        attempted=counts.attempted,
+        succeeded=counts.succeeded,
+        empty=counts.empty,
+        failed=counts.failed,
+        complete=True,
+        unsearched="other via airports, other dates, and offers outside this leg's shortlist",
+    )
+
+
+@dataclass(frozen=True)
+class SelfTransferReport:
+    """Two one-way legs through a named via, joined into unprotected pairings."""
+
+    searched_at: datetime
+    origin: str
+    via: str
+    destination: str
+    flights: SearchReport
+    pairings: Tuple[SelfTransferPairing, ...]
+    eligible_pairings: int
+    currency: str = field(kw_only=True)
+    min_connection_hours: Optional[float] = None
+    max_connection_hours: Optional[float] = None
+    locale: str = FETCH_LANGUAGE
+    warnings: Tuple[str, ...] = SELF_TRANSFER_WARNINGS
+    schema_version: int = field(init=False, default=2)
+
+    def __post_init__(self) -> None:
+        origin = _normalize_iata(self.origin, role="origin")
+        via = _normalize_iata(self.via, role="via")
+        destination = _normalize_iata(self.destination, role="destination")
+        if via in (origin, destination):
+            raise ValueError("via must differ from origin and destination")
+        if len(self.flights.queries) != 2:
+            raise ValueError("a self-transfer report holds exactly two one-way legs")
+        if self.eligible_pairings < len(self.pairings):
+            raise ValueError("eligible_pairings must be >= number of pairings")
+        if self.pairings and not all(isinstance(r, QuerySuccess) for r in self.flights.queries):
+            raise ValueError("pairings need both legs to succeed")
+        object.__setattr__(self, "origin", origin)
+        object.__setattr__(self, "via", via)
+        object.__setattr__(self, "destination", destination)
+        object.__setattr__(self, "currency", normalize_currency(self.currency))
+        _store_naive_utc(self)
+
+    @property
+    def first_leg(self) -> QueryResult:
+        return self.flights.queries[0]
+
+    @property
+    def second_leg(self) -> QueryResult:
+        return self.flights.queries[1]
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "searched_at": _iso_z(self.searched_at),
+            "currency": self.currency,
+            "locale": self.locale,
+            "origin": self.origin,
+            "via": self.via,
+            "destination": self.destination,
+            "ticketing": "separate_tickets",
+            "protected": False,
+            "min_connection_hours": self.min_connection_hours,
+            "max_connection_hours": self.max_connection_hours,
+            "first_leg": {"coverage": _leg_coverage(self.first_leg, "first").to_dict()},
+            "second_leg": {"coverage": _leg_coverage(self.second_leg, "second").to_dict()},
+            "eligible_pairings": self.eligible_pairings,
+            "pairings": [pairing.to_dict(self.currency) for pairing in self.pairings],
+            "warnings": list(self.warnings),
+            "flights": dict(self.flights.to_dict()),
+        }
+
+
 EvidenceLevel = Literal["confirmed", "user_supplied", "cached", "estimated"]
 _EVIDENCE: tuple[EvidenceLevel, ...] = ("confirmed", "user_supplied", "cached", "estimated")
 HIDDEN_CITY_SOURCE = "skiplagged"

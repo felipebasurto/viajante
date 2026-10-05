@@ -231,6 +231,41 @@ Each requested dated flight journey contributes its cheapest owned fare.
 Only nearby airport alternatives for the same dated journey share a minimum;
 separate dates and different multi-city legs are not collapsed.
 
+## Self-transfer through a named via
+
+Use `self-transfer` to pair two separate one-way tickets through an airport you
+name:
+
+```bash
+viajante self-transfer MAD-LHR-JFK:2026-11-10 --min-connection 3 --currency EUR
+```
+
+The command shops `MAD-LHR` and `LHR-JFK` in one sweep and pairs each returned
+first-leg offer with each returned second-leg offer. Add `--second-date` when
+the second ticket departs on a later day. Each pairing reports:
+
+- `connection_minutes`: the gap between the first ticket's last arrival and the
+  second ticket's first departure, in UTC. It is `null` when either clock, date
+  or timezone is missing or ambiguous.
+- `status`: `ok`, `too_short`, `too_long` or `unknown`. The bounds are the ones
+  you name with `--min-connection` and `--max-connection`; without them there
+  is no bound. A departure at or before the arrival is always `too_short`. An
+  unmeasured gap is always `unknown`, never `ok`.
+- `same_airport`: whether the first ticket lands at the airport the second
+  departs from, or `null` when segments do not show it.
+- `total_price`: the sum of both fares, only when both carry the same quote
+  currency.
+
+Every pairing has `protected: false`. The two tickets are separate: a delay on
+the first does not protect the second, and checked bags must be collected and
+re-checked. The measured margin is evidence, not an endorsed minimum
+connection, and it does not show that baggage recheck, immigration or transit
+rules allow the connection. Pairings with an out-of-bounds status sort after
+the rest, then by total price and margin. `--top` caps both the per-leg
+shortlist and the pairings shown; `eligible_pairings` is the count before the
+cap. If either leg fails, the report keeps that leg's error and has no
+pairings. Coverage covers only the named via, dates and returned offers.
+
 ## Saving results and handling errors
 
 Search commands print tables. Add `--save FILE` to write JSON as well:
@@ -297,7 +332,8 @@ for result in hotels.queries:
 
 `get_flights` takes a route spec or trip objects, not prose. Turning a request
 into a route is the calling agent's job. For other search types, use
-`search_dates`, `search_flex`, `search_explore`, or `search_trip`.
+`search_dates`, `search_flex`, `search_explore`, `search_trip`, or
+`search_self_transfer`.
 
 See the exported types in [`viajante.__init__`](../src/viajante/__init__.py)
 for the Python interface.
@@ -322,6 +358,12 @@ For flights and a hotel stay in one request:
 
 ```text
 search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="rt")
+```
+
+For two separate tickets through a named via:
+
+```text
+search_self_transfer(origin="MAD", via="LHR", destination="JFK", departure="2026-11-10", min_connection_hours=3)
 ```
 
 These are tool-call examples, not Python library calls. The MCP server uses

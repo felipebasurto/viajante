@@ -76,6 +76,7 @@ from viajante.models import (
     QuerySuccess,
     RawJourneyLeg,
     RoundTrip,
+    SelfTransferReport,
     StopsCompare,
     StopsCompareSide,
     Trip,
@@ -95,6 +96,7 @@ from viajante.quote import (
     resolve_quote_currency,
 )
 from viajante.runtime import package_version
+from viajante.self_transfer import search_self_transfer, validate_connection_bounds
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.storage import reports_payload, write_json_atomic
@@ -186,6 +188,13 @@ Examples:
   viajante trip LAX-NRT:2026-10-12:2026-10-20 --hotel Tokyo --trip rt --source google
   viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --bags 1 --via DXB
   viajante trip BOS-LHR:2026-09-18:2026-09-22 --hotel London --trip rt --nearby
+"""
+
+SELF_TRANSFER_EXAMPLES = """\
+Examples:
+  viajante self-transfer MAD-LHR-JFK:2026-11-10 --min-connection 3
+  viajante self-transfer SIN-BKK-HAN:2026-11-03 --second-date 2026-11-04 --max-connection 30
+  viajante self-transfer BOS-DUB-LIS:2026-11-20 --bags 1 --save results/self-transfer.json
 """
 
 HIDDEN_CITY_EXAMPLES = """\
@@ -1812,6 +1821,109 @@ def _hidden_city_route(
     return origin, destination, departure, back
 
 
+def _format_connection(minutes: Optional[int]) -> str:
+    if minutes is None:
+        return "?"
+    sign = "-" if minutes < 0 else ""
+    hours, rest = divmod(abs(minutes), 60)
+    return f"{sign}{hours}h{rest:02d}"
+
+
+def _format_leg_offer(offer: FlightOffer) -> str:
+    return f"{offer.departure or '?'}-{offer.arrival or '?'} {offer.airline or '?'}"
+
+
+def _print_self_transfer_report(report: SelfTransferReport) -> None:
+    first, second = report.first_leg.query, report.second_leg.query
+    dates = first.departure_date.isoformat()
+    if second.departure_date != first.departure_date:
+        dates = f"{dates} / {second.departure_date.isoformat()}"
+    print(
+        f"\n=== {report.origin} -> {report.via} -> {report.destination}  {dates} "
+        "(self-transfer, separate tickets) ==="
+    )
+    for line in report.warnings:
+        print(f"note: {line}", file=sys.stderr)
+    for result in report.flights.queries:
+        if isinstance(result, QueryFailure):
+            print(
+                f"error: {result.query.origin}-{result.query.destination}: "
+                f"{result.error.code.value}: {result.error.message}",
+                file=sys.stderr,
+            )
+    if not report.pairings:
+        print("No pairings.")
+        return
+    print(f"{'total':>12}  {'status':<9}  {'conn':>6}  {'same':<4}  first  |  second")
+    for pairing in report.pairings:
+        total = (
+            format_money(pairing.total_price, pairing.currency, width=10)
+            if pairing.total_price is not None and pairing.currency
+            else f"{'?':>12}"
+        )
+        same = {True: "yes", False: "no", None: "?"}[pairing.same_airport]
+        bag = "  bags: verify" if pairing.needs_bag_verify else ""
+        print(
+            f"{total}  {pairing.status:<9}  {_format_connection(pairing.connection_minutes):>6}  "
+            f"{same:<4}  {_format_leg_offer(pairing.first)}  |  "
+            f"{_format_leg_offer(pairing.second)}{bag}"
+        )
+    if report.eligible_pairings > len(report.pairings):
+        print(f"({len(report.pairings)} of {report.eligible_pairings} pairings shown)")
+
+
+def _self_transfer_route(spec: str) -> tuple[str, str, str, date]:
+    try:
+        codes, day = spec.split(":", 1)
+        origin, via, destination = (code.strip() for code in codes.split("-"))
+    except ValueError as exc:
+        raise ValueError(f"invalid route: {spec!r}. Expected ORIGIN-VIA-DESTINATION:DATE") from exc
+    return origin, via, destination, _parse_iso_date(day, "date")
+
+
+def _run_self_transfer(args: argparse.Namespace) -> int:
+    try:
+        if args.top <= 0:
+            raise ValueError("--top must be a positive integer")
+        occupancy = _occupancy_from_args(args)
+        origin, via, destination, departure = _self_transfer_route(args.route)
+        second = (
+            _parse_iso_date(args.second_date, "--second-date") if args.second_date else departure
+        )
+        for day in (departure, second):
+            if day < date.today():
+                raise ValueError(f"departure date is in the past: {day.isoformat()}")
+        validate_connection_bounds(args.min_connection, args.max_connection)
+        market = _market_from_args(args, origin.strip().upper())
+        report = search_self_transfer(
+            origin,
+            via,
+            destination,
+            departure,
+            second_date=second,
+            min_connection_hours=args.min_connection,
+            max_connection_hours=args.max_connection,
+            top=args.top,
+            max_stops=args.max_stops,
+            cabin=args.cabin,
+            bags=args.bags,
+            carry_on=1 if args.carry_on else None,
+            airlines=parse_airline_codes(args.airlines),
+            exclude_airlines=parse_airline_codes(args.exclude_airlines),
+            alliances=parse_alliances(args.alliance),
+            exclude_alliances=parse_alliances(args.exclude_alliance),
+            progress=lambda line: print(line, file=sys.stderr),
+            **occupancy,
+            **market,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_self_transfer_report(report)
+    _save(args, report)
+    return _exit_code(report.flights)
+
+
 def _run_hidden_city(args: argparse.Namespace) -> int:
     try:
         if args.top <= 0:
@@ -2380,6 +2492,83 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_baggage_buffer_flag(explore)
     _add_save_flag(explore)
 
+    self_transfer = sub.add_parser(
+        "self-transfer",
+        help="Two one-way flight legs through a named via, on separate tickets",
+        description=(
+            "Shop ORIGIN-VIA and VIA-DESTINATION as one-way sweeps and pair them with the "
+            "measured connection margin. Separate tickets: nothing protects the connection."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=SELF_TRANSFER_EXAMPLES,
+    )
+    self_transfer.add_argument("route", help="ORIGIN-VIA-DESTINATION:DATE (IATA codes)")
+    self_transfer.add_argument(
+        "--second-date",
+        dest="second_date",
+        default=None,
+        metavar="DATE",
+        help="Departure date of the second ticket (default: the same date)",
+    )
+    self_transfer.add_argument(
+        "--min-connection",
+        dest="min_connection",
+        type=float,
+        default=None,
+        metavar="HOURS",
+        help="Label shorter margins too_short (unnamed: no bound; margin still reported)",
+    )
+    self_transfer.add_argument(
+        "--max-connection",
+        dest="max_connection",
+        type=float,
+        default=None,
+        metavar="HOURS",
+        help="Label longer margins too_long (unnamed: no bound)",
+    )
+    _add_max_stops_flag(self_transfer)
+    _add_flight_query_flags(self_transfer)
+    self_transfer.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP,
+        help=f"Offers per leg and pairings shown (default {DEFAULT_TOP})",
+    )
+    self_transfer.add_argument(
+        "--bags",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Checked bags on both shopping requests (omit to leave unset)",
+    )
+    self_transfer.add_argument(
+        "--carry-on",
+        action="store_true",
+        dest="carry_on",
+        help="Ask both shopping requests for one carry-on (omit to leave unset)",
+    )
+    self_transfer.add_argument(
+        "--airlines", default=None, metavar="CODES", help="Airline IATA codes for both legs"
+    )
+    self_transfer.add_argument(
+        "--exclude-airlines",
+        dest="exclude_airlines",
+        default=None,
+        metavar="CODES",
+        help="Airline IATA codes to exclude on both legs",
+    )
+    self_transfer.add_argument(
+        "--alliance", default=None, metavar="NAMES", help="Alliances for both legs"
+    )
+    self_transfer.add_argument(
+        "--exclude-alliance",
+        dest="exclude_alliance",
+        default=None,
+        metavar="NAMES",
+        help="Alliances to exclude on both legs",
+    )
+    _add_save_flag(self_transfer)
+
     hidden = sub.add_parser(
         "hidden-city",
         help="Skiplagged search (opt-in; not Google Flights)",
@@ -2518,6 +2707,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_airports(args)
     if args.cmd == "hotel-rooms":
         return _run_hotel_rooms(args)
+    if args.cmd == "self-transfer":
+        return _run_self_transfer(args)
     if args.cmd == "hidden-city":
         return _run_hidden_city(args)
     if args.cmd == "awards":

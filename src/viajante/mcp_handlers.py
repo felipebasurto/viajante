@@ -57,6 +57,7 @@ from viajante.quote import (
     first_origin_iata,
     resolve_quote_and_buffer,
 )
+from viajante.self_transfer import search_self_transfer
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.stays import plan_stay_blocks, split_stay_costs
@@ -743,6 +744,67 @@ def search_trip_tool(
             currency=currency,
             country=country,
             hotel_source=source,
+        )
+    )
+    return _owned(reports_payload(report), report)
+
+
+@_cached
+def search_self_transfer_tool(
+    origin: str,
+    via: str,
+    destination: str,
+    departure: str,
+    *,
+    second_date: Optional[str] = None,
+    min_connection_hours: Optional[float] = None,
+    max_connection_hours: Optional[float] = None,
+    top: int = DEFAULT_TOP,
+    max_stops: int = 1,
+    adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+    cabin: FlightCabin = "economy",
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    alliance: Optional[str] = None,
+    exclude_alliance: Optional[str] = None,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
+) -> Mapping[str, object]:
+    """Two one-way flight legs through a named via, joined on separate tickets."""
+    first_date = date.fromisoformat(departure)
+    second = date.fromisoformat(second_date) if second_date else first_date
+    _reject_past((first_date, second))
+    report = _with_search_lock(
+        lambda: search_self_transfer(
+            origin,
+            via,
+            destination,
+            first_date,
+            second_date=second,
+            min_connection_hours=min_connection_hours,
+            max_connection_hours=max_connection_hours,
+            top=top,
+            max_stops=max_stops,
+            adults=adults,
+            children=children,
+            infants_in_seat=infants_in_seat,
+            infants_on_lap=infants_on_lap,
+            cabin=cabin,
+            bags=bags,
+            carry_on=carry_on,
+            airlines=parse_airline_codes(airlines),
+            exclude_airlines=parse_airline_codes(exclude_airlines),
+            alliances=parse_alliances(alliance),
+            exclude_alliances=parse_alliances(exclude_alliance),
+            currency=currency,
+            country=country,
+            proxy=proxy,
         )
     )
     return _owned(reports_payload(report), report)

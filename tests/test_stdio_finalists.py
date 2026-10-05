@@ -74,7 +74,7 @@ class StdioFinalistTests(unittest.TestCase):
                     await session.initialize()
                     listing = await session.list_tools()
                     by_name = {tool.name: tool for tool in listing.tools}
-                    self.assertEqual(len(by_name), 18)
+                    self.assertEqual(len(by_name), 19)
                     self.assertEqual(
                         by_name["search_flights"].inputSchema["properties"]["selection"]["enum"],
                         ["top", "pareto"],

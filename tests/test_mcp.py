@@ -1092,6 +1092,7 @@ class McpServerImportTests(unittest.TestCase):
                 "search_hotels",
                 "search_hotel_rooms",
                 "search_trip",
+                "search_self_transfer",
                 "lookup_airports",
                 "search_hidden_city",
                 "compare_awards",
@@ -1122,6 +1123,7 @@ class McpServerImportTests(unittest.TestCase):
             "search_hotels",
             "search_hotel_rooms",
             "search_trip",
+            "search_self_transfer",
             "search_hidden_city",
         }
 

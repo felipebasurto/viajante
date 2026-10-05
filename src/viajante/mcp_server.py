@@ -26,6 +26,7 @@ from viajante.mcp_handlers import (
     search_hidden_city_tool,
     search_hotel_rooms_tool,
     search_hotels_tool,
+    search_self_transfer_tool,
     search_trip_tool,
     split_stay_costs_tool,
     validate_itinerary_tool,
@@ -48,7 +49,7 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, get_flight_details, get_hotel_details,
-search_trip, lookup_airports, search_hidden_city,
+search_trip, search_self_transfer, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
 No auth. One search at a time in this process. A second search while one is
@@ -89,6 +90,10 @@ compare_awards is local points math from a named offer; it does not invent seats
 lookup_transfers is a local partner table, not live award inventory.
 plan_stay_blocks and split_stay_costs are local arithmetic over a per-night roster
 the caller supplies; they never search, never convert money, never pick a stay.
+search_self_transfer joins two one-way flight legs through a caller-named via
+into separate-ticket pairings. protected is always false. The measured
+connection is evidence, not an endorsement, and does not prove baggage recheck
+or immigration feasibility. Unnamed connection bounds mean no bound.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
 missing segment, baggage, or fare facts.
@@ -543,6 +548,45 @@ def build_server():
         country is Google gl (origin market); omit when unset.
         """
         return dict(await run_mcp_tool(search_trip_tool, **locals()))
+
+    @server.tool()
+    async def search_self_transfer(
+        origin: str,
+        via: str,
+        destination: str,
+        departure: str,
+        second_date: str | None = None,
+        min_connection_hours: float | None = None,
+        max_connection_hours: float | None = None,
+        top: int = DEFAULT_TOP,
+        max_stops: int = 1,
+        adults: int = 1,
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
+        cabin: str = "economy",
+        bags: int | None = None,
+        carry_on: int | None = None,
+        airlines: str | None = None,
+        exclude_airlines: str | None = None,
+        alliance: str | None = None,
+        exclude_alliance: str | None = None,
+        currency: str | None = None,
+        country: str | None = None,
+        proxy: str | None = None,
+    ) -> dict:
+        """Two one-way flight legs, origin-via and via-destination, on separate tickets.
+
+        Use only when the caller names the via airport. Pairings are unprotected:
+        protected is always false. connection_minutes is measured in UTC from
+        provider clocks; null means unknown and status is unknown, never ok.
+        Connection bounds are caller-named; unnamed means no bound. A margin is
+        evidence, not an endorsed minimum, and does not prove baggage recheck,
+        immigration or transit feasibility. second_date defaults to departure.
+        total_price appears only when both fares share one owned currency.
+        A failed leg is kept as error evidence and yields no pairings.
+        """
+        return dict(await run_mcp_tool(search_self_transfer_tool, **locals()))
 
     @server.tool()
     async def lookup_airports(query: str, limit: int = 20) -> list:

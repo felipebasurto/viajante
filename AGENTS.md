@@ -45,6 +45,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
+- Self-transfer pairing of two one-way legs through a named via: `src/viajante/self_transfer.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
@@ -59,9 +60,9 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `get_flight_details`, `get_hotel_details`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
-Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions, `get_flight_details`, `get_hotel_details`, and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
+CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `self-transfer`, `hidden-city`, `awards`, `points`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `search_self_transfer`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `get_flight_details`, `get_hotel_details`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
+Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions, `join_self_transfer`, `get_flight_details`, `get_hotel_details`, and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore, self-transfer. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
@@ -93,6 +94,16 @@ rows use the full triple. Stamp rules live with the search loops (`flights.py`,
 catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
+
+Self-transfer joins two owned one-way legs (origin-via, via-destination) from
+one sweep into separate-ticket pairings. The via is caller-named; no nearby or
+open-jaw rewrite. `protected` is always false. `connection_minutes` is measured
+from UTC segment instants and is evidence, not an endorsed minimum; missing or
+ambiguous clocks are `unknown`, never `ok`. Bounds are caller-named; unnamed is
+no bound, and a non-positive margin is `too_short`. `total_price` needs one
+owned currency on both fares. A failed leg keeps its error and yields no
+pairings. Temporal order does not prove baggage recheck, immigration or transit
+feasibility.
 
 `selection=top` remains the flight default. Opt-in `pareto` compares owned price,
 duration and stops within one query/currency, after explicit filters. Package

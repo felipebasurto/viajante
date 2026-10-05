@@ -32,10 +32,13 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
     SearchReport,
+    SelfTransferPairing,
+    SelfTransferReport,
     Trip,
     TripSearchReport,
 )
 from viajante.points import compare_award, load_award_offer, transfer_paths
+from viajante.self_transfer import join_self_transfer, search_self_transfer
 from viajante.skiplagged import search_hidden_city
 from viajante.trip import search_trip
 from viajante.validate import validate_itinerary
@@ -66,12 +69,15 @@ __all__ = [
     "SearchError",
     "SearchErrorCode",
     "SearchReport",
+    "SelfTransferPairing",
+    "SelfTransferReport",
     "Trip",
     "TripSearchReport",
     "compare_award",
     "get_flights",
     "get_flight_details",
     "get_hotel_details",
+    "join_self_transfer",
     "load_award_offer",
     "lookup_airports",
     "search_dates",
@@ -80,6 +86,7 @@ __all__ = [
     "search_flights",
     "search_hidden_city",
     "search_hotels",
+    "search_self_transfer",
     "search_trip",
     "transfer_paths",
     "validate_itinerary",
