@@ -678,6 +678,8 @@ def _print_hotel_offer_details(
     )
     print(f"    {cancellation}")
     print(f"    {_format_lodging_kind(offer.lodging_kind)}")
+    if offer.lodging_evidence_conflict:
+        print("    Lodging evidence: conflicting room and entire-home labels")
     if offer.priced_adults is None:
         print("    Priced party: unverified; confirm the total for the requested occupancy")
     else:

@@ -67,6 +67,7 @@ OFFER_KEYS = {
     "cancellation_evidence",
     "property_type_evidence",
     "lodging_kind",
+    "lodging_evidence_conflict",
     "bedrooms",
     "bathrooms",
     "beds",

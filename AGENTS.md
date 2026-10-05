@@ -252,6 +252,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   `entire_home` when the card is silent. Do not infer `hotel` from the word hotel
   in the title. Do not claim cancellation, lodging kind, or unit counts when
   unknown.
+  `lodging_evidence_conflict` flags explicit room labels that contradict an
+  entire-unit chip. Both lodging kind and property type then remain unknown;
+  preserve the title and raw evidence instead of choosing one label.
 - Callers must verify the final total and cancellation terms on Booking.com
   before booking.
 - Other OTAs are not scrapers in this tree. After Booking, for 1–3 finalists,

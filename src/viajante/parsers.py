@@ -189,8 +189,10 @@ def parse_cancellation_evidence(card_text: str | None) -> CancellationEvidence:
     return CancellationEvidence.UNKNOWN
 
 
-_ENTIRE_HOME = re.compile(r"entire\s+(?:home|apartment|cottage|villa)\b|whole\s+place")
-_NOT_ENTIRE_HOME = re.compile(r"private\s+room|shared\s+room|hotel\s+room")
+_ENTIRE_HOME = re.compile(r"entire\s+(?:home|house|apartment|cottage|villa)\b|whole\s+place")
+_NOT_ENTIRE_HOME = re.compile(
+    r"\b(?:private|shared|hotel|single|double|twin|triple|quadruple|family)\s+rooms?\b"
+)
 
 
 def parse_property_type_evidence(card_text: str | None) -> PropertyTypeEvidence:
@@ -209,6 +211,15 @@ _AMBIGUOUS_ROOM = re.compile(r"shared\s+rooms?\b|\bdorms?\b|\bdormitor(?:y|ies)\
 _NEGATED_PRIVATE_ROOM = re.compile(r"\b(?:no|not|without)\s+private\s+rooms?\b")
 _HOTEL_ROOM = re.compile(r"hotel\s+room")
 _TITLE_ENTIRE_HOME = re.compile(r"apartments?\b")
+
+
+def has_lodging_evidence_conflict(card_text: str, *, title: str) -> bool:
+    """An explicit entire-unit chip conflicts with room evidence, not a guess."""
+    text = card_text.replace("\xa0", " ").lower()
+    if not _ENTIRE_HOME.search(text):
+        return False
+    room_text = _NEGATED_PRIVATE_ROOM.sub("", f"{title.lower()}\n{text}")
+    return bool(_NOT_ENTIRE_HOME.search(room_text) or _AMBIGUOUS_ROOM.search(room_text))
 
 
 def parse_lodging_kind(card_text: str | None, *, title: str | None = None) -> LodgingKind:

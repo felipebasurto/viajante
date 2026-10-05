@@ -26,6 +26,7 @@ from viajante.google_flights import (
     build_search_params,
     build_search_url,
     extract_main_html,
+    fetch_search_html,
     google_flights_url,
     looks_blocked,
     parse_flight_cards,
@@ -591,57 +592,45 @@ class HttpSweepParseTests(unittest.TestCase):
 
     def test_http_source_uses_fixture_body_not_the_network(self) -> None:
         html = _http_page(build_results_page(build_card(price="€131", airline="Iberia")))
-
-        class _Resp:
-            def __init__(self) -> None:
-                self.headers = {"Content-Encoding": ""}
-                self.status = 200
-
-            def read(self) -> bytes:
-                return html.encode("utf-8")
-
-            def geturl(self) -> str:
-                return "https://www.google.com/travel/flights?hl=en"
-
-            def __enter__(self) -> "_Resp":
-                return self
-
-            def __exit__(self, *args: object) -> None:
-                return None
-
-        class _Opener:
-            def open(self, request: object, timeout: float = 0) -> _Resp:
-                return _Resp()
-
-        source = GoogleFlightsHttpSource(opener=_Opener(), currency="EUR")
+        client = _FakeSweepClient(post_text="not shopping", get_text=html)
+        source = GoogleFlightsHttpSource(client=client, currency="EUR")
         cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
         self.assertEqual(cards[0].airline, "Iberia")
         self.assertEqual(cards[0].price, "€131")
+        self.assertEqual(len(client.gets), 1)
 
     def test_http_source_raises_blocked_on_sorry_redirect(self) -> None:
-        class _Resp:
-            headers = {"Content-Encoding": ""}
-            status = 200
-
-            def read(self) -> bytes:
-                return b"<html>sorry</html>"
-
-            def geturl(self) -> str:
-                return "https://www.google.com/sorry/index?continue=flights"
-
-            def __enter__(self) -> "_Resp":
-                return self
-
-            def __exit__(self, *args: object) -> None:
-                return None
-
-        class _Opener:
-            def open(self, request: object, timeout: float = 0) -> _Resp:
-                return _Resp()
-
-        source = GoogleFlightsHttpSource(opener=_Opener(), currency="EUR")
+        client = _FakeSweepClient(
+            post_text="not shopping",
+            get_text="<html>sorry</html>",
+            get_url="https://www.google.com/sorry/index?continue=flights",
+        )
+        source = GoogleFlightsHttpSource(client=client, currency="EUR")
         with self.assertRaises(GoogleFlightsBlocked):
             source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
+        self.assertEqual(len(client.posts), 1)
+        self.assertEqual(len(client.gets), 1)
+
+    def test_html_default_uses_shared_client(self) -> None:
+        client = _FakeSweepClient(get_text="synthetic page")
+        with (
+            patch("viajante.google_flights.cooldown_client", return_value=(None, None)),
+            patch("viajante.google_flights.shared_chrome_sweep_client", return_value=client),
+        ):
+            html, final_url = fetch_search_html("https://www.google.com/travel/flights")
+        self.assertEqual(html, "synthetic page")
+        self.assertEqual(final_url, client.get_url)
+        self.assertEqual(len(client.gets), 1)
+
+    def test_html_default_respects_cooldown_without_creating_tls_session(self) -> None:
+        paused = _FakeSweepClient(get_status=429)
+        with (
+            patch("viajante.google_flights.cooldown_client", return_value=({}, paused)),
+            patch("viajante.google_flights.shared_chrome_sweep_client") as tls,
+            self.assertRaises(GoogleFlightsBlocked),
+        ):
+            fetch_search_html("https://www.google.com/travel/flights")
+        tls.assert_not_called()
 
 
 def _itinerary(
@@ -1196,6 +1185,14 @@ class ShoppingRpcTests(unittest.TestCase):
 
 
 class HttpSweepRetryTests(unittest.TestCase):
+    def test_reset_only_resets_the_owned_shared_session(self) -> None:
+        with patch("viajante.google_flights.reset_shared_chrome_sweep_client") as reset:
+            GoogleFlightsHttpSource(currency="EUR").reset()
+            reset.assert_called_once_with()
+            reset.reset_mock()
+            GoogleFlightsHttpSource(currency="EUR", client=_FakeSweepClient()).reset()
+            reset.assert_not_called()
+
     def test_retry_backoff_is_under_200ms_not_an_anti_bot_pause(self) -> None:
         self.assertGreater(SWEEP_RETRY_BACKOFF_SECONDS, 0.0)
         self.assertLess(SWEEP_RETRY_BACKOFF_SECONDS, 0.2)

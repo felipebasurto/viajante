@@ -227,46 +227,7 @@ def build_server():
         not mix payloads. Skip if bags were named. Omit hidden-city currency
         (Skiplagged cards are USD); do not copy this Google quote currency.
         """
-        return dict(
-            await run_mcp_tool(
-                search_flights_tool,
-                routes,
-                trip=trip,
-                max_stops=max_stops,
-                adults=adults,
-                cabin=cabin,  # type: ignore[arg-type]
-                top=top,
-                fetch=fetch,
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_duration=max_duration,
-                min_layover=min_layover,
-                max_layover=max_layover,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                baggage_buffer=baggage_buffer,
-                sort=sort,  # type: ignore[arg-type]
-                bags=bags,
-                carry_on=carry_on,
-                price_cap=price_cap,
-                children=children,
-                infants_in_seat=infants_in_seat,
-                infants_on_lap=infants_on_lap,
-                currency=currency,
-                country=country,
-                nearby=nearby,
-                proxy=proxy,
-            )
-        )
+        return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
     @server.tool()
     async def search_dates(
@@ -319,47 +280,7 @@ def build_server():
         convert for the user. Optional country is Google gl (origin market);
         omit when unset. Unnamed baggage_buffer is 0.
         """
-        return dict(
-            await run_mcp_tool(
-                search_dates_tool,
-                route,
-                start,
-                end,
-                max_stops=max_stops,
-                adults=adults,
-                children=children,
-                infants_in_seat=infants_in_seat,
-                infants_on_lap=infants_on_lap,
-                cabin=cabin,  # type: ignore[arg-type]
-                trip=trip,
-                nights=nights,
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                bags=bags,
-                carry_on=carry_on,
-                price_cap=price_cap,
-                nearby=nearby,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_duration=max_duration,
-                min_layover=min_layover,
-                max_layover=max_layover,
-                currency=currency,
-                country=country,
-                baggage_buffer=baggage_buffer,
-                sort=sort,  # type: ignore[arg-type]
-                proxy=proxy,
-            )
-        )
+        return dict(await run_mcp_tool(search_dates_tool, **locals()))
 
     @server.tool()
     async def search_flex(
@@ -411,48 +332,7 @@ def build_server():
         (error markup_drift, empty days) is not no_results: do not invent a
         cheapest week; a named-date search_flights is allowed.
         """
-        return dict(
-            await run_mcp_tool(
-                search_flex_tool,
-                route,
-                around,
-                flex,
-                max_stops=max_stops,
-                adults=adults,
-                children=children,
-                infants_in_seat=infants_in_seat,
-                infants_on_lap=infants_on_lap,
-                cabin=cabin,  # type: ignore[arg-type]
-                trip=trip,
-                nights=nights,
-                top=top,
-                baggage_buffer=baggage_buffer,
-                sort=sort,  # type: ignore[arg-type]
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                bags=bags,
-                carry_on=carry_on,
-                price_cap=price_cap,
-                nearby=nearby,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_duration=max_duration,
-                min_layover=min_layover,
-                max_layover=max_layover,
-                currency=currency,
-                country=country,
-                proxy=proxy,
-            )
-        )
+        return dict(await run_mcp_tool(search_flex_tool, **locals()))
 
     @server.tool()
     async def search_explore(
@@ -501,48 +381,7 @@ def build_server():
         convert for the user. Unnamed baggage_buffer is 0. Optional country is
         Google gl (origin market); omit when unset.
         """
-        return dict(
-            await run_mcp_tool(
-                search_explore_tool,
-                origin,
-                start,
-                days=days,
-                top=top,
-                month=month,
-                adults=adults,
-                children=children,
-                infants_in_seat=infants_in_seat,
-                infants_on_lap=infants_on_lap,
-                cabin=cabin,  # type: ignore[arg-type]
-                max_stops=max_stops,
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                exclude_regions=exclude_regions,
-                bags=bags,
-                carry_on=carry_on,
-                price_cap=price_cap,
-                nearby=nearby,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_duration=max_duration,
-                min_layover=min_layover,
-                max_layover=max_layover,
-                currency=currency,
-                country=country,
-                sort=sort,  # type: ignore[arg-type]
-                baggage_buffer=baggage_buffer,
-                proxy=proxy,
-            )
-        )
+        return dict(await run_mcp_tool(search_explore_tool, **locals()))
 
     @server.tool()
     async def search_hotels(
@@ -598,29 +437,13 @@ def build_server():
         optional, requires near, and excludes distant or unlocated offers before
         top. A location query or property title does not prove centrality. Generic
         hostel descriptions do not prove a private room for the quoted price.
+        lodging_evidence_conflict marks explicit room/entire-home contradictions;
+        lodging_kind and property_type_evidence then stay unknown.
         Unknown evidence is a candidate, not proof of compliance. link_context
         and applied.url_context distinguish stay, property, location and none;
         only stay reproduces dates and occupancy, never availability.
         """
-        return dict(
-            await run_mcp_tool(
-                search_hotels_tool,
-                location,
-                check_in,
-                check_out,
-                stays=stays,
-                near=near,
-                max_distance_km=max_distance_km,
-                adults=adults,
-                rooms=rooms,
-                top=top,
-                min_rating=min_rating,
-                entire_home=entire_home,
-                free_cancellation=free_cancellation,
-                source=source,  # type: ignore[arg-type]
-                currency=currency,
-            )
-        )
+        return dict(await run_mcp_tool(search_hotels_tool, **locals()))
 
     @server.tool()
     async def search_hotel_rooms(
@@ -647,18 +470,7 @@ def build_server():
         that your party fits across several rooms. Rates come in provider order, not
         ranked. Skiplagged only: do not mix these rows with Google or Booking prices.
         """
-        return dict(
-            await run_mcp_tool(
-                search_hotel_rooms_tool,
-                hotel_id,
-                check_in,
-                check_out,
-                hotel_name=hotel_name,
-                city=city,
-                adults=adults,
-                rooms=rooms,
-            )
-        )
+        return dict(await run_mcp_tool(search_hotel_rooms_tool, **locals()))
 
     @server.tool()
     async def search_trip(
@@ -708,53 +520,11 @@ def build_server():
         shopping request. The same currency is passed to hotels. Optional
         country is Google gl (origin market); omit when unset.
         """
-        return dict(
-            await run_mcp_tool(
-                search_trip_tool,
-                routes,
-                location,
-                check_in=check_in,
-                check_out=check_out,
-                trip=trip,
-                max_stops=max_stops,
-                adults=adults,
-                rooms=rooms,
-                cabin=cabin,  # type: ignore[arg-type]
-                top=top,
-                fetch=fetch,
-                baggage_buffer=baggage_buffer,
-                sort=sort,  # type: ignore[arg-type]
-                bags=bags,
-                carry_on=carry_on,
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                price_cap=price_cap,
-                children=children,
-                infants_in_seat=infants_in_seat,
-                infants_on_lap=infants_on_lap,
-                currency=currency,
-                country=country,
-                min_rating=min_rating,
-                entire_home=entire_home,
-                free_cancellation=free_cancellation,
-                source=source,  # type: ignore[arg-type]
-                nearby=nearby,
-            )
-        )
+        return dict(await run_mcp_tool(search_trip_tool, **locals()))
 
     @server.tool()
     async def lookup_airports(query: str, limit: int = 20) -> list:
-        return await run_lookup_tool(lookup_airports_tool, query, limit=limit)
+        return await run_lookup_tool(lookup_airports_tool, **locals())
 
     @server.tool()
     async def search_hidden_city(
@@ -779,17 +549,7 @@ def build_server():
         currency_mismatch (owned quote stamped), not no_results. Does not
         infer from origin or convert.
         """
-        return dict(
-            await run_mcp_tool(
-                search_hidden_city_tool,
-                route,
-                departure,
-                return_date=return_date,
-                adults=adults,
-                top=top,
-                currency=currency,
-            )
-        )
+        return dict(await run_mcp_tool(search_hidden_city_tool, **locals()))
 
     @server.tool()
     async def compare_awards(
@@ -804,15 +564,7 @@ def build_server():
         and evidence. confirmed evidence needs a named source. Unnamed cash_price
         omits cpp_cents. Do not treat estimated or user_supplied as live inventory.
         """
-        return dict(
-            await run_lookup_tool(
-                compare_awards_tool,
-                offer,
-                cash_price=cash_price,
-                currency=currency,
-                balances=balances,
-            )
-        )
+        return dict(await run_lookup_tool(compare_awards_tool, **locals()))
 
     @server.tool()
     async def lookup_transfers(
@@ -821,14 +573,7 @@ def build_server():
         balances: list | None = None,
     ) -> dict:
         """Local card-to-program transfer table. Not live award availability."""
-        return dict(
-            await run_lookup_tool(
-                lookup_transfers_tool,
-                program,
-                points,
-                balances=balances,
-            )
-        )
+        return dict(await run_lookup_tool(lookup_transfers_tool, **locals()))
 
     @server.tool()
     async def validate_itinerary(
@@ -841,14 +586,7 @@ def build_server():
         Each leg must preserve its exact query and one selected offer. The
         result is tri-state: unknown evidence never becomes pass.
         """
-        return dict(
-            await run_lookup_tool(
-                validate_itinerary_tool,
-                legs,
-                constraints,
-                currency=currency,
-            )
-        )
+        return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 
     @server.tool()
     async def plan_stay_blocks(roster: dict[str, list[str]]) -> dict:
@@ -859,7 +597,7 @@ def build_server():
         check_out, nights, headcount and people, so one search_hotels stay per block
         can use headcount as adults. Never decides where anyone sleeps.
         """
-        return dict(await run_lookup_tool(plan_stay_blocks_tool, roster))
+        return dict(await run_lookup_tool(plan_stay_blocks_tool, **locals()))
 
     @server.tool()
     async def split_stay_costs(
@@ -878,15 +616,7 @@ def build_server():
         are allocated so each stay sums exactly. Nights no stay covers come back as
         unallocated_nights. Arithmetic only: it does not price or recommend a stay.
         """
-        return dict(
-            await run_lookup_tool(
-                split_stay_costs_tool,
-                stays,
-                roster,
-                currency,
-                fee_per_person_night=fee_per_person_night,
-            )
-        )
+        return dict(await run_lookup_tool(split_stay_costs_tool, **locals()))
 
     @server.tool()
     async def verify_answer(answer: str) -> dict:
@@ -899,7 +629,7 @@ def build_server():
         unowned unless a payload carries them (e.g. trip_total). Local; may run
         during a search.
         """
-        return dict(await run_lookup_tool(verify_answer_tool, answer))
+        return dict(await run_lookup_tool(verify_answer_tool, **locals()))
 
     return server
 
