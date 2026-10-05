@@ -34,7 +34,7 @@ Native Python:
 }
 ```
 
-Reload MCP. The 15 tools are: `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google by default; `stays` batches up to 8 stays; named `near` adds distance for offers with coordinates), `search_hotel_rooms` (Skiplagged room rates, USD), `search_trip`, `lookup_airports`, `search_hidden_city` (Skiplagged, opt-in; USD/omit currency), `compare_awards`, `lookup_transfers`, `validate_itinerary` (offline tri-state validation), `plan_stay_blocks`, `split_stay_costs` (offline roster blocks and per-person cost split), and `verify_answer` (offline draft-reply evidence check).
+Reload MCP. The 16 tools (1.4.0+) are: `get_runtime_info` (offline executing package/Python/schema versions), `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google by default; `stays` batches up to 8 stays; named `near` adds straight-line distance; `max_distance_km` requires `near` and excludes outside/unknown coordinates before ranking), `search_hotel_rooms` (Skiplagged room rates, USD), `search_trip`, `lookup_airports`, `search_hidden_city` (Skiplagged, opt-in; USD/omit currency), `compare_awards`, `lookup_transfers`, `validate_itinerary` (offline tri-state validation), `plan_stay_blocks`, `split_stay_costs` (offline roster blocks and per-person cost split), and `verify_answer` (offline draft-reply evidence check).
 
 Hotel source `skiplagged` is opt-in, supports up to 10 adults and 9 rooms, and
 rejects `entire_home`. Omit currency or name USD; nothing converts. Read
@@ -49,6 +49,8 @@ On `rate_limited: true`, stop and wait 30–60 minutes; do not retry or switch
 method. Direct Google HTTP 429 and data-less status 13 share a cooldown;
 Skiplagged HTTP 429 has its own cooldown and no retry. Status 13 can cause a
 2-minute pause even when its cause is not throttling.
+
+Check `get_runtime_info` before searching (available in 1.4.0+), and `viajante --version` for the CLI. Hotel reports carry `viajante_version`. An npm MCP pins its own Python package; it does not upgrade a separate installed uv tool. Unpinned `uvx --from viajante` can reuse that tool. Upgrade it explicitly with `uv tool upgrade viajante`, or use `uvx --refresh --from 'viajante==VERSION' viajante --version` with the published version. Do not assume latest was installed.
 
 After a new release, `uvx` / `npx` can cache an old tool list. Reload the MCP client, `uvx --refresh --from viajante[mcp] viajante-mcp`, `npx -y @viajante/mcp@latest`, or point the client at a local `viajante-mcp`.
 

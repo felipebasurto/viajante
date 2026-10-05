@@ -272,13 +272,16 @@ def _record_to_card(record: list[Any]) -> Optional[RawHotelCard]:
         return None
     if title.strip().casefold() in NON_PROPERTY_TITLES:
         return None
+    link = _link(record)
     return RawHotelCard(
         title=title,
         address=_address(record),
         total_price=total,
         rating=_rating(record),
         details=_details(record),
-        link=_link(record),
+        link=link,
+        link_context="property" if link else "none",
+        unit_details=_unit_details(record),
         **_coordinates(record),
         review_count=_review_count(record),
         place_types=_place_types(record),
@@ -393,7 +396,16 @@ def _details(record: list[Any]) -> str:
         text = None
     if isinstance(text, str) and text.strip():
         parts.append(text.strip())
-    # Vacation rentals carry "Entire apartment", "Sleeps 3", "1 bedroom" chips here.
+    unit_details = _unit_details(record)
+    if unit_details:
+        parts.append(unit_details)
+    return ". ".join(parts)
+
+
+def _unit_details(record: list[Any]) -> str:
+    # Vacation rentals carry explicit unit chips. Hotel descriptions enumerate
+    # what a property sells, not the room type associated with its quoted price.
+    parts: list[str] = []
     try:
         chips = record[10][3][1]
     except (IndexError, TypeError):
@@ -408,9 +420,13 @@ def _details(record: list[Any]) -> str:
 
 def _link(record: list[Any]) -> Optional[str]:
     try:
-        path = record[6][2][4][0]
+        entity = record[20]
     except (IndexError, TypeError):
         return None
-    if isinstance(path, str) and path.startswith("/"):
-        return "https://www.google.com" + path
+    if (
+        isinstance(entity, str)
+        and entity.startswith(("Ch", "Cg", "Ci"))
+        and all(char.isascii() and (char.isalnum() or char in "-_") for char in entity)
+    ):
+        return "https://www.google.com/travel/hotels/entity/" + entity
     return None

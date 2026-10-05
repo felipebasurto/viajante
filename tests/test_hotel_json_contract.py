@@ -20,6 +20,8 @@ from viajante.models import (
 
 REPORT_KEYS = {
     "schema_version",
+    "viajante_version",
+    "max_distance_km",
     "provider",
     "searched_at",
     "currency",
@@ -42,7 +44,7 @@ QUERY_KEYS = {
     "free_cancellation",
     "nights",
 }
-APPLIED_KEYS = {"chips", "url", "not_applied"}
+APPLIED_KEYS = {"chips", "url", "not_applied", "url_context"}
 SUCCESS_KEYS = {
     "status",
     "query",
@@ -69,6 +71,7 @@ OFFER_KEYS = {
     "bathrooms",
     "beds",
     "link",
+    "link_context",
     "latitude",
     "longitude",
     "review_count",

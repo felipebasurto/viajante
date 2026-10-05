@@ -37,9 +37,12 @@ jobs:
           uv pip install --python /tmp/viajante-wheel "$WHEEL"
           uv pip install --python /tmp/viajante-wheel 'mcp>=1.6,<2'
           /tmp/viajante-wheel/bin/viajante airports JFK
+          /tmp/viajante-wheel/bin/viajante --version
           /tmp/viajante-wheel/bin/python -c "from importlib.resources import files; t=files('viajante').joinpath('THIRD_PARTY_NOTICES').read_text(); assert 'Permission is hereby granted' in t"
           /tmp/viajante-wheel/bin/python - <<'PY'
           import asyncio
+          import json
+          from importlib.metadata import version
           from mcp import ClientSession
           from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -56,15 +59,26 @@ jobs:
                           "search_flex",
                           "search_explore",
                           "search_hotels",
+                          "search_hotel_rooms",
                           "search_trip",
                           "lookup_airports",
                           "search_hidden_city",
                           "compare_awards",
                           "lookup_transfers",
+                          "validate_itinerary",
+                          "plan_stay_blocks",
+                          "split_stay_costs",
                           "verify_answer",
+                          "get_runtime_info",
                       }
-                      missing = expected - names
-                      assert not missing, missing
+                      assert names == expected, names ^ expected
+                      hotel = next(tool for tool in tools.tools if tool.name == "search_hotels")
+                      assert "max_distance_km" in hotel.inputSchema["properties"]
+                      result = await session.call_tool("get_runtime_info", {})
+                      assert not result.isError, result
+                      runtime = json.loads(result.content[0].text)
+                      assert runtime["viajante_version"] == version("viajante"), runtime
+                      assert runtime["hotel_schema_version"] == 2, runtime
 
           asyncio.run(main())
           PY

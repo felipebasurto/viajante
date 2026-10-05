@@ -37,7 +37,13 @@ from viajante.flights import (
     parse_via_airports,
     search_flights,
 )
-from viajante.hotels import HotelSourceName, resolve_hotel_currency, search_hotels
+from viajante.hotels import (
+    HotelSourceName,
+    resolve_hotel_currency,
+    search_hotels,
+    validate_max_distance,
+    validate_near,
+)
 from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
     award_offer_from_mapping,
@@ -545,6 +551,7 @@ def search_hotels_tool(
     currency: Optional[str] = None,
     stays: Optional[Sequence[Mapping[str, object]]] = None,
     near: Optional[Mapping[str, float]] = None,
+    max_distance_km: Optional[float] = None,
 ) -> Mapping[str, object]:
     if source == "google" and min_rating is not None and min_rating > 5:
         raise ValueError("min_rating must be at most 5 with source google")
@@ -560,9 +567,17 @@ def search_hotels_tool(
         entire_home=entire_home,
         free_cancellation=free_cancellation,
     )
-    near_point = _near_point(near)
+    near_point = validate_near(_near_point(near))
+    max_distance_km = validate_max_distance(max_distance_km, near_point)
     report = _with_search_lock(
-        lambda: search_hotels(queries, top=top, source=source, currency=currency, near=near_point)
+        lambda: search_hotels(
+            queries,
+            top=top,
+            source=source,
+            currency=currency,
+            near=near_point,
+            max_distance_km=max_distance_km,
+        )
     )
     return _owned(reports_payload(report))
 

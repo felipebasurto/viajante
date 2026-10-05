@@ -75,6 +75,7 @@ def _hotel_record(
         None,
         None,
         None,
+        None,
         "ChgIredacted",
     ]
 
@@ -186,7 +187,7 @@ class HotelsParseTests(unittest.TestCase):
         self.assertNotEqual(cards[0].total_price, "€14")
         self.assertEqual(cards[0].address, "Přívozní 1")
         self.assertEqual(cards[0].rating, "4")
-        self.assertEqual(cards[0].link, "https://www.google.com/travel/clk/hi?qid=tok")
+        self.assertEqual(cards[0].link, "https://www.google.com/travel/hotels/entity/ChgIredacted")
 
     def test_card_carries_owned_coordinates_and_review_count(self) -> None:
         card = parse_hotels_body(_wrap_wrb(_search_payload(_hotel_record())))[0]

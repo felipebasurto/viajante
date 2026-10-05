@@ -183,6 +183,22 @@ does not state cancellation terms, the output says `filter applied; card
 silent`. It does not mark the property's terms as confirmed free cancellation.
 Property type, room counts, and cancellation terms can remain unknown.
 
+Use `--near LAT,LNG` for a named reference point and `--max-distance-km N`
+to enforce a radius before price ranking. N must be finite and positive and
+requires `--near`; offers without coordinates cannot prove the radius and are
+excluded. `distance_km` is a straight line, not a walking route. Without a
+radius, `--near` only annotates distance. No city center is assumed.
+
+Google descriptions can mention private rooms without pricing one. Parsed
+room/capacity fields require unit evidence. Known priced-party mismatches and
+insufficient single-unit capacity are excluded; unknown occupancy remains
+unverified. Check finalist room rates, sleeping layout, total and cancellation.
+
+Google entity and search URLs reproduce dates, adults, rooms and currency.
+`link_context` and `applied.url_context` state whether a link identifies a
+stay, property, location or none. A stay context does not guarantee the quoted
+price or availability. `verify_answer` checks provenance, not link reachability.
+
 ## Flights and hotels together
 
 Use `trip` to search flights and accommodation in sequence:
@@ -294,3 +310,12 @@ search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="r
 These are tool-call examples, not Python library calls. The MCP server uses
 stdio and runs one search at a time. See the signatures in
 [`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
+
+
+To diagnose installation drift, run `viajante --version` or call MCP
+`get_runtime_info` (both available in 1.4.0+). Hotel JSON includes the executing
+`viajante_version`. An npm MCP and a separately installed uv CLI can differ.
+Unpinned `uvx` may reuse an old installed tool. Use `uv tool upgrade viajante`
+for that installation, or refresh an explicitly published version:
+`uvx --refresh --from 'viajante==VERSION' viajante --version`. Reload MCP after
+upgrading; confirm the executing version before using new parameters.

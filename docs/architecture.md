@@ -41,7 +41,7 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 15 tools. |
+| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 16 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
@@ -51,6 +51,7 @@ One library, three ways in:
 | `search_dates` | `dates` | Cheapest fare per day across a window (≤31 days). |
 | `search_flex` | `flex` | Cheapest day in ±N around a date, then one shop. |
 | `search_explore` | `explore` | Destinations from an origin, shortlist priced. |
+| `get_runtime_info` | `--version` | Executing package/Python and hotel schema versions, offline. |
 | `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP, Booking browser, or opt-in Skiplagged). |
 | `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
 | `search_trip` | `trip` | Flights then one hotel, plus a sum when both succeed. |
@@ -189,6 +190,13 @@ Three sources, one loop (`hotels.py`):
   latitude/longitude, and a Google link. Owned `place_types`, `class_label`, and
   `priced_adults` distinguish property type and the party actually priced;
   vacation-rental chips feed `details` and parsed sleeps, bedrooms, and beds.
+  General descriptions are retained but cannot prove the quoted unit's type,
+  capacity or cancellation. Known priced-party mismatches and insufficient
+  single-unit capacity are excluded; unknown remains an unverified shortlist.
+  Navigation uses the owned entity ID at record[20], never an internal click
+  tracker. `google_hotels_url.py` encodes ts stay dates, adults, rooms and currency
+  for entity and search URLs. `link_context` / `applied.url_context` distinguish
+  stay, property, location and none; a context is not live availability proof.
   Query results carry `resolved_place` and `place_bounds` from the provider.
   Free cancellation and vacation-rental
   type go into the request. With a named `min_rating`, the price-sorted page
@@ -222,7 +230,10 @@ and address and listing each returned total in query order. Rows are sorted
 by name, never by price; a null means absent from that stay's returned offers,
 not unavailable. A named `near` point adds straight-line `distance_km` only
 when an offer has owned coordinates; it does not assume a location or change
-the price order.
+the price order. Optional `max_distance_km` requires that point and filters
+outside or unknown coordinates using unrounded distance before ranking and top.
+It does not measure walking distance or prove city-wide availability. Hotel JSON
+also stamps the executing `viajante_version` without changing schema 2.
 
 The loop keeps three things apart: what the caller *asked* for, which filter
 chips were *applied*, and what each card *says*. `filter applied; card silent`

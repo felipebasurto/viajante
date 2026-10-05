@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-05
+
+### Added
+
+- Optional hotel `max_distance_km` / `--max-distance-km`: requires a named `near` point and filters outside or unlocated offers using unrounded straight-line distance before ranking and top.
+- CLI `--version` and offline MCP `get_runtime_info` expose the executing package version. Hotel schema 2 adds `viajante_version`, `max_distance_km`, offer `link_context`, and `applied.url_context`.
+
+### Fixed
+
+- Google Hotels navigation uses owned entity IDs instead of internal click trackers that can return empty HTTP 204 pages. Entity and search links preserve stay dates, adults, rooms and currency; malformed or missing IDs do not become guessed property links.
+- General Google property descriptions no longer prove the quoted unit's lodging kind, capacity or cancellation. Explicit unit chips remain evidence; shared rooms, dorm/private mixes and negated private rooms stay unknown. Entire cottage and villa chips are recognized.
+- Known priced-party mismatches and insufficient single-unit capacity are excluded. Unknown occupancy stays explicitly unverified.
+- Agent contracts preserve the latest nightly roster, distinguish arithmetic estimates from replacement quotes, and require exact cancellation deadlines, dorm exclusivity and transfer checks. CLI and MCP installations are checked separately for version drift.
+
 ## [1.3.1] - 2026-10-02
 
 ### Fixed

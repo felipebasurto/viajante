@@ -28,6 +28,7 @@ from viajante.mcp_handlers import (
     split_stay_costs_tool,
     validate_itinerary_tool,
 )
+from viajante.runtime import get_runtime_info as runtime_info
 
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
@@ -46,18 +47,21 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
-split_stay_costs, verify_answer.
+split_stay_costs, verify_answer, get_runtime_info.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
-validate_itinerary, plan_stay_blocks, split_stay_costs, and verify_answer may run
+validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
 during a search.
 
 Results are raw owned evidence, not a recommendation. You choose: read the
 payload, weigh price against duration, stops, clocks, and rating, and say why.
 Before replying, pass the draft to verify_answer; it flags amounts,
 currencies, codes, dates, and links no search in this process returned.
+verify_answer checks provenance, not link reachability, availability or room fit.
+Check get_runtime_info before searching; an npm MCP and a separate installed
+uv tool may execute different package versions. Do not assume uvx updates either.
 
 If an error has rate_limited true, tell the user to wait until the UTC time
 named in its message.
@@ -88,8 +92,27 @@ missing segment, baggage, or fare facts.
 
 Every MCP call is synchronous: never say you are still searching or will
 report back; call the tool now or name the next step. Hotel location is one
-named place; ask rather than substitute a nearby town. Hotel total_price is
-for the whole party and stay, not per person.
+named place; ask rather than substitute a nearby town. Hotel total_price is a
+total-stay quote, not per person. Only claim the requested party total when
+priced_adults agrees; unknown is unverified. General property descriptions do
+not prove a private room. Check finalists' room rates and actual sleeping layout.
+near names a reference point; max_distance_km requires it and excludes unknown
+coordinates before ranking. Distances are straight lines, not walking routes.
+Read resolved_place and report an unexpected place. Do not infer a city center.
+link_context and applied.url_context distinguish stay, property, location and
+none. A stay link preserves dates/adults/rooms, not guaranteed price or availability.
+Never present an internal /travel/clk/hi tracker as a usable property link.
+For changing groups use the latest confirmed nightly roster, group identical
+people with plan_stay_blocks, and report unallocated_nights from split_stay_costs.
+Do not extend a departing person's last night. Quote replacements before
+recommending cancellation. A dorm room may lose exclusivity if beds are removed.
+Use the exact cancellation deadline and property-local time from the reservation;
+do not assume altered bookings retain prices, rooms or policy. Separate arithmetic
+estimates from fresh quotes. Flight timing needs a verified transfer and airport
+arrival margin; a latest check-out time alone does not prove a flight is reachable.
+Keep warnings in the final response. Browser access denial is not a broken URL
+or provider throttling: name the actual limitation and use available permitted
+read-only evidence; never ask for permission the user already granted.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -126,6 +149,15 @@ def build_server():
     from mcp.server.fastmcp import FastMCP
 
     server = FastMCP("viajante", instructions=_HELP)
+
+    @server.tool()
+    def get_runtime_info() -> dict:
+        """Offline executing package, Python and hotel schema versions.
+
+        Check before searches; an npm MCP does not upgrade a separate uv tool
+        installation. May run during a search. No network or personal paths.
+        """
+        return runtime_info()
 
     @server.tool()
     async def search_flights(
@@ -514,6 +546,7 @@ def build_server():
         currency: str | None = None,
         stays: list[dict] | None = None,
         near: dict[str, float] | None = None,
+        max_distance_km: float | None = None,
     ) -> dict:
         """Hotel search. Currency is required (no origin airport) except source
         skiplagged, whose quotes are USD (omit currency or pass USD).
@@ -526,8 +559,9 @@ def build_server():
 
         location is one named place. Ask when it is a typo, a region, or has
         several candidate towns; never substitute a nearby town. total_price is
-        the whole stay for the whole searched party and every room, not per
-        person. The request carries adults and rooms only, so do not state a room
+        a total-stay quote, not per person. Matching priced_adults proves the
+        quoted adult party; unknown occupancy needs verification. The request
+        carries adults and rooms only, so do not state a room
         split. Vacation rentals (entire_home=true) carry sleeps, bedrooms and
         beds; hotels do not. priced_adults is the party Google priced. place_types
         and class_label say what a property is (a hotel search returns hostels).
@@ -539,13 +573,21 @@ def build_server():
         check_out: up to 8 objects with location, check_in, check_out and
         optional adults and rooms (defaults come from the top-level values).
         Use it for a headcount that changes by night: one stay per block of
-        equal headcount. Results come back as one query per stay, and
+        identical people, using plan_stay_blocks after each roster change. Equal
+        headcounts alone do not identify the same block. Results come back as
+        one query per stay, and
         property_matrix lists each property with its total per stay (null where it was
         not among that stay's returned offers, which is not proof it is unavailable;
         raise top to see more). Rows are sorted by name, never by price.
 
         near is a point you name, {lat, lng}; each offer then carries distance_km, its
-        straight-line distance to it. No point is assumed.
+        straight-line distance to it. No point is assumed. max_distance_km is
+        optional, requires near, and excludes distant or unlocated offers before
+        top. A location query or property title does not prove centrality. Generic
+        hostel descriptions do not prove a private room for the quoted price.
+        Unknown evidence is a candidate, not proof of compliance. link_context
+        and applied.url_context distinguish stay, property, location and none;
+        only stay reproduces dates and occupancy, never availability.
         """
         return dict(
             await run_mcp_tool(
@@ -555,6 +597,7 @@ def build_server():
                 check_out,
                 stays=stays,
                 near=near,
+                max_distance_km=max_distance_km,
                 adults=adults,
                 rooms=rooms,
                 top=top,

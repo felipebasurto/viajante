@@ -1527,6 +1527,10 @@ class RawHotelCard:
     class_label: Optional[str] = None
     priced_adults: Optional[int] = None
     provider_id: Optional[str] = None
+    # None preserves legacy card evidence; an empty string explicitly means no
+    # unit evidence. Google property descriptions are never unit evidence.
+    unit_details: Optional[str] = None
+    link_context: Literal["stay", "property", "location", "none"] = "none"
 
 
 @dataclass(frozen=True)
@@ -1546,12 +1550,14 @@ class AppliedHotelFilters:
     url: str
     # Requested filters this source cannot apply or check (it returns no evidence for them).
     not_applied: Tuple[str, ...] = ()
+    url_context: Literal["stay", "property", "location", "none"] = "none"
 
     def to_dict(self) -> Mapping[str, object]:
         return {
             "chips": list(self.chips),
             "url": self.url,
             "not_applied": list(self.not_applied),
+            "url_context": self.url_context,
         }
 
 
@@ -1580,6 +1586,7 @@ class HotelOffer:
     priced_adults: Optional[int] = None
     provider_id: Optional[str] = None
     distance_km: Optional[float] = None
+    link_context: Literal["stay", "property", "location", "none"] = "none"
 
     def __post_init__(self) -> None:
         title = self.title.strip()
@@ -1606,6 +1613,7 @@ class HotelOffer:
             "bathrooms": self.bathrooms,
             "beds": self.beds,
             "link": self.link,
+            "link_context": self.link_context,
             "latitude": self.latitude,
             "longitude": self.longitude,
             "review_count": self.review_count,
@@ -1683,13 +1691,17 @@ class HotelSearchReport:
     fetch_ms: Optional[int] = None
     # A point the caller named; offers carry their straight-line distance to it.
     near: Optional[Tuple[float, float]] = None
+    max_distance_km: Optional[float] = None
 
     def __post_init__(self) -> None:
         _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
+        from viajante.runtime import package_version
+
         return {
             "schema_version": self.schema_version,
+            "viajante_version": package_version(),
             "provider": self.provider,
             "searched_at": _iso_z(self.searched_at),
             "currency": self.currency,
@@ -1698,6 +1710,7 @@ class HotelSearchReport:
             "fetch_backend": self.fetch_backend,
             "fetch_ms": self.fetch_ms,
             "near": {"lat": self.near[0], "lng": self.near[1]} if self.near else None,
+            "max_distance_km": self.max_distance_km,
             "property_matrix": _property_matrix(self.queries),
             "queries": [result.to_dict() for result in self.queries],
         }
