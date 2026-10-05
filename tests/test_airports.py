@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import io
+import math
 import unittest
 from contextlib import redirect_stdout
 from datetime import date
 from unittest.mock import patch
 
 from viajante.airports import (
+    METRO_GROUPS,
     airport_geo,
     dest_blocked_by_exclude_regions,
     get_airport,
     is_known_iata,
     lookup_airports,
     matching_excluded_regions,
+    metro_members,
+    metro_of,
     owned_tz_region_tokens,
     parse_exclude_regions,
     same_city_iata,
@@ -95,6 +99,49 @@ class AirportLookupTests(unittest.TestCase):
         self.assertIsNone(airport_geo("XXX"))
 
 
+def _km(a: str, b: str) -> float:
+    geo_a, geo_b = airport_geo(a), airport_geo(b)
+    assert geo_a is not None and geo_b is not None
+    lat1, lon1, lat2, lon2 = map(math.radians, (geo_a[1], geo_a[2], geo_b[1], geo_b[2]))
+    h = (
+        math.sin((lat2 - lat1) / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    )
+    return 2 * 6371 * math.asin(math.sqrt(h))
+
+
+class MetroTableTests(unittest.TestCase):
+    def test_every_metro_is_provable_from_the_airport_table(self) -> None:
+        seen: dict[str, str] = {}
+        for metro, members in METRO_GROUPS.items():
+            with self.subTest(metro=metro):
+                self.assertFalse(is_known_iata(metro), "a metro code must not also be an airport")
+                self.assertGreaterEqual(len(members), 2)
+                airports = [get_airport(code) for code in members]
+                self.assertTrue(all(airports), f"unknown member in {members}")
+                self.assertEqual(len({a.country for a in airports if a}), 1)
+                zones = {(airport_geo(code) or ("?",))[0] for code in members}
+                self.assertEqual(len(zones), 1, zones)
+                widest = max(_km(x, y) for x in members for y in members)
+                self.assertLessEqual(widest, 100.0)
+                for code in members:
+                    self.assertNotIn(code, seen, f"{code} already in {seen.get(code)}")
+                    seen[code] = metro
+
+    def test_named_metro_lists_members_and_members_name_their_metro(self) -> None:
+        self.assertEqual(metro_members("nyc"), ("JFK", "EWR", "LGA"))
+        self.assertEqual(metro_members("JFK"), ())
+        self.assertEqual(metro_of("ewr"), "NYC")
+        self.assertIsNone(metro_of("MAD"))
+
+    def test_lookup_surfaces_metro_codes(self) -> None:
+        self.assertEqual([row.iata for row in lookup_airports("NYC")], ["JFK", "EWR", "LGA"])
+        self.assertEqual([row.iata for row in lookup_airports("LHR")], ["LHR"])
+        london = {row.iata: row.to_dict() for row in lookup_airports("london")}
+        self.assertEqual(london["LHR"]["metro"], "LON")
+        self.assertNotIn("metro", get_airport("MAD").to_dict())  # type: ignore[union-attr]
+
+
 class ExcludeRegionsParseTests(unittest.TestCase):
     def test_named_asia_europe_are_owned_iana_prefixes(self) -> None:
         tokens = owned_tz_region_tokens()
@@ -140,6 +187,15 @@ class AirportCliTests(unittest.TestCase):
         output = buffer.getvalue()
         self.assertIn("LHR", output)
         self.assertIn("LGW", output)
+
+    def test_airports_metro_code_prints_members_with_their_metro(self) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(["airports", "NYC"])
+        self.assertEqual(code, 0)
+        lines = buffer.getvalue().splitlines()
+        self.assertEqual([line.split()[0] for line in lines], ["JFK", "EWR", "LGA"])
+        self.assertTrue(all(line.endswith("metro NYC") for line in lines))
 
     def test_airports_help_lists_examples(self) -> None:
         buffer = io.StringIO()

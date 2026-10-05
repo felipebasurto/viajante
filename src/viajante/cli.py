@@ -35,6 +35,7 @@ from viajante.explore import (
 from viajante.flights import (
     DEFAULT_TOP,
     FLIGHT_SORTS,
+    FlightPlan,
     FlightSort,
     _clock_minutes,
     _effective_cost,
@@ -96,7 +97,7 @@ from viajante.quote import (
     resolve_quote_currency,
 )
 from viajante.runtime import package_version
-from viajante.self_transfer import search_self_transfer, validate_connection_bounds
+from viajante.self_transfer import MAX_VIAS, search_self_transfer, validate_connection_bounds
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.storage import reports_payload, write_json_atomic
@@ -193,6 +194,7 @@ Examples:
 SELF_TRANSFER_EXAMPLES = """\
 Examples:
   viajante self-transfer MAD-LHR-JFK:2026-11-10 --min-connection 3
+  viajante self-transfer MAD-LHR,CDG,AMS-JFK:2026-11-10 --min-connection 3 --top 10
   viajante self-transfer SIN-BKK-HAN:2026-11-03 --second-date 2026-11-04 --max-connection 30
   viajante self-transfer BOS-DUB-LIS:2026-11-20 --bags 1 --save results/self-transfer.json
 """
@@ -242,10 +244,8 @@ def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dic
     return trips, shop
 
 
-def _plan_departure_dates(plan: object) -> Tuple[date, ...]:
-    if isinstance(plan, (RoundTrip, MultiCity)):
-        return tuple(leg.departure_date for leg in plan.legs)
-    return tuple(query.departure_date for query in plan)  # type: ignore[union-attr]
+def _plan_departure_dates(plan: FlightPlan) -> Tuple[date, ...]:
+    return tuple(leg.departure_date for trip in as_trips(plan) for leg in trip.legs)
 
 
 def _format_stops(stops_count: Optional[int]) -> str:
@@ -860,9 +860,8 @@ def _run_flights(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    if getattr(args, "nearby", False):
-        for note in nearby_notes(queries, exclude_airports=shop["exclude_airports"]):
-            print(note, file=sys.stderr)
+    for note in nearby_notes(queries, exclude_airports=shop["exclude_airports"]):
+        print(note, file=sys.stderr)
 
     report = search_flights(
         queries,
@@ -1072,7 +1071,10 @@ def _print_airports(query: str) -> int:
     for row in rows:
         city = row.city or "?"
         country = row.country or "?"
-        print(f"  {row.iata}  {row.name}  {city}  {country}")
+        metro = row.to_dict().get("metro")
+        print(
+            f"  {row.iata}  {row.name}  {city}  {country}" + (f"  metro {metro}" if metro else "")
+        )
     return 0
 
 
@@ -1805,7 +1807,10 @@ def _hidden_city_route(
     else:
         trips = as_trips(plan)
         if len(trips) != 1:
-            raise ValueError("hidden-city takes one DATE or ORIGIN-DESTINATION:OUT:BACK")
+            raise ValueError(
+                "hidden-city takes one airport pair (no metro codes) and one DATE or "
+                "ORIGIN-DESTINATION:OUT:BACK"
+            )
         query = trips[0]
         origin, destination, departure, back = (
             query.origin,
@@ -1834,12 +1839,12 @@ def _format_leg_offer(offer: FlightOffer) -> str:
 
 
 def _print_self_transfer_report(report: SelfTransferReport) -> None:
-    first, second = report.first_leg.query, report.second_leg.query
+    first, second = (result.query for result in report.flights.queries[:2])
     dates = first.departure_date.isoformat()
     if second.departure_date != first.departure_date:
         dates = f"{dates} / {second.departure_date.isoformat()}"
     print(
-        f"\n=== {report.origin} -> {report.via} -> {report.destination}  {dates} "
+        f"\n=== {report.origin} -> {','.join(report.vias)} -> {report.destination}  {dates} "
         "(self-transfer, separate tickets) ==="
     )
     for line in report.warnings:
@@ -1854,7 +1859,7 @@ def _print_self_transfer_report(report: SelfTransferReport) -> None:
     if not report.pairings:
         print("No pairings.")
         return
-    print(f"{'total':>12}  {'status':<9}  {'conn':>6}  {'same':<4}  first  |  second")
+    print(f"{'total':>12}  {'via':<3}  {'status':<9}  {'conn':>6}  {'same':<4}  first  |  second")
     for pairing in report.pairings:
         total = (
             format_money(pairing.total_price, pairing.currency, width=10)
@@ -1864,21 +1869,24 @@ def _print_self_transfer_report(report: SelfTransferReport) -> None:
         same = {True: "yes", False: "no", None: "?"}[pairing.same_airport]
         bag = "  bags: verify" if pairing.needs_bag_verify else ""
         print(
-            f"{total}  {pairing.status:<9}  {_format_connection(pairing.connection_minutes):>6}  "
-            f"{same:<4}  {_format_leg_offer(pairing.first)}  |  "
+            f"{total}  {pairing.via:<3}  {pairing.status:<9}  "
+            f"{_format_connection(pairing.connection_minutes):>6}  {same:<4}  "
+            f"{_format_leg_offer(pairing.first)}  |  "
             f"{_format_leg_offer(pairing.second)}{bag}"
         )
     if report.eligible_pairings > len(report.pairings):
         print(f"({len(report.pairings)} of {report.eligible_pairings} pairings shown)")
 
 
-def _self_transfer_route(spec: str) -> tuple[str, str, str, date]:
+def _self_transfer_route(spec: str) -> tuple[str, list[str], str, date]:
     try:
         codes, day = spec.split(":", 1)
-        origin, via, destination = (code.strip() for code in codes.split("-"))
+        origin, vias, destination = (code.strip() for code in codes.split("-"))
     except ValueError as exc:
-        raise ValueError(f"invalid route: {spec!r}. Expected ORIGIN-VIA-DESTINATION:DATE") from exc
-    return origin, via, destination, _parse_iso_date(day, "date")
+        raise ValueError(
+            f"invalid route: {spec!r}. Expected ORIGIN-VIA[,VIA...]-DESTINATION:DATE"
+        ) from exc
+    return origin, vias.split(","), destination, _parse_iso_date(day, "date")
 
 
 def _run_self_transfer(args: argparse.Namespace) -> int:
@@ -1886,7 +1894,7 @@ def _run_self_transfer(args: argparse.Namespace) -> int:
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
         occupancy = _occupancy_from_args(args)
-        origin, via, destination, departure = _self_transfer_route(args.route)
+        origin, vias, destination, departure = _self_transfer_route(args.route)
         second = (
             _parse_iso_date(args.second_date, "--second-date") if args.second_date else departure
         )
@@ -1897,7 +1905,7 @@ def _run_self_transfer(args: argparse.Namespace) -> int:
         market = _market_from_args(args, origin.strip().upper())
         report = search_self_transfer(
             origin,
-            via,
+            vias,
             destination,
             departure,
             second_date=second,
@@ -2494,15 +2502,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     self_transfer = sub.add_parser(
         "self-transfer",
-        help="Two one-way flight legs through a named via, on separate tickets",
+        help="Two one-way flight legs through each named via, on separate tickets",
         description=(
-            "Shop ORIGIN-VIA and VIA-DESTINATION as one-way sweeps and pair them with the "
-            "measured connection margin. Separate tickets: nothing protects the connection."
+            "Shop ORIGIN-VIA and VIA-DESTINATION as one-way sweeps for each named via (at most "
+            f"{MAX_VIAS}) and pair them with the measured connection margin. Separate tickets: "
+            "nothing protects the connection."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=SELF_TRANSFER_EXAMPLES,
     )
-    self_transfer.add_argument("route", help="ORIGIN-VIA-DESTINATION:DATE (IATA codes)")
+    self_transfer.add_argument(
+        "route", help="ORIGIN-VIA[,VIA...]-DESTINATION:DATE (IATA codes; vias comma-separated)"
+    )
     self_transfer.add_argument(
         "--second-date",
         dest="second_date",
@@ -2532,7 +2543,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--top",
         type=int,
         default=DEFAULT_TOP,
-        help=f"Offers per leg and pairings shown (default {DEFAULT_TOP})",
+        help=f"Offers per leg, and pairings shown across all vias (default {DEFAULT_TOP})",
     )
     self_transfer.add_argument(
         "--bags",

@@ -1888,6 +1888,7 @@ SELF_TRANSFER_WARNINGS: tuple[str, ...] = (
 class SelfTransferPairing:
     """Two owned one-way offers on separate tickets and the measured gap between them."""
 
+    via: str
     first: FlightOffer
     second: FlightOffer
     connection_minutes: Optional[int]
@@ -1899,6 +1900,7 @@ class SelfTransferPairing:
     ticketing: Literal["separate_tickets"] = field(init=False, default="separate_tickets")
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "via", _normalize_iata(self.via, role="via"))
         if self.connection_minutes is None and self.status != "unknown":
             raise ValueError("an unmeasured connection must have status unknown")
         if self.connection_minutes is not None and self.status == "unknown":
@@ -1919,6 +1921,7 @@ class SelfTransferPairing:
 
     def to_dict(self, currency: str) -> Mapping[str, object]:
         return {
+            "via": self.via,
             "ticketing": self.ticketing,
             "protected": self.protected,
             "status": self.status,
@@ -1948,17 +1951,21 @@ def _leg_coverage(result: QueryResult, role: str) -> SearchCoverage:
         empty=counts.empty,
         failed=counts.failed,
         complete=True,
-        unsearched="other via airports, other dates, and offers outside this leg's shortlist",
+        unsearched="unnamed via airports, other dates, and offers outside this leg's shortlist",
     )
 
 
 @dataclass(frozen=True)
 class SelfTransferReport:
-    """Two one-way legs through a named via, joined into unprotected pairings."""
+    """One-way legs through each named via, joined into unprotected pairings.
+
+    ``flights.queries`` holds two legs per via, in via order: origin-via, then
+    via-destination.
+    """
 
     searched_at: datetime
     origin: str
-    via: str
+    vias: Tuple[str, ...]
     destination: str
     flights: SearchReport
     pairings: Tuple[SelfTransferPairing, ...]
@@ -1972,29 +1979,54 @@ class SelfTransferReport:
 
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
-        via = _normalize_iata(self.via, role="via")
         destination = _normalize_iata(self.destination, role="destination")
-        if via in (origin, destination):
+        vias = tuple(_normalize_iata(via, role="via") for via in self.vias)
+        if not vias:
+            raise ValueError("a self-transfer report needs at least one via")
+        if len(set(vias)) != len(vias):
+            raise ValueError("vias must not repeat")
+        if any(via in (origin, destination) for via in vias):
             raise ValueError("via must differ from origin and destination")
-        if len(self.flights.queries) != 2:
-            raise ValueError("a self-transfer report holds exactly two one-way legs")
+        if len(self.flights.queries) != 2 * len(vias):
+            raise ValueError("a self-transfer report holds two one-way legs per via")
         if self.eligible_pairings < len(self.pairings):
             raise ValueError("eligible_pairings must be >= number of pairings")
-        if self.pairings and not all(isinstance(r, QuerySuccess) for r in self.flights.queries):
-            raise ValueError("pairings need both legs to succeed")
         object.__setattr__(self, "origin", origin)
-        object.__setattr__(self, "via", via)
+        object.__setattr__(self, "vias", vias)
         object.__setattr__(self, "destination", destination)
+        for via, first, second in self.via_legs:
+            legs = (
+                (first.query.origin, first.query.destination),
+                (
+                    second.query.origin,
+                    second.query.destination,
+                ),
+            )
+            if legs != ((origin, via), (via, destination)):
+                raise ValueError(
+                    f"legs for via {via} must be {origin}-{via} then {via}-{destination}"
+                )
+        failed = set(self.failed_vias)
+        for pairing in self.pairings:
+            if pairing.via not in vias:
+                raise ValueError(f"pairing via {pairing.via} was not searched")
+            if pairing.via in failed:
+                raise ValueError("pairings need both legs of their via to succeed")
         object.__setattr__(self, "currency", normalize_currency(self.currency))
         _store_naive_utc(self)
 
     @property
-    def first_leg(self) -> QueryResult:
-        return self.flights.queries[0]
+    def via_legs(self) -> Tuple[Tuple[str, QueryResult, QueryResult], ...]:
+        queries = self.flights.queries
+        return tuple(zip(self.vias, queries[::2], queries[1::2], strict=True))
 
     @property
-    def second_leg(self) -> QueryResult:
-        return self.flights.queries[1]
+    def failed_vias(self) -> Tuple[str, ...]:
+        return tuple(
+            via
+            for via, first, second in self.via_legs
+            if isinstance(first, QueryFailure) or isinstance(second, QueryFailure)
+        )
 
     def to_dict(self) -> Mapping[str, object]:
         return {
@@ -2003,14 +2035,21 @@ class SelfTransferReport:
             "currency": self.currency,
             "locale": self.locale,
             "origin": self.origin,
-            "via": self.via,
+            "vias": list(self.vias),
             "destination": self.destination,
             "ticketing": "separate_tickets",
             "protected": False,
             "min_connection_hours": self.min_connection_hours,
             "max_connection_hours": self.max_connection_hours,
-            "first_leg": {"coverage": _leg_coverage(self.first_leg, "first").to_dict()},
-            "second_leg": {"coverage": _leg_coverage(self.second_leg, "second").to_dict()},
+            "failed_vias": list(self.failed_vias),
+            "legs": [
+                {
+                    "via": via,
+                    "first": {"coverage": _leg_coverage(first, "first").to_dict()},
+                    "second": {"coverage": _leg_coverage(second, "second").to_dict()},
+                }
+                for via, first, second in self.via_legs
+            ],
             "eligible_pairings": self.eligible_pairings,
             "pairings": [pairing.to_dict(self.currency) for pairing in self.pairings],
             "warnings": list(self.warnings),

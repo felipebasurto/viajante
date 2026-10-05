@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import io
+import unittest
+from contextlib import redirect_stderr
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from viajante import mcp_handlers
+from viajante.cli import main
+from viajante.flights import (
+    drop_excluded_airport_trips,
+    expand_nearby_trips,
+    nearby_notes,
+    parse_flight_plan,
+)
+from viajante.google_flights import RawFlightCard
+from viajante.models import (
+    AppliedHotelFilters,
+    CancellationEvidence,
+    HotelOffer,
+    HotelQuery,
+    HotelQuerySuccess,
+    HotelSearchReport,
+    LodgingKind,
+    PropertyTypeEvidence,
+    RoundTrip,
+)
+from viajante.trip import search_trip
+
+DAY = date(2026, 11, 10)
+BACK = date(2026, 11, 14)
+
+
+def _pairs(trips) -> list[tuple[str, str]]:
+    return [(trip.origin, trip.destination) for trip in trips]
+
+
+class MetroPlanTests(unittest.TestCase):
+    def test_named_metro_expands_to_owned_members_with_a_metro_label(self) -> None:
+        trips = parse_flight_plan([f"nyc-LHR:{DAY}"], max_stops=1)
+        self.assertEqual(_pairs(trips), [("JFK", "LHR"), ("EWR", "LHR"), ("LGA", "LHR")])
+        self.assertEqual({trip.nearby_label for trip in trips}, {"metro NYC"})
+        self.assertEqual({trip.departure_date for trip in trips}, {DAY})
+
+    def test_metro_never_pairs_a_member_with_itself(self) -> None:
+        trips = parse_flight_plan([f"NYC-JFK:{DAY}"], max_stops=1)
+        self.assertEqual(_pairs(trips), [("EWR", "JFK"), ("LGA", "JFK")])
+
+    def test_member_airport_is_not_expanded_to_its_metro(self) -> None:
+        (trip,) = parse_flight_plan([f"JFK-LHR:{DAY}"], max_stops=1)
+        self.assertEqual(_pairs([trip]), [("JFK", "LHR")])
+        self.assertIsNone(trip.nearby_label)
+
+    def test_both_sides_and_one_way_out_back_expand_together(self) -> None:
+        trips = parse_flight_plan([f"PAR-TYO:{DAY}:{BACK}"], max_stops=1)
+        self.assertEqual(len(trips), 8)
+        self.assertEqual({trip.nearby_label for trip in trips}, {"metro PAR; metro TYO"})
+        self.assertEqual(
+            {(t.origin, t.destination) for t in trips if t.departure_date == BACK},
+            {(d, o) for o in ("CDG", "ORY") for d in ("NRT", "HND")},
+        )
+
+    def test_round_trip_expands_to_one_package_per_member_pair(self) -> None:
+        plan = parse_flight_plan([f"MAD-NYC:{DAY}:{BACK}"], trip="rt", max_stops=1)
+        self.assertTrue(all(isinstance(trip, RoundTrip) for trip in plan))
+        self.assertEqual(_pairs(plan), [("MAD", "JFK"), ("MAD", "EWR"), ("MAD", "LGA")])
+        self.assertEqual({trip.return_date for trip in plan}, {BACK})
+
+    def test_open_jaw_and_multi_city_reject_metro_codes(self) -> None:
+        cases = (
+            ([f"MAD-NYC:{DAY}", f"NYC-LIS:{BACK}"], "rt"),
+            ([f"MAD-LHR:{DAY}", f"LON-LIS:{BACK}"], "multi"),
+        )
+        for specs, kind in cases:
+            with self.subTest(kind=kind), self.assertRaises(ValueError) as caught:
+                parse_flight_plan(specs, trip=kind, max_stops=1)
+            self.assertIn("metro", str(caught.exception))
+
+    def test_nearby_does_not_fan_out_metro_members_again(self) -> None:
+        trips = parse_flight_plan([f"NYC-MAD:{DAY}"], max_stops=1)
+        self.assertEqual(expand_nearby_trips(trips, nearby=True), trips)
+
+    def test_exclude_drops_members_and_the_legend_follows(self) -> None:
+        trips = parse_flight_plan([f"NYC-MAD:{DAY}"], max_stops=1)
+        self.assertEqual(nearby_notes(trips), ("metro NYC: EWR, JFK, LGA",))
+        kept = drop_excluded_airport_trips(trips, ("EWR",))
+        self.assertEqual(_pairs(kept), [("JFK", "MAD"), ("LGA", "MAD")])
+        self.assertEqual(nearby_notes(kept, exclude_airports=("EWR",)), ("metro NYC: JFK, LGA",))
+
+
+class _FaresByOrigin:
+    """Flight source whose single card price depends on the trip's origin airport."""
+
+    def __init__(self, fares: dict[str, str]) -> None:
+        self.fares = fares
+        self.fetched: list[str] = []
+        self.config = SimpleNamespace(html_lang="en", currency="EUR")
+
+    def fetch(self, trip: object) -> tuple[RawFlightCard, ...]:
+        origin = trip.origin  # type: ignore[attr-defined]
+        self.fetched.append(origin)
+        card = RawFlightCard(
+            airline="Example Air",
+            departure="08:00",
+            arrival="20:00",
+            duration="7 hr",
+            stops="Nonstop",
+            price=self.fares[origin],
+        )
+        return (card,)
+
+    def reset(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+class MetroTripTotalTests(unittest.TestCase):
+    def test_metro_members_take_the_cheapest_fare_not_a_sum(self) -> None:
+        plan = parse_flight_plan([f"NYC-LHR:{DAY}:{BACK}"], trip="rt", max_stops=1)
+        source = _FaresByOrigin({"JFK": "€300", "EWR": "€120", "LGA": "€200"})
+        stay = HotelQuery("London", DAY, BACK)
+        offer = HotelOffer(
+            title="Example Hotel",
+            address="London",
+            total_price_text="50 €",
+            total_price=50.0,
+            rating=None,
+            rating_score=None,
+            details="Free cancellation",
+            cancellation_evidence=CancellationEvidence.FREE,
+            property_type_evidence=PropertyTypeEvidence.UNKNOWN,
+            lodging_kind=LodgingKind.UNKNOWN,
+            bedrooms=None,
+            bathrooms=None,
+            beds=None,
+            link=None,
+        )
+        hotels = HotelSearchReport(
+            searched_at=datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc),
+            queries=(
+                HotelQuerySuccess(
+                    query=stay,
+                    applied=AppliedHotelFilters(chips=(), url="https://example.test"),
+                    raw_count=1,
+                    eligible_count=1,
+                    offers=(offer,),
+                ),
+            ),
+            currency="EUR",
+            fetch_backend="google",
+            provider="google-hotels",
+        )
+        with (
+            patch("viajante.flights.GoogleFlightsHttpSource", return_value=source),
+            patch("viajante.trip.search_hotels", return_value=hotels),
+        ):
+            report = search_trip(plan, stay, fetch="sweep", baggage_buffer=0, currency="EUR")
+        self.assertEqual(sorted(source.fetched), ["EWR", "JFK", "LGA"])
+        assert report.trip_total is not None
+        self.assertEqual(report.trip_total.flight_fare, 120)
+        self.assertEqual(report.trip_total.total, 170)
+
+
+class MetroSurfaceTests(unittest.TestCase):
+    FUTURE = date.today() + timedelta(days=30)
+
+    def test_flights_cli_expands_a_named_metro_and_prints_its_members(self) -> None:
+        err = io.StringIO()
+        with (
+            patch("viajante.cli.search_flights") as search,
+            patch("viajante.cli._print_report"),
+            patch("viajante.cli._exit_code", return_value=0),
+            redirect_stderr(err),
+        ):
+            code = main(["flights", f"MAD-LON:{self.FUTURE}", "--exclude-airports", "SEN"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [q.destination for q in search.call_args.args[0]],
+            ["LHR", "LGW", "STN", "LTN", "LCY", "SEN"],
+        )
+        self.assertIn("metro LON: LCY, LGW, LHR, LTN, STN\n", err.getvalue())
+
+    def test_mcp_search_flights_expands_a_named_metro(self) -> None:
+        mcp_handlers._CACHE.clear()
+        fake = MagicMock()
+        fake.to_dict.return_value = {"schema_version": 2, "queries": []}
+        with patch("viajante.mcp_handlers.search_flights", return_value=fake) as search:
+            mcp_handlers.search_flights_tool([f"WAS-CHI:{self.FUTURE}"], currency="USD")
+        trips = search.call_args.args[0]
+        self.assertEqual(len(trips), 6)
+        self.assertEqual({t.nearby_label for t in trips}, {"metro WAS; metro CHI"})
+
+
+if __name__ == "__main__":
+    unittest.main()

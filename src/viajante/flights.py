@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, get_args
 
-from viajante.airports import get_airport, is_known_iata, same_city_iata
+from viajante.airports import get_airport, is_known_iata, metro_members, same_city_iata
 from viajante.browser import chromium_installed, playwright_available
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
@@ -108,7 +108,7 @@ _CLOCK_TOKEN = re.compile(
 _ROUTE_SPEC_RE = re.compile(r"^[A-Za-z]{3}-[A-Za-z]{3}:")
 FetchMode = Literal["auto", "sweep", "detail"]
 TripKind = Literal["one-way", "rt", "multi"]
-FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | MultiCity
+FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | Tuple[RoundTrip, ...] | MultiCity
 TypicalTrip = FlightQuery | RoundTrip
 TypicalCacheKey = tuple[str, str, date, Optional[int], int, int, int, int, int, str]
 SWEEP_BATCH_THRESHOLD = 3
@@ -265,16 +265,53 @@ def _nearby_pair_label(
     return "; ".join(parts) if parts else None
 
 
+_METRO_LABEL = "metro "
+
+
+def metro_codes_in_label(label: Optional[str]) -> frozenset[str]:
+    """Metro codes a named route expanded, read back from its ``nearby_label``."""
+    if not label:
+        return frozenset()
+    parts = (part.strip() for part in label.split(";"))
+    return frozenset(part[len(_METRO_LABEL) :] for part in parts if part.startswith(_METRO_LABEL))
+
+
+def _expand_metro_spec(spec: str) -> Tuple[tuple[str, Optional[str]], ...]:
+    """One route spec per member pair when a side names a metro code; else the spec."""
+    pair, colon, rest = spec.partition(":")
+    origin, dash, destination = pair.strip().partition("-")
+    named = [code.strip().upper() for code in (origin, destination) if metro_members(code)]
+    if not colon or not dash or not named:
+        return ((spec, None),)
+    label = "; ".join(f"{_METRO_LABEL}{code}" for code in named)
+    return tuple(
+        (f"{start}-{end}:{rest}", label)
+        for start in metro_members(origin) or (origin,)
+        for end in metro_members(destination) or (destination,)
+        if start != end
+    )
+
+
 def nearby_notes(
     trips: Sequence[Trip],
     exclude_airports: Optional[Sequence[str]] = None,
 ) -> Tuple[str, ...]:
-    """Stderr legend for `--nearby` expands. Named open-jaw is not expanded."""
+    """Stderr legend for `--nearby` and metro expands. Named open-jaw is not expanded."""
     blocked = _named_iata(exclude_airports)
     notes: list[str] = []
     seen: set[tuple[str, str]] = set()
+    seen_metros: set[str] = set()
     for trip in trips:
-        if isinstance(trip, MultiCity) or not getattr(trip, "nearby_label", None):
+        label = getattr(trip, "nearby_label", None)
+        if isinstance(trip, MultiCity) or not label:
+            continue
+        metros = metro_codes_in_label(label)
+        for metro in sorted(metros - seen_metros):
+            seen_metros.add(metro)
+            codes = sorted(code for code in metro_members(metro) if code not in blocked)
+            if codes:
+                notes.append(f"metro {metro}: {', '.join(codes)}")
+        if metros:
             continue
         for code in (trip.origin, trip.destination):
             if code in blocked:
@@ -312,14 +349,15 @@ def expand_nearby_trips(trips: Sequence[Trip], *, nearby: bool = False) -> Tuple
     """Fan out one-way and mirrored RT queries to owned same-city IATA.
 
     Default off. Packaged open-jaw / multi-city keeps every named airport
-    (LGW stays LGW). Does not invent codes or mix a mirrored RT into an
-    open jaw.
+    (LGW stays LGW). A trip that already carries a label (a metro member)
+    is an alternative already and is not fanned out again. Does not invent
+    codes or mix a mirrored RT into an open jaw.
     """
     if not nearby:
         return tuple(trips)
     expanded: list[Trip] = []
     for trip in trips:
-        if isinstance(trip, (FlightQuery, RoundTrip)):
+        if isinstance(trip, (FlightQuery, RoundTrip)) and not trip.nearby_label:
             expanded.extend(_expand_od_trip(trip))
         else:
             expanded.append(trip)
@@ -496,11 +534,28 @@ def parse_flight_plan(
         "carry_on": carry_on,
         "price_cap": price_cap,
     }
-    if kind == "one-way":
-        return parse_route_specs(specs, max_stops=max_stops, **shop)
+    variants = tuple(variant for spec in specs for variant in _expand_metro_spec(spec))
+    if all(label is None for _spec, label in variants):
+        if kind == "one-way":
+            return parse_route_specs(specs, max_stops=max_stops, **shop)
+        if kind == "rt":
+            return _parse_round_trip_plan(specs, max_stops=max_stops, **shop)
+        return _parse_multi_city_plan(specs, max_stops=max_stops, **shop)
+    if kind == "multi" or len(specs) != 1 and kind == "rt":
+        raise ValueError(
+            "metro codes expand one-way and --trip rt routes only; "
+            "name airports for open-jaw or multi-city"
+        )
     if kind == "rt":
-        return _parse_round_trip_plan(specs, max_stops=max_stops, **shop)
-    return _parse_multi_city_plan(specs, max_stops=max_stops, **shop)
+        return tuple(
+            replace(_parse_round_trip_plan([spec], max_stops=max_stops, **shop), nearby_label=label)
+            for spec, label in variants
+        )
+    return tuple(
+        replace(query, nearby_label=label) if label else query
+        for spec, label in variants
+        for query in parse_route_specs([spec], max_stops=max_stops, **shop)
+    )
 
 
 def _split_route(spec: str, *, grammar: str) -> tuple[str, str, str]:

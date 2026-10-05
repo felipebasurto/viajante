@@ -90,10 +90,14 @@ compare_awards is local points math from a named offer; it does not invent seats
 lookup_transfers is a local partner table, not live award inventory.
 plan_stay_blocks and split_stay_costs are local arithmetic over a per-night roster
 the caller supplies; they never search, never convert money, never pick a stay.
-search_self_transfer joins two one-way flight legs through a caller-named via
-into separate-ticket pairings. protected is always false. The measured
+search_self_transfer joins two one-way flight legs through each caller-named via
+(comma list, at most 5) into separate-ticket pairings. protected is always false. The measured
 connection is evidence, not an endorsement, and does not prove baggage recheck
 or immigration feasibility. Unnamed connection bounds mean no bound.
+A metro code (LON, NYC, PAR, TYO and others in the owned table) named on a
+search_flights or search_trip route expands to its member airports; a trip total
+takes the cheapest member fare, not a sum. lookup_airports with the code lists
+its members. A metro code is never inferred from an airport or city.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
 missing segment, baggage, or fare facts.
@@ -224,6 +228,9 @@ def build_server():
         Use search_dates for the cheapest week and search_flex for ±N days.
         Each routes entry is ORIGIN-DEST:YYYY-MM-DD. fetch=detail requires the
         browser extra and Chromium in the MCP environment.
+        A named metro code (LON, NYC, PAR, TYO; lookup_airports lists members)
+        on a one-way or rt route searches each member airport, labeled
+        "metro XXX". Only a named metro code expands; JFK stays JFK.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
         convert for the user. Unproven country, dest, or currency (city with
@@ -577,14 +584,18 @@ def build_server():
     ) -> dict:
         """Two one-way flight legs, origin-via and via-destination, on separate tickets.
 
-        Use only when the caller names the via airport. Pairings are unprotected:
+        via is one IATA code or a comma list of at most 5; use only codes the
+        caller named, never invented candidates. Repeats are shopped once. Pairings
+        from every via share one order (out-of-bounds last, then total price,
+        then margin) and one top cap; each pairing names its via. Pairings are unprotected:
         protected is always false. connection_minutes is measured in UTC from
         provider clocks; null means unknown and status is unknown, never ok.
         Connection bounds are caller-named; unnamed means no bound. A margin is
         evidence, not an endorsed minimum, and does not prove baggage recheck,
         immigration or transit feasibility. second_date defaults to departure.
         total_price appears only when both fares share one owned currency.
-        A failed leg is kept as error evidence and yields no pairings.
+        A failed leg is kept as error evidence; its via is listed in failed_vias
+        and yields no pairings.
         """
         return dict(await run_mcp_tool(search_self_transfer_tool, **locals()))
 

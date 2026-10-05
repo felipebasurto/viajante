@@ -776,14 +776,14 @@ def search_self_transfer_tool(
     country: Optional[str] = None,
     proxy: Optional[str] = None,
 ) -> Mapping[str, object]:
-    """Two one-way flight legs through a named via, joined on separate tickets."""
+    """Two one-way flight legs through each named via (comma list), on separate tickets."""
     first_date = date.fromisoformat(departure)
     second = date.fromisoformat(second_date) if second_date else first_date
     _reject_past((first_date, second))
     report = _with_search_lock(
         lambda: search_self_transfer(
             origin,
-            via,
+            via.split(","),
             destination,
             first_date,
             second_date=second,

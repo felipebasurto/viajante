@@ -73,6 +73,24 @@ list and accepted values.
 | `--sort duration` | Order by `ranked`, `fare`/`price`, `duration`, `departure`, or `arrival`. |
 | `--baggage-buffer 30` | Add a ranking allowance for recognized low-cost carriers, in the quote currency. |
 
+### Metro city codes
+
+Name a metro code instead of an airport to search every airport in that city
+group:
+
+```bash
+viajante flights NYC-LON:2026-11-15 --currency USD
+```
+
+`NYC` searches `JFK`, `EWR` and `LGA`; `LON` searches `LHR`, `LGW`, `STN`,
+`LTN`, `LCY` and `SEN`. Run `viajante airports NYC` to list a metro's
+airports. Each expanded query carries `nearby_label` `metro NYC`, and
+`--exclude-airports` still removes members. Only a code you name expands: `JFK`
+searches `JFK` alone. Metro codes work on one-way and `--trip rt` routes in
+`flights` and `trip`, not on open-jaw or multi-city routes, and not in
+`dates`, `flex`, `explore` or `self-transfer`. A metro-expanded route is not
+expanded again by `--nearby`.
+
 Time, layover, duration, and price-cap filters operate on returned flight
 details. Unknown details can remain in results for some filters, so inspect
 the returned fields when a constraint is essential. These filters do not turn
@@ -228,10 +246,11 @@ the flight fare and hotel stay, not a reservation or a quote for every trip
 expense. Trip searches support adult occupancy only.
 
 Each requested dated flight journey contributes its cheapest owned fare.
-Only nearby airport alternatives for the same dated journey share a minimum;
+Only nearby or metro airport alternatives for the same dated journey share a
+minimum;
 separate dates and different multi-city legs are not collapsed.
 
-## Self-transfer through a named via
+## Self-transfer through named vias
 
 Use `self-transfer` to pair two separate one-way tickets through an airport you
 name:
@@ -241,7 +260,17 @@ viajante self-transfer MAD-LHR-JFK:2026-11-10 --min-connection 3 --currency EUR
 ```
 
 The command shops `MAD-LHR` and `LHR-JFK` in one sweep and pairs each returned
-first-leg offer with each returned second-leg offer. Add `--second-date` when
+first-leg offer with each returned second-leg offer.
+
+To compare several vias, list them with commas. Name up to five; more is an
+error. A repeated via is shopped once:
+
+```bash
+viajante self-transfer MAD-LHR,CDG,AMS-JFK:2026-11-10 --min-connection 3 --currency EUR
+```
+
+All legs for all vias go in one sweep. Viajante does not suggest vias; it
+searches only the ones you name. Add `--second-date` when
 the second ticket departs on a later day. Each pairing reports:
 
 - `connection_minutes`: the gap between the first ticket's last arrival and the
@@ -251,6 +280,7 @@ the second ticket departs on a later day. Each pairing reports:
   you name with `--min-connection` and `--max-connection`; without them there
   is no bound. A departure at or before the arrival is always `too_short`. An
   unmeasured gap is always `unknown`, never `ok`.
+- `via`: the airport this pairing connects through.
 - `same_airport`: whether the first ticket lands at the airport the second
   departs from, or `null` when segments do not show it.
 - `total_price`: the sum of both fares, only when both carry the same quote
@@ -261,10 +291,12 @@ the first does not protect the second, and checked bags must be collected and
 re-checked. The measured margin is evidence, not an endorsed minimum
 connection, and it does not show that baggage recheck, immigration or transit
 rules allow the connection. Pairings with an out-of-bounds status sort after
-the rest, then by total price and margin. `--top` caps both the per-leg
-shortlist and the pairings shown; `eligible_pairings` is the count before the
-cap. If either leg fails, the report keeps that leg's error and has no
-pairings. Coverage covers only the named via, dates and returned offers.
+the rest, then by total price and margin, across all vias. `--top` caps each
+leg's shortlist and the pairings shown across all vias; `eligible_pairings` is
+the count before the cap. If either leg of a via fails, the report keeps that
+leg's error, lists the via in `failed_vias`, and has no pairings through it.
+The other vias still pair. Coverage covers only the named vias, dates and
+returned offers.
 
 ## Saving results and handling errors
 
@@ -360,10 +392,10 @@ For flights and a hotel stay in one request:
 search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="rt")
 ```
 
-For two separate tickets through a named via:
+For two separate tickets through one or more named vias:
 
 ```text
-search_self_transfer(origin="MAD", via="LHR", destination="JFK", departure="2026-11-10", min_connection_hours=3)
+search_self_transfer(origin="MAD", via="LHR,CDG", destination="JFK", departure="2026-11-10", min_connection_hours=3)
 ```
 
 These are tool-call examples, not Python library calls. The MCP server uses

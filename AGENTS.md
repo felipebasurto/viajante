@@ -45,7 +45,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
-- Self-transfer pairing of two one-way legs through a named via: `src/viajante/self_transfer.py`
+- Self-transfer pairing of two one-way legs through named vias: `src/viajante/self_transfer.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
@@ -95,15 +95,17 @@ catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
 
-Self-transfer joins two owned one-way legs (origin-via, via-destination) from
-one sweep into separate-ticket pairings. The via is caller-named; no nearby or
-open-jaw rewrite. `protected` is always false. `connection_minutes` is measured
-from UTC segment instants and is evidence, not an endorsed minimum; missing or
-ambiguous clocks are `unknown`, never `ok`. Bounds are caller-named; unnamed is
-no bound, and a non-positive margin is `too_short`. `total_price` needs one
-owned currency on both fares. A failed leg keeps its error and yields no
-pairings. Temporal order does not prove baggage recheck, immigration or transit
-feasibility.
+Self-transfer joins two owned one-way legs (origin-via, via-destination) for
+each caller-named via (at most 5, all in one sweep) into separate-ticket
+pairings. Never invent a candidate via; no nearby or open-jaw rewrite. Repeats
+are shopped once. Pairings from every via share one order and one `top` cap.
+Over the cap is an error, not truncation. `protected` is always false.
+`connection_minutes` is measured from UTC segment instants and is evidence, not
+an endorsed minimum; missing or ambiguous clocks are `unknown`, never `ok`.
+Bounds are caller-named; unnamed is no bound, and a non-positive margin is
+`too_short`. `total_price` needs one owned currency on both fares. A failed leg
+keeps its error; its via is in `failed_vias` and yields no pairings. Temporal
+order does not prove baggage recheck, immigration or transit feasibility.
 
 `selection=top` remains the flight default. Opt-in `pareto` compares owned price,
 duration and stops within one query/currency, after explicit filters. Package
@@ -138,7 +140,12 @@ constraints are a separate scenario. Search `coverage` is bounded to its named
 scope and is not proof over unsearched routes, dates, gateways, or permutations.
 
 `--nearby` is opt-in same-city IATA (default off; open-jaw not rewritten; no
-invented codes). `--exclude-airports` / `--include-airports` are named owned
+invented codes). A metro code (`METRO_GROUPS` in `airports.py`) named on a
+one-way or `rt` flights/trip route expands to its members with `nearby_label`
+`metro XXX`; an airport never expands to its metro. Metro-expanded trips are not
+`--nearby` expanded again. Open-jaw and multi-city reject metro codes; dates,
+flex, explore, hotels, self-transfer vias and hidden-city do not take them. Add
+a metro only when tests can confirm every member from the airport table. `--exclude-airports` / `--include-airports` are named owned
 IATA lists (same parse as via). Include is dests only, not origins. Exclude wins
 on overlap. `--exclude-regions` is explore-only (owned IANA tz prefixes). Named
 origin/dest in an exclude list is empty unless `--nearby` already owned a

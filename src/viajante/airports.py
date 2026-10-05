@@ -96,6 +96,48 @@ _MINOR_NAME_MARKERS = (
 )
 
 
+# IATA metropolitan codes a caller may name instead of one airport. Membership
+# is the IATA city assignment, not a guess from distance; the table can only
+# confirm each member is a known code in one country, zone and short radius,
+# which tests enforce. A code that is also an airport (SHA, BKK, IST) is left
+# out so a route never has two readings.
+METRO_GROUPS: Mapping[str, Tuple[str, ...]] = {
+    "BJS": ("PEK", "PKX"),
+    "BUE": ("EZE", "AEP"),
+    "CHI": ("ORD", "MDW"),
+    "JKT": ("CGK", "HLP"),
+    "LON": ("LHR", "LGW", "STN", "LTN", "LCY", "SEN"),
+    "MIL": ("MXP", "LIN", "BGY"),
+    "MOW": ("SVO", "DME", "VKO"),
+    "NYC": ("JFK", "EWR", "LGA"),
+    "OSA": ("KIX", "ITM"),
+    "PAR": ("CDG", "ORY"),
+    "REK": ("KEF", "RKV"),
+    "RIO": ("GIG", "SDU"),
+    "ROM": ("FCO", "CIA"),
+    "SAO": ("GRU", "CGH", "VCP"),
+    "SEL": ("ICN", "GMP"),
+    "STO": ("ARN", "BMA"),
+    "TYO": ("NRT", "HND"),
+    "WAS": ("IAD", "DCA", "BWI"),
+    "YMQ": ("YUL", "YMX"),
+    "YTO": ("YYZ", "YTZ"),
+}
+_METRO_OF: Mapping[str, str] = {
+    member: metro for metro, members in METRO_GROUPS.items() for member in members
+}
+
+
+def metro_members(code: str) -> Tuple[str, ...]:
+    """Member airports of a named metro code; empty for anything else."""
+    return METRO_GROUPS.get(code.strip().upper(), ())
+
+
+def metro_of(code: str) -> Optional[str]:
+    """The metro code an airport belongs to, if the table names one."""
+    return _METRO_OF.get(code.strip().upper())
+
+
 @dataclass(frozen=True)
 class Airport:
     iata: str
@@ -104,12 +146,16 @@ class Airport:
     country: str
 
     def to_dict(self) -> Mapping[str, str]:
-        return {
+        payload = {
             "iata": self.iata,
             "name": self.name,
             "city": self.city,
             "country": self.country,
         }
+        metro = metro_of(self.iata)
+        if metro is not None:
+            payload["metro"] = metro
+        return payload
 
 
 _LOOKUP_ROWS: Optional[tuple[tuple[Airport, str, str, str], ...]] = None
@@ -364,6 +410,9 @@ def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
         exact = by_code.get(needle.upper())
         if exact is not None:
             return (exact,)
+        members = metro_members(needle)
+        if members:
+            return tuple(by_code[code] for code in members)[:limit]
     city_hits = list(by_city.get(needle, ()))
     if len(city_hits) >= limit:
         return tuple(city_hits[:limit])
