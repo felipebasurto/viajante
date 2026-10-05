@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-05
+
 ### Added
 
 - Optional hotel `max_distance_km` / `--max-distance-km`: requires a named `near` point and filters outside or unlocated offers using unrounded straight-line distance before ranking and top.

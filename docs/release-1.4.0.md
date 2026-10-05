@@ -1,7 +1,8 @@
-# 1.4.0 hotel evidence and navigation candidate
+# 1.4.0 hotel evidence and navigation release
 
-Prepared on 2026-10-05. This is a candidate, not a published release. Main merge,
-tagging and PyPI/npm/MCP Registry publication require human confirmation.
+Prepared and authorized for publication on 2026-10-05. The user explicitly
+approved merging PR #51 and publishing v1.4.0. Publication results will be
+recorded after the workflow and public installation checks complete.
 All six version stamps are aligned; hotel schema 2 gains additive fields.
 README is owned elsewhere and remains unchanged.
 
@@ -86,9 +87,9 @@ the previous configuration worked, not that future registry access is guaranteed
 Preparation verified that v1.4.0 is absent from the remote Git tags and that the
 PyPI and npm 1.4.0 metadata endpoints return 404. Repeat these checks if another
 release or candidate change intervenes. Version stamps and `mcpName` are already
-aligned; the changelog entries remain under Unreleased until the release date.
+aligned; the changelog entries are dated 2026-10-05 for release 1.4.0.
 
-After explicit human approval:
+The user approved this sequence on 2026-10-05:
 
 1. Confirm the approved PR head and all seven checks are green. Finalize the
    changelog's 1.4.0 release date, then merge PR #51 into main using that exact
