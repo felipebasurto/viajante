@@ -6,6 +6,7 @@ from random import Random
 from types import SimpleNamespace
 from typing import Sequence
 
+import _isolate  # noqa: F401
 from viajante.dates import MAX_DATE_WINDOW_DAYS
 from viajante.flights import _run_search
 from viajante.google_flights import NoFlightsFound, RawFlightCard

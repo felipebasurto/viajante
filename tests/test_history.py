@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import history, mcp_handlers, watch
 from viajante.cli import main
 from viajante.evidence import _Owned
@@ -227,6 +228,42 @@ class ImmutabilityAndBoundsTests(_State):
         path.write_text("not json\n" + path.read_text(), encoding="utf-8")
         self.assertEqual(len(history.read_observations()), 1)
 
+    def test_one_bad_byte_costs_only_its_own_line(self) -> None:
+        self.enable()
+        for hours in range(5):
+            self.record_flights(_flight_report(500.0 + hours, at=T0 + timedelta(hours=hours)))
+        path = self.state / history.HISTORY_FILE
+        lines = path.read_bytes().split(b"\n")
+        lines[2] = b"\xff" + lines[2]
+        path.write_bytes(b"\n".join(lines))
+        self.assertEqual(len(history.read_observations()), 4)
+
+    def test_append_never_drops_lines_it_cannot_parse(self) -> None:
+        self.enable()
+        for hours in range(5):
+            self.record_flights(_flight_report(500.0 + hours, at=T0 + timedelta(hours=hours)))
+        path = self.state / history.HISTORY_FILE
+        lines = path.read_bytes().split(b"\n")
+        lines[1] = b"\xff\xfe broken"
+        path.write_bytes(b"\n".join(lines))
+        broken = lines[1]
+        self.record_flights(_flight_report(400.0, at=T0 + timedelta(days=1)))
+        after = path.read_bytes().split(b"\n")
+        self.assertIn(broken, after)
+        self.assertEqual(len(history.read_observations()), 5)
+        self.assertEqual(after[:1], lines[:1])
+
+    def test_cap_counts_only_valid_entries_and_keeps_unreadable_lines(self) -> None:
+        self.enable()
+        path = self.state / history.HISTORY_FILE
+        with patch.object(history, "MAX_ENTRIES", 2):
+            self.record_flights(_flight_report(100.0, at=T0))
+            path.write_bytes(b"\xff garbage\n" + path.read_bytes())
+            for hours in (1, 2, 3):
+                self.record_flights(_flight_report(100.0 + hours, at=T0 + timedelta(hours=hours)))
+        self.assertEqual([r["cheapest"] for r in history.read_observations()], [102.0, 103.0])
+        self.assertIn(b"\xff garbage", path.read_bytes())
+
     def test_undecodable_file_reads_as_empty(self) -> None:
         (self.state / history.HISTORY_FILE).write_bytes(b"\xff\xfe\x00bad")
         self.assertEqual(history.read_observations(), [])
@@ -420,7 +457,7 @@ class WatchTests(_State):
         with (
             patch(
                 "viajante.history.append_observations",
-                side_effect=PermissionError("[Errno 13] Permission denied"),
+                side_effect=PermissionError(13, "Permission denied", str(self.state / "x.tmp")),
             ),
             contextlib.redirect_stderr(err),
         ):
@@ -429,8 +466,10 @@ class WatchTests(_State):
         (item,) = result["results"]
         self.assertEqual(item["current"]["cheapest"], 500.0)
         self.assertFalse(item["recorded"])
-        self.assertIn("recording failed: [Errno 13] Permission denied", result["note"])
-        self.assertIn("Permission denied", result["recording_error"])
+        self.assertIn("recording failed: permission denied writing price history", result["note"])
+        self.assertEqual(result["recording_error"], "permission denied writing price history")
+        self.assertNotIn("/", result["note"] + result["recording_error"])
+        self.assertNotIn(str(self.state), json.dumps(result))
         self.assertNotIn("no priced offer", result["note"])
         self.assertEqual(history.read_observations(), [])
 

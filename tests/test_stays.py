@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
+import _isolate  # noqa: F401
 from viajante import evidence
 from viajante.mcp_handlers import plan_stay_blocks_tool, split_stay_costs_tool
 from viajante.stays import plan_stay_blocks, split_stay_costs

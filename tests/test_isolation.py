@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -29,36 +30,42 @@ class SuiteIsolationTests(unittest.TestCase):
         self.assertIn("viajante-tests-", os.environ["VIAJANTE_STATE_DIR"])
 
     @unittest.skipIf(os.environ.get(CHILD) == "1", "child run of the isolation probe")
-    def test_exported_opt_in_never_reaches_the_real_state_dir(self) -> None:
-        with tempfile.TemporaryDirectory() as real:
-            env = {
-                **os.environ,
-                CHILD: "1",
-                ENV_RECORD: "1",
-                "VIAJANTE_STATE_DIR": real,
-                "XDG_STATE_HOME": real,
-                "HOME": real,
-            }
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "unittest",
-                    "discover",
-                    "-s",
-                    "tests",
-                    "-p",
-                    "test_[hi]*.py",
-                ],
-                cwd=ROOT,
-                env=env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout)
-            self.assertEqual(os.listdir(real), [])
+    def test_each_module_alone_never_reaches_the_real_state_dir(self) -> None:
+        for module in (
+            "test_flights.py",
+            "test_trip.py",
+            "test_hotel_evidence_context.py",
+            "test_skiplagged_hotels.py",
+            "test_isolation.py",
+        ):
+            with self.subTest(module=module), tempfile.TemporaryDirectory() as real:
+                env = {
+                    **os.environ,
+                    CHILD: "1",
+                    ENV_RECORD: "1",
+                    "VIAJANTE_STATE_DIR": real,
+                    "XDG_STATE_HOME": real,
+                    "HOME": real,
+                }
+                result = subprocess.run(
+                    [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", module],
+                    cwd=ROOT,
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(os.listdir(real), [])
+
+    def test_every_test_module_imports_the_isolation(self) -> None:
+        missing = [
+            path.name
+            for path in sorted(Path(__file__).parent.glob("test_*.py"))
+            if not re.search(r"^import _isolate\b", path.read_text(encoding="utf-8"), re.M)
+        ]
+        self.assertEqual(missing, [], "add `import _isolate  # noqa: F401` to these test modules")
 
     @unittest.skipUnless(os.environ.get(CHILD) == "1", "probe only runs inside the child")
     def test_probe_a_real_search_records_nothing_under_an_exported_opt_in(self) -> None:

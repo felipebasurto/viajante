@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.cli import main
 from viajante.models import AwardOffer, PointsBalance
 from viajante.points import (

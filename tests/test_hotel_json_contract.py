@@ -4,6 +4,7 @@ import json
 import unittest
 from datetime import date, datetime, timedelta, timezone
 
+import _isolate  # noqa: F401
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,

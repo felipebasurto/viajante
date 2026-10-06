@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 import viajante
 from viajante.cli import _format_clock, _join_cancellation_rows, _print_report, main
 from viajante.models import (

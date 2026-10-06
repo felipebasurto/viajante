@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from random import Random
 
+import _isolate  # noqa: F401
 from viajante.models import SearchErrorCode
 from viajante.orchestration import (
     BACKOFF_BASE_SECONDS,

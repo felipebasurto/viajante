@@ -4,6 +4,7 @@ import json
 import unittest
 from datetime import datetime
 
+import _isolate  # noqa: F401
 from viajante.validate import validate_itinerary
 
 

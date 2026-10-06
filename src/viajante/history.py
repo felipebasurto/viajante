@@ -30,7 +30,7 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 from viajante.models import HotelQuerySuccess, QuerySuccess
 from viajante.runtime import package_version
-from viajante.storage import default_state_dir, write_text_atomic
+from viajante.storage import default_state_dir, write_bytes_atomic
 
 ENV_RECORD = "VIAJANTE_PRICE_HISTORY"
 HISTORY_FILE = "price-history.jsonl"
@@ -97,10 +97,10 @@ def _path():
     return default_state_dir() / HISTORY_FILE
 
 
-def _valid(line: str) -> Optional[dict]:
+def _valid(line: bytes) -> Optional[dict]:
     try:
-        row = json.loads(line)
-    except ValueError:
+        row = json.loads(line.decode("utf-8"))
+    except ValueError:  # includes UnicodeDecodeError
         return None
     if not isinstance(row, dict):
         return None
@@ -116,23 +116,37 @@ def _valid(line: str) -> Optional[dict]:
     return row
 
 
-def read_observations() -> list[dict]:
-    """Every readable entry, oldest first. Unreadable lines are skipped."""
+def _raw_lines() -> list[bytes]:
     try:
-        text = _path().read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        data = _path().read_bytes()
+    except OSError:
         return []
-    return [row for row in map(_valid, text.splitlines()) if row is not None]
+    return [line for line in data.split(b"\n") if line.strip()]
+
+
+def read_observations() -> list[dict]:
+    """Every readable entry, oldest first. Unreadable lines are skipped one by one."""
+    return [row for row in map(_valid, _raw_lines()) if row is not None]
 
 
 def append_observations(entries: Sequence[Mapping[str, Any]]) -> None:
-    """Append immutable entries; the oldest fall off beyond MAX_ENTRIES."""
+    """Append immutable entries; the oldest valid ones fall off beyond MAX_ENTRIES.
+
+    Lines this version cannot parse are carried through byte for byte, never dropped.
+    """
     if not entries:
         return
-    lines = [json.dumps(row, ensure_ascii=False, sort_keys=True) for row in read_observations()] + [
-        json.dumps(dict(row), ensure_ascii=False, sort_keys=True) for row in entries
+    lines = _raw_lines() + [
+        json.dumps(dict(row), ensure_ascii=False, sort_keys=True).encode("utf-8") for row in entries
     ]
-    write_text_atomic("\n".join(lines[-MAX_ENTRIES:]) + "\n", _path())
+    excess = sum(_valid(line) is not None for line in lines) - MAX_ENTRIES
+    kept = []
+    for line in lines:
+        if excess > 0 and _valid(line) is not None:
+            excess -= 1
+            continue
+        kept.append(line)
+    write_bytes_atomic(b"\n".join(kept) + b"\n", _path())
 
 
 def clear_history() -> int:
@@ -140,6 +154,15 @@ def clear_history() -> int:
     count = len(read_observations())
     _path().unlink(missing_ok=True)
     return count
+
+
+def short_reason(exc: BaseException) -> str:
+    """A reason safe to hand to an MCP client: no paths, no temp file names."""
+    if isinstance(exc, PermissionError):
+        return "permission denied writing price history"
+    if isinstance(exc, OSError):
+        return f"could not write price history ({exc.strerror or type(exc).__name__})"
+    return f"price history could not be recorded ({type(exc).__name__})"
 
 
 def _plain(value: object) -> object:
@@ -262,7 +285,7 @@ def _recorded(build: Callable[[Any, Mapping[str, Any]], list[dict]]):
                 except Exception as exc:  # recording must never lose a real search result
                     print(f"price history not recorded: {exc}", file=sys.stderr)
                     if sink is not None:
-                        sink.errors.append(str(exc))
+                        sink.errors.append(short_reason(exc))
                         sink.unsaved.extend(entries)
                 else:
                     if sink is not None:

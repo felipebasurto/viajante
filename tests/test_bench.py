@@ -9,6 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.bench import (
     LIVE_ENV,
     MIN_PARSED_CARDS,

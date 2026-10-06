@@ -315,7 +315,8 @@ No live Google unless `VIAJANTE_BENCH_LIVE=1`; that extra `sweep_ms` is never th
 score. **Do not optimize `score_ms`.**
 
 The suite is isolated from the caller's environment (`tests/_isolate.py`: no
-`VIAJANTE_PRICE_HISTORY`, temporary `VIAJANTE_STATE_DIR`); the bench gate strips
+`VIAJANTE_PRICE_HISTORY`, temporary `VIAJANTE_STATE_DIR`); every new
+`tests/test_*.py` must start with `import _isolate  # noqa: F401` (a test enforces it); the bench gate strips
 the opt-in from its subprocesses. Keep new tests off the real state dir.
 
 `pip install -e .` still works; `uv` is the reproducible path. Tests are offline.
