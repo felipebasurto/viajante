@@ -18,6 +18,7 @@ SKIPLAGGED_RATE_LIMIT_FILE = "skiplagged-rate-limit.json"
 RATE_LIMIT_COOLDOWN_SECONDS = 120.0
 RATE_LIMIT_MAX_COOLDOWN_SECONDS = 1800.0
 NOT_SENT = "Not sent. "
+PAUSE_PHRASE = "searches until"
 
 
 def _read_rate_limit(file: str) -> Optional[dict]:
@@ -73,6 +74,18 @@ def rate_limit_advice(
     prefix = "" if sent else NOT_SENT
     return (
         f"{prefix}{provider} is rate-limiting this machine ({reason} at {clock(state['at'])} UTC). "
-        f"Viajante pauses {provider} searches until {clock(state['until'])} UTC (~{minutes} min). "
+        f"Viajante pauses {provider} {PAUSE_PHRASE} {clock(state['until'])} UTC (~{minutes} min). "
         "Tell the user to wait; do not retry or switch fetch mode."
     )
+
+
+def cooldown_until(message: str, file: str = GOOGLE_RATE_LIMIT_FILE) -> Optional[float]:
+    """End of the recorded cooldown, only when this failure carries its advice.
+
+    A proxied 429 records no cooldown, so a direct cooldown that happens to be running
+    must not be attributed to it.
+    """
+    if PAUSE_PHRASE not in message:
+        return None
+    state = rate_limit_status(file=file)
+    return None if state is None else float(state["until"])

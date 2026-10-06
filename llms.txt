@@ -63,11 +63,21 @@ Every result (except lookup_airports) opens with an envelope: status, completene
 - validate_itinerary: local pass/fail/unknown check of selected offers against
   named constraints (layovers, stay length, bags). Unknown never becomes pass.
 
-One search at a time in the MCP process.
+- get_guide: the long operational guide (markdown); same text as the `viajante://guide` resource.
+
+One search at a time in the MCP process. Every tool has a title and read-only
+annotations; only the search tools are open-world. Bad input fails the call with
+JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
+after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=1.14.1`.
+
+Local HTTP (opt-in, no auth): `viajante-mcp --transport streamable-http` serves
+`http://127.0.0.1:8000/mcp`; client entry `{"mcpServers": {"viajante": {"url": "http://127.0.0.1:8000/mcp"}}}`.
+A non-loopback `--host` warns: every client searches from this machine's IP and
+shares its provider cooldown.
 
 Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
 cooldown (error `rate_limited: true`; its message names the UTC time to wait
-until). Tell the user to wait; do not retry. Identical successful
+until, and `retry_after` / `retry_after_seconds` repeat it when a cooldown was recorded). Tell the user to wait; do not retry. Identical successful
 searches within 5 minutes return `cached: true` without a new request.
 
 ## Currency

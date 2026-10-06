@@ -1009,18 +1009,28 @@ class _FakeFastMCP:
         self.instructions = kwargs.get("instructions")
         self.tools: list[str] = []
         self.tool_functions: list[Any] = []
+        self.tool_kwargs: dict[str, dict[str, object]] = {}
+        self.resources: dict[str, Any] = {}
 
-    def tool(self, *_args: object, **_kwargs: object):
+    def tool(self, *_args: object, **kwargs: object):
         def deco(fn: Any) -> Any:
             self.tools.append(fn.__name__)
             self.tool_functions.append(fn)
+            self.tool_kwargs[fn.__name__] = kwargs
+            return fn
+
+        return deco
+
+    def resource(self, uri: str, **_kwargs: object):
+        def deco(fn: Any) -> Any:
+            self.resources[uri] = fn
             return fn
 
         return deco
 
 
 def _sdk_module_names() -> tuple[str, ...]:
-    return ("mcp", "mcp.server", "mcp.server.fastmcp")
+    return ("mcp", "mcp.server", "mcp.server.fastmcp", "mcp.types")
 
 
 class McpServerImportTests(unittest.TestCase):
@@ -1057,11 +1067,15 @@ class McpServerImportTests(unittest.TestCase):
         fake_server = types.ModuleType("mcp.server")
         fake_fastmcp = types.ModuleType("mcp.server.fastmcp")
         fake_fastmcp.FastMCP = _FakeFastMCP
+        fake_types = types.ModuleType("mcp.types")
+        fake_types.ToolAnnotations = lambda **kw: kw
         fake_mcp.server = fake_server
+        fake_mcp.types = fake_types
         fake_server.fastmcp = fake_fastmcp
         sys.modules["mcp"] = fake_mcp
         sys.modules["mcp.server"] = fake_server
         sys.modules["mcp.server.fastmcp"] = fake_fastmcp
+        sys.modules["mcp.types"] = fake_types
 
         def _drop_fakes() -> None:
             for name in _sdk_module_names():
@@ -1078,8 +1092,9 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIsInstance(server.instructions, str)
         assert isinstance(server.instructions, str)
         self.assertIn("search_dates is the cheapest week", server.instructions)
-        self.assertIn("search_dates is HTTP-calendar only", server.instructions)
-        self.assertIn("uvx", server.instructions)
+        self.assertIn("viajante://guide", server.instructions)
+        self.assertIn("viajante://guide", server.resources)
+        self.assertIn("search_dates is HTTP-calendar only", server.resources["viajante://guide"]())
         self.assertEqual(
             server.tools,
             [
@@ -1099,6 +1114,7 @@ class McpServerImportTests(unittest.TestCase):
                 "plan_stay_blocks",
                 "split_stay_costs",
                 "verify_answer",
+                "get_guide",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))
@@ -1106,6 +1122,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertNotIn("fetch", inspect.signature(tools["search_dates"]).parameters)
         self.assertIn("max_distance_km", inspect.signature(tools["search_hotels"]).parameters)
         self.assertEqual(tools["get_runtime_info"]()["hotel_schema_version"], 2)
+        self.assertIn("viajante://guide", tools["get_guide"]()["guide"])
 
         # Exercise the registered adapters: every argument must reach the correct
         # worker unchanged, with no incidental local variables or shape changes.
@@ -1124,7 +1141,7 @@ class McpServerImportTests(unittest.TestCase):
 
         async def check_forwarding() -> None:
             for name, function in tools.items():
-                if name == "get_runtime_info":
+                if name in {"get_runtime_info", "get_guide"}:
                     continue
                 signature = inspect.signature(function)
                 named = {param: object() for param in signature.parameters}

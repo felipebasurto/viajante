@@ -330,9 +330,54 @@ search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="r
 ```
 
 These are tool-call examples, not Python library calls. The MCP server uses
-stdio and runs one search at a time. See the signatures in
+stdio by default (local Streamable HTTP is opt-in, see below) and runs one
+search at a time. See the signatures in
 [`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
 
+
+### MCP client compatibility
+
+The `tools/list` and `instructions` sizes quoted in the changelog and PR were measured
+over a real stdio session as the client sees them:
+`ListToolsResult.model_dump_json(by_alias=True, exclude_none=True)` and
+`len(initialize.instructions.encode())`. A different serializer gives different
+absolute bytes (a raw compact-JSON measure read 30615 before and 33303 after) but
+the same roughly 2.7 KB difference.
+
+- **Annotations and titles.** All 17 tools carry a title and read-only
+  annotations (`readOnlyHint: true`, `destructiveHint: false`,
+  `idempotentHint: true`). `openWorldHint` is `true` for the tools that ask a
+  provider (`search_flights`, `search_dates`, `search_flex`, `search_explore`,
+  `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_hidden_city`) and
+  `false` for the local ones. This needs `mcp>=1.14.1`.
+- **Guide.** The server instructions hold only the load-bearing rules. The full
+  operational guide is the `viajante://guide` resource (markdown) and the
+  `get_guide` tool for clients without resource support.
+- **Invalid input.** Still an `isError` result. The text is the SDK's exact
+  `Error executing tool <name>: ` prefix followed by JSON:
+  `{"error": {"code": "invalid_parameter", "field": "origin", "message": "..."}}`.
+  Strip that prefix and parse the remainder only if it starts with `{`; any other
+  error text is not from this contract. This covers handler checks and missing or
+  mistyped arguments, and a top-level argument the tool does not declare (a
+  misspelled filter is rejected, never ignored). `message` lists every failure as
+  `name: reason`. `field` is set only when every failure is on one top-level
+  parameter; otherwise it is `null`, as it is when a handler message does not name
+  exactly one parameter. A concurrent search is `code: "search_in_progress"`.
+  The `message` of a handler check is the same sentence earlier versions raised.
+  A viajante-side failure (a decode error, or a result shape the envelope cannot read)
+  is not `invalid_parameter`: its text is not JSON.
+- **Rate limits.** A rate-limited search error keeps `rate_limited: true` and its
+  message, and adds `retry_after` (ISO 8601 UTC) and `retry_after_seconds` (integer)
+  from the recorded cooldown. Both are omitted when no cooldown was recorded, for
+  example a proxied 429. The envelope's top-level `retry_after` fields repeat the
+  latest of these per-error values exactly, so they are null whenever the errors carry none.
+- **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
+  [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
+  not meant to be hosted. A non-loopback `--host` prints a warning: every client
+  searches from this machine's IP and the machine-wide provider cooldown applies to
+  all of them. Loopback binds reject a foreign `Host` (421) or `Origin` (refused) header,
+  which stops DNS-rebinding from a web page. Client entry: `{"mcpServers": {"viajante": {"url": "http://127.0.0.1:8000/mcp"}}}`;
+  Claude Code: `claude mcp add --transport http viajante http://127.0.0.1:8000/mcp`.
 
 To diagnose installation drift, run `viajante --version` or call MCP
 `get_runtime_info` (both available in 1.4.0+). Hotel JSON includes the executing

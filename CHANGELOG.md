@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MCP tools carry human titles and read-only annotations (`readOnlyHint`, `destructiveHint: false`, `idempotentHint`); `openWorldHint` is true only for the tools that ask a provider.
+- MCP input errors have a stable JSON body, `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`, with `field` set only when the message names one parameter. A concurrent search is `search_in_progress`. Missing, mistyped and undeclared top-level arguments (a misspelled filter) get the same body, with `field` set only when every failure is on one parameter. Invalid input still fails the call (`isError`) and a handler's message keeps its wording.
+- Rate-limited search errors add `retry_after` (ISO 8601 UTC) and `retry_after_seconds` from the recorded cooldown. They are omitted when no cooldown was recorded (a proxied 429), and the message is unchanged. The end of a cooldown is rounded up to a whole second once, so `retry_after` is never earlier than the real end and `retry_after_seconds` is derived from it. The envelope's top-level `retry_after` / `retry_after_seconds` repeat these per-error values exactly, so a proxied 429 during a direct cooldown no longer shows a top-level value.
+- Opt-in local Streamable HTTP: `viajante-mcp --transport streamable-http [--host 127.0.0.1] [--port 8000]`. Stdio stays the default. No authentication and no `remotes` entry in `server.json`; a non-loopback host prints a warning, and loopback binds refuse a foreign `Host` or `Origin` header (set explicitly, because the SDK only does so itself from 1.23).
+- `viajante://guide` resource (markdown) and a `get_guide` tool carry the long operational guidance.
 - Every MCP tool except `lookup_airports` returns one typed envelope: `status`, `completeness`, `empty_reason` (`provider_empty`, `filtered_out`, `not_loaded`), `error_code`, `retry_after`, `observed_at` and `observed_at_basis`. It is derived from the existing counters and error codes, and is published as the tool's `outputSchema` / `structuredContent`.
 - `empty_reason` on query, date, and explore rows; `timeout` on typed errors when the cause was a timeout. Both appear only when set.
 - Contract: only `provider_empty` may be called "no flights/hotels found".
@@ -16,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The MCP server instructions shrink to the load-bearing rules (the result envelope, evidence, currency, bags, empty-is-not-absent, rate limits, hidden-city sequencing) and point at the guide; the full envelope text lives in the guide. `get_guide` carries the envelope too. No rule was removed; a test checks that every sentence of the previous instructions is in the new instructions or the guide.
 - The MCP extra now requires `mcp>=1.14.1,<2`. Earlier SDKs crash at startup on the server module's postponed annotations (or, on 1.6, serve no output schemas).
 - A calendar day that is missing or unpriced is `not_loaded`, never `provider_empty`; a priced calendar with such gaps is `partial`.
 - A sweep request that raises before any HTTP response (reset, timeout) is a transport failure: a multiplexed batch replays once on a fresh session, there is no per-query retry on top, and the result is `fetch_failed` (`timeout` when it timed out). It no longer reads as an HTTP 429 rate limit. Google Hotels multi-post searches replay once too. A calendar/explore POST that raises is `fetch_failed`, not `markup_drift`.

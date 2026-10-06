@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import time
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
@@ -916,12 +918,23 @@ class SearchError:
     code: SearchErrorCode
     message: str
     rate_limited: bool = False
+    # Epoch seconds a recorded cooldown ends; None unless a cooldown file named one.
+    retry_until: Optional[float] = None
     timeout: bool = False
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {"code": self.code.value, "message": self.message}
         if self.rate_limited:
             payload["rate_limited"] = True
+            now = time.time()
+            if self.retry_until is not None and self.retry_until > now:
+                # Round up once: the ISO instant is never earlier than the real end, and
+                # the seconds come from that same instant.
+                end = math.ceil(self.retry_until)
+                payload["retry_after"] = datetime.fromtimestamp(end, timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+                payload["retry_after_seconds"] = max(1, math.ceil(end - now))
         if self.timeout:
             payload["timeout"] = True
         return payload
