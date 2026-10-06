@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, get_args
 
-from viajante.airports import get_airport, is_known_iata, same_city_iata
+from viajante.airports import get_airport, is_known_iata, metro_members, metro_of, same_city_iata
 from viajante.browser import chromium_installed, playwright_available
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.control import (
@@ -34,6 +34,7 @@ from viajante.google_flights import (
     SweepTransportError,
     google_flights_url,
 )
+from viajante.history import recorded_flights
 from viajante.models import (
     DateCalendarSummary,
     FetchBackend,
@@ -69,6 +70,9 @@ from viajante.orchestration import (
     classify_failure as classify_provider_failure,
 )
 from viajante.parsers import (
+    clock_minutes as _clock_minutes,
+)
+from viajante.parsers import (
     normalize_clock,
     parse_duration_hours,
     parse_price,
@@ -76,6 +80,12 @@ from viajante.parsers import (
 )
 from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
 from viajante.ratelimit import cooldown_until
+from viajante.recommend import (
+    Recommendation,
+    Requirements,
+    hide_slow_connections,
+    recommend_offers,
+)
 from viajante.storage import default_state_dir
 from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
@@ -84,7 +94,6 @@ DEFAULT_TOP = 8
 UNKNOWN_DURATION_SORTS_LAST = float("inf")
 FlightSort = Literal["ranked", "fare", "price", "duration", "departure", "arrival"]
 FLIGHT_SORTS: tuple[str, ...] = get_args(FlightSort)
-_MINUTES_IN_DAY = 24 * 60
 
 LOW_COST_NAMES = [
     "AirAsia",
@@ -119,7 +128,7 @@ _CLOCK_TOKEN = re.compile(
 _ROUTE_SPEC_RE = re.compile(r"^[A-Za-z]{3}-[A-Za-z]{3}:")
 FetchMode = Literal["auto", "sweep", "detail"]
 TripKind = Literal["one-way", "rt", "multi"]
-FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | MultiCity
+FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | Tuple[RoundTrip, ...] | MultiCity
 TypicalTrip = FlightQuery | RoundTrip
 TypicalCacheKey = tuple[str, str, date, Optional[int], int, int, int, int, int, str]
 SWEEP_BATCH_THRESHOLD = 3
@@ -141,9 +150,6 @@ _TRIP_ALIASES = {
     "multi_city": "multi",
     "multicity": "multi",
 }
-# Hide connections slower than this multiple of the fastest nonstop/shortest
-# elapsed time. Short-haul overnight hops drop out; long-haul 1-stops stay.
-RANKED_SLOW_CONNECTION_FACTOR = 3.0
 
 
 def validate_sort(sort: str) -> None:
@@ -277,16 +283,68 @@ def _nearby_pair_label(
     return "; ".join(parts) if parts else None
 
 
+_METRO_LABEL = "metro "
+METRO_QUERY_LIMIT = 18
+
+
+def metro_codes_in_label(label: Optional[str]) -> frozenset[str]:
+    """Metro codes a named route expanded, read back from its ``nearby_label``."""
+    if not label:
+        return frozenset()
+    parts = (part.strip() for part in label.split(";"))
+    return frozenset(part[len(_METRO_LABEL) :] for part in parts if part.startswith(_METRO_LABEL))
+
+
+def _reject_same_metro(origin: str, destination: str) -> None:
+    """A route whose ends are one metro, or an airport inside the other's metro, is empty."""
+    left = origin.strip().upper()
+    right = destination.strip().upper()
+    left_metro = left if metro_members(left) else metro_of(left)
+    right_metro = right if metro_members(right) else metro_of(right)
+    if left_metro and left_metro == right_metro:
+        raise ValueError(
+            f"origin {left} and destination {right} resolve to the same metro {left_metro}"
+        )
+
+
+def _expand_metro_spec(spec: str) -> Tuple[tuple[str, Optional[str]], ...]:
+    """One route spec per member pair when a side names a metro code; else the spec."""
+    pair, colon, rest = spec.partition(":")
+    origin, dash, destination = pair.strip().partition("-")
+    if colon and dash and origin and destination:
+        _reject_same_metro(origin, destination)
+    named = [code.strip().upper() for code in (origin, destination) if metro_members(code)]
+    if not colon or not dash or not named:
+        return ((spec, None),)
+    label = "; ".join(f"{_METRO_LABEL}{code}" for code in named)
+    return tuple(
+        (f"{start}-{end}:{rest}", label)
+        for start in metro_members(origin) or (origin,)
+        for end in metro_members(destination) or (destination,)
+        if start != end
+    )
+
+
 def nearby_notes(
     trips: Sequence[Trip],
     exclude_airports: Optional[Sequence[str]] = None,
 ) -> Tuple[str, ...]:
-    """Stderr legend for `--nearby` expands. Named open-jaw is not expanded."""
+    """Stderr legend for `--nearby` and metro expands. Named open-jaw is not expanded."""
     blocked = _named_iata(exclude_airports)
     notes: list[str] = []
     seen: set[tuple[str, str]] = set()
+    seen_metros: set[str] = set()
     for trip in trips:
-        if isinstance(trip, MultiCity) or not getattr(trip, "nearby_label", None):
+        label = getattr(trip, "nearby_label", None)
+        if isinstance(trip, MultiCity) or not label:
+            continue
+        metros = metro_codes_in_label(label)
+        for metro in sorted(metros - seen_metros):
+            seen_metros.add(metro)
+            codes = sorted(code for code in metro_members(metro) if code not in blocked)
+            if codes:
+                notes.append(f"metro {metro}: {', '.join(codes)}")
+        if metros:
             continue
         for code in (trip.origin, trip.destination):
             if code in blocked:
@@ -324,14 +382,21 @@ def expand_nearby_trips(trips: Sequence[Trip], *, nearby: bool = False) -> Tuple
     """Fan out one-way and mirrored RT queries to owned same-city IATA.
 
     Default off. Packaged open-jaw / multi-city keeps every named airport
-    (LGW stays LGW). Does not invent codes or mix a mirrored RT into an
-    open jaw.
+    (LGW stays LGW). Combining `nearby` with a named metro code is an error:
+    the metro already names its airports, and expanding only the other side
+    would silently drop part of the request. Does not invent codes or mix a
+    mirrored RT into an open jaw.
     """
     if not nearby:
         return tuple(trips)
+    if any(metro_codes_in_label(getattr(trip, "nearby_label", None)) for trip in trips):
+        raise ValueError(
+            "--nearby cannot be combined with a metro code; name airports or "
+            "metros on both sides (for example NYC-LON), not --nearby"
+        )
     expanded: list[Trip] = []
     for trip in trips:
-        if isinstance(trip, (FlightQuery, RoundTrip)):
+        if isinstance(trip, (FlightQuery, RoundTrip)) and not trip.nearby_label:
             expanded.extend(_expand_od_trip(trip))
         else:
             expanded.append(trip)
@@ -508,11 +573,36 @@ def parse_flight_plan(
         "carry_on": carry_on,
         "price_cap": price_cap,
     }
-    if kind == "one-way":
-        return parse_route_specs(specs, max_stops=max_stops, **shop)
+    variants = tuple(variant for spec in specs for variant in _expand_metro_spec(spec))
+    if all(label is None for _spec, label in variants):
+        if kind == "one-way":
+            return parse_route_specs(specs, max_stops=max_stops, **shop)
+        if kind == "rt":
+            return _parse_round_trip_plan(specs, max_stops=max_stops, **shop)
+        return _parse_multi_city_plan(specs, max_stops=max_stops, **shop)
+    if kind == "multi" or len(specs) != 1 and kind == "rt":
+        raise ValueError(
+            "metro codes expand one-way and --trip rt routes only; "
+            "name airports for open-jaw or multi-city"
+        )
     if kind == "rt":
-        return _parse_round_trip_plan(specs, max_stops=max_stops, **shop)
-    return _parse_multi_city_plan(specs, max_stops=max_stops, **shop)
+        plan: FlightPlan = tuple(
+            replace(_parse_round_trip_plan([spec], max_stops=max_stops, **shop), nearby_label=label)
+            for spec, label in variants
+        )
+    else:
+        plan = tuple(
+            replace(query, nearby_label=label) if label else query
+            for spec, label in variants
+            for query in parse_route_specs([spec], max_stops=max_stops, **shop)
+        )
+    count = len(as_trips(plan))
+    if count > METRO_QUERY_LIMIT:
+        raise ValueError(
+            f"metro expansion would send {count} provider queries; "
+            f"the limit is {METRO_QUERY_LIMIT} per call"
+        )
+    return plan
 
 
 def _split_route(spec: str, *, grammar: str) -> tuple[str, str, str]:
@@ -1138,20 +1228,6 @@ def _passes_airline_filters(
     return True
 
 
-def _clock_minutes(text: Optional[str]) -> Optional[int]:
-    clock = normalize_clock(text)
-    if not clock:
-        return None
-    try:
-        hour_text, minute_text = clock.split(":", 1)
-        minutes = int(hour_text) * 60 + int(minute_text)
-    except ValueError:
-        return None
-    if not (0 <= minutes < _MINUTES_IN_DAY):
-        return None
-    return minutes
-
-
 def owned_clock(text: Optional[str]) -> Optional[str]:
     return text if _clock_minutes(text) is not None else None
 
@@ -1232,18 +1308,21 @@ def _normalize_offer(
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
+    enforce_requirements: bool = True,
 ) -> Optional[FlightOffer]:
+    """Parse one card. ``enforce_requirements=False`` keeps offers that miss the stop cap,
+    clock bounds, duration cap, or bag ask so the recommendation can report a relaxation."""
     price_text = raw.price or ""
     price = parse_price(price_text)
     if price is None or price <= 0:
         return None
-    if not _eligible_stops(raw.stops, max_stops):
+    if enforce_requirements and not _eligible_stops(raw.stops, max_stops):
         return None
     if not _passes_airline_filters(raw, airlines=airlines, exclude_airlines=exclude_airlines):
         return None
-    if not _passes_depart_window(raw, depart_window):
+    if enforce_requirements and not _passes_depart_window(raw, depart_window):
         return None
-    if not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
+    if enforce_requirements and not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
         return None
     if price_cap is not None and price > price_cap:
         return None
@@ -1257,7 +1336,8 @@ def _normalize_offer(
     layover_hours = raw.layover_hours
     duration_hours = parse_duration_hours(raw.duration)
     if (
-        max_duration_hours is not None
+        enforce_requirements
+        and max_duration_hours is not None
         and duration_hours is not None
         and duration_hours > max_duration_hours
     ):
@@ -1314,9 +1394,11 @@ def _normalize_offer(
         checked_bags=raw.checked_bags,
         carry_on=raw.carry_on,
     )
-    if not _passes_clock_bound(offer.arrival, arrive_before, before=True):
+    if enforce_requirements and not _passes_clock_bound(offer.arrival, arrive_before, before=True):
         return None
-    if not _passes_clock_bound(offer.departure, depart_after, before=False):
+    if enforce_requirements and not _passes_clock_bound(
+        offer.departure, depart_after, before=False
+    ):
         return None
     return offer
 
@@ -1327,6 +1409,7 @@ def offers_from_cards(
     filters: OfferFilters,
     *,
     baggage_buffer: int = 0,
+    enforce_requirements: bool = True,
 ) -> list[FlightOffer]:
     """Owned offers that pass the trip's shop fields and the named post-filters."""
     max_stops = _trip_max_stops(trip)
@@ -1344,6 +1427,7 @@ def offers_from_cards(
                 bags=trip.bags,
                 carry_on=trip.carry_on,
                 price_cap=trip.price_cap,
+                enforce_requirements=enforce_requirements,
                 **named,
             )
         )
@@ -1353,30 +1437,6 @@ def offers_from_cards(
 
 def _effective_cost(offer: FlightOffer) -> float:
     return offer.price + offer.baggage_buffer
-
-
-def _fastest_duration(offers: Sequence[FlightOffer]) -> Optional[float]:
-    hours = [offer.duration_hours for offer in offers if offer.duration_hours is not None]
-    return min(hours) if hours else None
-
-
-def _hide_slow_connections(
-    offers: Sequence[FlightOffer],
-) -> Tuple[FlightOffer, ...]:
-    """Drop connections many times slower than the fastest nonstop/shortest offer."""
-    nonstops = [offer for offer in offers if offer.stops_count == 0]
-    baseline = _fastest_duration(nonstops) or _fastest_duration(offers)
-    if baseline is None or baseline <= 0:
-        return tuple(offers)
-    limit = baseline * RANKED_SLOW_CONNECTION_FACTOR
-    kept: list[FlightOffer] = []
-    for offer in offers:
-        duration = offer.duration_hours
-        connecting = offer.stops_count is not None and offer.stops_count > 0
-        if connecting and duration is not None and duration > limit:
-            continue
-        kept.append(offer)
-    return tuple(kept) if kept else tuple(offers)
 
 
 def _duration_key(offer: FlightOffer) -> float:
@@ -1423,7 +1483,7 @@ def _rank_offers(
     top: int,
     sort: FlightSort = "ranked",
 ) -> Tuple[FlightOffer, ...]:
-    rows = offers if sort != "ranked" else _hide_slow_connections(offers)
+    rows = offers if sort != "ranked" else hide_slow_connections(offers)
     rows = sorted(rows, key=lambda offer: _offer_sort_key(offer, sort))
     seen: set[tuple] = set()
     deduped: list[FlightOffer] = []
@@ -1517,6 +1577,38 @@ def _calendar_summary_from_source(
     return summary
 
 
+def _recommend(
+    trip: Trip,
+    pool: Sequence[FlightOffer],
+    filters: OfferFilters,
+    *,
+    currency: str,
+    packaged: bool,
+) -> Optional[Recommendation]:
+    """Recommendation over the pool before the requirement filters, so a relaxation can show.
+
+    Round-trip and multi-city offers only exist after the filters ran on every journey
+    (the next journey is shopped lazily), so a package cannot be relaxed.
+    """
+    requirements = Requirements(
+        max_stops=_trip_max_stops(trip),
+        depart_window=filters.depart_window,
+        depart_after=filters.depart_after,
+        arrive_before=filters.arrive_before,
+        max_duration=filters.max_duration_hours,
+        carry_on=trip.carry_on,
+        bags=trip.bags,
+    )
+    recommendation = recommend_offers(pool, requirements, currency=currency, relax=not packaged)
+    if recommendation is None or not packaged:
+        return recommendation
+    note = (
+        "Round-trip and multi-city: requirements were applied to every journey before ranking "
+        "and cannot be relaxed; the per-offer requirement check covers the first journey only."
+    )
+    return replace(recommendation, notes=(*recommendation.notes, note))
+
+
 def _stamp_google_flights_urls(
     result: QueryResult,
     *,
@@ -1528,8 +1620,9 @@ def _stamp_google_flights_urls(
         result.query, html_lang=html_lang, currency=currency, country=country
     )
     if isinstance(result, QuerySuccess):
-        offers = tuple(
-            replace(
+
+        def stamp(offer: FlightOffer) -> FlightOffer:
+            return replace(
                 offer,
                 google_flights_url=google_flights_url(
                     result.query,
@@ -1539,9 +1632,15 @@ def _stamp_google_flights_urls(
                     booking_token=offer.booking_token,
                 ),
             )
-            for offer in result.offers
+
+        return replace(
+            result,
+            offers=tuple(stamp(offer) for offer in result.offers),
+            google_flights_url=query_url,
+            recommendation=result.recommendation.map_offers(stamp)
+            if result.recommendation
+            else None,
         )
-        return replace(result, offers=offers, google_flights_url=query_url)
     return replace(result, google_flights_url=query_url)
 
 
@@ -1555,8 +1654,8 @@ def _stamp_offer_evidence(
     if not isinstance(result, QuerySuccess):
         return result
     query = result.query.to_dict()
-    offers: list[FlightOffer] = []
-    for offer in result.offers:
+
+    def stamp(offer: FlightOffer) -> FlightOffer:
         offer_data = dict(offer.to_dict(currency))
         offer_data.pop("evidence", None)
         canonical = json.dumps(
@@ -1573,23 +1672,26 @@ def _stamp_offer_evidence(
             url_kind = "query"
         else:
             url_kind = "none"
-        offers.append(
-            replace(
-                offer,
-                evidence=OfferEvidence(
-                    evidence_id=f"gf_{hashlib.sha256(canonical).hexdigest()[:24]}",
-                    query=query,
-                    currency=currency,
-                    retrieved_at=retrieved_at,
-                    fetch_backend=fetch_backend,
-                    query_url=query_url,
-                    offer_url=offer_url,
-                    url_kind=url_kind,
-                ),
-                completeness=None,
-            )
+        return replace(
+            offer,
+            evidence=OfferEvidence(
+                evidence_id=f"gf_{hashlib.sha256(canonical).hexdigest()[:24]}",
+                query=query,
+                currency=currency,
+                retrieved_at=retrieved_at,
+                fetch_backend=fetch_backend,
+                query_url=query_url,
+                offer_url=offer_url,
+                url_kind=url_kind,
+            ),
+            completeness=None,
         )
-    return replace(result, offers=tuple(offers))
+
+    return replace(
+        result,
+        offers=tuple(stamp(offer) for offer in result.offers),
+        recommendation=result.recommendation.map_offers(stamp) if result.recommendation else None,
+    )
 
 
 def _report_with_evidence(
@@ -1817,12 +1919,27 @@ def _run_search(
                     break
         ranked = _rank_offers(eligible, top=top, sort=sort)
         shown = _stamp_typical(trip, ranked, source, typical_cache)
+        recommendation = _recommend(
+            trip,
+            eligible
+            if packaged
+            else offers_from_cards(
+                cards, trip, filters, baggage_buffer=baggage_buffer, enforce_requirements=False
+            ),
+            filters,
+            currency=currency,
+            packaged=packaged,
+        )
+        if recommendation is not None:
+            stamped = dict(zip(ranked, shown, strict=True))
+            recommendation = recommendation.map_offers(lambda offer: stamped.get(offer, offer))
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),
             eligible_count=len(eligible),
             offers=shown,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
+            recommendation=recommendation,
         )
 
     def _stamp(result: QueryResult) -> QueryResult:
@@ -2120,7 +2237,52 @@ def get_flights(
     return _search(trips)
 
 
+def validate_flight_search_args(
+    *,
+    top: int,
+    sort: str,
+    fetch: str,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
+    exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
+) -> Tuple[OfferFilters, Optional[Tuple[str, ...]], Optional[Tuple[str, ...]]]:
+    """Every check on search arguments alone, before any lock, fetch or state write.
+
+    Shared by `search_flights`, the MCP tool and saved watches so they reject the same input.
+    """
+    if top <= 0:
+        raise ValueError("top must be positive")
+    filters = parse_offer_filters(
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
+        depart_window=depart_window,
+        arrive_before=arrive_before,
+        depart_after=depart_after,
+        via=via,
+        exclude_via=exclude_via,
+        no_overnight=no_overnight,
+        require_overnight=require_overnight,
+    )
+    parsed_exclude = parse_code_list(exclude_airports, role="exclude-airports")
+    parsed_include = parse_code_list(include_airports, role="include-airports")
+    validate_sort(sort)
+    if fetch not in ("auto", "sweep", "detail"):
+        raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
+    return filters, parsed_exclude, parsed_include
+
+
 @controlled
+@recorded_flights
 def search_flights(
     queries: Sequence[Trip],
     *,
@@ -2153,11 +2315,10 @@ def search_flights(
 ) -> SearchReport:
     if not queries:
         raise ValueError("at least one query is required")
-    if top <= 0:
-        raise ValueError("top must be positive")
-    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
-    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
-    filters = parse_offer_filters(
+    filters, parsed_exclude_airports, parsed_include_airports = validate_flight_search_args(
+        top=top,
+        sort=sort,
+        fetch=fetch,
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
         max_duration_hours=max_duration_hours,
@@ -2168,12 +2329,11 @@ def search_flights(
         exclude_via=exclude_via,
         no_overnight=no_overnight,
         require_overnight=require_overnight,
+        exclude_airports=exclude_airports,
+        include_airports=include_airports,
     )
-    parsed_exclude_airports = parse_code_list(exclude_airports, role="exclude-airports")
-    parsed_include_airports = parse_code_list(include_airports, role="include-airports")
-    validate_sort(sort)
-    if fetch not in ("auto", "sweep", "detail"):
-        raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
+    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
     original = tuple(queries)
     kept = keep_included_dest_trips(original, parsed_include_airports)

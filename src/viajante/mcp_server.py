@@ -14,7 +14,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Any, Callable, Literal, NoReturn, Optional, Sequence, TypeVar, Union
+from typing import Annotated, Any, Callable, Literal, NoReturn, Optional, Sequence, TypeVar, Union
 
 from viajante.control import SearchControl, active
 from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
@@ -24,6 +24,7 @@ from viajante.mcp_errors import structured_error, unknown_arguments_body, valida
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
     compare_awards_tool,
+    get_hotel_details_tool,
     lookup_airports_tool,
     lookup_transfers_tool,
     plan_stay_blocks_tool,
@@ -35,6 +36,7 @@ from viajante.mcp_handlers import (
     search_hidden_city_tool,
     search_hotel_rooms_tool,
     search_hotels_tool,
+    search_split_tickets_tool,
     search_trip_tool,
     split_stay_costs_tool,
     validate_itinerary_tool,
@@ -42,6 +44,8 @@ from viajante.mcp_handlers import (
 )
 from viajante.models import EmptyReason
 from viajante.runtime import get_runtime_info as runtime_info
+from viajante.split import DEFAULT_MIN_CONNECTION_HOURS
+from viajante.watch import price_history_tool, watch_price_tool
 
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
@@ -74,10 +78,11 @@ usage: viajante-mcp [--transport {{stdio,streamable-http}}] [--host HOST] [--por
 Install:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp
 Checkout: uv sync --extra mcp && viajante-mcp
 
-Tools: search_flights, search_dates, search_flex, search_explore,
-search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers, validate_itinerary, recheck_offer, plan_stay_blocks,
-split_stay_costs, verify_answer, get_runtime_info, get_guide.
+Tools: search_flights, get_hotel_details, search_dates, search_flex, search_explore,
+search_hotels, search_hotel_rooms, search_trip, search_split_tickets, lookup_airports,
+search_hidden_city, compare_awards, lookup_transfers, validate_itinerary, recheck_offer,
+plan_stay_blocks, split_stay_costs, verify_answer, price_history, watch_price,
+get_runtime_info, get_guide.
 
 Server instructions (the full guide is the viajante://guide resource):
 
@@ -325,6 +330,13 @@ def _with_deadline_doc(fn: Callable[..., Any]) -> Callable[..., Any]:
     return fn
 
 
+def _room_rates_flag(value: object) -> bool:
+    # Reject before bool coercion, which would treat "yes" as true.
+    if not isinstance(value, bool):
+        raise ValueError("room_rates must be a boolean")
+    return value
+
+
 def _loopback_security(host: str):
     """Reject a foreign Host or Origin. The SDK only does this by itself from 1.23."""
     from mcp.server.transport_security import TransportSecuritySettings
@@ -341,13 +353,14 @@ def _loopback_security(host: str):
 
 
 def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
-    global _CONTEXT_FACTORY, _ENV_DEADLINE, _DeadlineSeconds
+    global _ROOM_RATES, _CONTEXT_FACTORY, _ENV_DEADLINE, _DeadlineSeconds
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
-    from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt
+    from pydantic import BaseModel, BeforeValidator, ConfigDict, StrictFloat, StrictInt
 
     _ENV_DEADLINE = env_deadline_seconds()
     _DeadlineSeconds = Optional[Union[StrictInt, StrictFloat]]
+    _ROOM_RATES = Annotated[bool, BeforeValidator(_room_rates_flag)]
 
     class ToolEnvelope(BaseModel):
         """Top-level fields on every tool result except lookup_airports (a bare list).
@@ -405,14 +418,16 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     server = ViajanteServer("viajante", instructions=_HELP, **options)
     _CONTEXT_FACTORY = getattr(server, "get_context", None)
 
-    def tool(title: str, *, network: bool, envelope: bool = True):
-        # Every tool only reads; openWorldHint is True only when the tool asks a provider.
+    def tool(title: str, *, network: bool, envelope: bool = True, writes: bool = False):
+        # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
+        # provider. A writing tool is neither read-only nor idempotent (it appends), but
+        # it never deletes: destructiveHint stays False.
         register = server.tool(
             title=title,
             annotations=ToolAnnotations(
-                readOnlyHint=True,
+                readOnlyHint=not writes,
                 destructiveHint=False,
-                idempotentHint=True,
+                idempotentHint=not writes,
                 openWorldHint=network,
             ),
         )
@@ -491,6 +506,10 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         Use search_dates for the cheapest week and search_flex for ±N days.
         Each routes entry is ORIGIN-DEST:YYYY-MM-DD. fetch=detail requires the
         browser extra and Chromium in the MCP environment.
+        A named metro code (LON, NYC, PAR, TYO; lookup_airports lists members)
+        on a one-way or rt route searches each member airport. Only a named
+        metro code expands; JFK stays JFK. A call that would send more than 18
+        provider queries is rejected before anything is fetched.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
         convert for the user. Unproven country, dest, or currency (city with
@@ -502,8 +521,38 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         search_hidden_city once with the same route and date. Sequential; do
         not mix payloads. Skip if bags were named. Omit hidden-city currency
         (Skiplagged cards are USD); do not copy this Google quote currency.
+        A successful query may carry recommendation (none when the provider
+        returned nothing): a pick that meets the named requirements
+        (relaxed_requirements names any it relaxed), a varied shortlist, and
+        highlights/tradeoffs from returned fields only.
+        It is evidence for your judgment; offers are unchanged. Check
+        relaxed_requirements before presenting a pick as a match. A query
+        with empty_reason filtered_out (envelope status no_results when every
+        query is filtered_out) that still has a recommendation means the pick
+        is a relaxed one, not an exact match: the named filters removed every
+        offer.
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
+
+    @tool("Hotel finalist details", network=True)
+    async def get_hotel_details(selection_id: str, room_rates: _ROOM_RATES = False) -> dict:
+        """Read a hotel offer this process returned. room_rates must be a boolean.
+
+        False returns the stored quote, does not search, and may run during another
+        search. True asks Skiplagged for a separate USD room quote and takes the
+        one-search lock. That quote is not the original stay when the city matches
+        more than one place, the returned coordinates do not match the hotel, or
+        the provider echoes different adults, rooms, or dates (occupancy_mismatch,
+        dates_mismatch, property_mismatch). A missing echo is echo unknown.
+        When the provider does not echo adults, rooms, and dates, a returned
+        quote is partial. A read does not evict stored searches. Unknown or
+        evicted ids send nothing.
+        """
+        return dict(
+            await (run_mcp_tool if room_rates else run_lookup_tool)(
+                get_hotel_details_tool, selection_id=selection_id, room_rates=room_rates
+            )
+        )
 
     @tool("Cheapest-dates calendar", network=True)
     @_with_deadline_doc
@@ -804,9 +853,73 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         If unknown, ask. Viajante does not convert. The calling agent may convert
         for the user. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
         shopping request. The same currency is passed to hotels. Optional
-        country is Google gl (origin market); omit when unset.
+        country is Google gl (origin market); omit when unset. The flights
+        queries carry the same recommendation block as search_flights.
         """
         return dict(await run_mcp_tool(search_trip_tool, **locals()))
+
+    @tool("Split-ticket itineraries", network=True)
+    async def search_split_tickets(
+        route: str,
+        trip: str = "one-way",
+        max_stops: int = 1,
+        adults: int = 1,
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
+        cabin: str = "economy",
+        top: int = DEFAULT_TOP,
+        fetch: str = "sweep",
+        airlines: str | None = None,
+        exclude_airlines: str | None = None,
+        alliance: str | None = None,
+        exclude_alliance: str | None = None,
+        bags: int | None = None,
+        carry_on: int | None = None,
+        price_cap: int | None = None,
+        via: str | None = None,
+        max_hubs: int | None = None,
+        min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
+        allow_overnight: bool = False,
+        leg_max_stops: int = 0,
+        currency: str | None = None,
+        country: str | None = None,
+        proxy: str | None = None,
+    ) -> dict:
+        """Opt-in separately ticketed itineraries built from real one-way quotes.
+
+        route is one ORIGIN-DEST:YYYY-MM-DD (one-way: a self-transfer via a hub,
+        origin to hub on one ticket and hub to destination on another) or, with
+        trip="rt", ORIGIN-DEST:OUT:BACK (the cheapest outbound one-way plus the
+        cheapest return one-way, compared with the packaged round-trip). It runs the
+        packaged search itself (returned as packaged_report) and then a capped number
+        of extra searches: max_hubs (default 3, or every named via airport; at
+        most 5) hubs of 2 queries, 3 with allow_overnight; mixed one-ways use 2.
+        via is a comma-separated list of up to 5 connection airports to try;
+        unnamed, hubs are the layover airports seen in the packaged results. It stops at a
+        recorded rate limit (rate_limited true): do not retry.
+        Currency is currency or inferred from a named origin's owned country. If
+        unknown, ask.
+        Every itinerary says split_ticket true, connection_protected false, and
+        self_transfer true for a hub. A missed connection between tickets is not
+        rebooked by either airline and bags may need to be re-checked: tell the
+        user, and have them confirm each part on its own google_flights_url.
+        min_connection_hours (default 3) is a planning default, not provider
+        evidence. total is summed only when every part is in one owned currency,
+        otherwise it is null. vs_packaged is present only when the split and the best
+        packaged offer share a currency and carries a non-negative savings (split
+        cheaper) or extra_cost (split dearer). Itineraries rank within one currency;
+        top applies to the requested currency; other currencies and unknown totals
+        keep at most 3 rows each (omitted_other_currency counts the rest). Hub
+        tickets must meet at the hub airport; mixed one-ways need the return to
+        leave after the outbound lands, else timing_proven is false and
+        timing_note says so. Gaps are measured in UTC through the segment
+        timezone, or the airport catalogue when the segment has none; a missing
+        timezone or a nonexistent or ambiguous
+        local time (a DST change) leaves the timing unproven, never a number.
+        Nothing is split out of a round-trip price, estimated, or converted. Not for multi-city.
+        """
+        return dict(await run_mcp_tool(search_split_tickets_tool, **locals()))
 
     @tool("Look up airports", network=False, envelope=False)
     async def lookup_airports(query: str, limit: int = 20) -> list:
@@ -869,8 +982,13 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     ) -> dict:
         """Validate selected v2 flight offers locally without fetching.
 
-        Each leg must preserve its exact query and one selected offer. The
-        result is tri-state: unknown evidence never becomes pass.
+        Each leg must preserve its exact query and one selected offer. Pass legs
+        in travel order: arrival_deadline and chronological read that order.
+        The result is tri-state: unknown evidence never becomes pass.
+        arrival_deadline is an ISO date and time; an explicit offset is compared
+        in UTC, and a naive time is local at the arrival airport. Ambiguous or
+        missing timezones stay unknown. chronological checks owned segment
+        instants. min_stay_days and max_stay_days use owned journey dates.
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 
@@ -957,6 +1075,52 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         during a search.
         """
         return dict(await run_lookup_tool(verify_answer_tool, **locals()))
+
+    @tool("Price history", network=False)
+    async def price_history(
+        kind: str | None = None,
+        route: str | None = None,
+        date: str | None = None,
+        location: str | None = None,
+        query_key: str | None = None,
+        currency: str | None = None,
+        limit: int = 20,
+    ) -> dict:
+        """Local: prices this machine observed for a route/date or hotel stay.
+
+        Reads the opt-in log (VIAJANTE_PRICE_HISTORY=1 in the server environment).
+        Each series is one exact query (same dates, passengers, cabin, stops, filters)
+        in one currency, with first_seen, last_seen, lowest, highest and the change
+        since the previous observation. One observation says so and reports no trend.
+        Observations in different currencies are separate series and never compared.
+        route is ORIGIN-DEST; date matches a departure, return, check-in or check-out
+        date; location names a hotel stay. No forecast, no estimate. A log that cannot
+        be read gives read_error and series null (unknown, not empty). May run during
+        a search.
+        """
+        return dict(await run_lookup_tool(price_history_tool, **locals()))
+
+    @tool("Watch a price", network=True, writes=True)
+    async def watch_price(
+        name: str | None = None,
+        kind: str | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        """Re-run a saved flight or hotel search once and report the change.
+
+        With no name: list saved watches (watches null and status failed when the
+        saved file cannot be read; never an empty list for an unreadable file). With
+        name, kind (flight or hotel, as in price_history) and params (the
+        search_flights / search_hotels arguments): validate, save, then run it.
+        Saving under an existing name replaces that watch. With only a name: run the
+        saved search. Saving a watch and recording the
+        observation write to this machine's state directory. The run records its
+        observation even when the global opt-in is off, and reports the change versus
+        the last observation of the same query in the same currency. A cached replay
+        or a failed or rate-limited search records nothing. No scheduler, no
+        notification.
+        """
+        return dict(await run_mcp_tool(watch_price_tool, **locals()))
 
     @tool("Operational guide", network=False)
     def get_guide() -> dict:

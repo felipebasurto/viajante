@@ -8,6 +8,7 @@ from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.cli import main
 from viajante.dates import (
     EMPTY_DAY_MARK,

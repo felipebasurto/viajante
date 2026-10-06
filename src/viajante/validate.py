@@ -8,8 +8,11 @@ from typing import Mapping, Optional, Sequence
 from viajante.flights import _clock_minutes, _overnight_from_owned_clocks
 from viajante.models import ConstraintCheck, ItineraryValidationReport, normalize_currency
 from viajante.parsers import parse_stops_count
+from viajante.temporal import local_instant, segment_instant
 
 _SUPPORTED_CONSTRAINTS = {
+    "arrival_deadline",
+    "chronological",
     "arrive_before",
     "bags",
     "carry_on",
@@ -487,6 +490,112 @@ def _baggage_check(
     return _status(constraint, "pass", f"owned {field} satisfies the request")
 
 
+def _temporal_complete(selected, complete):
+    if not complete:
+        return False
+    for query, offer in selected:
+        expected = len(query.get("legs", ())) or (2 if query.get("trip") == "rt" else 1)
+        if len(_journey_legs(offer) or ()) != expected:
+            return False
+    return True
+
+
+def _chronological_check(segments, complete):
+    if not complete or not segments:
+        return _status("chronological", "unknown", "complete segment times are missing")
+    previous = None
+    unknown = False
+    for segment in segments:
+        departure = segment_instant(segment, "departure")
+        arrival = segment_instant(segment, "arrival")
+        if departure is None or arrival is None:
+            unknown = True
+        if departure is not None and arrival is not None and arrival < departure:
+            return _status("chronological", "fail", "a segment arrives before it departs in UTC")
+        if previous is not None and departure is not None and departure < previous:
+            return _status("chronological", "fail", "selected segments overlap in UTC")
+        previous = arrival
+    return _status(
+        "chronological",
+        "unknown" if unknown else "pass",
+        "missing or ambiguous civil times"
+        if unknown
+        else "owned instants are in sequence; connection protection and margins are unverified",
+    )
+
+
+def _arrival_deadline_check(segments, complete, value):
+    if not isinstance(value, str) or "T" not in value:
+        raise ValueError("arrival_deadline must be an ISO date and time")
+    try:
+        deadline = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("arrival_deadline must be an ISO date and time") from exc
+    if not complete or not segments:
+        return _status("arrival_deadline", "unknown", "final segment is missing")
+    final = segments[-1]
+    # An explicit offset is already an instant. Compare it in UTC even when the
+    # arrival airport's zone is a different offset. A naive deadline is local
+    # civil time at that airport; ambiguous or missing zones stay unknown.
+    if deadline.tzinfo is not None:
+        bound = deadline.astimezone(timezone.utc)
+    else:
+        bound = local_instant(deadline, final.get("arrival_timezone"))
+    arrival = segment_instant(final, "arrival")
+    if bound is None or arrival is None:
+        return _status(
+            "arrival_deadline", "unknown", "final arrival or local deadline is missing or ambiguous"
+        )
+    return _status(
+        "arrival_deadline",
+        "pass" if arrival <= bound else "fail",
+        "final arrival meets the deadline"
+        if arrival <= bound
+        else "final arrival exceeds the deadline",
+    )
+
+
+def _stay_check(constraint, selected, complete, bound):
+    journeys = [journey for _, offer in selected for journey in (_journey_legs(offer) or ())]
+    if len(journeys) < 2:
+        return _status(constraint, "unknown", "no intervening stay between selected journeys")
+    if not complete:
+        return _status(constraint, "unknown", "complete journeys are missing")
+    unknown = False
+    for left, right in zip(journeys, journeys[1:], strict=False):
+        inbound, outbound = left.get("segments"), right.get("segments")
+        if not inbound or not outbound:
+            unknown = True
+            continue
+        arrival, departure = inbound[-1], outbound[0]
+        if not arrival.get("destination") or arrival.get("destination") != departure.get("origin"):
+            unknown = True
+            continue
+        a, d = segment_instant(arrival, "arrival"), segment_instant(departure, "departure")
+        if a is None or d is None:
+            unknown = True
+            continue
+        days = (
+            _iso_date(departure.get("departure_date"), role="departure_date")
+            - _iso_date(arrival.get("arrival_date"), role="arrival_date")
+        ).days
+        if (
+            d < a
+            or (constraint == "min_stay_days" and days < bound)
+            or (constraint == "max_stay_days" and days > bound)
+        ):
+            return _status(
+                constraint, "fail", f"owned stay of {days} local days violates the bound"
+            )
+    return _status(
+        constraint,
+        "unknown" if unknown else "pass",
+        "a stay interval is unproven"
+        if unknown
+        else "owned intervening stays satisfy the bound; no stay inferred after the final flight",
+    )
+
+
 def validate_itinerary(
     legs: Sequence[Mapping[str, object]],
     constraints: Mapping[str, object],
@@ -695,15 +804,20 @@ def validate_itinerary(
                 break
         checks.append(_status("require_reproducible", status, detail))
 
+    if "chronological" in scenario and _boolean(scenario["chronological"], role="chronological"):
+        checks.append(_chronological_check(segments, _temporal_complete(selected, complete)))
+    if "arrival_deadline" in scenario:
+        checks.append(
+            _arrival_deadline_check(
+                segments, _temporal_complete(selected, complete), scenario["arrival_deadline"]
+            )
+        )
+
     for constraint in ("min_stay_days", "max_stay_days"):
         if constraint in scenario:
-            _integer(scenario[constraint], role=constraint)
+            bound = _integer(scenario[constraint], role=constraint)
             checks.append(
-                _status(
-                    constraint,
-                    "unknown",
-                    "offer payloads do not own segment arrival dates",
-                )
+                _stay_check(constraint, selected, _temporal_complete(selected, complete), bound)
             )
     if "minimum_savings" in scenario:
         _number(scenario["minimum_savings"], role="minimum_savings")

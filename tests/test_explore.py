@@ -8,6 +8,7 @@ from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.airports import airport_geo
 from viajante.cli import _print_explore_report, main
 from viajante.explore import search_explore

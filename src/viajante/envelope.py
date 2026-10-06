@@ -31,6 +31,17 @@ class EnvelopeShapeError(ValueError):
 
 STATUSES = ("ok", "no_results", "rate_limited", "blocked", "timeout", "failed")
 COMPLETENESS = ("complete", "partial", "blocked")
+ENVELOPE_KEYS = (
+    "status",
+    "completeness",
+    "empty_reason",
+    "empty_note",
+    "error_code",
+    "retry_after",
+    "retry_after_seconds",
+    "observed_at",
+    "observed_at_basis",
+)
 EMPTY_REASONS = ("provider_empty", "filtered_out", "not_loaded")
 # "provider" is reserved for a timestamp a provider itself returns; none does today.
 OBSERVED_BASES = ("provider", "fetch")
@@ -297,6 +308,100 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     return payload
 
 
+def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
+    """Stamp the envelope on a ``search_split_tickets`` result from its own ledger.
+
+    ``stamp_search`` reads query rows; a split report keeps its fetched rows in ``legs``
+    and ``packaged_report`` and its pairings in ``itineraries``. Any itinerary is ``ok``
+    (``partial`` when a fetch failed); with none, a failed or cooled-down fetch wins over
+    an empty answer, an answer whose pairings were all rejected is ``filtered_out``, and
+    only provider-empty legs may be called ``provider_empty``.
+    """
+    legs, itineraries = payload.get("legs"), payload.get("itineraries")
+    if not isinstance(legs, list) or not isinstance(itineraries, list):
+        raise EnvelopeShapeError(
+            "viajante could not read the shape of this split-ticket result, so it was not "
+            "returned. This is a viajante bug, not a provider answer; no search outcome is implied."
+        )
+    tally = _Tally()
+    seen: set[tuple[object, object]] = set()
+
+    def count(error: Mapping[str, object]) -> None:
+        if error.get("code") != "no_results":
+            key = (error.get("code"), error.get("message"))
+            if key in seen:
+                return
+            seen.add(key)
+        _error(error, tally, "google")
+
+    leg_empty = 0  # legs the provider answered with nothing at all
+    for row in legs:
+        error = row.get("error")
+        if isinstance(error, Mapping):
+            count(error)
+            leg_empty += error.get("code") == "no_results"
+        elif row.get("offers"):
+            tally.usable += 1
+        elif row.get("raw_count") == 0:
+            tally.provider_empty += 1
+            leg_empty += 1
+        else:
+            tally.filtered_out += 1
+    packaged = payload.get("packaged_report")
+    for row in packaged.get("queries", ()) if isinstance(packaged, Mapping) else ():
+        if isinstance(row.get("error"), Mapping):
+            count(row["error"])
+        else:
+            _query_row(row, tally, "google")
+    if isinstance(payload.get("error"), Mapping):
+        count(payload["error"])
+
+    failures = tally.failures
+    worst = min((f[0] for f in failures), key=_FAILURE_PRIORITY.index, default=None)
+    answered = tally.usable + tally.provider_empty + tally.filtered_out
+    empty_reason: Optional[str] = None
+    if itineraries:
+        status = "ok"
+    elif failures:
+        status, empty_reason = worst, "not_loaded"
+    else:
+        status = "no_results"
+        # The packaged fare is a baseline, not a pairing input: when legs were searched
+        # they alone decide whether the provider had nothing to pair.
+        if legs:
+            only_provider = leg_empty == len(legs)
+        else:
+            only_provider = tally.provider_empty and not (tally.usable or tally.filtered_out)
+        empty_reason = "provider_empty" if only_provider else "filtered_out"
+    if failures:
+        completeness = "partial" if itineraries or answered else "blocked"
+    else:
+        completeness = "complete"
+    error_code = next((code for s, code, _ in failures if s == worst), None)
+    if error_code is None:
+        error_code = next(
+            (code for reason, code in tally.empty_codes if reason == empty_reason), None
+        )
+    if error_code is None and empty_reason == "provider_empty":
+        error_code = "no_results"
+    retry_after, retry_after_seconds = _retry_after(tally, now)
+    # Nothing was observed when every counted failure was a recorded cooldown and nothing answered.
+    units = answered + len(failures)
+    observed = payload.get("searched_at") if (not units or units > tally.unsent) else None
+    payload.update(
+        status=status,
+        completeness=completeness,
+        empty_reason=empty_reason,
+        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
+        error_code=error_code,
+        retry_after=retry_after,
+        retry_after_seconds=retry_after_seconds,
+        observed_at=observed,
+        observed_at_basis="fetch" if observed else None,
+    )
+    return payload
+
+
 def stamp_local(
     payload: dict,
     *,
@@ -304,16 +409,18 @@ def stamp_local(
     status: str = "ok",
     completeness: Optional[str] = None,
     error_code: Optional[str] = None,
+    empty_reason: Optional[str] = None,
 ) -> dict:
     """Stamp the envelope on an offline tool payload: ran locally, nothing fetched.
 
-    ``status`` stays ``ok`` unless the tool's own verdict failed (``verify_answer``).
+    ``status`` stays ``ok`` unless the tool's own verdict failed (``verify_answer``)
+    or a local filter removed the only candidate (``get_hotel_details``).
     """
     payload.update(
         status=status,
         completeness=completeness or ("partial" if partial else "complete"),
-        empty_reason=None,
-        empty_note=None,
+        empty_reason=empty_reason,
+        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
         error_code=error_code,
         retry_after=None,
         retry_after_seconds=None,

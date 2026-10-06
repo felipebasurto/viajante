@@ -8,9 +8,13 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
 from statistics import median
-from typing import Literal, Mapping, Optional, Sequence, Tuple, Union, get_args
+from typing import TYPE_CHECKING, Literal, Mapping, Optional, Sequence, Tuple, Union, get_args
 
 from viajante.airports import is_known_iata
+
+if TYPE_CHECKING:
+    # recommend.py builds on these models; the import is for annotations only.
+    from viajante.recommend import Recommendation
 
 # Fetch/browser locale is English so owned card parsers stay on English evidence.
 FETCH_LANGUAGE = "en"
@@ -429,6 +433,9 @@ class RawSegment:
     flight_number: Optional[str] = None
     departure_date: Optional[date] = None
     carrier: Optional[str] = None
+    arrival_date: Optional[date] = None
+    departure_timezone: Optional[str] = None
+    arrival_timezone: Optional[str] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -441,6 +448,12 @@ class RawSegment:
         }
         if self.departure_date is not None:
             payload["departure_date"] = self.departure_date.isoformat()
+        if self.arrival_date is not None:
+            payload["arrival_date"] = self.arrival_date.isoformat()
+        if self.departure_timezone is not None:
+            payload["departure_timezone"] = self.departure_timezone
+        if self.arrival_timezone is not None:
+            payload["arrival_timezone"] = self.arrival_timezone
         if self.carrier is not None:
             payload["carrier"] = self.carrier
         return payload
@@ -490,6 +503,8 @@ class EvidenceCompleteness:
     segment_clocks: EvidenceKnowledge = "unknown"
     layovers: EvidenceKnowledge = "unknown"
     baggage: EvidenceKnowledge = "unknown"
+    segment_dates: EvidenceKnowledge = "unknown"
+    segment_timezones: EvidenceKnowledge = "unknown"
 
     def to_dict(self) -> Mapping[str, str]:
         return {
@@ -499,6 +514,8 @@ class EvidenceCompleteness:
             "segment_clocks": self.segment_clocks,
             "layovers": self.layovers,
             "baggage": self.baggage,
+            "segment_dates": self.segment_dates,
+            "segment_timezones": self.segment_timezones,
         }
 
 
@@ -692,6 +709,14 @@ def _offer_completeness(
         ),
         segment_clocks=known(
             segments_complete and all(segment.departure and segment.arrival for segment in segments)
+        ),
+        segment_dates=known(
+            segments_complete
+            and all(segment.departure_date and segment.arrival_date for segment in segments)
+        ),
+        segment_timezones=known(
+            segments_complete
+            and all(segment.departure_timezone and segment.arrival_timezone for segment in segments)
         ),
         layovers=known(layovers_known),
         baggage=known(checked_bags is not None or carry_on is not None),
@@ -950,6 +975,7 @@ class QuerySuccess:
     google_flights_url: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
     empty_reason: Optional[EmptyReason] = None
+    recommendation: Optional["Recommendation"] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -973,6 +999,8 @@ class QuerySuccess:
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.recommendation is not None:
+            payload["recommendation"] = self.recommendation.to_dict(currency)
         if self.empty_reason is not None:
             payload["empty_reason"] = self.empty_reason
         return payload
@@ -2326,12 +2354,17 @@ class HotelRoomsReport:
     rates: Tuple[HotelRoomRate, ...] = ()
     error: Optional[SearchError] = None
     fetch_ms: Optional[int] = None
+    # What the provider echoed, when it did. Absent means the answer did not say.
+    answered_adults: Optional[int] = None
+    answered_rooms: Optional[int] = None
+    answered_check_in: Optional[date] = None
+    answered_check_out: Optional[date] = None
 
     def __post_init__(self) -> None:
         _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "provider": self.provider,
             "searched_at": _iso_z(self.searched_at),
@@ -2356,6 +2389,15 @@ class HotelRoomsReport:
             "error": self.error.to_dict() if self.error else None,
             "fetch_ms": self.fetch_ms,
         }
+        if self.answered_adults is not None:
+            payload["answered_adults"] = self.answered_adults
+        if self.answered_rooms is not None:
+            payload["answered_rooms"] = self.answered_rooms
+        if self.answered_check_in is not None:
+            payload["answered_check_in"] = self.answered_check_in.isoformat()
+        if self.answered_check_out is not None:
+            payload["answered_check_out"] = self.answered_check_out.isoformat()
+        return payload
 
 
 @dataclass(frozen=True)

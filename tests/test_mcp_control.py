@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from test_audit_regressions import _card as _rt_card
 from test_audit_regressions import _direct
 from test_google_flights import _compact_body, _itinerary, _MuxFakeSweepClient
@@ -275,7 +276,8 @@ class CancelTests(McpControlCase):
             await loop.run_in_executor(None, mcp_server._SEARCH_BUSY.acquire)
             mcp_server._SEARCH_BUSY.release()
 
-        asyncio.run(main())
+        with patch.dict(os.environ, {"VIAJANTE_PRICE_HISTORY": "1"}):
+            asyncio.run(main())
         self.assertEqual(source.calls, 1)
         self.assert_untouched()
         self.assertEqual(evidence.verify_answer("x")["searches"], 0)
@@ -317,6 +319,32 @@ def _tool_args(**extra: object) -> dict:
 
 
 class DeadlineTests(McpControlCase):
+    def test_invalid_deadlines_are_rejected_even_with_a_cached_search(self):
+        source = self.use_source(FakeFlights())
+        first = mcp_handlers.search_flights_tool(**_args(deadline_seconds=30))
+        self.assertNotIn("cached", first)
+        calls = source.calls
+        for value in (0, -1, float("nan"), float("inf"), True, "30"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "deadline_seconds"):
+                mcp_handlers.search_flights_tool(**_args(deadline_seconds=value))
+        self.assertEqual(source.calls, calls)
+        replay = mcp_handlers.search_flights_tool(**_args(deadline_seconds=10))
+        self.assertTrue(replay["cached"])
+
+    def test_negative_deadline_on_cache_hit_is_a_protocol_input_error(self):
+        source = self.use_source(FakeFlights())
+
+        async def main():
+            async with _session(mcp_server.build_server()) as session:
+                first = await session.call_tool("search_flights", _args(deadline_seconds=30))
+                self.assertFalse(first.isError)
+                bad = await session.call_tool("search_flights", _args(deadline_seconds=-1))
+                self.assertTrue(bad.isError)
+                self.assertIn("deadline_seconds", bad.content[0].text)
+
+        asyncio.run(main())
+        self.assertEqual(source.calls, len(ROUTES))
+
     def test_deadline_returns_finished_queries_and_labels_the_rest(self) -> None:
         source = self.use_source(FakeFlights(delay=0.2))
 

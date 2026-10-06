@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers
 from viajante.cli import main
 from viajante.flights import _attach_missing_legs

@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import threading
 import time
+from copy import deepcopy
 from datetime import date
 from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
-from viajante.control import SearchControl, active, current_control
+from viajante.control import SearchControl, active, current_control, validate_deadline_seconds
 from viajante.dates import (
     flex_window,
     parse_route_pair,
@@ -19,8 +21,15 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.envelope import stamp_local, stamp_recheck, stamp_search
-from viajante.evidence import failure_codes, find_offer, record
+from viajante.details import get_hotel_details
+from viajante.envelope import stamp_local, stamp_recheck, stamp_search, stamp_split
+from viajante.evidence import (
+    failure_codes,
+    find_offer,
+    record,
+    selected_reference,
+    selection_records,
+)
 from viajante.evidence import verify_answer as verify_answer_evidence
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
@@ -39,11 +48,13 @@ from viajante.flights import (
     parse_overnight_airports,
     parse_via_airports,
     search_flights,
+    validate_flight_search_args,
 )
 from viajante.hotels import (
     HotelSourceName,
     resolve_hotel_currency,
     search_hotels,
+    validate_hotel_search_args,
     validate_max_distance,
     validate_near,
 )
@@ -61,6 +72,12 @@ from viajante.quote import (
 from viajante.recheck import recheck_offer
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
+from viajante.split import (
+    DEFAULT_MIN_CONNECTION_HOURS,
+    search_split_tickets,
+    validate_split_request,
+    with_carrier_filters,
+)
 from viajante.stays import plan_stay_blocks, split_stay_costs
 from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
@@ -68,7 +85,8 @@ from viajante.validate import validate_itinerary
 
 _SEARCH_LOCK = threading.Lock()
 CACHE_SECONDS = 300.0
-_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+_CACHE: dict[tuple[str, str], tuple[float, dict, dict]] = {}
+_SELECTION_CONTEXT = threading.local()
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -78,7 +96,27 @@ def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
             raise ValueError(f"{label} date is in the past: {value.isoformat()}")
 
 
+_VALIDATE_ONLY = contextvars.ContextVar("viajante_validate_only", default=False)
+
+
+class _Validated(Exception):
+    """Raised at the search lock while only checking arguments: nothing was sent."""
+
+
+def check_search_params(tool, params: Mapping[str, object]) -> None:
+    """Run a search tool's own argument checks and stop before any search or lock."""
+    token = _VALIDATE_ONLY.set(True)
+    try:
+        tool(**params)
+    except _Validated:
+        pass
+    finally:
+        _VALIDATE_ONLY.reset(token)
+
+
 def _with_search_lock(fn):
+    if _VALIDATE_ONLY.get():
+        raise _Validated
     if not _SEARCH_LOCK.acquire(blocking=False):
         raise ValueError("a viajante search is already running in this process")
     try:
@@ -87,13 +125,15 @@ def _with_search_lock(fn):
         _SEARCH_LOCK.release()
 
 
-def _owned(payload: dict) -> dict:
-    record(payload)
+def _owned(payload: dict, report=None) -> dict:
+    selections = selection_records(payload, report)
+    record(payload, selections=selections)
+    _SELECTION_CONTEXT.records = selections
     return payload
 
 
-def _searched(payload: dict) -> dict:
-    return _owned(stamp_search(payload))
+def _searched(payload: dict, report=None) -> dict:
+    return _owned(stamp_search(payload), report)
 
 
 def _cached(fn):
@@ -101,21 +141,28 @@ def _cached(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        validate_deadline_seconds(kwargs.get("deadline_seconds"))
         # A complete result does not depend on how long the caller was willing to wait.
         keyed = sorted((k, v) for k, v in kwargs.items() if k != "deadline_seconds")
         key = (fn.__name__, repr((args, keyed)))
         now = time.monotonic()
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
-            return _owned({**hit[1], "cached": True})
+            result = {**deepcopy(hit[1]), "cached": True}
+            record(result, selections=hit[2])
+            return result
+        _SELECTION_CONTEXT.records = {}
         control = current_control() or SearchControl()
         with active(control):
             result = fn(*args, **kwargs)
-        # A deadline that cut any step, even one that left no failed row, is never replayed.
+        selections = getattr(_SELECTION_CONTEXT, "records", {})
+        _SELECTION_CONTEXT.records = {}
         if not control.cut and not failure_codes(result):
-            for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
+            for stale in [k for k, (at, _, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
                 del _CACHE[stale]
-            _CACHE[key] = (now, result)
+            if len(_CACHE) >= 20:
+                del _CACHE[next(iter(_CACHE))]
+            _CACHE[key] = (now, deepcopy(result), selections)
         return result
 
     return wrapper
@@ -183,36 +230,123 @@ def search_flights_tool(
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
     )
+    carriers = dict(
+        airlines=parse_airline_codes(airlines),
+        exclude_airlines=parse_airline_codes(exclude_airlines),
+        alliances=parse_alliances(alliance),
+        exclude_alliances=parse_alliances(exclude_alliance),
+    )
+    search = dict(
+        depart_window=parse_depart_window(depart_window),
+        arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
+        depart_after=parse_named_clock(depart_after, role="depart-after"),
+        max_duration_hours=max_duration,
+        min_layover_hours=min_layover,
+        max_layover_hours=max_layover,
+        via=parse_via_airports(via),
+        exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+        no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
+        require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
+        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
+        include_airports=parse_via_airports(include_airports, role="include-airports"),
+    )
+    validate_flight_search_args(top=top, sort=sort, fetch=fetch, **search)
     report = _with_search_lock(
         lambda: search_flights(
             trips,
             top=top,
             fetch=fetch,  # type: ignore[arg-type]
-            airlines=parse_airline_codes(airlines),
-            exclude_airlines=parse_airline_codes(exclude_airlines),
-            alliances=parse_alliances(alliance),
-            exclude_alliances=parse_alliances(exclude_alliance),
-            depart_window=parse_depart_window(depart_window),
-            arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-            depart_after=parse_named_clock(depart_after, role="depart-after"),
-            max_duration_hours=max_duration,
-            min_layover_hours=min_layover,
-            max_layover_hours=max_layover,
-            via=parse_via_airports(via),
-            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-            no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-            require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-            exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-            include_airports=parse_via_airports(include_airports, role="include-airports"),
             baggage_buffer=baggage_buffer,
             sort=sort,
             currency=currency,
             country=country,
             proxy=proxy,
             deadline_seconds=deadline_seconds,
+            **carriers,
+            **search,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
+
+
+@_cached
+def search_split_tickets_tool(
+    route: str,
+    *,
+    trip: str = "one-way",
+    max_stops: int = 1,
+    adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+    cabin: FlightCabin = "economy",
+    top: int = DEFAULT_TOP,
+    fetch: str = "sweep",
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    alliance: Optional[str] = None,
+    exclude_alliance: Optional[str] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
+    via: Optional[str] = None,
+    max_hubs: Optional[int] = None,
+    min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
+    allow_overnight: bool = False,
+    leg_max_stops: int = 0,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
+) -> Mapping[str, object]:
+    plan = parse_flight_plan(
+        [route],
+        trip=trip,
+        max_stops=max_stops,
+        adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+        price_cap=price_cap,
+    )
+    trips = as_trips(plan)
+    _reject_past([leg.departure_date for item in trips for leg in item.legs])
+    if len(trips) != 1:
+        raise ValueError("split tickets take one one-way route or one round-trip (trip='rt')")
+    split_query = with_carrier_filters(
+        trips[0],
+        airlines=parse_airline_codes(airlines),
+        exclude_airlines=parse_airline_codes(exclude_airlines),
+        alliances=parse_alliances(alliance),
+        exclude_alliances=parse_alliances(exclude_alliance),
+    )
+    via_codes = parse_via_airports(via, role="via")
+    validate_split_request(
+        split_query,
+        via=via_codes,
+        max_hubs=max_hubs,
+        min_connection_hours=min_connection_hours,
+        leg_max_stops=leg_max_stops,
+        top=top,
+    )
+    report = _with_search_lock(
+        lambda: search_split_tickets(
+            split_query,
+            via=via_codes,
+            max_hubs=max_hubs,
+            min_connection_hours=min_connection_hours,
+            allow_overnight=allow_overnight,
+            leg_max_stops=leg_max_stops,
+            top=top,
+            fetch=fetch,
+            currency=currency,
+            country=country,
+            proxy=proxy,
+        )
+    )
+    return _owned(stamp_split(dict(report.to_dict())))
 
 
 @_cached
@@ -304,7 +438,7 @@ def search_dates_tool(
             deadline_seconds=deadline_seconds,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -397,7 +531,7 @@ def search_flex_tool(
             deadline_seconds=deadline_seconds,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -493,7 +627,7 @@ def search_explore_tool(
             deadline_seconds=deadline_seconds,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 MAX_HOTEL_STAYS = 8
@@ -597,6 +731,7 @@ def search_hotels_tool(
     )
     near_point = validate_near(_near_point(near))
     max_distance_km = validate_max_distance(max_distance_km, near_point)
+    validate_hotel_search_args(queries, top=top, source=source)
     report = _with_search_lock(
         lambda: search_hotels(
             queries,
@@ -608,7 +743,7 @@ def search_hotels_tool(
             deadline_seconds=deadline_seconds,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -756,7 +891,7 @@ def search_trip_tool(
             deadline_seconds=deadline_seconds,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -788,7 +923,7 @@ def search_hidden_city_tool(
             currency=currency,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 def compare_awards_tool(
@@ -916,3 +1051,18 @@ def verify_answer_tool(answer: str) -> Mapping[str, object]:
         completeness="blocked" if nothing else "complete",
         error_code="no_search_recorded" if nothing else "unowned_claims",
     )
+
+
+def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Mapping[str, object]:
+    if not isinstance(room_rates, bool):
+        raise ValueError("room_rates must be a boolean")
+    report, query_index, offer_index = selected_reference(selection_id, "hotel")
+
+    def action():
+        return get_hotel_details(report, query_index, offer_index, room_rates=room_rates)
+
+    # A read does not enter the evidence ledger or the selection store.
+    # room_rates false stays off the search lock; the server runs it on the lookup worker.
+    detail = _with_search_lock(action) if room_rates else action()
+    detail["original_quote"]["offer"]["selection_id"] = selection_id
+    return detail

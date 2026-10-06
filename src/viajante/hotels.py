@@ -34,6 +34,7 @@ from viajante.google_hotels_rpc import (
     HotelsParseMiss,
     HotelsRejected,
 )
+from viajante.history import recorded_hotels
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -452,21 +453,11 @@ def _skiplagged_currency_mismatch(
     )
 
 
-@controlled
-def search_hotels(
-    queries: Sequence[HotelQuery],
-    *,
-    top: int = DEFAULT_TOP,
-    progress: Optional[Callable[[str], None]] = None,
-    source: HotelSourceName = "booking",
-    currency: Optional[str] = None,
-    near: Optional[Tuple[float, float]] = None,
-    max_distance_km: Optional[float] = None,
-    cancel: Optional[threading.Event] = None,
-    deadline_seconds: Optional[float] = None,
-) -> HotelSearchReport:
-    near = validate_near(near)
-    max_distance_km = validate_max_distance(max_distance_km, near)
+def validate_hotel_search_args(queries: Sequence[HotelQuery], *, top: int, source: str) -> None:
+    """Every check on search arguments alone, before any lock, fetch or state write.
+
+    Shared by `search_hotels`, the MCP tool and saved watches so they reject the same input.
+    """
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
@@ -482,6 +473,25 @@ def search_hotels(
             validate_search_party(query.adults, query.rooms)
             if query.entire_home:
                 raise ValueError("entire_home is not supported with source skiplagged")
+
+
+@controlled
+@recorded_hotels
+def search_hotels(
+    queries: Sequence[HotelQuery],
+    *,
+    top: int = DEFAULT_TOP,
+    progress: Optional[Callable[[str], None]] = None,
+    source: HotelSourceName = "booking",
+    currency: Optional[str] = None,
+    near: Optional[Tuple[float, float]] = None,
+    max_distance_km: Optional[float] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
+) -> HotelSearchReport:
+    near = validate_near(near)
+    max_distance_km = validate_max_distance(max_distance_km, near)
+    validate_hotel_search_args(queries, top=top, source=source)
     currency = resolve_hotel_currency(source, currency)
     if source == "skiplagged" and currency != SKIPLAGGED_HOTEL_CURRENCY:
         return replace(
