@@ -839,4 +839,14 @@ def validate_itinerary_tool(
 
 
 def verify_answer_tool(answer: str) -> Mapping[str, object]:
-    return stamp_local(dict(verify_answer_evidence(answer)))
+    payload = dict(verify_answer_evidence(answer))
+    if payload["ok"]:
+        return stamp_local(payload)
+    # status mirrors the verdict so it never reads "ok" beside "ok": false.
+    nothing = not payload["searches"]
+    return stamp_local(
+        payload,
+        status="failed",
+        completeness="blocked" if nothing else "complete",
+        error_code="no_search_recorded" if nothing else "unowned_claims",
+    )

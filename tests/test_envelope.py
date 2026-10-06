@@ -7,13 +7,14 @@ import os
 import sys
 import tempfile
 import unittest
+import warnings
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from random import Random
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from viajante import mcp_handlers
+from viajante import evidence, mcp_handlers
 from viajante.dates import search_dates, search_flex
 from viajante.envelope import (
     COMPLETENESS,
@@ -52,6 +53,7 @@ from viajante.models import (
 from viajante.orchestration import classify_failure
 from viajante.ratelimit import (
     GOOGLE_RATE_LIMIT_FILE,
+    NOT_SENT,
     SKIPLAGGED_RATE_LIMIT_FILE,
     note_rate_limited,
 )
@@ -335,6 +337,19 @@ class FlightEmptyReasonTests(_StateDirCase):
             max_duration_hours=0.5,
         )
         self.assertEqual(payload["empty_reason"], "filtered_out")
+        self.assertIsNone(payload["error_code"])
+
+    def test_a_cooldown_replay_sent_nothing_so_nothing_was_observed(self) -> None:
+        blocked = GoogleFlightsBlocked(f"{NOT_SENT}Google is rate limiting.", status=429)
+        payload = _flights({"LHR": blocked})
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertIsNone(payload["observed_at"])
+        self.assertIsNone(payload["observed_at_basis"])
+
+    def test_a_request_that_was_sent_is_observed_on_the_fetch_clock(self) -> None:
+        payload = _flights({"LHR": GoogleFlightsBlocked("HTTP 429", status=429)})
+        self.assertEqual(payload["observed_at_basis"], "fetch")
+        self.assertIsNotNone(payload["observed_at"])
 
     def test_envelope_agrees_with_the_search_coverage_counters(self) -> None:
         payload = _flights(
@@ -427,17 +442,17 @@ class DatesFlexExploreTests(_StateDirCase):
         )
         return stamp_search(reports_payload(report), now=NOW)
 
-    def test_calendar_cells_without_a_price_are_provider_empty(self) -> None:
+    def test_calendar_cells_without_a_price_are_never_provider_empty(self) -> None:
+        # An unpriced or missing calendar cell does not prove the provider has no flights.
         payload = self._dates(
-            self._Source(
-                (CompactCalendarDay(DAY, None), CompactCalendarDay(DAY + timedelta(1), None))
-            )
+            self._Source((CompactCalendarDay(DAY, None),))  # the second day is missing entirely
         )
-        self.assertEqual({row["empty_reason"] for row in payload["days"]}, {"provider_empty"})
+        self.assertEqual({row["empty_reason"] for row in payload["days"]}, {"not_loaded"})
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
-            ("no_results", "complete", "provider_empty"),
+            ("no_results", "partial", "not_loaded"),
         )
+        self.assertNotIn("provider_empty", str(payload["days"]))
 
     def test_priced_calendar_is_ok(self) -> None:
         payload = self._dates(
@@ -447,7 +462,7 @@ class DatesFlexExploreTests(_StateDirCase):
         )
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
-            ("ok", "complete", None),
+            ("ok", "partial", None),
         )
 
     def test_sweep_days_filtered_locally_are_filtered_out_not_empty(self) -> None:
@@ -485,12 +500,12 @@ class DatesFlexExploreTests(_StateDirCase):
             ("failed", "blocked", "not_loaded"),
         )
 
-    def test_flex_window_with_no_priced_day_is_provider_empty(self) -> None:
+    def test_flex_window_with_no_priced_day_is_not_loaded_not_no_flights(self) -> None:
         source = self._Source(())
         report = search_flex("JFK", "LHR", DAY, 1, source=source, currency="USD")
         payload = stamp_search(reports_payload(report), now=NOW)
-        self.assertEqual(payload["empty_reason"], "provider_empty")
-        self.assertEqual(payload["status"], "no_results")
+        self.assertEqual(payload["empty_reason"], "not_loaded")
+        self.assertEqual((payload["status"], payload["completeness"]), ("no_results", "partial"))
 
     class _ExploreSource:
         def __init__(self, places: object, prices: dict | None = None) -> None:
@@ -504,7 +519,10 @@ class DatesFlexExploreTests(_StateDirCase):
             return self.places
 
         def fetch(self, query):
-            return self.prices.get(query.destination, ())
+            response = self.prices.get(query.destination, ())
+            if isinstance(response, Exception):
+                raise response
+            return response
 
         def close(self) -> None:
             pass
@@ -540,6 +558,23 @@ class DatesFlexExploreTests(_StateDirCase):
         source = self._ExploreSource((CompactExplorePlace("LHR", "London", "United Kingdom"),))
         payload = self._explore(source, price_cap=100)
         self.assertEqual(payload["empty_reason"], "provider_empty")
+
+    def test_explore_with_some_shops_answered_and_some_failed_is_partial(self) -> None:
+        source = self._ExploreSource(
+            (
+                CompactExplorePlace("LHR", "London", "United Kingdom"),
+                CompactExplorePlace("CDG", "Paris", "France"),
+            ),
+            prices={"CDG": GoogleFlightsBlocked("wall")},
+        )
+        payload = self._explore(source, price_cap=100)
+        self.assertEqual(payload["destinations"], [])
+        self.assertEqual(payload["coverage"]["empty"], 1)
+        self.assertEqual(payload["coverage"]["failed"], 1)
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["empty_reason"]),
+            ("blocked", "partial", "not_loaded"),
+        )
 
     def test_explore_catalog_failure_is_not_loaded(self) -> None:
         payload = self._explore(self._ExploreSource(GoogleFlightsBlocked("wall")))
@@ -632,6 +667,7 @@ class SkiplaggedAndTripTests(_StateDirCase):
             error=SearchError(SearchErrorCode.NO_RESULTS, "no exact match"),
         )
         self.assertEqual(payload["empty_reason"], "filtered_out")
+        self.assertIsNone(payload["error_code"])
 
     def test_rooms_failure_is_not_loaded(self) -> None:
         payload = self._rooms(error=SearchError(SearchErrorCode.MARKUP_DRIFT, "drift"))
@@ -712,12 +748,57 @@ class LocalToolTests(unittest.TestCase):
                     "evidence": "user_supplied",
                 }
             ),
-            mcp_handlers.verify_answer_tool("nothing to check"),
         ]
         for payload in payloads:
             with self.subTest(keys=sorted(payload)[:3]):
                 self.assertTrue(ENVELOPE_KEYS <= set(payload))
                 self.assertEqual(payload["status"], "ok")
+
+
+class UnknownShapeTests(unittest.TestCase):
+    def test_an_unrecognised_payload_raises_instead_of_reading_as_no_results(self) -> None:
+        for payload in (
+            {"outcome": "same_price", "price": 291},
+            {"offers": [], "chosen_date": DAY.isoformat()},
+            {},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    stamp_search(dict(payload))
+
+    def test_a_payload_with_only_a_typed_error_is_recognised(self) -> None:
+        payload = stamp_search({"error": {"code": "blocked", "message": "wall"}}, now=NOW)
+        self.assertEqual((payload["status"], payload["empty_reason"]), ("blocked", "not_loaded"))
+
+
+class VerifyAnswerEnvelopeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        evidence._ledger.clear()
+        self.addCleanup(evidence._ledger.clear)
+
+    def test_nothing_recorded_is_a_failed_verification_not_status_ok_beside_ok_false(self) -> None:
+        payload = mcp_handlers.verify_answer_tool("JFK-LHR is 291 USD")
+        self.assertIs(payload["ok"], False)
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["error_code"]),
+            ("failed", "blocked", "no_search_recorded"),
+        )
+        self.assertIsNone(payload["empty_reason"])
+
+    def test_unowned_claims_fail_with_a_complete_check(self) -> None:
+        evidence.record({"queries": [{"query": {"origin": "JFK"}, "offers": [{"price": 291}]}]})
+        payload = mcp_handlers.verify_answer_tool("Costs USD 99999")
+        self.assertIs(payload["ok"], False)
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["error_code"]),
+            ("failed", "complete", "unowned_claims"),
+        )
+
+    def test_a_verified_answer_is_ok_and_complete(self) -> None:
+        evidence.record({"queries": [{"query": {"origin": "JFK"}, "offers": [{"price": 291}]}]})
+        payload = mcp_handlers.verify_answer_tool("nothing to check")
+        self.assertIs(payload["ok"], True)
+        self.assertEqual((payload["status"], payload["completeness"]), ("ok", "complete"))
 
 
 class HandlerTests(_StateDirCase):
@@ -810,7 +891,11 @@ class OutputSchemaTests(unittest.TestCase):
                 if name == "mcp" or name.startswith("mcp.")
             ]
         )
-        self.server = build_server()
+        with warnings.catch_warnings():
+            # The SDK's own settings model leaves `lifespan` unresolved; plain FastMCP("x")
+            # emits this too. It is not ours to fix.
+            warnings.filterwarnings("ignore", message="Field 'lifespan'")
+            self.server = build_server()
         mcp_handlers._CACHE.clear()
 
     def test_every_tool_but_the_bare_list_advertises_the_envelope_schema(self) -> None:

@@ -185,10 +185,17 @@ Contract: `provider_empty` (the provider answered with nothing) is the only empt
 that may be called "no flights/hotels found". `filtered_out` (the provider returned
 rows, viajante's filters removed them all) must say filters removed results.
 `not_loaded` (no usable response) must say the search did not complete.
-`completeness` is `partial` when only some units answered or the search is
-scope-bound, `blocked` when none did.
+`completeness` is `partial` when only some units answered, some came back
+unproven, or the search is scope-bound, `blocked` when none did. A calendar day
+that is missing or unpriced is `not_loaded`: the calendar cannot prove there are
+no flights, so only a shop that answered empty is `provider_empty`. `error_code`
+only accompanies the `empty_reason` it supports. `observed_at` is null when a
+recorded cooldown answered every request (nothing was sent). `stamp_search`
+raises on a payload shape it does not recognise instead of defaulting to
+`no_results`. `verify_answer` is local: its `status` follows its verdict.
 
-Machine-readable schema: the mcp SDK (>=1.10) derives `outputSchema` and
+Machine-readable schema: the mcp SDK (the supported floor is 1.14.1; earlier
+releases crash at startup on this module's postponed annotations) derives `outputSchema` and
 `structuredContent` from a tool's return annotation. The envelope is a pydantic
 model with `extra="allow"`, so tool-specific keys stay in the structured result.
 `lookup_airports` keeps its bare list return and has no output schema (a list

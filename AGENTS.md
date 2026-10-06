@@ -74,7 +74,15 @@ rest of the payload is unchanged and additive. `status`: `ok`, `no_results`,
 `provider_empty`, `filtered_out`, `not_loaded`. Also `error_code`, `retry_after` /
 `retry_after_seconds` (only when a cooldown file names one), and `observed_at`
 with `observed_at_basis` (`fetch` = our fetch clock; `provider` is reserved).
-Offline tools report `ok` / `complete` with the rest null.
+Offline tools report `ok` / `complete` with the rest null; `verify_answer`'s
+`status` follows its verdict (`failed` with `error_code` `unowned_claims` or
+`no_search_recorded` when `ok` is false). `observed_at` / basis are null when a
+recorded cooldown answered and nothing was sent. A calendar day with no price is
+`not_loaded` (an unpriced cell does not prove there are no flights), and a
+`partial` completeness. `error_code` only rides with the `empty_reason` it
+supports (never `no_results` beside `filtered_out`). A new search tool must
+stamp through `stamp_search`, which raises on a payload shape it does not
+recognise, and must advertise the envelope schema (a test enforces it).
 
 Wording rule: only `provider_empty` may be told to a traveller as "no flights/hotels
 found". `filtered_out` means viajante's filters removed rows the provider returned
@@ -170,7 +178,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
-  jobs. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
+  jobs. A multiplexed request that raised before any response (reset, timeout)
+  is a transport failure, not a 429: it replays once on a fresh session, then
+  fails `fetch_failed` (`timeout` when it timed out), never `rate_limited`. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
   writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat limit up to 30 min, or
   a named `Retry-After`). While it runs, new flight/hotel Google searches in any
   process send nothing and fail `blocked` with `rate_limited: true`; a search
@@ -319,7 +329,7 @@ They must not launch Chromium or use the network. CI runs the suite on Python
 
 Pin owned seams, not upstream HTML rewriting. A renamed or dropped JSON key is a
 breaking change. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is
-installed (`mcp>=1.6,<2`).
+installed (`mcp>=1.14.1,<2`).
 
 Stdio MCP: `npx -y @viajante/mcp`, or
 `uvx --from 'viajante[mcp]' viajante-mcp`, or checkout `uv sync --extra mcp`

@@ -139,6 +139,9 @@ Every MCP result (except `lookup_airports`) opens with `status`, `completeness`,
 | `not_loaded` | The search did not complete. Availability is unknown. |
 
 `completeness` `partial` or `blocked` means do not summarise as a full answer.
+In `search_dates` / `search_flex`, a day with no calendar price is `not_loaded`:
+never say "no flights that day". `verify_answer` `status: failed` means the draft
+has claims no search owns (see `error_code`), not that a search failed.
 `retry_after` is a known cooldown; wait for it instead of retrying.
 
 ## Recovery

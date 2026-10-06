@@ -954,7 +954,8 @@ def _rows_from_calendar(
                     departure_date=cursor,
                     return_date=returning,
                     status="empty",
-                    empty_reason="provider_empty",
+                    # A cell the calendar left unpriced does not prove there are no flights.
+                    empty_reason="not_loaded",
                 )
             )
         else:

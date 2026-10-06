@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Mapping, Optional
 
-from viajante.ratelimit import GOOGLE_RATE_LIMIT_FILE, SKIPLAGGED_RATE_LIMIT_FILE, rate_limit_status
+from viajante.ratelimit import (
+    GOOGLE_RATE_LIMIT_FILE,
+    NOT_SENT,
+    SKIPLAGGED_RATE_LIMIT_FILE,
+    rate_limit_status,
+)
 
 STATUSES = ("ok", "no_results", "rate_limited", "blocked", "timeout", "failed")
 COMPLETENESS = ("complete", "partial", "blocked")
@@ -51,19 +56,22 @@ class _Tally:
     usable: int = 0
     provider_empty: int = 0
     filtered_out: int = 0
+    not_loaded: int = 0  # units that came back without evidence and without an error
     failures: list[tuple[str, str, str]] = field(default_factory=list)  # (status, code, provider)
-    empty_codes: list[str] = field(default_factory=list)
+    empty_codes: list[tuple[str, str]] = field(default_factory=list)  # (empty_reason, code)
     scope_partial: bool = False
     observed: list[str] = field(default_factory=list)
+    unsent: int = 0  # failures that never reached the provider (a recorded cooldown)
+    shapes: int = 0  # recognised payload shapes; zero means stamp_search was misused
 
 
 def _failure_status(error: Mapping[str, object]) -> str:
     if error.get("rate_limited"):
         return "rate_limited"
-    if error.get("code") == "blocked":
-        return "blocked"
     if error.get("timeout"):
         return "timeout"
+    if error.get("code") == "blocked":
+        return "blocked"
     return "failed"
 
 
@@ -77,10 +85,13 @@ def _error(
     """Count one provider error. Returns the empty reason it implies for its row."""
     code = str(error.get("code", "fetch_failed"))
     if code == "no_results":
-        tally.empty_codes.append(code)
+        # An error code only rides along with the reason it actually supports.
+        if empty_as == "provider_empty":
+            tally.empty_codes.append((empty_as, code))
         setattr(tally, empty_as, getattr(tally, empty_as) + 1)
         return empty_as
     tally.failures.append((_failure_status(error), code, provider))
+    tally.unsent += str(error.get("message", "")).startswith(NOT_SENT)
     return "not_loaded"
 
 
@@ -107,9 +118,8 @@ def _date_row(row: dict, tally: _Tally, provider: str, *, calendar: bool) -> Non
         tally.usable += 1
     else:
         # A row without its own reason came from outside viajante's constructors:
-        # only a calendar cell proves the provider had nothing; anything else is a
-        # filter claim at worst, never "no flights".
-        reason = row.get("empty_reason") or ("provider_empty" if calendar else "filtered_out")
+        # never "no flights". A calendar cell is unproven, anything else a filter claim.
+        reason = row.get("empty_reason") or ("not_loaded" if calendar else "filtered_out")
         setattr(tally, reason, getattr(tally, reason) + 1)
 
 
@@ -129,6 +139,7 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
         tally.scope_partial = True
 
     own_error = False
+    shape = True
     if isinstance(node.get("queries"), list):
         for item in node["queries"]:
             if isinstance(item, dict) and "query" in item:
@@ -152,7 +163,12 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
         for row in node.get("pricing_errors") or ():
             if isinstance(row, Mapping) and isinstance(row.get("error"), Mapping):
                 _error(row["error"], tally, provider)
-    elif "rates" in node:
+        coverage = node.get("coverage")
+        if isinstance(coverage, Mapping) and (node.get("error") or node.get("pricing_errors")):
+            # Shops that answered without an eligible fare are answers, not failures. The
+            # counter cannot tell a provider-empty shop from one the filters emptied.
+            tally.filtered_out += int(coverage.get("empty") or 0)
+    elif "rates" in node and provider == "skiplagged":
         own_error = True
         error = node.get("error")
         if node["rates"]:
@@ -164,23 +180,28 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
             _error(error, tally, provider, empty_as="filtered_out")
         else:
             _error(error, tally, provider)
-    elif "offers" in node:
+    elif "offers" in node and provider == "skiplagged":
         tally.usable += bool(node["offers"])
         error = node.get("error")
         if isinstance(error, Mapping) and not node["offers"]:
             if error.get("code") == "currency_mismatch":
                 # The provider priced the route; the caller's named keep removed every row.
-                tally.empty_codes.append("currency_mismatch")
+                tally.empty_codes.append(("filtered_out", "currency_mismatch"))
                 tally.filtered_out += 1
             else:
                 _error(error, tally, provider)
         elif not node["offers"]:
             tally.provider_empty += 1
+        tally.shapes += 1
         return
+    else:
+        shape = False
 
     error = node.get("error")
     if isinstance(error, Mapping) and not own_error:
         _error(error, tally, provider)
+        shape = True
+    tally.shapes += shape
 
 
 def _iso_z(epoch: float) -> str:
@@ -206,6 +227,11 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     """Stamp the envelope on a provider-backed MCP payload. Existing keys are untouched."""
     tally = _Tally()
     _walk(payload, tally)
+    if not tally.shapes:
+        raise ValueError(
+            "stamp_search does not recognise this payload shape; "
+            "add its shape to envelope._walk or use stamp_local"
+        )
     failures = tally.failures
     answered = tally.usable + tally.provider_empty + tally.filtered_out
     worst = min((f[0] for f in failures), key=_FAILURE_PRIORITY.index, default=None)
@@ -215,16 +241,25 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
         status, empty_reason = worst, "not_loaded"
     else:
         status = "no_results"
-        # Nothing attempted (every query removed locally) is a filter outcome, not an empty answer.
-        only_provider = tally.provider_empty and not tally.filtered_out
-        empty_reason = "provider_empty" if only_provider else "filtered_out"
+        # The weakest claim wins. Unproven units cannot be called empty, and nothing
+        # attempted (every query removed locally) is a filter outcome, not an empty answer.
+        if tally.not_loaded:
+            empty_reason = "not_loaded"
+        else:
+            only_provider = tally.provider_empty and not tally.filtered_out
+            empty_reason = "provider_empty" if only_provider else "filtered_out"
     if failures:
         completeness = "partial" if answered else "blocked"
     else:
-        completeness = "partial" if tally.scope_partial else "complete"
+        completeness = "partial" if tally.scope_partial or tally.not_loaded else "complete"
     error_code = next((code for s, code, _ in failures if s == worst), None)
-    if error_code is None and empty_reason in ("provider_empty", "filtered_out"):
-        error_code = next(iter(tally.empty_codes), None)
+    if error_code is None:
+        error_code = next(
+            (code for reason, code in tally.empty_codes if reason == empty_reason), None
+        )
+    units = answered + tally.not_loaded + len(failures)
+    # A request answered from a recorded cooldown never reached the provider: nothing was observed.
+    observed = tally.observed if not units or units > tally.unsent else []
     retry_after, retry_after_seconds = _retry_after(tally, now)
     payload.update(
         status=status,
@@ -234,20 +269,30 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
         error_code=error_code,
         retry_after=retry_after,
         retry_after_seconds=retry_after_seconds,
-        observed_at=max(tally.observed, default=None),
-        observed_at_basis="fetch" if tally.observed else None,
+        observed_at=max(observed, default=None),
+        observed_at_basis="fetch" if observed else None,
     )
     return payload
 
 
-def stamp_local(payload: dict, *, partial: bool = False) -> dict:
-    """Stamp the envelope on an offline tool payload: ran locally, nothing fetched."""
+def stamp_local(
+    payload: dict,
+    *,
+    partial: bool = False,
+    status: str = "ok",
+    completeness: Optional[str] = None,
+    error_code: Optional[str] = None,
+) -> dict:
+    """Stamp the envelope on an offline tool payload: ran locally, nothing fetched.
+
+    ``status`` stays ``ok`` unless the tool's own verdict failed (``verify_answer``).
+    """
     payload.update(
-        status="ok",
-        completeness="partial" if partial else "complete",
+        status=status,
+        completeness=completeness or ("partial" if partial else "complete"),
         empty_reason=None,
         empty_note=None,
-        error_code=None,
+        error_code=error_code,
         retry_after=None,
         retry_after_seconds=None,
         observed_at=None,
