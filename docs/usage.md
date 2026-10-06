@@ -178,6 +178,69 @@ Sweep requests for flights, dates, flex, and explore accept `--proxy URL`
 (`proxy` in MCP). Browser detail requests have built-in pacing and run
 sequentially.
 
+### Split tickets (opt-in)
+
+`--split-tickets` adds separately ticketed alternatives built only from real
+one-way quotes. It costs extra searches, so it is off by default and capped.
+
+```bash
+# One-way: origin to hub on one ticket, hub to destination on another
+viajante flights JFK-NRT:2026-11-10 --fetch sweep --split-tickets --split-via HKG,ICN
+# Round trip: cheapest outbound one-way plus cheapest return one-way vs the package
+viajante flights --trip rt JFK-NRT:2026-11-10:2026-11-24 --split-tickets
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--split-via CODES` | Up to 5 connection airports to try (every one named is searched). Unnamed, hubs are the layover airports in the packaged results shown. An unknown code or more than 5 is an error naming `via`. |
+| `--split-max-hubs N` | Hubs to try (default 3, or every `--split-via` airport; at most 5). Each hub is 2 searches, or 3 with `--split-overnight`. |
+| `--split-min-connection HOURS` | Minimum gap between tickets at the hub (default 3). A planning default, not provider evidence. |
+| `--split-overnight` | Also search the second ticket on the next day. |
+| `--split-leg-stops N` | Maximum stops on each hub ticket (default 0). |
+
+Each result is labelled `split_ticket: true` and `connection_protected: false`
+(`self_transfer: true` for a hub) and lists both tickets with their own offer
+and Google Flights link. A missed connection between separate tickets is not
+rebooked by either airline, and bags may need to be collected and checked in
+again. Confirm each ticket on its own link.
+
+The total is summed only when every ticket has the same currency; otherwise it
+is `null` and the tickets stay listed (nothing converts). Totals are rounded to
+the currency's minor unit. `vs_packaged` compares with the cheapest returned
+packaged offer quoted in the same currency, and carries a non-negative `savings`
+(`direction: "cheaper"`) or `extra_cost` (`direction: "costlier"`). Results are
+ordered within one currency at a time (the requested currency first, unknown
+totals last), and `--top` applies to the requested currency (other groups are
+capped, below).
+
+A hub connection needs ticket 1 to land at the hub airport and ticket 2 to leave
+from it (owned segment airports), plus an owned arrival and departure time at the
+hub. The gap is measured in UTC, each time converted with the hub's catalogue
+timezone, so date-line and after-midnight arrivals stay correct. A missing
+timezone, or a local time that does not exist or happens twice around a DST
+change, leaves the timing unproven: the pair is never given a number. Rejected
+hub pairs are counted in `rejected` (`airport_mismatch`, `airport_unproven`,
+`timing_unproven`, `connection_too_short`), not shown.
+
+Mixed one-ways pair the cheapest outbound and return where the return departs
+after the outbound lands, compared the same way in UTC (`return_before_arrival`
+is rejected), one pair per currency. When the timing cannot be proven, a pair is
+kept only if no proven pair exists in its currency; it says `timing_proven: false`
+with a `timing_note` (the return may leave before the outbound lands; not
+verified), and is counted in `rejected.timing_unproven` (dropped) and
+`coverage.scope.timing_unproven_kept` (kept). Unknown timing never sorts above
+proven timing. Rows in other currencies and rows with an unknown total are capped
+at 3 per group (`other_currency_row_cap`); `omitted_other_currency` counts the
+rest and the CLI says so.
+
+A recorded Google cooldown stops the extra searches and the command exits
+non-zero. `--save` adds the report under `split_tickets`. The MCP tool is
+`search_split_tickets`; one-way routes use `via` / hubs, `trip="rt"` uses mixed
+one-ways. Over MCP it carries the result envelope: `ok` with any itinerary (`partial`
+if a fetch failed), the failure's status with `not_loaded` when none was found
+and a fetch failed or a cooldown ran, `no_results` / `filtered_out` when every
+pairing was rejected, and `provider_empty` only when every leg came back empty.
+
 ## Dates and flexible travel
 
 Use `dates` to compare departure dates across an inclusive window of up to
@@ -564,12 +627,15 @@ over a real stdio session as the client sees them:
 absolute bytes (a raw compact-JSON measure read 30615 before and 33303 after) but
 the same roughly 2.7 KB difference.
 
-- **Annotations and titles.** All 18 tools carry a title and read-only
-  annotations (`readOnlyHint: true`, `destructiveHint: false`,
-  `idempotentHint: true`). `openWorldHint` is `true` for the tools that ask a
+- **Annotations and titles.** All 21 tools carry a title and annotations
+  (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`),
+  except `watch_price`, which writes (it saves the watch and records the
+  observation): `readOnlyHint: false`, `idempotentHint: false`,
+  `destructiveHint: false`. `openWorldHint` is `true` for the tools that ask a
   provider (`search_flights`, `search_dates`, `search_flex`, `search_explore`,
-  `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_hidden_city`) and
-  `false` for the local ones. This needs `mcp>=1.14.1`.
+  `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_split_tickets`,
+  `search_hidden_city`, `recheck_offer`, `watch_price`) and `false` for the local
+  ones. This needs `mcp>=1.14.1`.
 - **Guide.** The server instructions hold only the load-bearing rules. The full
   operational guide is the `viajante://guide` resource (markdown) and the
   `get_guide` tool for clients without resource support.

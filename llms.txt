@@ -54,6 +54,7 @@ Every result (except lookup_airports) opens with an envelope: status, completene
 - search_explore: dest triage from a named origin
 - search_hotels: total-stay prices. Currency required. Default source google.
 - search_trip: flights then hotels. Same currency. Default hotel source google.
+- search_split_tickets: opt-in separately ticketed itineraries from real one-way quotes (hub self-transfer for a one-way route; mixed one-ways for trip=rt). Capped extra searches. Not protected: a missed connection between tickets is not rebooked, bags may need re-checking. Total is null across currencies; no FX.
 - lookup_airports: offline city or IATA lookup. Does not pick a hub.
 - recheck_offer: one fresh Google Flights search (never cached) that matches an earlier
   offer by flight numbers and departure times. Outcomes: same_price, price_changed,

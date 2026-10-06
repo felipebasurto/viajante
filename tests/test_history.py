@@ -13,6 +13,7 @@ import threading
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import _isolate  # noqa: F401
@@ -23,10 +24,11 @@ from viajante import history, mcp_handlers, watch
 from viajante.cli import main
 from viajante.envelope import ENVELOPE_KEYS
 from viajante.evidence import _Owned
-from viajante.flights import DEFAULT_TOP, search_flights
+from viajante.flights import DEFAULT_TOP, as_trips, parse_flight_plan, search_flights
+from viajante.hotels import search_hotels
 from viajante.mcp_errors import structured_error
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
-from viajante.mcp_handlers import search_flights_tool
+from viajante.mcp_handlers import search_flights_tool, search_hotels_tool
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -636,6 +638,106 @@ class WatchValidationTests(_State):
             watch.save_watch("w", "flights", self.params())
         with self.assertRaises(ValueError):
             history.price_history(kind="flights")
+
+
+class ArgumentOnlyChecksTests(_State):
+    """Checks that need no provider run before the lock, in the library, the tool and save_watch."""
+
+    ROUTE = f"JFK-LHR:{DEPART.isoformat()}"
+    STAY = {
+        "location": "Lisbon",
+        "check_in": DEPART.isoformat(),
+        "check_out": (DEPART + timedelta(days=3)).isoformat(),
+        "currency": "GBP",
+    }
+    FLIGHT_CASES = (
+        ({"top": 0}, {"top": 0}, "top must be positive"),
+        ({"fetch": "bogus"}, {"fetch": "bogus"}, "fetch must be 'auto', 'sweep', or 'detail'"),
+        ({"sort": "bogus"}, {"sort": "bogus"}, None),
+        (
+            {"max_duration": -1},
+            {"max_duration_hours": -1},
+            "max_duration_hours must not be negative",
+        ),
+        (
+            {"min_layover": 5, "max_layover": 1},
+            {"min_layover_hours": 5, "max_layover_hours": 1},
+            "min layover must be at or below max layover",
+        ),
+    )
+    HOTEL_CASES = (
+        ({"top": 0}, "top must be positive"),
+        ({"source": "bogus"}, "source must be booking, google, or skiplagged"),
+        ({"source": "skiplagged", "adults": 11}, None),
+        ({"source": "skiplagged", "rooms": 10}, None),
+        (
+            {"source": "skiplagged", "entire_home": True},
+            "entire_home is not supported with source skiplagged",
+        ),
+    )
+
+    def tool_error(self, tool, **kwargs: object) -> dict:
+        with self.assertRaises(ValueError) as caught:
+            tool(**kwargs)
+        return json.loads(str(structured_error(caught.exception, kwargs)))["error"]
+
+    def assert_not_saved(self, kind: str, params: dict, before: Optional[bytes]) -> None:
+        with self.assertRaises(ValueError):
+            watch.watch_price_tool("w", kind=kind, params=params)
+        path = self.state / watch.WATCHES_FILE
+        self.assertEqual(path.read_bytes() if path.exists() else None, before)
+
+    def test_flights_reject_the_same_input_everywhere_and_save_nothing(self) -> None:
+        trips = as_trips(parse_flight_plan([self.ROUTE], max_stops=1))
+        for tool_kw, lib_kw, message in self.FLIGHT_CASES:
+            with self.subTest(case=tool_kw):
+                with self.assertRaises(ValueError) as lib:
+                    search_flights(trips, currency="USD", **lib_kw)
+                message = message or str(lib.exception)
+                call = {"routes": [self.ROUTE], "currency": "USD", **tool_kw}
+                with patch("viajante.mcp_handlers._with_search_lock", side_effect=AssertionError):
+                    error = self.tool_error(search_flights_tool, **call)
+                self.assertEqual((error["code"], error["message"]), ("invalid_parameter", message))
+                if "top" in tool_kw or "fetch" in tool_kw or "sort" in tool_kw:
+                    self.assertEqual(error["field"], next(iter(tool_kw)))
+                self.assert_not_saved("flight", call, None)
+
+    def test_hotels_reject_the_same_input_everywhere_and_save_nothing(self) -> None:
+        for extra, message in self.HOTEL_CASES:
+            with self.subTest(case=extra):
+                kw = {**self.STAY, **extra}
+                if extra.get("source") == "skiplagged":
+                    kw.pop("currency")
+                query = HotelQuery(
+                    "Lisbon",
+                    DEPART,
+                    DEPART + timedelta(days=3),
+                    **{k: v for k, v in extra.items() if k in ("adults", "rooms", "entire_home")},
+                )
+                lib_kw = {k: v for k, v in extra.items() if k in ("top", "source")}
+                with self.assertRaises(ValueError) as lib:
+                    search_hotels([query], currency="GBP", **lib_kw)
+                message = message or str(lib.exception)
+                with patch("viajante.mcp_handlers._with_search_lock", side_effect=AssertionError):
+                    error = self.tool_error(search_hotels_tool, **kw)
+                self.assertEqual((error["code"], error["message"]), ("invalid_parameter", message))
+                self.assert_not_saved("hotel", kw, None)
+
+    def test_a_rejected_save_leaves_existing_watches_byte_identical(self) -> None:
+        watch.save_watch("keep", "flight", {"routes": [self.ROUTE], "currency": "USD"})
+        before = (self.state / watch.WATCHES_FILE).read_bytes()
+        self.assert_not_saved("flight", {"routes": [self.ROUTE], "fetch": "bogus"}, before)
+        self.assert_not_saved("hotel", {**self.STAY, "top": 0}, before)
+
+    def test_a_params_mismatch_names_the_real_tool(self) -> None:
+        for kind, tool in (("flight", "search_flights"), ("hotel", "search_hotels")):
+            with self.assertRaisesRegex(ValueError, f"do not match {tool}:"):
+                watch.save_watch("w", kind, {"nope": 1})
+
+    def test_lock_files_are_private_like_the_data_files(self) -> None:
+        watch.save_watch("w", "flight", {"routes": [self.ROUTE], "currency": "USD"})
+        lock = self.state / (watch.WATCHES_FILE + ".lock")
+        self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
 
 
 class _Raw(_State):

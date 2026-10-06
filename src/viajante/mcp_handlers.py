@@ -19,7 +19,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.envelope import stamp_local, stamp_recheck, stamp_search
+from viajante.envelope import stamp_local, stamp_recheck, stamp_search, stamp_split
 from viajante.evidence import failure_codes, find_offer, record
 from viajante.evidence import verify_answer as verify_answer_evidence
 from viajante.explore import (
@@ -39,11 +39,13 @@ from viajante.flights import (
     parse_overnight_airports,
     parse_via_airports,
     search_flights,
+    validate_flight_search_args,
 )
 from viajante.hotels import (
     HotelSourceName,
     resolve_hotel_currency,
     search_hotels,
+    validate_hotel_search_args,
     validate_max_distance,
     validate_near,
 )
@@ -61,6 +63,12 @@ from viajante.quote import (
 from viajante.recheck import recheck_offer
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
+from viajante.split import (
+    DEFAULT_MIN_CONNECTION_HOURS,
+    search_split_tickets,
+    validate_split_request,
+    with_carrier_filters,
+)
 from viajante.stays import plan_stay_blocks, split_stay_costs
 from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
@@ -197,11 +205,13 @@ def search_flights_tool(
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
     )
-    search = dict(
+    carriers = dict(
         airlines=parse_airline_codes(airlines),
         exclude_airlines=parse_airline_codes(exclude_airlines),
         alliances=parse_alliances(alliance),
         exclude_alliances=parse_alliances(exclude_alliance),
+    )
+    search = dict(
         depart_window=parse_depart_window(depart_window),
         arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
         depart_after=parse_named_clock(depart_after, role="depart-after"),
@@ -215,6 +225,7 @@ def search_flights_tool(
         exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
         include_airports=parse_via_airports(include_airports, role="include-airports"),
     )
+    validate_flight_search_args(top=top, sort=sort, fetch=fetch, **search)
     report = _with_search_lock(
         lambda: search_flights(
             trips,
@@ -225,10 +236,91 @@ def search_flights_tool(
             currency=currency,
             country=country,
             proxy=proxy,
+            **carriers,
             **search,
         )
     )
     return _searched(reports_payload(report))
+
+
+@_cached
+def search_split_tickets_tool(
+    route: str,
+    *,
+    trip: str = "one-way",
+    max_stops: int = 1,
+    adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+    cabin: FlightCabin = "economy",
+    top: int = DEFAULT_TOP,
+    fetch: str = "sweep",
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    alliance: Optional[str] = None,
+    exclude_alliance: Optional[str] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
+    via: Optional[str] = None,
+    max_hubs: Optional[int] = None,
+    min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
+    allow_overnight: bool = False,
+    leg_max_stops: int = 0,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
+) -> Mapping[str, object]:
+    plan = parse_flight_plan(
+        [route],
+        trip=trip,
+        max_stops=max_stops,
+        adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+        price_cap=price_cap,
+    )
+    trips = as_trips(plan)
+    _reject_past([leg.departure_date for item in trips for leg in item.legs])
+    if len(trips) != 1:
+        raise ValueError("split tickets take one one-way route or one round-trip (trip='rt')")
+    split_query = with_carrier_filters(
+        trips[0],
+        airlines=parse_airline_codes(airlines),
+        exclude_airlines=parse_airline_codes(exclude_airlines),
+        alliances=parse_alliances(alliance),
+        exclude_alliances=parse_alliances(exclude_alliance),
+    )
+    via_codes = parse_via_airports(via, role="via")
+    validate_split_request(
+        split_query,
+        via=via_codes,
+        max_hubs=max_hubs,
+        min_connection_hours=min_connection_hours,
+        leg_max_stops=leg_max_stops,
+        top=top,
+    )
+    report = _with_search_lock(
+        lambda: search_split_tickets(
+            split_query,
+            via=via_codes,
+            max_hubs=max_hubs,
+            min_connection_hours=min_connection_hours,
+            allow_overnight=allow_overnight,
+            leg_max_stops=leg_max_stops,
+            top=top,
+            fetch=fetch,
+            currency=currency,
+            country=country,
+            proxy=proxy,
+        )
+    )
+    return _owned(stamp_split(dict(report.to_dict())))
 
 
 @_cached
@@ -606,6 +698,7 @@ def search_hotels_tool(
     )
     near_point = validate_near(_near_point(near))
     max_distance_km = validate_max_distance(max_distance_km, near_point)
+    validate_hotel_search_args(queries, top=top, source=source)
     report = _with_search_lock(
         lambda: search_hotels(
             queries,

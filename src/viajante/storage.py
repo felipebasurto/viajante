@@ -43,10 +43,12 @@ def exclusive_lock(data_file: Path) -> Iterator[None]:
 
     Works across threads and processes (flock on POSIX, msvcrt.locking on Windows). Where
     neither is available this is a documented no-op: two writers at the same instant can
-    then lose an update. The lock file is left in place; it holds no data.
+    then lose an update. The lock file (mode 0600, like the data files) stays in place and
+    holds no data.
     """
     data_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(data_file.with_name(data_file.name + ".lock"), "a+b") as handle:
+    lock_path = data_file.with_name(data_file.name + ".lock")
+    with os.fdopen(os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600), "a+b") as handle:
         if fcntl is not None:
             fcntl.flock(handle, fcntl.LOCK_EX)
         elif msvcrt is not None:  # pragma: no cover - Windows only

@@ -1966,6 +1966,49 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(card.flight_numbers, ("A3701",))
         self.assertEqual(card.legs[0].segments[0].carrier, "A3")
         self.assertEqual(card.legs[0].segments[0].departure_date, date(2026, 10, 9))
+        self.assertEqual(card.legs[0].segments[0].arrival_date, date(2026, 10, 9))
+
+    def test_next_day_arrival_keeps_its_own_owned_date(self) -> None:
+        out_day, in_day = [2026, 10, 9], [2026, 10, 10]
+        leg = _live_leg(
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
+            dest="LHR",
+            dest_name="London Heathrow Airport",
+            dep=[22, 30],
+            arr=[10, 25],
+            minutes=415,
+            dep_date=out_day,
+            arr_date=in_day,
+            code="BA",
+            number="178",
+            airline="British Airways",
+        )
+        card = parse_shopping_body(
+            _compact_body(
+                _priced(
+                    _live_flight(
+                        code="BA",
+                        airline="British Airways",
+                        legs=[leg],
+                        origin="JFK",
+                        dest="LHR",
+                        dep_date=out_day,
+                        dep=[22, 30],
+                        arr_date=in_day,
+                        arr=[10, 25],
+                        minutes=415,
+                    ),
+                    480,
+                )
+            ),
+            currency="USD",
+        )[0]
+        segment = card.legs[0].segments[0]
+        self.assertEqual(segment.departure_date, date(2026, 10, 9))
+        self.assertEqual(segment.arrival_date, date(2026, 10, 10))
+        self.assertEqual(segment.arrival, "10:25")
+        self.assertEqual(segment.to_dict()["arrival_date"], "2026-10-10")
 
     def test_layover_from_legs_when_itinerary_block_is_missing(self) -> None:
         item = _tap_long_layover()

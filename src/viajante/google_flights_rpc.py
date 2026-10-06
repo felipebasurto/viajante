@@ -906,6 +906,7 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
                 flight_number=None if ident is None else f"{ident[0]}{ident[1]}",
                 departure_date=_leg_date(leg[20] if len(leg) > 20 else None),
                 carrier=None if ident is None else ident[0],
+                arrival_date=_leg_date(leg[21] if len(leg) > 21 else None),
             )
         )
     return tuple(segments)

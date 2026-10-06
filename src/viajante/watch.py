@@ -38,6 +38,9 @@ _TOOLS: dict[str, Callable[..., Mapping[str, object]]] = {
 }
 
 
+_TOOL_NAMES = {"flight": "search_flights", "hotel": "search_hotels"}
+
+
 class WatchesReadError(OSError):
     """The saved-watches file exists but could not be read. Never the same as no watches."""
 
@@ -109,7 +112,7 @@ def save_watch(name: str, kind: str, params: Mapping[str, Any]) -> dict:
     try:
         inspect.signature(_TOOLS[kind]).bind(**params)
     except TypeError as exc:
-        raise ValueError(f"params do not match search_{kind}: {exc}") from exc
+        raise ValueError(f"params do not match {_TOOL_NAMES[kind]}: {exc}") from exc
     check_search_params(_TOOLS[kind], params)
     spec = {
         "kind": kind,
