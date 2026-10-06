@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
@@ -994,6 +995,47 @@ class SplitMcpTests(unittest.TestCase):
             ),
         ) as split:
             return search_split_tickets_tool(route, **kwargs), split
+
+    def test_a_recorded_cooldown_is_a_rate_limited_envelope_with_its_retry_fields(self) -> None:
+        now = time.time()
+        state = {"at": now, "until": now + 300, "cooldown_s": 300.0}
+        fake = FakeSearch(_hub_table())
+        with patch("viajante.split.rate_limit_status", return_value=state):
+            payload, _split = self._call(ROUTE, fake, via="LAX")
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["empty_reason"]),
+            ("rate_limited", "blocked", "not_loaded"),
+        )
+        self.assertEqual(payload["error"]["retry_after"], payload["retry_after"])
+        self.assertEqual(payload["error"]["retry_after_seconds"], payload["retry_after_seconds"])
+        self.assertIn(payload["retry_after_seconds"], (300, 301))
+        self.assertEqual(payload["observed_at_basis"], "fetch")
+
+    def test_a_failed_second_ticket_leg_is_a_partial_ok_or_the_failure(self) -> None:
+        table = _hub_table()
+        table[("LAX", "NRT", DAY)] = QueryFailure(
+            query=FlightQuery("LAX", "NRT", DAY),
+            error=SearchError(SearchErrorCode.FETCH_FAILED, "boom", timeout=True),
+        )
+        payload, _split = self._call(ROUTE, FakeSearch(table), via="LAX")
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["error_code"]),
+            ("timeout", "partial", "fetch_failed"),
+        )
+
+    def test_every_pairing_rejected_is_filtered_out_and_empty_legs_are_provider_empty(self) -> None:
+        payload, _split = self._call(ROUTE, FakeSearch(_hub_table("12:00")), via="LAX")
+        self.assertEqual(payload["itineraries"], [])
+        self.assertEqual(
+            (payload["status"], payload["empty_reason"]), ("no_results", "filtered_out")
+        )
+        mcp_handlers._CACHE.clear()
+        payload, _split = self._call(ROUTE, FakeSearch({}), via="LAX")
+        self.assertEqual(
+            (payload["status"], payload["empty_reason"], payload["error_code"]),
+            ("no_results", "provider_empty", "no_results"),
+        )
 
     def test_hub_split_over_the_tool_and_ledger_owns_the_savings(self) -> None:
         payload, split = self._call(ROUTE, FakeSearch(_hub_table()), via="lax", max_hubs=2)

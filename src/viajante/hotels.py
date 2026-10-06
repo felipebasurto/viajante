@@ -18,6 +18,7 @@ from viajante.booking import (
 )
 from viajante.browser import playwright_available
 from viajante.flights import DEFAULT_TOP
+from viajante.google_flights import SweepTransportError
 from viajante.google_hotels import (
     GoogleHotelsSource,
 )
@@ -67,6 +68,7 @@ from viajante.parsers import (
     parse_unit_hints,
 )
 from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
+from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged_hotels import (
     SKIPLAGGED_HOTEL_CURRENCY,
@@ -262,7 +264,12 @@ def _rank_offers(
 
 def _classify_hotel_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
-        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+        return SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message=str(exc),
+            rate_limited=True,
+            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+        )
     if isinstance(exc, SkiplaggedNoHotels):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):
@@ -285,6 +292,7 @@ def _classify_hotel_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc) if exc.rate_limited else "Google Hotels blocked the sweep.",
             rate_limited=exc.rate_limited,
+            retry_until=cooldown_until(str(exc)) if exc.rate_limited else None,
         )
     if isinstance(exc, HotelsParseMiss):
         return SearchError(
@@ -364,7 +372,9 @@ def _run_search(
             except Exception as exc:
                 failure = _classify_hotel_failure(exc)
                 source.reset()
-                if failure.code in NON_RETRIABLE_CODES or isinstance(exc, BookingResultsTimeout):
+                if failure.code in NON_RETRIABLE_CODES or isinstance(
+                    exc, (BookingResultsTimeout, SweepTransportError)
+                ):
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     sleep(retry_backoff_seconds(attempt, random_gen))

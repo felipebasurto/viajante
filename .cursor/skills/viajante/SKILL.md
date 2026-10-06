@@ -36,6 +36,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
+| Re-check a finalist offer is still available (fresh search, never cached) | `recheck_offer` (`offer`; hand-built also `query`, `currency`; opt-ins `allow_loose_match`, `allow_substitute`) | `viajante recheck-offer --offer FILE` |
 | Validate selected flight offers (local) | `validate_itinerary` (`legs`, `constraints`) | — |
 | Per-night roster into check-in/check-out blocks (local) | `plan_stay_blocks` (`roster`) | — |
 | Split stay totals by nights per person (local) | `split_stay_costs` (`stays`, `roster`, `currency`) | — |
@@ -119,6 +120,24 @@ empty `segments` array makes segment count, connection airports, per-segment clo
 operators, and overnight checks **UNKNOWN**. A comparative rule such as “unless it
 saves N” is **UNKNOWN** without two owned comparison candidates.
 
+Call `recheck_offer` on each finalist before presenting it as current. It runs one
+fresh search (never the 5-minute replay) and returns exactly one of `same_price`,
+`price_changed`, `not_found`, `multiple_matches`, `incomplete_identity`, `check_failed`, with
+`checked_at` (and `substituted` only when you pass `allow_substitute`). Quote the outcome
+as found. `multiple_matches` gives no verdict: show the candidates and do not pick one.
+`incomplete_identity` sent nothing: add the `missing` fields from the original offer, or
+pass `allow_loose_match` and call the result loose. A `closest_candidate` on a `not_found`
+is a different itinerary listed for information; name what differs and do not call it the
+original. Report `filter_violations` (for example `price_cap`) beside the price.
+`check_failed` (`check_completed: false`: blocked, rate limited, incomplete offers, any
+provider error) means the check did not run; never say the offer is gone, do not retry a
+rate limit, and report the cooldown. `not_found` is a completed check: read the envelope
+first. `empty_reason` `provider_empty` is the only "Google returned nothing"; `filtered_out`
+means filters removed what Google returned; `not_among_offers` is `ok` (flights came back,
+none was the offer). `check_failed` is `not_loaded`. Pass the offer's own
+currency only; a different one is refused. A re-check is still not
+a booking guarantee: the price is confirmed only on the provider's own page.
+
 Call `validate_itinerary` before saying an assembled itinerary is compliant:
 
 - **PASS**: the validator has owned evidence for the named constraint and it satisfies it.
@@ -132,14 +151,33 @@ scope whose `coverage.complete` is true. Otherwise say “not found in the teste
 Relaxed dates or constraints are a separate scenario and never make the original
 scenario compliant.
 
+## Read the envelope first
+
+Every MCP result (except `lookup_airports`) opens with `status`, `completeness`,
+`empty_reason`, `retry_after`, `observed_at`. Check them before reading rows.
+
+| `empty_reason` | Say to the traveller |
+|----------------|----------------------|
+| `provider_empty` | The only case that may be called "no flights/hotels found" (for this search). |
+| `filtered_out` | The provider returned results; the filters removed them all. Not "none available". |
+| `not_loaded` | The search did not complete. Availability is unknown. |
+
+`completeness` `partial` or `blocked` means do not summarise as a full answer.
+In `search_dates` / `search_flex`, a day with no calendar price is `not_loaded`:
+never say "no flights that day". An explore destination with `price: null` is `not_loaded` too. An `ok` or `partial`
+result may carry the worst failure's `error_code`; read `empty_reason` for emptiness.
+`verify_answer` `status: failed` means the draft
+has claims no search owns (see `error_code`), not that a search failed.
+`retry_after` is a known cooldown; wait for it instead of retrying.
+
 ## Recovery
 
 | Situation | Action |
 |-----------|--------|
 | Browser access denied | Report the client access limitation, not a provider failure or broken URL. Use permitted read-only alternatives; do not bypass denial or re-request already authorized access. |
 | Missing local screenshot | Say the image could not be read; do not claim visual inspection. Continue from available text/evidence. |
-| `no_results` | Stop. Do not retry. |
-| `rate_limited: true` | Stop provider searches. Wait 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
+| `no_results` | Stop. Do not retry. Read `empty_reason` before wording it: only `provider_empty` is "none found". |
+| `rate_limited: true` | Stop provider searches. Wait until `retry_after` (UTC; `retry_after_seconds`) when the error has it, else 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
 | `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |

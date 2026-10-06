@@ -26,6 +26,7 @@ from viajante.models import (
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
     SKIPLAGGED_RATE_LIMIT_FILE,
+    cooldown_until,
     note_rate_limited,
     rate_limit_advice,
     rate_limit_status,
@@ -554,7 +555,12 @@ def _offer_from_row(
 
 def _classify(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
-        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+        return SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message=str(exc),
+            rate_limited=True,
+            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+        )
     if isinstance(exc, SkiplaggedError):
         message = str(exc) or "Skiplagged MCP request failed."
         folded = message.casefold()
@@ -565,6 +571,7 @@ def _classify(exc: BaseException) -> SearchError:
         return SearchError(
             code=SearchErrorCode.FETCH_FAILED,
             message="Skiplagged MCP could not be reached.",
+            timeout=isinstance(exc, TimeoutError),
         )
     return SearchError(
         code=SearchErrorCode.FETCH_FAILED,

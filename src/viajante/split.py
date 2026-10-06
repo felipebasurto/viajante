@@ -589,7 +589,10 @@ def _rate_limited(reports: Sequence[SearchReport]) -> Optional[SearchError]:
     state = rate_limit_status()
     if state is not None:
         return SearchError(
-            SearchErrorCode.BLOCKED, rate_limit_advice(state, sent=False), rate_limited=True
+            SearchErrorCode.BLOCKED,
+            rate_limit_advice(state, sent=False),
+            rate_limited=True,
+            retry_until=state["until"],
         )
     return None
 
