@@ -85,6 +85,8 @@ any row has evidence (otherwise timeout), completeness is partial, and each unfi
 query carries error code deadline with empty_reason not_loaded. That is availability
 unknown, never "no results". The error carries no retry_after. A partial result is not
 cached; ask again with a larger deadline_seconds or none.
+In search_explore, `not_loaded` under a deadline means the prices weren't loaded,
+even if destinations are listed.
 
 ## The result envelope
 
