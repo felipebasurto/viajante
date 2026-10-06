@@ -81,6 +81,7 @@ jobs:
                           "compare_awards",
                           "lookup_transfers",
                           "validate_itinerary",
+                          "recheck_offer",
                           "plan_stay_blocks",
                           "split_stay_costs",
                           "verify_answer",
@@ -92,9 +93,8 @@ jobs:
                           assert tool.title and tool.annotations, tool.name
                           assert tool.annotations.readOnlyHint is True, tool.name
                           assert tool.annotations.destructiveHint is False, tool.name
-                          assert tool.annotations.openWorldHint == tool.name.startswith(
-                              "search_"
-                          ), tool.name
+                          network = tool.name.startswith("search_") or tool.name == "recheck_offer"
+                          assert tool.annotations.openWorldHint == network, tool.name
                       guide = await session.read_resource("viajante://guide")
                       assert "Rate limits" in guide.contents[0].text
                       hotel = next(tool for tool in tools.tools if tool.name == "search_hotels")

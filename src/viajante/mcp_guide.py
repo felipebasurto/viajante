@@ -29,6 +29,8 @@ search_hidden_city is Skiplagged (USD), not Google: run it at most once, after a
 search_flights, never when bags were named, and never mix its rows with Google evidence.
 search_dates is the cheapest week, search_flex is +/-N around a named date, search_explore
 is destination triage. max_stops is 0, 1 or 2.
+recheck_offer re-checks a finalist with one fresh search; check_failed means the check did not run,
+never that the offer is gone.
 """
 
 GUIDE = r"""# viajante MCP guide
@@ -62,6 +64,7 @@ Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
+Also recheck_offer, a search that takes the one-search lock (see Re-checking an offer).
 Also get_guide, which returns this guide (the same text as the viajante://guide resource).
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
@@ -132,6 +135,25 @@ the caller supplies; they never search, never convert money, never pick a stay.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
 missing segment, baggage, or fare facts.
+
+## Re-checking an offer
+
+recheck_offer is a search: it runs one fresh Google Flights query (never the 5-minute replay
+cache), under the one-search lock and the machine-wide cooldown, and matches an earlier offer by
+flight numbers and scheduled departure times. Re-check finalists before presenting them as
+current. Outcomes: same_price, price_changed, not_found, multiple_matches, incomplete_identity,
+check_failed, and substituted only with allow_substitute. multiple_matches picks no offer and
+gives no price verdict. incomplete_identity sent nothing: the offer lacks flight numbers,
+airports or clocks (`missing` names them); allow_loose_match opts in to carrier plus times and
+labels the result loose_match. check_failed (check_completed false: blocked, rate limited,
+incomplete offers, any provider error) means the check did not run to an answer, not that the
+offer is gone; do not retry a rate limit. A closest_candidate on a not_found is a different
+itinerary, for information only. Pass the offer's own currency; a different one is refused.
+The envelope reads: a found itinerary is ok; not_found is no_results only for provider_empty or
+filtered_out (an answered not_among_offers stays ok); check_failed carries the failure status and
+not_loaded; incomplete_identity is failed and blocked. Caller-typed values are not recorded as
+owned evidence. It is not a booking guarantee; the price is confirmed only on the provider's own
+page.
 
 ## Hotels and stays
 

@@ -55,6 +55,16 @@ Every result (except lookup_airports) opens with an envelope: status, completene
 - search_hotels: total-stay prices. Currency required. Default source google.
 - search_trip: flights then hotels. Same currency. Default hotel source google.
 - lookup_airports: offline city or IATA lookup. Does not pick a hub.
+- recheck_offer: one fresh Google Flights search (never cached) that matches an earlier
+  offer by flight numbers and departure times. Outcomes: same_price, price_changed,
+  not_found, multiple_matches (no pick, no verdict), incomplete_identity (no search
+  sent), check_failed, and substituted only with allow_substitute. check_failed
+  (blocked, rate limited, incomplete offers, any provider error; check_completed false)
+  means the check did not run to an answer, not that the offer is gone. allow_loose_match
+  opts in to carrier plus times. A price_cap in the query is reported as
+  filter_violations. currency must be the offer's own. Re-check finalists
+  before presenting them as current. Not a booking guarantee; confirm the price on
+  the provider's own page.
 - search_hidden_city: Skiplagged, opt-in. Cards are USD; omit currency or pass USD. Do not copy a Google/origin quote keep (GBP, JPY, …).
 - compare_awards: local award vs cash math. No live award seats.
 - lookup_transfers: local transfer-partner table for a named program.

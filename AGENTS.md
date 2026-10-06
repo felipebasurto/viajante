@@ -52,6 +52,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
 - Offline evidence-bound itinerary validation: `src/viajante/validate.py`
+- Fresh re-check of an earlier flight offer (`recheck-offer` / `recheck_offer`): `src/viajante/recheck.py`
 - Offline stay blocks and per-person cost split: `src/viajante/stays.py`
 - MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
@@ -60,8 +61,8 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`, `get_guide`.
+CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `recheck-offer`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`, `get_guide`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -88,6 +89,16 @@ explore destination without a price (its shop failed or came back empty) is
 `not_loaded`, not a usable row. A new search tool must
 stamp through `stamp_search`, which raises on a payload shape it does not
 recognise, and must advertise the envelope schema (a test enforces it).
+`recheck_offer` stamps through `stamp_recheck`, which maps its own outcome: a found
+itinerary (`same_price`, `price_changed`, `substituted`, `multiple_matches`) is `ok` /
+`complete`; `not_found` is `no_results` / `complete` with `provider_empty` or
+`filtered_out`, but `not_among_offers` is `ok` (the provider returned flights; `partial`
+when only the N cheapest of M were compared); `check_failed` carries the failure status
+(`rate_limited` with `retry_after` from the cooldown, `blocked`, `timeout`, else `failed`),
+`not_loaded`, `blocked` completeness (`partial` for `incomplete_offers`) and the error's
+code; `incomplete_identity` is `failed` / `blocked`. `observed_at` is `checked_at` (basis
+`fetch`), null when nothing was sent. A completed check is recorded in the evidence ledger
+(caller values stripped); `check_failed` and `incomplete_identity` are not.
 
 Wording rule: only `provider_empty` may be told to a traveller as "no flights/hotels
 found". `filtered_out` means viajante's filters removed rows the provider returned
@@ -123,6 +134,45 @@ rows use the full triple. Stamp rules live with the search loops (`flights.py`,
 catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
+
+`recheck_offer` / `viajante recheck-offer` is a search, not a local helper: one fresh
+Google Flights query that skips the MCP replay cache, runs under the one-search lock,
+and respects the Google cooldown. It matches an earlier offer by flight numbers plus
+scheduled departure times per segment and never picks between ambiguous matches. The
+offer needs a full segment identity (flight number, origin, destination, departure
+clock); otherwise the outcome is `incomplete_identity`, no search is sent, and `missing`
+names the fields. `allow_loose_match` opts in to carrier plus departure times and stamps
+`loose_match: true`, `match_basis: carrier_times`. Exactly one outcome: `same_price`,
+`price_changed`, `not_found`, `multiple_matches` (more than one identical fresh offer:
+`candidates` lists their prices and times, no verdict), `incomplete_identity`,
+`check_failed`, or `substituted` (only with `allow_substitute`; by default a close
+alternative is a `not_found` / `not_among_offers` with a `closest_candidate` listed for
+information only). A positive outcome always rests on a fresh provider match.
+`currency` must be the offer's own: a different one is refused, never converted. The
+query (evidence or supplied) is replayed: cabin, stops, bags and airline/alliance filters
+ride the request; a `price_cap` is not sent but reported in `filter_violations` (also
+`max_stops`, `airlines`, `exclude_airlines`) when the matched fresh offer breaks it
+(`filters_replayed` is what rode the request, `filters_checked` what was only checked
+locally; `max_stops` and `exclude_airlines` breaches are defensive since the search already
+applies them; `airlines` uses the search's any-carrier rule). Loose matching refuses a
+connecting leg without segments. Origin and destination are compared in every match.
+Only a result built from a provider answer is recorded in the evidence ledger;
+`incomplete_identity`, `check_failed` and input errors record nothing. `not_found` is
+a completed check (`reason`: `provider_empty`, `filtered`, `not_among_offers`).
+`check_failed` has `check_completed: false`, a `reason` and the provider `error`
+(`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`,
+`browser_unavailable`, `currency_mismatch`, or `incomplete_offers` when fresh round-trip or
+multi-city offers came back without every journey and nothing matched): the check did not
+run to an answer, which is not evidence the offer is gone. Never branch a rate limit into
+"gone". `substituted` needs a shared flight number, or the same marketing carrier within
+90 minutes of the original departure. `previous.source` is `search_evidence` only when
+the offer's `evidence_id`, price, currency and itinerary (every segment) match an offer a
+search in this process returned, and then previous leg times are read from that ledger
+offer; anything else (hand-typed, invented or borrowed id, edited amount or itinerary,
+CLI) is `caller_supplied`, and its `previous` block and `differences[].previous` values
+(also inside `closest_candidate`) are returned but not recorded in the evidence ledger.
+Re-check finalists before presenting them as current. A re-check is still not a booking
+guarantee: confirm the price on the provider's own page.
 
 Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.
 The URL evidence reproduces a query, not guaranteed current fare availability.
