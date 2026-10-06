@@ -158,6 +158,7 @@ EXPECTED_TOOLS = [
 @unittest.skipUnless(importlib.util.find_spec("mcp"), "mcp extra is not installed")
 class StdioFinalistTests(unittest.TestCase):
     def test_real_stdio_session_keeps_reads_and_rejects_bad_inputs(self):
+        import jsonschema
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
@@ -310,6 +311,26 @@ class StdioFinalistTests(unittest.TestCase):
                     )
                     self.assertTrue(missing.isError)
                     self.assertIn("unknown or evicted", missing.content[0].text)
+                    metro = await session.call_tool(
+                        "search_flights",
+                        {"routes": ["LON-CDG:2099-07-01"], "fetch": "sweep", "top": 1},
+                    )
+                    metro_body = payload(metro)
+                    jsonschema.validate(metro_body, flights_tool.outputSchema)
+                    self.assertEqual(
+                        {row["query"]["origin"] for row in metro_body["queries"]},
+                        {"LHR", "LGW", "STN", "LTN", "LCY", "SEN"},
+                    )
+                    for metro_row in metro_body["queries"]:
+                        self.assertEqual(metro_row["query"]["destination"], "CDG")
+                        self.assertIn("recommendation", metro_row)
+                        shown = metro_row["offers"][0]["legs"][0]["segments"][0]
+                        picked = metro_row["recommendation"]["shortlist"][0]["offer"]["legs"][0][
+                            "segments"
+                        ][0]
+                        for key in ("arrival_date", "departure_timezone", "arrival_timezone"):
+                            self.assertEqual(picked[key], shown[key])
+                            self.assertEqual(shown[key], _SEGMENT[key])
                     same_metro = await session.call_tool(
                         "search_flights",
                         {"routes": ["LON-LON:2099-07-01"], "fetch": "sweep"},

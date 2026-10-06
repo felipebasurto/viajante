@@ -8,9 +8,13 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
 from statistics import median
-from typing import Literal, Mapping, Optional, Sequence, Tuple, Union, get_args
+from typing import TYPE_CHECKING, Literal, Mapping, Optional, Sequence, Tuple, Union, get_args
 
 from viajante.airports import is_known_iata
+
+if TYPE_CHECKING:
+    # recommend.py builds on these models; the import is for annotations only.
+    from viajante.recommend import Recommendation
 
 # Fetch/browser locale is English so owned card parsers stay on English evidence.
 FETCH_LANGUAGE = "en"
@@ -970,6 +974,7 @@ class QuerySuccess:
     google_flights_url: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
     empty_reason: Optional[EmptyReason] = None
+    recommendation: Optional["Recommendation"] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -993,6 +998,8 @@ class QuerySuccess:
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.recommendation is not None:
+            payload["recommendation"] = self.recommendation.to_dict(currency)
         if self.empty_reason is not None:
             payload["empty_reason"] = self.empty_reason
         return payload

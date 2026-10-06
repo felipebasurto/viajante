@@ -96,6 +96,7 @@ from viajante.quote import (
     resolve_quote_currency,
 )
 from viajante.recheck import run_recheck_cli
+from viajante.recommend import Recommendation
 from viajante.runtime import package_version
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
@@ -317,6 +318,19 @@ def _format_offer_row(offer: FlightOffer, currency: str) -> str:
         f"{_format_airline(offer.airline)}"
         f"{_format_flight_numbers(offer.flight_numbers)}"
     )
+
+
+def format_recommendation(recommendation: Recommendation, currency: str) -> str:
+    lines = ["  Recommendation (score 0-100, higher is better; weights in the JSON):"]
+    if recommendation.relaxed_requirements:
+        lines.append(f"    Relaxed requirements: {', '.join(recommendation.relaxed_requirements)}")
+    for entry in recommendation.entries:
+        lines.append(f"    [{', '.join(entry.labels)}] score {entry.score:g}")
+        lines.append(f"  {_format_offer_row(entry.offer, currency)}")
+        lines.append(f"      + {'; '.join(entry.highlights)}")
+        lines.append(f"      - {'; '.join(entry.tradeoffs)}")
+    lines.extend(f"    Note: {note}" for note in recommendation.notes)
+    return "\n".join(lines)
 
 
 def _format_compare_side(side: StopsCompareSide, currency: str) -> str:
@@ -588,6 +602,8 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                 _print_google_flights_url(query_url, indent="  ")
             if result.stops_compare is not None:
                 print(format_stops_compare(result.stops_compare, currency))
+            if result.recommendation is not None:
+                print(format_recommendation(result.recommendation, currency))
             print(
                 f"  Raw: {result.raw_count}; "
                 f"eligible: {result.eligible_count}; "

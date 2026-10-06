@@ -128,6 +128,24 @@ def normalize_clock(text: str | None) -> str | None:
     return None
 
 
+_MINUTES_IN_DAY = 24 * 60
+
+
+def clock_minutes(text: str | None) -> int | None:
+    """Minutes since midnight for an owned clock, else None."""
+    clock = normalize_clock(text)
+    if not clock:
+        return None
+    try:
+        hour_text, minute_text = clock.split(":", 1)
+        minutes = int(hour_text) * 60 + int(minute_text)
+    except ValueError:
+        return None
+    if not (0 <= minutes < _MINUTES_IN_DAY):
+        return None
+    return minutes
+
+
 def parse_stops_count(stops: str | None) -> int | None:
     if stops is None:
         return None
