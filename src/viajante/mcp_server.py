@@ -17,6 +17,7 @@ from viajante.mcp_handlers import (
     lookup_airports_tool,
     lookup_transfers_tool,
     plan_stay_blocks_tool,
+    recheck_offer_tool,
     search_dates_tool,
     search_explore_tool,
     search_flex_tool,
@@ -46,7 +47,7 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
+compare_awards, lookup_transfers, validate_itinerary, recheck_offer, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
@@ -89,6 +90,13 @@ the caller supplies; they never search, never convert money, never pick a stay.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
 missing segment, baggage, or fare facts.
+recheck_offer is a search: it runs one fresh Google Flights query (never the
+5-minute replay cache) and matches an earlier offer by flight numbers and
+scheduled departure times. Re-check finalists before presenting them as current.
+Outcomes: same_price, price_changed, substituted, not_found. A not_found with
+check_completed false (blocked, rate limited) means the check did not run to an
+answer, not that the offer is gone. It is not a booking guarantee; the price is
+confirmed only on the provider's own page.
 
 Every MCP call is synchronous: never say you are still searching or will
 report back; call the tool now or name the next step. Hotel location is one
@@ -587,6 +595,32 @@ def build_server():
         result is tri-state: unknown evidence never becomes pass.
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
+
+    @server.tool()
+    async def recheck_offer(
+        offer: dict,
+        query: dict | None = None,
+        currency: str | None = None,
+        country: str | None = None,
+        fetch: str | None = None,
+        proxy: str | None = None,
+    ) -> dict:
+        """Re-check an earlier flight offer with one fresh Google Flights search.
+
+        offer is an offer from a prior search_flights result (or a {query, offer}
+        row), or enough of one: price plus legs[].segments[] with flight_number
+        and departure clock. query defaults to the offer's evidence query; a
+        hand-built offer also needs query adults, cabin and max_stops, and
+        currency. Matches by flight numbers plus departure times (carrier plus
+        times when flight numbers are absent, and it says so). Returns exactly
+        one outcome: same_price, price_changed, substituted, or not_found, with
+        checked_at. Positive outcomes always rest on a fresh provider match.
+        not_found with check_completed false (blocked, rate_limited) means the
+        check could not be completed, not that the offer is gone. Different
+        currencies are reported, never compared or converted. Not a booking
+        guarantee: confirm the price on the provider's own page.
+        """
+        return dict(await run_mcp_tool(recheck_offer_tool, **locals()))
 
     @server.tool()
     async def plan_stay_blocks(roster: dict[str, list[str]]) -> dict:

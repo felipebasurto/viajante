@@ -94,6 +94,7 @@ from viajante.quote import (
     resolve_baggage_buffer,
     resolve_quote_currency,
 )
+from viajante.recheck import run_recheck_cli
 from viajante.runtime import package_version
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
@@ -199,6 +200,13 @@ AWARDS_EXAMPLES = """\
 Examples:
   viajante awards --offer award.json --cash 1200 --currency USD
   viajante awards --offer award.json --balances balances.json --cash 1800 --currency GBP
+"""
+
+RECHECK_EXAMPLES = """\
+Examples:
+  viajante recheck-offer --offer offer.json
+  viajante recheck-offer --offer offer.json --save results/recheck.json
+  viajante recheck-offer --offer identity.json --query query.json --currency USD
 """
 
 POINTS_EXAMPLES = """\
@@ -2455,6 +2463,49 @@ def _build_parser() -> argparse.ArgumentParser:
         help="JSON {balances:[{program,balance},...]} of named card currencies",
     )
 
+    recheck = sub.add_parser(
+        "recheck-offer",
+        help="Re-check an earlier flight offer with one fresh Google Flights search",
+        description=(
+            "Re-check an earlier offer. Runs one fresh search (no cache) and matches by "
+            "flight numbers plus departure times. Outcome: same_price, price_changed, "
+            "substituted, or not_found. Not a booking guarantee: confirm the price on "
+            "the provider's own page. Exit 0 check completed, 1 bad input, 2 check not "
+            "completed (blocked or rate limited)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=RECHECK_EXAMPLES,
+    )
+    recheck.add_argument(
+        "--offer",
+        required=True,
+        metavar="FILE",
+        help="JSON offer (or {query, offer} row) from an earlier result; - reads stdin",
+    )
+    recheck.add_argument(
+        "--query",
+        default=None,
+        metavar="FILE",
+        help="JSON query when the offer carries no evidence query",
+    )
+    recheck.add_argument(
+        "--currency",
+        default=None,
+        metavar="CODE",
+        help="ISO 4217 quote currency; defaults to the offer's own, required if it has none",
+    )
+    recheck.add_argument(
+        "--country", default=None, metavar="CC", help="ISO country for Google gl (omit when unset)"
+    )
+    recheck.add_argument(
+        "--fetch",
+        default=None,
+        choices=["auto", "sweep", "detail"],
+        help="Fetch mode; defaults to the offer's own backend",
+    )
+    _add_proxy_flag(recheck)
+    _add_save_flag(recheck)
+
     airports = sub.add_parser(
         "airports",
         help="Offline IATA airport lookup",
@@ -2509,6 +2560,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_awards(args)
     if args.cmd == "points":
         return _run_points(args)
+    if args.cmd == "recheck-offer":
+        return run_recheck_cli(args)
     if args.cmd == "bench":
         return run_bench()
 

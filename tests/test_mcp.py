@@ -1047,6 +1047,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIn("search_trip", help_text)
         self.assertIn("search_hidden_city", help_text)
         self.assertIn("validate_itinerary", help_text)
+        self.assertIn("recheck_offer", help_text)
         self.assertIn("stdio", help_text)
 
     def test_build_server_registers_tools_without_sdk(self) -> None:
@@ -1095,6 +1096,7 @@ class McpServerImportTests(unittest.TestCase):
                 "compare_awards",
                 "lookup_transfers",
                 "validate_itinerary",
+                "recheck_offer",
                 "plan_stay_blocks",
                 "split_stay_costs",
                 "verify_answer",
@@ -1119,6 +1121,7 @@ class McpServerImportTests(unittest.TestCase):
             "search_hotel_rooms",
             "search_trip",
             "search_hidden_city",
+            "recheck_offer",
         }
 
         async def check_forwarding() -> None:

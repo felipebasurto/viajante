@@ -55,6 +55,7 @@ from viajante.quote import (
     first_origin_iata,
     resolve_quote_and_buffer,
 )
+from viajante.recheck import recheck_offer
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.stays import plan_stay_blocks, split_stay_costs
@@ -826,3 +827,22 @@ def validate_itinerary_tool(
     currency: Optional[str] = None,
 ) -> Mapping[str, object]:
     return dict(validate_itinerary(legs, constraints, currency=currency).to_dict())
+
+
+def recheck_offer_tool(
+    offer: Mapping[str, object],
+    *,
+    query: Optional[Mapping[str, object]] = None,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    fetch: Optional[str] = None,
+    proxy: Optional[str] = None,
+) -> Mapping[str, object]:
+    """One fresh search, never the replay cache, under the one-search process lock."""
+    return _owned(
+        _with_search_lock(
+            lambda: recheck_offer(
+                offer, query=query, currency=currency, country=country, fetch=fetch, proxy=proxy
+            )
+        )
+    )

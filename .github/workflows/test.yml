@@ -66,6 +66,7 @@ jobs:
                           "compare_awards",
                           "lookup_transfers",
                           "validate_itinerary",
+                          "recheck_offer",
                           "plan_stay_blocks",
                           "split_stay_costs",
                           "verify_answer",
