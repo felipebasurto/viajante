@@ -17,6 +17,8 @@ import json
 import re
 from typing import Iterable, Mapping, Optional, Sequence
 
+from viajante.envelope import EnvelopeShapeError
+
 INVALID_PARAMETER = "invalid_parameter"
 SEARCH_IN_PROGRESS = "search_in_progress"
 _BUSY_PHRASE = "already running in this process"
@@ -76,8 +78,8 @@ def error_body(code: str, message: str, field: Optional[str] = None) -> dict[str
 
 
 def is_internal(exc: ValueError) -> bool:
-    """Decode failures come from provider payloads, not from a caller's argument."""
-    return isinstance(exc, (UnicodeError, json.JSONDecodeError))
+    """Decode and shape failures are viajante's, not a caller's argument."""
+    return isinstance(exc, (UnicodeError, json.JSONDecodeError, EnvelopeShapeError))
 
 
 def validation_body(errors: Sequence[Mapping[str, object]]) -> str:

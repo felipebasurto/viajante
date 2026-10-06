@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import math
 import os
 import sys
 import tempfile
@@ -305,8 +306,10 @@ class FlightEmptyReasonTests(_StateDirCase):
             (payload["status"], payload["completeness"], payload["empty_reason"]),
             ("rate_limited", "blocked", "not_loaded"),
         )
-        self.assertEqual(payload["retry_after_seconds"], 240)
-        retry_after = datetime.fromtimestamp(start + 300, timezone.utc).strftime(
+        error = payload["queries"][0]["error"]
+        self.assertIn(payload["retry_after_seconds"], (300, 301))
+        self.assertEqual(payload["retry_after_seconds"], error["retry_after_seconds"])
+        retry_after = datetime.fromtimestamp(math.ceil(start + 300), timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
         self.assertEqual(payload["retry_after"], retry_after)
@@ -418,7 +421,10 @@ class HotelEmptyReasonTests(_StateDirCase):
             (payload["status"], payload["completeness"], payload["empty_reason"]),
             ("rate_limited", "blocked", "not_loaded"),
         )
-        self.assertEqual(payload["retry_after_seconds"], 120)
+        self.assertIn(payload["retry_after_seconds"], (120, 121))
+        self.assertEqual(
+            payload["retry_after_seconds"], payload["queries"][0]["error"]["retry_after_seconds"]
+        )
 
     def test_not_loaded_on_a_booking_timeout(self) -> None:
         from viajante.booking import BookingResultsTimeout
@@ -669,7 +675,7 @@ class SkiplaggedAndTripTests(_StateDirCase):
         )
 
     def test_hidden_city_rate_limit_reads_the_skiplagged_cooldown_only(self) -> None:
-        start = time.time()
+        start = float(math.floor(time.time()))
         note_rate_limited(60.0, start, file=SKIPLAGGED_RATE_LIMIT_FILE)
         error = SearchError(
             SearchErrorCode.BLOCKED, "429", rate_limited=True, retry_until=start + 60

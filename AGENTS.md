@@ -325,7 +325,7 @@ clients strip that prefix and parse the rest only if it starts with `{`.
 pydantic check) and undeclared top-level arguments (a misspelled filter) get the same
 body; `field` is set only when every failure is on one top-level parameter. Other
 `field` values are set only when the message names exactly one parameter or quotes
-exactly one parameter's value; never guess it. Decode errors are not blamed on the caller.
+exactly one parameter's value; never guess it. Decode errors and an unreadable result shape (`EnvelopeShapeError`) are viajante's, never blamed on the caller.
 Long guidance lives in `viajante://guide` / `get_guide`; the server instructions
 keep only currency, bags, evidence, hidden-city sequencing, empty-is-not-absent
 and rate limits. Do not drop a rule from both. Floor `mcp>=1.14.1`; loopback HTTP

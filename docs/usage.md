@@ -364,11 +364,13 @@ the same roughly 2.7 KB difference.
   parameter; otherwise it is `null`, as it is when a handler message does not name
   exactly one parameter. A concurrent search is `code: "search_in_progress"`.
   The `message` of a handler check is the same sentence earlier versions raised.
+  A viajante-side failure (a decode error, or a result shape the envelope cannot read)
+  is not `invalid_parameter`: its text is not JSON.
 - **Rate limits.** A rate-limited search error keeps `rate_limited: true` and its
   message, and adds `retry_after` (ISO 8601 UTC) and `retry_after_seconds` (integer)
   from the recorded cooldown. Both are omitted when no cooldown was recorded, for
   example a proxied 429. The envelope's top-level `retry_after` fields repeat the
-  latest of these per-error values, so they are null whenever the errors carry none.
+  latest of these per-error values exactly, so they are null whenever the errors carry none.
 - **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
   [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
   not meant to be hosted. A non-loopback `--host` prints a warning: every client

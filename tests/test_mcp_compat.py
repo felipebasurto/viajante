@@ -6,11 +6,13 @@ Offline. Every test runs against a throwaway state dir, never the developer's ow
 from __future__ import annotations
 
 import asyncio
+import calendar
 import contextlib
 import http.client
 import importlib.util
 import io
 import json
+import math
 import os
 import re
 import socket
@@ -25,11 +27,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from viajante import mcp_server
+from viajante.envelope import EnvelopeShapeError
 from viajante.flights import classify_failure
 from viajante.google_flights import GoogleFlightsBlocked
 from viajante.google_hotels_rpc import HotelsBlocked
 from viajante.hotels import _classify_hotel_failure
-from viajante.mcp_errors import infer_field
+from viajante.mcp_errors import infer_field, is_internal, structured_error
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.models import SearchError, SearchErrorCode
 from viajante.ratelimit import (
@@ -38,6 +41,7 @@ from viajante.ratelimit import (
     cooldown_until,
     note_rate_limited,
     rate_limit_advice,
+    rate_limit_status,
 )
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged import _classify as classify_skiplagged
@@ -403,6 +407,10 @@ class InvalidParameterTests(_StateDir):
         self.assertIsNone(infer_field("something unrelated", params))
 
 
+def _epoch(iso: str) -> float:
+    return calendar.timegm(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ"))
+
+
 class RetryFieldTests(_StateDir):
     def test_search_error_carries_retry_fields_only_while_a_cooldown_runs(self) -> None:
         until = time.time() + 90
@@ -410,10 +418,12 @@ class RetryFieldTests(_StateDir):
         payload = error.to_dict()
         self.assertEqual(payload["rate_limited"], True)
         self.assertEqual(
-            payload["retry_after"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
+            payload["retry_after"],
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(math.ceil(until))),
         )
         self.assertTrue(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", payload["retry_after"]))
         self.assertIn(payload["retry_after_seconds"], (90, 91))
+        self.assertGreaterEqual(_epoch(payload["retry_after"]), until)
         self.assertIsInstance(payload["retry_after_seconds"], int)
 
         expired = SearchError(
@@ -432,7 +442,7 @@ class RetryFieldTests(_StateDir):
         payload = error.to_dict()
         self.assertEqual(payload["message"], advice)
         self.assertGreater(payload["retry_after_seconds"], 290)
-        self.assertLessEqual(payload["retry_after_seconds"], 300)
+        self.assertLessEqual(payload["retry_after_seconds"], 301)
 
     def test_a_429_without_the_cooldown_advice_is_not_given_one(self) -> None:
         note_rate_limited(300.0)
@@ -445,14 +455,14 @@ class RetryFieldTests(_StateDir):
         advice = rate_limit_advice(note_rate_limited(120.0))
         payload = _classify_hotel_failure(HotelsBlocked(advice, rate_limited=True)).to_dict()
         self.assertIn("retry_after", payload)
-        self.assertLessEqual(payload["retry_after_seconds"], 120)
+        self.assertLessEqual(payload["retry_after_seconds"], 121)
 
     def test_skiplagged_reads_its_own_cooldown_file(self) -> None:
         advice = rate_limit_advice(
             note_rate_limited(60.0, file=SKIPLAGGED_RATE_LIMIT_FILE), provider="Skiplagged"
         )
         payload = classify_skiplagged(SkiplaggedRateLimited(advice)).to_dict()
-        self.assertLessEqual(payload["retry_after_seconds"], 60)
+        self.assertLessEqual(payload["retry_after_seconds"], 61)
         self.assertIsNone(cooldown_until(advice, GOOGLE_RATE_LIMIT_FILE))
 
 
@@ -473,8 +483,32 @@ class SearchEnvelopeTests(_StateDir):
         error = body["queries"][0]["error"]
         self.assertEqual((body["status"], body["empty_reason"]), ("rate_limited", "not_loaded"))
         self.assertEqual(body["retry_after"], error["retry_after"])
-        self.assertAlmostEqual(body["retry_after_seconds"], error["retry_after_seconds"], delta=1)
+        self.assertEqual(body["retry_after_seconds"], error["retry_after_seconds"])
+        # A client that retries at the stated instant is no longer paused.
+        self.assertIsNone(rate_limit_status(_epoch(body["retry_after"])))
         self.assertGreater(body["retry_after_seconds"], 290)
+
+    def test_an_unrecognised_result_shape_is_not_an_invalid_parameter(self) -> None:
+        report = MagicMock()
+        report.to_dict.return_value = {"not": "a search result"}
+        server = mcp_server.build_server()
+
+        async def calls(session):
+            return await session.call_tool("search_flights", {"routes": [f"JFK-LHR:{FUTURE}"]})
+
+        with patch("viajante.mcp_handlers.search_flights", return_value=report):
+            result = _session_call(server, calls)
+        self.assertTrue(result.isError)
+        text = _text(result)
+        self.assertIn("viajante could not read the shape", text)
+        self.assertNotIn("invalid_parameter", text)
+        self.assertFalse(text.removeprefix("Error executing tool search_flights: ").startswith("{"))
+
+    def test_shape_errors_are_internal(self) -> None:
+        exc = EnvelopeShapeError("viajante could not read the shape")
+        self.assertTrue(is_internal(exc))
+        self.assertIsInstance(exc, ValueError)
+        self.assertIs(structured_error(exc, {"routes": []}), exc)
 
 
 class GuideTests(_StateDir):

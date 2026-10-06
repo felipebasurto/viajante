@@ -24,6 +24,11 @@ from typing import Mapping, Optional
 
 from viajante.ratelimit import NOT_SENT
 
+
+class EnvelopeShapeError(ValueError):
+    """An internal bug: a search result whose shape the envelope cannot read."""
+
+
 STATUSES = ("ok", "no_results", "rate_limited", "blocked", "timeout", "failed")
 COMPLETENESS = ("complete", "partial", "blocked")
 EMPTY_REASONS = ("provider_empty", "filtered_out", "not_loaded")
@@ -56,7 +61,8 @@ class _Tally:
     scope_partial: bool = False
     observed: list[str] = field(default_factory=list)
     unsent: int = 0  # failures that never reached the provider (a recorded cooldown)
-    retry_ends: list[float] = field(default_factory=list)  # per-error retry_after, epoch seconds
+    # per-error (retry_after epoch seconds, retry_after_seconds as the error stated it)
+    retry_ends: list[tuple[float, Optional[int]]] = field(default_factory=list)
     shapes: int = 0  # recognised payload shapes; zero means stamp_search was misused
 
 
@@ -93,7 +99,13 @@ def _error(
         except ValueError:
             pass
         else:
-            tally.retry_ends.append(end.replace(tzinfo=timezone.utc).timestamp())
+            seconds = error.get("retry_after_seconds")
+            tally.retry_ends.append(
+                (
+                    end.replace(tzinfo=timezone.utc).timestamp(),
+                    seconds if isinstance(seconds, int) else None,
+                )
+            )
     return "not_loaded"
 
 
@@ -220,11 +232,13 @@ def _iso_z(epoch: float) -> str:
 def _retry_after(tally: _Tally, now: Optional[float]) -> tuple[Optional[str], Optional[int]]:
     """The latest cooldown end a rate-limited error itself named; none if it named none."""
     current = time.time() if now is None else now
-    until = [end for end in tally.retry_ends if end > current]
+    until = [pair for pair in tally.retry_ends if pair[0] > current]
     if not until:
         return None, None
-    end = max(until)
-    return _iso_z(end), max(1, math.ceil(end - current))
+    end, seconds = max(until, key=lambda pair: pair[0])
+    # The error already rounded its end up to a whole second and derived its seconds from
+    # it; repeat both instead of deriving a second, slightly different pair.
+    return _iso_z(end), seconds if seconds is not None else max(1, math.ceil(end - current))
 
 
 def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
@@ -234,7 +248,7 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     if not tally.shapes:
         # Developer hint: a new provider-backed payload needs its shape in `_walk`; an
         # offline one uses `stamp_local`. The client only learns the result is unusable.
-        raise ValueError(
+        raise EnvelopeShapeError(
             "viajante could not read the shape of this search result, so it was not "
             "returned. This is a viajante bug, not a provider answer; no search outcome is implied."
         )
