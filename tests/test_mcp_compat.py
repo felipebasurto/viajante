@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http.client
 import importlib.util
 import io
 import json
@@ -47,14 +48,20 @@ NEEDS_SDK = unittest.skipIf(importlib.util.find_spec("mcp") is None, "mcp extra 
 
 def _sdk() -> types.SimpleNamespace:
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client import streamable_http
+
+    # Newer SDKs deprecate streamablehttp_client for streamable_http_client; the floor has only
+    # the old name.
+    http_client = getattr(streamable_http, "streamable_http_client", None) or (
+        streamable_http.streamablehttp_client
+    )
     from mcp.shared.memory import create_connected_server_and_client_session
     from mcp.types import TextContent
     from pydantic import AnyUrl
 
     return types.SimpleNamespace(
         ClientSession=ClientSession,
-        streamablehttp_client=streamablehttp_client,
+        http_client=http_client,
         memory_session=create_connected_server_and_client_session,
         TextContent=TextContent,
         AnyUrl=AnyUrl,
@@ -270,6 +277,71 @@ class InvalidParameterTests(_StateDir):
                 self.assertEqual(body["field"], field)
                 self.assertTrue(body["message"])
 
+    def test_missing_and_mistyped_arguments_get_the_same_body(self) -> None:
+        cases = [
+            ("search_flights", {}, "routes", "routes: Field required"),
+            (
+                "search_flights",
+                {"routes": "JFK-LHR"},
+                "routes",
+                "routes: Input should be a valid list",
+            ),
+            (
+                "search_dates",
+                {"route": "JFK-LHR", "start": 20300101, "end": FUTURE},
+                "start",
+                "start: Input should be a valid string",
+            ),
+            (
+                "search_explore",
+                {"origin": "JFK", "start": FUTURE, "top": "many"},
+                "top",
+                "top: Input should be a valid integer",
+            ),
+        ]
+        for tool, args, field, message in cases:
+            with self.subTest(tool=tool, args=args):
+
+                async def calls(session, tool=tool, args=args):
+                    return await session.call_tool(tool, args)
+
+                result = _session_call(self.server, calls)
+                self.assertTrue(result.isError)
+                text = _text(result)
+                prefix = f"Error executing tool {tool}: "
+                self.assertTrue(text.startswith(prefix + "{"), text)
+                body = json.loads(text[len(prefix) :])["error"]
+                self.assertEqual(body["code"], "invalid_parameter")
+                self.assertEqual(body["field"], field)
+                self.assertTrue(body["message"].startswith(message), body["message"])
+                self.assertNotIn("input_value", text)
+                self.assertNotIn("errors.pydantic.dev", text)
+
+    def test_several_bad_arguments_are_listed_and_the_first_is_the_field(self) -> None:
+        async def calls(session):
+            return await session.call_tool("search_dates", {"route": "JFK-LHR"})
+
+        result = _session_call(self.server, calls)
+        body = _error_body(result)
+        self.assertEqual(body["field"], "start")
+        self.assertIn("start: Field required; end: Field required", body["message"])
+
+    def test_decode_failures_are_not_blamed_on_the_caller(self) -> None:
+        for exc in (
+            json.JSONDecodeError("bad", "{", 0),
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "x"),
+        ):
+            with self.subTest(exc=type(exc).__name__):
+                with self.assertRaises(ValueError) as ctx:
+                    mcp_server._reraise(exc, {"query": "x"})
+                self.assertIs(ctx.exception, exc)
+
+    def test_stay_messages_point_at_stays(self) -> None:
+        params = {"stays": [{}], "roster": {}, "currency": "USD"}
+        self.assertEqual(infer_field("stay 1 needs a name", params), "stays")
+        self.assertEqual(infer_field("stay 2: unknown keys ['x']", params), "stays")
+        self.assertIsNone(infer_field("stay 1 needs a name", {"roster": {}}))
+
     def test_field_is_null_when_the_message_names_no_single_parameter(self) -> None:
         body = self.call("search_dates", route="JFK-LHR", start=FUTURE_END, end=FUTURE)
         self.assertEqual(body["code"], "invalid_parameter")
@@ -391,6 +463,11 @@ class GuideTests(_StateDir):
         missing = [s for s in sentences if s not in covered]
         self.assertEqual(missing, [])
 
+    def test_guide_lists_get_guide_among_tools_that_may_run_during_a_search(self) -> None:
+        text = self._flat(GUIDE)
+        self.assertIn("Also get_guide, which returns this guide", text)
+        self.assertIn("get_guide may also run during a search", text)
+
     def test_help_prints_usage_then_the_short_instructions(self) -> None:
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
@@ -416,7 +493,8 @@ class GuideSurfaceTests(_StateDir):
         self.assertEqual(resource.mimeType, "text/markdown")
         self.assertEqual(read.contents[0].text, GUIDE)
         self.assertFalse(tool.isError)
-        self.assertEqual(_text(tool), GUIDE)
+        self.assertEqual(json.loads(_text(tool)), {"guide": GUIDE})
+        self.assertTrue(GUIDE.startswith("# viajante MCP guide"))
 
     def test_server_instructions_are_the_short_text(self) -> None:
         server = mcp_server.build_server()
@@ -455,6 +533,23 @@ class MainArgumentTests(_StateDir):
         self.assertIn("this machine's IP", err)
         self.assertIn("cooldown", err)
 
+    def test_any_loopback_address_is_quiet(self) -> None:
+        for host in ("127.0.0.2", "127.255.255.254", "::1", "[::1]", "localhost"):
+            with self.subTest(host=host):
+                build, _server, err = self.run_main(
+                    "--transport", "streamable-http", "--host", host
+                )
+                self.assertEqual(err, "")
+                self.assertEqual(build.call_args.kwargs["host"], host)
+
+    def test_other_addresses_warn(self) -> None:
+        for host in ("0.0.0.0", "192.168.1.20", "::", "example.com"):
+            with self.subTest(host=host):
+                _build, _server, err = self.run_main(
+                    "--transport", "streamable-http", "--host", host
+                )
+                self.assertIn("no authentication", err)
+
     def test_host_or_port_without_http_is_an_error(self) -> None:
         for argv in (["--port", "9"], ["--host", "127.0.0.1"]):
             with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
@@ -479,43 +574,110 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _start_http_server(case: unittest.TestCase, host: str = "127.0.0.1") -> int:
+    port = _free_port()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "viajante.mcp_server",
+            "--transport",
+            "streamable-http",
+            "--port",
+            str(port),
+            "--host",
+            host,
+        ],
+        env={**os.environ, "VIAJANTE_STATE_DIR": os.environ["VIAJANTE_STATE_DIR"]},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    case.addCleanup(proc.stderr.close)
+    case.addCleanup(proc.wait, 10)
+    case.addCleanup(proc.terminate)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            case.fail(f"server exited early: {proc.stderr.read()}")
+        with contextlib.suppress(OSError), socket.create_connection((host, port), 0.5):
+            return port
+        time.sleep(0.1)
+    case.fail("server did not start listening")
+
+
+def _raw_initialize(port: int, headers: dict[str, str]) -> int:
+    return _raw_initialize_at("127.0.0.1", port, headers)
+
+
+def _raw_initialize_at(address: str, port: int, headers: dict[str, str]) -> int:
+    """POST an initialize with exactly these headers (http.client adds none of its own)."""
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "probe", "version": "0"},
+            },
+        }
+    )
+    conn = http.client.HTTPConnection(address, port, timeout=10)
+    try:
+        conn.putrequest("POST", "/mcp", skip_host=True, skip_accept_encoding=True)
+        for name, value in {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "Content-Length": str(len(body)),
+            **headers,
+        }.items():
+            conn.putheader(name, value)
+        conn.endheaders(body.encode())
+        return conn.getresponse().status
+    finally:
+        conn.close()
+
+
+@NEEDS_SDK
+class HttpHostProtectionTests(_StateDir):
+    """The SDK enables DNS-rebinding protection by itself only from 1.23; the floor is 1.14.1."""
+
+    def test_foreign_host_and_origin_are_refused_and_local_ones_are_not(self) -> None:
+        port = _start_http_server(self)
+        own = f"127.0.0.1:{port}"
+        self.assertEqual(_raw_initialize(port, {"Host": own}), 200)
+        self.assertEqual(_raw_initialize(port, {"Host": f"localhost:{port}"}), 200)
+        self.assertEqual(
+            _raw_initialize(port, {"Host": own, "Origin": "http://localhost:3000"}), 200
+        )
+        self.assertEqual(_raw_initialize(port, {"Host": f"evil.example:{port}"}), 421)
+        self.assertEqual(_raw_initialize(port, {"Host": "evil.example"}), 421)
+        # 400 on SDK 1.14, 403 on newer ones: either way it is refused, never 200.
+        self.assertIn(
+            _raw_initialize(port, {"Host": own, "Origin": "http://evil.example"}), (400, 403)
+        )
+        self.assertIn(
+            _raw_initialize(port, {"Host": own, "Origin": f"http://evil.example:{port}"}),
+            (400, 403),
+        )
+
+    def test_another_loopback_address_is_allowed_by_name(self) -> None:
+        port = _start_http_server(self, "127.0.0.2")
+        self.assertEqual(_raw_initialize_at("127.0.0.2", port, {"Host": f"127.0.0.2:{port}"}), 200)
+        self.assertEqual(_raw_initialize_at("127.0.0.2", port, {"Host": "evil.example"}), 421)
+
+
 @NEEDS_SDK
 class StreamableHttpSessionTests(_StateDir):
     def test_real_client_session_over_http(self) -> None:
-        port = _free_port()
-        state = os.environ["VIAJANTE_STATE_DIR"]
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "viajante.mcp_server",
-                "--transport",
-                "streamable-http",
-                "--port",
-                str(port),
-            ],
-            env={**os.environ, "VIAJANTE_STATE_DIR": state},
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.addCleanup(proc.stderr.close)
-        self.addCleanup(proc.wait, 10)
-        self.addCleanup(proc.terminate)
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                self.fail(f"server exited early: {proc.stderr.read()}")
-            with contextlib.suppress(OSError), socket.create_connection(("127.0.0.1", port), 0.5):
-                break
-            time.sleep(0.1)
-        else:
-            self.fail("server did not start listening")
+        port = _start_http_server(self)
 
         async def session_calls():
             sdk = _sdk()
             url = f"http://127.0.0.1:{port}/mcp"
-            async with sdk.streamablehttp_client(url) as (read, write, _session_id):
+            async with sdk.http_client(url) as (read, write, _session_id):
                 async with sdk.ClientSession(read, write) as session:
                     init = await session.initialize()
                     tools = await session.list_tools()

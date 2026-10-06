@@ -56,15 +56,17 @@ After a new release, `uvx` / `npx` can cache an old tool list. Reload the MCP cl
 
 ## Errors
 
-A bad argument fails the tool call (`isError: true`). The text after the SDK's
-`Error executing tool <name>: ` prefix is a JSON object:
+A bad argument fails the tool call (`isError: true`). The text is the SDK's exact
+`Error executing tool <name>: ` prefix followed by a JSON object. Strip that prefix
+and parse the rest only if it starts with `{`:
 
 ```json
 {"error": {"code": "invalid_parameter", "field": "origin", "message": "unknown origin IATA code: 'XXX'"}}
 ```
 
 `field` is the parameter the message names, or `null` when it does not single one
-out. A second search while one runs is `code: "search_in_progress"` with the same
+out. Missing or mistyped arguments get the same body (`field` is the first failing
+parameter). A second search while one runs is `code: "search_in_progress"` with the same
 sentence as before. Rate-limited search errors keep `rate_limited: true` and their
 message, and add `retry_after` (ISO 8601 UTC) and `retry_after_seconds` only while a
 recorded cooldown is running.
@@ -77,7 +79,8 @@ viajante-mcp --transport streamable-http --port 8123
 ```
 
 No authentication, no public hosting; it binds 127.0.0.1 unless `--host` says
-otherwise (a non-loopback host prints a warning). Every client shares this
+otherwise (a non-loopback host prints a warning; any 127.0.0.0/8 address or `::1`
+counts as loopback). A foreign `Host` or `Origin` header is refused. Every client shares this
 machine's IP and the machine-wide provider cooldown. Client configs:
 
 ```json

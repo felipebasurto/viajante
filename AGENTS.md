@@ -286,14 +286,17 @@ prices or converts currency.
 
 Every tool has a title and read-only annotations; `openWorldHint` is true only for
 tools on the search runner (`search_*`). Invalid input stays an `isError` result
-whose text (after the SDK's `Error executing tool <name>: ` prefix) is
+whose text is the SDK's exact `Error executing tool <name>: ` prefix followed by
 `{"error": {"code": "invalid_parameter", "field": <param or null>, "message"}}`;
-`search_in_progress` is the busy code. `field` is set only when the message names
-exactly one parameter or quotes exactly one parameter's value; never guess it.
+clients strip that prefix and parse the rest only if it starts with `{`.
+`search_in_progress` is the busy code. Missing or mistyped arguments (the SDK's
+pydantic check) get the same body, `field` being the first failing parameter. Other
+`field` values are set only when the message names exactly one parameter or quotes
+exactly one parameter's value; never guess it. Decode errors are not blamed on the caller.
 Long guidance lives in `viajante://guide` / `get_guide`; the server instructions
 keep only currency, bags, evidence, hidden-city sequencing, empty-is-not-absent
-and rate limits. Do not drop a rule from both. Do not add an envelope or
-`outputSchema` here; that is a separate change. Floor `mcp>=1.14.1`.
+and rate limits. Do not drop a rule from both. Floor `mcp>=1.14.1`; loopback HTTP
+passes `transport_security` explicitly because the SDK only does it itself from 1.23.
 
 ## Tests
 

@@ -3,7 +3,9 @@
 Invalid input still fails the tool call (``isError``). The exception text is a JSON
 object, ``{"error": {"code", "field", "message"}}``, so a client can parse it and a
 person can still read ``message``. The SDK puts its own ``Error executing tool <name>: ``
-prefix in front of it; parse from the first ``{``.
+prefix in front of it: strip that exact prefix, then parse the rest if it starts with ``{``.
+Missing or mistyped arguments are rejected by the SDK's argument model before a handler
+runs; ``validation_body`` gives them the same shape.
 
 ``field`` names the tool parameter the message is about. It is ``null`` whenever the
 message does not single one out; a field is never guessed.
@@ -13,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Sequence
 
 INVALID_PARAMETER = "invalid_parameter"
 SEARCH_IN_PROGRESS = "search_in_progress"
@@ -29,6 +31,7 @@ _ALIASES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple(
             ("routes", "route", "origin"),
         ),
         (r"^departure date is in the past", ("departure", "routes")),
+        (r"^stay \d+\b", ("stays",)),
         (r"currency", ("currency",)),
         (r"baggage buffer", ("baggage_buffer",)),
     )
@@ -72,8 +75,26 @@ def error_body(code: str, message: str, field: Optional[str] = None) -> dict[str
     return {"error": {"code": code, "field": field, "message": message}}
 
 
+def is_internal(exc: ValueError) -> bool:
+    """Decode failures come from provider payloads, not from a caller's argument."""
+    return isinstance(exc, (UnicodeError, json.JSONDecodeError))
+
+
+def validation_body(errors: Sequence[Mapping[str, object]]) -> str:
+    """JSON error body for the SDK's argument-model errors (``ValidationError.errors()``)."""
+    parts = []
+    for error in errors:
+        loc = ".".join(str(item) for item in error.get("loc", ()))
+        parts.append(f"{loc}: {error.get('msg')}" if loc else str(error.get("msg")))
+    first = errors[0].get("loc") if errors else None
+    field = str(first[0]) if first else None
+    return json.dumps(error_body(INVALID_PARAMETER, "; ".join(parts), field))
+
+
 def structured_error(exc: ValueError, params: Mapping[str, object]) -> ValueError:
-    """Re-raise-ready ValueError whose text is the JSON error body."""
+    """ValueError whose text is the JSON error body; ``exc`` itself if it is not a bad argument."""
+    if is_internal(exc):
+        return exc
     message = str(exc)
     if _BUSY_PHRASE in message:
         body = error_body(SEARCH_IN_PROGRESS, message)

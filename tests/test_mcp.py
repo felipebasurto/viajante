@@ -1121,7 +1121,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertNotIn("fetch", inspect.signature(tools["search_dates"]).parameters)
         self.assertIn("max_distance_km", inspect.signature(tools["search_hotels"]).parameters)
         self.assertEqual(tools["get_runtime_info"]()["hotel_schema_version"], 2)
-        self.assertIn("viajante://guide", tools["get_guide"]())
+        self.assertIn("viajante://guide", tools["get_guide"]()["guide"])
 
         # Exercise the registered adapters: every argument must reach the correct
         # worker unchanged, with no incidental local variables or shape changes.

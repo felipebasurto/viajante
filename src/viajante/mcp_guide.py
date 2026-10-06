@@ -25,8 +25,7 @@ search_dates is the cheapest week, search_flex is +/-N around a named date, sear
 is destination triage. max_stops is 0, 1 or 2.
 """
 
-GUIDE = r"""\
-# viajante MCP guide
+GUIDE = r"""# viajante MCP guide
 
 ## Overview
 
@@ -57,12 +56,13 @@ Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
+Also get_guide, which returns this guide (the same text as the viajante://guide resource).
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
 validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
-during a search.
+during a search. get_guide may also run during a search.
 
 ## Evidence and replying
 

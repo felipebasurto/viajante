@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Callable, Optional, Sequence, TypeVar
+from typing import Callable, NoReturn, Optional, Sequence, TypeVar
 
 from viajante.evidence import verify_answer as verify_answer_tool
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
-from viajante.mcp_errors import structured_error
+from viajante.mcp_errors import structured_error, validation_body
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
     compare_awards_tool,
@@ -41,7 +42,7 @@ _SEARCH_BUSY_MESSAGE = "a viajante search is already running in this process"
 _HELP = INSTRUCTIONS
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8000
-_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_TOOL_ERROR_PREFIX = "Error executing tool {name}: "
 _USAGE = f"""\
 viajante-mcp is the MCP server for local flight and hotel search (stdio by default).
 
@@ -64,10 +65,26 @@ Server instructions (the full guide is the viajante://guide resource):
 """
 
 
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _reraise(exc: ValueError, params: dict[str, object]) -> NoReturn:
+    converted = structured_error(exc, params)
+    if converted is exc:
+        raise exc
+    raise converted from exc
+
+
 async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
     """Run a search on the one-worker pool. Fail immediately if a search is in flight."""
     if not _SEARCH_BUSY.acquire(blocking=False):
-        raise structured_error(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+        _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
     loop = asyncio.get_running_loop()
 
     def run() -> _T:
@@ -87,7 +104,7 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
         future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         raise
     except ValueError as exc:
-        raise structured_error(exc, kwargs) from exc
+        _reraise(exc, kwargs)
 
 
 async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
@@ -96,15 +113,50 @@ async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: obj
     try:
         return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
     except ValueError as exc:
-        raise structured_error(exc, kwargs) from exc
+        _reraise(exc, kwargs)
+
+
+def _loopback_security(host: str):
+    """Reject a foreign Host or Origin. The SDK only does this by itself from 1.23."""
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    names = ["127.0.0.1", "localhost", "[::1]"]
+    own = f"[{host.strip('[]')}]" if ":" in host else host
+    if own not in names:
+        names.append(own)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[f"{name}:*" for name in names],
+        allowed_origins=[f"http://{name}:*" for name in names],
+    )
 
 
 def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
 
-    options: dict[str, object] = {} if host is None else {"host": host, "port": port}
-    server = FastMCP("viajante", instructions=_HELP, **options)
+    options: dict[str, object] = {}
+    if host is not None:
+        options = {"host": host, "port": port}
+        if _is_loopback(host):
+            options["transport_security"] = _loopback_security(host)
+
+    class ViajanteServer(FastMCP):
+        async def call_tool(self, name, arguments):
+            # The SDK rejects missing or mistyped arguments before any handler runs, with
+            # pydantic text. Give those the same JSON body as a handler's ValueError.
+            try:
+                return await super().call_tool(name, arguments)
+            except Exception as exc:
+                cause = exc.__cause__
+                if not (isinstance(cause, ValueError) and callable(getattr(cause, "errors", None))):
+                    raise
+                body = validation_body(
+                    cause.errors(include_url=False, include_context=False, include_input=False)
+                )
+                raise type(exc)(_TOOL_ERROR_PREFIX.format(name=name) + body) from cause
+
+    server = ViajanteServer("viajante", instructions=_HELP, **options)
 
     def tool(title: str, *, network: bool):
         # Every tool only reads; openWorldHint is True only when the tool asks a provider.
@@ -598,12 +650,13 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         return dict(await run_lookup_tool(verify_answer_tool, **locals()))
 
     @tool("Operational guide", network=False)
-    def get_guide() -> str:
+    def get_guide() -> dict:
         """The long operational guide (markdown); the same text as the viajante://guide resource.
 
-        For clients that do not read MCP resources. Local; may run during a search.
+        For clients that do not read MCP resources. Returns {"guide": markdown}. Local;
+        may run during a search.
         """
-        return GUIDE
+        return {"guide": GUIDE}
 
     return server
 
@@ -631,7 +684,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     http = parsed.transport == "streamable-http"
     host = parsed.host or _DEFAULT_HOST
     port = parsed.port or _DEFAULT_PORT
-    if http and host not in _LOOPBACK_HOSTS:
+    if http and not _is_loopback(host):
         print(
             f"warning: binding to {host}, not loopback. viajante-mcp has no authentication; "
             "every client that can reach this port searches from this machine's IP, and the "
