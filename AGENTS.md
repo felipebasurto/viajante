@@ -31,7 +31,9 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
-- Stdio MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
+- Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
+- MCP input-error JSON body: `src/viajante/mcp_errors.py`
+- MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
 - Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
@@ -58,7 +60,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 ## Public contract
 
 CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`, `get_guide`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -154,7 +156,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   jobs. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
   writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat limit up to 30 min, or
   a named `Retry-After`). While it runs, new flight/hotel Google searches in any
-  process send nothing and fail `blocked` with `rate_limited: true`; a search
+  process send nothing and fail `blocked` with `rate_limited: true` (plus
+  `retry_after` ISO UTC and `retry_after_seconds` only when a recorded cooldown
+  names one; a proxied 429 records none); a search
   already running keeps its replay. Rate-limited failures do not fall back to
   detail. MCP search tools replay an identical successful call for 5 min
   (`cached: true`) instead of asking Google again. `no_results`, `rejected`, `blocked`,
@@ -278,6 +282,19 @@ per-person nightly fee, allocates exact cents per stay only among its occupants,
 and reports uncovered roster nights as `unallocated_nights`. Neither fetches
 prices or converts currency.
 
+## MCP client surface
+
+Every tool has a title and read-only annotations; `openWorldHint` is true only for
+tools on the search runner (`search_*`). Invalid input stays an `isError` result
+whose text (after the SDK's `Error executing tool <name>: ` prefix) is
+`{"error": {"code": "invalid_parameter", "field": <param or null>, "message"}}`;
+`search_in_progress` is the busy code. `field` is set only when the message names
+exactly one parameter or quotes exactly one parameter's value; never guess it.
+Long guidance lives in `viajante://guide` / `get_guide`; the server instructions
+keep only currency, bags, evidence, hidden-city sequencing, empty-is-not-absent
+and rate limits. Do not drop a rule from both. Do not add an envelope or
+`outputSchema` here; that is a separate change. Floor `mcp>=1.14.1`.
+
 ## Tests
 
 Prefer the locked checkout workflow:
@@ -300,11 +317,14 @@ They must not launch Chromium or use the network. CI runs the suite on Python
 
 Pin owned seams, not upstream HTML rewriting. A renamed or dropped JSON key is a
 breaking change. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is
-installed (`mcp>=1.6,<2`).
+installed (`mcp>=1.14.1,<2`).
 
 Stdio MCP: `npx -y @viajante/mcp`, or
 `uvx --from 'viajante[mcp]' viajante-mcp`, or checkout `uv sync --extra mcp`
-then `viajante-mcp`. No Streamable HTTP. Keep
+then `viajante-mcp`. Local Streamable HTTP is opt-in
+(`viajante-mcp --transport streamable-http [--host 127.0.0.1] [--port N]`): no
+auth, loopback by default, never hosted, no `remotes` in `server.json`; a
+non-loopback host warns. Keep
 the one-search process lock: a second search raises
 `a viajante search is already running in this process` immediately.
 `MCP error -32001: Request timed out` is not that lock; do not retry timeouts

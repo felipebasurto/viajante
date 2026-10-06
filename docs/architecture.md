@@ -41,7 +41,7 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 16 tools. |
+| MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 17 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
@@ -63,6 +63,7 @@ One library, three ways in:
 | `plan_stay_blocks` | — | Local roster-to-stay blocks for consecutive nights with the same people. |
 | `split_stay_costs` | — | Local cost split per stay and person-night, with exact allocated cents. |
 | `verify_answer` | — | Local check of a draft reply against the search ledger. |
+| `get_guide` | — | The long operational guide (also the `viajante://guide` resource). |
 
 The room-rate helper is in `viajante.skiplagged_hotels`; local stay arithmetic
 is in `viajante.stays`. These helpers are not re-exported from `viajante`.
@@ -71,6 +72,15 @@ The MCP process holds one search lock: a second concurrent search fails
 immediately instead of queueing. Lookups, local stay arithmetic, and the two
 verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
+
+MCP client compatibility lives at the adapter edge. `mcp_server.py` registers each
+tool with a title and read-only annotations (`openWorldHint` only for tools that go
+through the search runner). `mcp_errors.py` turns a handler `ValueError` into the
+JSON error body (`invalid_parameter` with an inferred `field`, or
+`search_in_progress`) without touching the handlers. `mcp_guide.py` holds the short
+server instructions and the guide. `SearchError.retry_until` carries the end of a
+recorded cooldown from the classifier that saw the 429 to `to_dict`, which emits
+`retry_after` / `retry_after_seconds`.
 
 ## How a flight search travels
 

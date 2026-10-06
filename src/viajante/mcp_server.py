@@ -1,7 +1,8 @@
-"""Stdio MCP entry. Importable only when the mcp extra is installed."""
+"""MCP entry (stdio, or opt-in local Streamable HTTP). Importable only with the mcp extra."""
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 import threading
@@ -12,6 +13,8 @@ from typing import Callable, Optional, Sequence, TypeVar
 from viajante.evidence import verify_answer as verify_answer_tool
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
+from viajante.mcp_errors import structured_error
+from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
     compare_awards_tool,
     lookup_airports_tool,
@@ -35,103 +38,36 @@ _SEARCH_BUSY = threading.Lock()
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viajante-mcp")
 _SEARCH_BUSY_MESSAGE = "a viajante search is already running in this process"
 
-_HELP = """\
-viajante-mcp is the stdio MCP server for local flight and hotel search.
+_HELP = INSTRUCTIONS
+_DEFAULT_HOST = "127.0.0.1"
+_DEFAULT_PORT = 8000
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_USAGE = f"""\
+viajante-mcp is the MCP server for local flight and hotel search (stdio by default).
+
+usage: viajante-mcp [--transport {{stdio,streamable-http}}] [--host HOST] [--port PORT]
+
+  --transport   stdio (default) or streamable-http (local, opt-in, no authentication)
+  --host        streamable-http bind address (default {_DEFAULT_HOST})
+  --port        streamable-http port (default {_DEFAULT_PORT}); the endpoint is /mcp
 
 Install:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp
 Checkout: uv sync --extra mcp && viajante-mcp
-Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' \\
-            playwright install chromium
-          (only for --fetch detail and Booking.com; extras must match the MCP env)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
-split_stay_costs, verify_answer, get_runtime_info.
-No auth. One search at a time in this process. A second search while one is
-running raises "a viajante search is already running in this process" immediately.
-That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
-or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
-validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
-during a search.
+split_stay_costs, verify_answer, get_runtime_info, get_guide.
 
-Results are raw owned evidence, not a recommendation. You choose: read the
-payload, weigh price against duration, stops, clocks, and rating, and say why.
-Before replying, pass the draft to verify_answer; it flags amounts,
-currencies, codes, dates, and links no search in this process returned.
-verify_answer checks provenance, not link reachability, availability or room fit.
-Check get_runtime_info before searching; an npm MCP and a separate installed
-uv tool may execute different package versions. Do not assume uvx updates either.
+Server instructions (the full guide is the viajante://guide resource):
 
-If an error has rate_limited true, tell the user to wait until the UTC time
-named in its message.
-Do not retry, switch fetch mode, or fan out other searches; they are paused
-locally and send nothing. An identical successful search within 5 minutes
-comes back cached (cached: true) without a new request.
-
-search_dates is the cheapest week. search_flex is ±N around a named date.
-Do not brute-force a date matrix. search_explore is dest triage from an origin.
-search_dates is HTTP-calendar only and has no fetch parameter. If it returns
-blocked, stop that request: a separate browser's consent or prices are not MCP
-evidence. fetch=detail applies only to search_flights and needs the browser
-extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
-product cannot require 3+ stops.
-search_hidden_city is Skiplagged, not Google. After a named-route
-search_flights on a hub or leisure trunk, the caller may run it once
-sequentially. Do not mix evidence. Skip when bags were named.
-Skiplagged cards are USD; omit currency or pass USD. Do not copy a
-Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
-currency_mismatch (owned quote stamped), not no_results. No FX.
-compare_awards is local points math from a named offer; it does not invent seats.
-lookup_transfers is a local partner table, not live award inventory.
-plan_stay_blocks and split_stay_costs are local arithmetic over a per-night roster
-the caller supplies; they never search, never convert money, never pick a stay.
-validate_itinerary is local and offline. It returns pass, fail, or unknown from
-owned v2 offer evidence; unknown evidence never becomes pass. It never fills
-missing segment, baggage, or fare facts.
-
-Every MCP call is synchronous: never say you are still searching or will
-report back; call the tool now or name the next step. Hotel location is one
-named place; ask rather than substitute a nearby town. Hotel total_price is a
-total-stay quote, not per person. Only claim the requested party total when
-priced_adults agrees; unknown is unverified. General property descriptions do
-not prove a private room. Check finalists' room rates and actual sleeping layout.
-near names a reference point; max_distance_km requires it and excludes unknown
-coordinates before ranking. Distances are straight lines, not walking routes.
-Read resolved_place and report an unexpected place. Do not infer a city center.
-link_context and applied.url_context distinguish stay, property, location and
-none. A stay link preserves dates/adults/rooms, not guaranteed price or availability.
-Never present an internal /travel/clk/hi tracker as a usable property link.
-For changing groups use the latest confirmed nightly roster, group identical
-people with plan_stay_blocks, and report unallocated_nights from split_stay_costs.
-Do not extend a departing person's last night. Quote replacements before
-recommending cancellation. A dorm room may lose exclusivity if beds are removed.
-Use the exact cancellation deadline and property-local time from the reservation;
-do not assume altered bookings retain prices, rooms or policy. Separate arithmetic
-estimates from fresh quotes. Flight timing needs a verified transfer and airport
-arrival margin; a latest check-out time alone does not prove a flight is reachable.
-Keep warnings in the final response. Browser access denial is not a broken URL
-or provider throttling: name the actual limitation and use available permitted
-read-only evidence; never ask for permission the user already granted.
-
-Currency is currency or inferred from a named origin's owned country.
-If unknown, ask. Hotels require currency (no origin airport). Viajante
-does not convert. The calling agent may convert for the user. If country,
-destination, or currency is not proven (a city with several airports,
-Europe, unnamed origin, two possible currencies), do not pick: ask or
-error. Unknown cannot prove include. Do not invent IATA, gl, or ISO 4217
-from vibe. Optional country is Google gl (origin market); omit when unset;
-do not pass a destination ISO. Unnamed baggage_buffer is 0. Prefer bags /
-carry_on on the shopping request so Google prices the bag. Do not invent a
-bag fee. Fetch locale is English. User prompts may be any language.
-Compute ISO dates from today; do not send a past start.
 """
 
 
 async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
     """Run a search on the one-worker pool. Fail immediately if a search is in flight."""
     if not _SEARCH_BUSY.acquire(blocking=False):
-        raise ValueError(_SEARCH_BUSY_MESSAGE)
+        raise structured_error(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
     loop = asyncio.get_running_loop()
 
     def run() -> _T:
@@ -150,20 +86,50 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     except asyncio.CancelledError:
         future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         raise
+    except ValueError as exc:
+        raise structured_error(exc, kwargs) from exc
 
 
 async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
     """Airport lookup stays off the search worker so it can run during a search."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
+    try:
+        return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
+    except ValueError as exc:
+        raise structured_error(exc, kwargs) from exc
 
 
-def build_server():
+def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 
-    server = FastMCP("viajante", instructions=_HELP)
+    options: dict[str, object] = {} if host is None else {"host": host, "port": port}
+    server = FastMCP("viajante", instructions=_HELP, **options)
 
-    @server.tool()
+    def tool(title: str, *, network: bool):
+        # Every tool only reads; openWorldHint is True only when the tool asks a provider.
+        return server.tool(
+            title=title,
+            annotations=ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=network,
+            ),
+        )
+
+    @server.resource(
+        "viajante://guide",
+        name="guide",
+        title="viajante operational guide",
+        description="Long operational rules for the viajante tools: evidence, currency, "
+        "rate limits, hotels and stays.",
+        mime_type="text/markdown",
+    )
+    def guide_resource() -> str:
+        return GUIDE
+
+    @tool("Runtime info", network=False)
     def get_runtime_info() -> dict:
         """Offline executing package, Python and hotel schema versions.
 
@@ -172,7 +138,7 @@ def build_server():
         """
         return runtime_info()
 
-    @server.tool()
+    @tool("Search flights", network=True)
     async def search_flights(
         routes: list[str],
         trip: str = "one-way",
@@ -229,7 +195,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
-    @server.tool()
+    @tool("Cheapest-dates calendar", network=True)
     async def search_dates(
         route: str,
         start: str,
@@ -282,7 +248,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_dates_tool, **locals()))
 
-    @server.tool()
+    @tool("Flexible-date flight search", network=True)
     async def search_flex(
         route: str,
         around: str,
@@ -334,7 +300,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_flex_tool, **locals()))
 
-    @server.tool()
+    @tool("Explore destinations", network=True)
     async def search_explore(
         origin: str,
         start: str | None = None,
@@ -383,7 +349,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_explore_tool, **locals()))
 
-    @server.tool()
+    @tool("Search hotels", network=True)
     async def search_hotels(
         location: str | None = None,
         check_in: str | None = None,
@@ -445,7 +411,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_hotels_tool, **locals()))
 
-    @server.tool()
+    @tool("Hotel room rates", network=True)
     async def search_hotel_rooms(
         check_in: str,
         check_out: str,
@@ -472,7 +438,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_hotel_rooms_tool, **locals()))
 
-    @server.tool()
+    @tool("Search flights and hotel", network=True)
     async def search_trip(
         routes: list[str],
         location: str,
@@ -522,11 +488,11 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_trip_tool, **locals()))
 
-    @server.tool()
+    @tool("Look up airports", network=False)
     async def lookup_airports(query: str, limit: int = 20) -> list:
         return await run_lookup_tool(lookup_airports_tool, **locals())
 
-    @server.tool()
+    @tool("Search hidden-city fares", network=True)
     async def search_hidden_city(
         route: str,
         departure: str,
@@ -551,7 +517,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_hidden_city_tool, **locals()))
 
-    @server.tool()
+    @tool("Compare award to cash", network=False)
     async def compare_awards(
         offer: dict,
         cash_price: float | None = None,
@@ -566,7 +532,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(compare_awards_tool, **locals()))
 
-    @server.tool()
+    @tool("Look up point transfers", network=False)
     async def lookup_transfers(
         program: str,
         points: int,
@@ -575,7 +541,7 @@ def build_server():
         """Local card-to-program transfer table. Not live award availability."""
         return dict(await run_lookup_tool(lookup_transfers_tool, **locals()))
 
-    @server.tool()
+    @tool("Validate itinerary", network=False)
     async def validate_itinerary(
         legs: list[dict],
         constraints: dict,
@@ -588,7 +554,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 
-    @server.tool()
+    @tool("Plan stay blocks", network=False)
     async def plan_stay_blocks(roster: dict[str, list[str]]) -> dict:
         """Local: group consecutive nights with the same people into blocks.
 
@@ -599,7 +565,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(plan_stay_blocks_tool, **locals()))
 
-    @server.tool()
+    @tool("Split stay costs", network=False)
     async def split_stay_costs(
         stays: list[dict],
         roster: dict[str, list[str]],
@@ -618,7 +584,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(split_stay_costs_tool, **locals()))
 
-    @server.tool()
+    @tool("Verify draft answer", network=False)
     async def verify_answer(answer: str) -> dict:
         """Check a draft reply against this process's recent search payloads.
 
@@ -631,22 +597,54 @@ def build_server():
         """
         return dict(await run_lookup_tool(verify_answer_tool, **locals()))
 
+    @tool("Operational guide", network=False)
+    def get_guide() -> str:
+        """The long operational guide (markdown); the same text as the viajante://guide resource.
+
+        For clients that do not read MCP resources. Local; may run during a search.
+        """
+        return GUIDE
+
     return server
+
+
+def _parse_args(args: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="viajante-mcp", add_help=False)
+    parser.add_argument("--transport", choices=("stdio", "streamable-http"), default="stdio")
+    parser.add_argument("--host", default=None)
+    parser.add_argument("--port", type=int, default=None)
+    parsed = parser.parse_args(args)
+    if parsed.transport == "stdio" and (parsed.host is not None or parsed.port is not None):
+        parser.error("--host and --port apply only to --transport streamable-http")
+    if parsed.port is not None and not 1 <= parsed.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    return parsed
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args and args[0] in {"-h", "--help"}:
+    if any(arg in {"-h", "--help"} for arg in args):
         # Help must work without the mcp extra.
-        print(_HELP.strip())
+        print(_USAGE + _HELP.strip())
         return
+    parsed = _parse_args(args)
+    http = parsed.transport == "streamable-http"
+    host = parsed.host or _DEFAULT_HOST
+    port = parsed.port or _DEFAULT_PORT
+    if http and host not in _LOOPBACK_HOSTS:
+        print(
+            f"warning: binding to {host}, not loopback. viajante-mcp has no authentication; "
+            "every client that can reach this port searches from this machine's IP, and the "
+            "machine-wide provider cooldown applies to all of them.",
+            file=sys.stderr,
+        )
     try:
-        server = build_server()
+        server = build_server(host=host, port=port) if http else build_server()
     except ImportError as exc:
         raise SystemExit(
             "viajante-mcp requires the mcp extra. Install with: uv sync --extra mcp"
         ) from exc
-    server.run()
+    server.run(transport=parsed.transport)
 
 
 if __name__ == "__main__":

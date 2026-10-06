@@ -324,9 +324,38 @@ search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="r
 ```
 
 These are tool-call examples, not Python library calls. The MCP server uses
-stdio and runs one search at a time. See the signatures in
+stdio by default (local Streamable HTTP is opt-in, see below) and runs one
+search at a time. See the signatures in
 [`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
 
+
+### MCP client compatibility
+
+- **Annotations and titles.** All 17 tools carry a title and read-only
+  annotations (`readOnlyHint: true`, `destructiveHint: false`,
+  `idempotentHint: true`). `openWorldHint` is `true` for the tools that ask a
+  provider (`search_flights`, `search_dates`, `search_flex`, `search_explore`,
+  `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_hidden_city`) and
+  `false` for the local ones. This needs `mcp>=1.14.1`.
+- **Guide.** The server instructions hold only the load-bearing rules. The full
+  operational guide is the `viajante://guide` resource (markdown) and the
+  `get_guide` tool for clients without resource support.
+- **Invalid input.** Still an `isError` result. The text after the SDK's
+  `Error executing tool <name>: ` prefix is JSON:
+  `{"error": {"code": "invalid_parameter", "field": "origin", "message": "..."}}`.
+  `field` is `null` when the message does not name exactly one parameter. A
+  concurrent search is `code: "search_in_progress"`. The `message` is the same
+  sentence earlier versions raised.
+- **Rate limits.** A rate-limited search error keeps `rate_limited: true` and its
+  message, and adds `retry_after` (ISO 8601 UTC) and `retry_after_seconds` (integer)
+  from the recorded cooldown. Both are omitted when no cooldown was recorded, for
+  example a proxied 429.
+- **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
+  [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
+  not meant to be hosted. A non-loopback `--host` prints a warning: every client
+  searches from this machine's IP and the machine-wide provider cooldown applies to
+  all of them. Client entry: `{"mcpServers": {"viajante": {"url": "http://127.0.0.1:8000/mcp"}}}`;
+  Claude Code: `claude mcp add --transport http viajante http://127.0.0.1:8000/mcp`.
 
 To diagnose installation drift, run `viajante --version` or call MCP
 `get_runtime_info` (both available in 1.4.0+). Hotel JSON includes the executing

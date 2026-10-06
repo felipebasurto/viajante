@@ -1339,7 +1339,7 @@ dev = [
 requires-dist = [
     { name = "airportsdata", specifier = ">=20260315" },
     { name = "curl-cffi", specifier = ">=0.16.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.6,<2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.14.1,<2" },
     { name = "playwright", marker = "extra == 'browser'", specifier = "==1.60.0" },
     { name = "selectolax", specifier = ">=0.3.25" },
 ]
@@ -1347,7 +1347,7 @@ provides-extras = ["mcp", "browser"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "mcp", specifier = ">=1.6,<2" },
+    { name = "mcp", specifier = ">=1.14.1,<2" },
     { name = "playwright", specifier = "==1.60.0" },
     { name = "pre-commit", specifier = ">=4.3.0" },
     { name = "ruff", specifier = "==0.15.12" },

@@ -134,7 +134,7 @@ scenario compliant.
 | Browser access denied | Report the client access limitation, not a provider failure or broken URL. Use permitted read-only alternatives; do not bypass denial or re-request already authorized access. |
 | Missing local screenshot | Say the image could not be read; do not claim visual inspection. Continue from available text/evidence. |
 | `no_results` | Stop. Do not retry. |
-| `rate_limited: true` | Stop provider searches. Wait 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
+| `rate_limited: true` | Stop provider searches. Wait until `retry_after` (UTC; `retry_after_seconds`) when the error has it, else 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
 | `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP tools carry human titles and read-only annotations (`readOnlyHint`, `destructiveHint: false`, `idempotentHint`); `openWorldHint` is true only for the tools that ask a provider.
+- MCP input errors have a stable JSON body, `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`, with `field` set only when the message names one parameter. A concurrent search is `search_in_progress`. Invalid input still fails the call (`isError`) and the message keeps its wording.
+- Rate-limited search errors add `retry_after` (ISO 8601 UTC) and `retry_after_seconds` from the recorded cooldown. They are omitted when no cooldown was recorded (a proxied 429), and the message is unchanged.
+- Opt-in local Streamable HTTP: `viajante-mcp --transport streamable-http [--host 127.0.0.1] [--port 8000]`. Stdio stays the default. No authentication and no `remotes` entry in `server.json`; a non-loopback host prints a warning.
+- `viajante://guide` resource (markdown) and a `get_guide` tool carry the long operational guidance.
+
+### Changed
+
+- The MCP server instructions shrink to the load-bearing rules (evidence, currency, bags, empty-is-not-absent, rate limits, hidden-city sequencing) and point at the guide. No rule was removed; a test checks that every sentence of the previous instructions is in the new instructions or the guide.
+- The `mcp` floor is `>=1.14.1,<2` (tool titles, annotations and the HTTP transport). The lock still resolves 1.29.0.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added
