@@ -982,6 +982,22 @@ class McpToolTests(unittest.TestCase):
         verdict = evidence.verify_answer("It is now USD 540 and was USD 500.")
         return [row["text"] for row in verdict["unowned"]]
 
+    def test_results_without_a_provider_answer_record_nothing(self) -> None:
+        evidence.record({"offers": [_previous(OUTBOUND, evidence_id="gf_other")]})
+        searches = evidence.verify_answer("x")["searches"]
+        elsewhere = _segment("JFK", "NRT", "19:30", "22:30", "BA999")
+        unnumbered = _previous(elsewhere, evidence_id=None)
+        unnumbered["legs"][0]["segments"][0]["flight_number"] = None
+        blocked = _Stub(_failed(SearchErrorCode.BLOCKED))
+        with patch("viajante.recheck.search_flights", blocked):
+            failed = mcp_handlers.recheck_offer_tool(_previous(elsewhere, evidence_id=None))
+        incomplete = self._recheck(unnumbered)
+        self.assertEqual(failed["outcome"], "check_failed")
+        self.assertEqual(incomplete["outcome"], "incomplete_identity")
+        verdict = evidence.verify_answer("JFK NRT on 2099-02-01")
+        self.assertEqual(verdict["searches"], searches)
+        self.assertIn("NRT", [row["text"] for row in verdict["unowned"]])
+
     def test_an_offer_this_process_returned_has_its_previous_price_owned(self) -> None:
         previous = _previous(OUTBOUND)
         evidence.record({"offers": [previous]})
