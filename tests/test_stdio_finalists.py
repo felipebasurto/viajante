@@ -142,6 +142,7 @@ EXPECTED_TOOLS = [
     "search_hotels",
     "search_hotel_rooms",
     "search_trip",
+    "search_split_tickets",
     "lookup_airports",
     "search_hidden_city",
     "compare_awards",

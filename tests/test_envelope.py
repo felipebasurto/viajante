@@ -24,8 +24,10 @@ from viajante.envelope import (
     EMPTY_REASONS,
     OBSERVED_BASES,
     STATUSES,
+    EnvelopeShapeError,
     stamp_local,
     stamp_search,
+    stamp_split,
 )
 from viajante.explore import search_explore
 from viajante.flights import search_flights
@@ -892,6 +894,242 @@ class HandlerTests(_StateDirCase):
         self.assertEqual(search.call_count, 2)
 
 
+SPLIT_AT = "2026-08-10T10:00:00Z"
+
+
+def _split_error(code: SearchErrorCode, message: str = "x", **kwargs: object) -> dict:
+    return dict(SearchError(code, message, **kwargs).to_dict())
+
+
+def _leg(error: dict | None = None, offers: int = 3, hub: str = "LAX") -> dict:
+    row = {
+        "origin": "JFK",
+        "destination": hub,
+        "departure_date": "2026-09-01",
+        "status": "ok" if error is None else "error",
+    }
+    if error is None:
+        row["offers"] = offers
+    else:
+        row["error"] = error
+    return row
+
+
+def _split_payload(legs: list, itineraries: list | None = None, **extra: object) -> dict:
+    return {
+        "schema_version": 2,
+        "searched_at": SPLIT_AT,
+        "itineraries": itineraries or [],
+        "legs": legs,
+        **extra,
+    }
+
+
+class SplitEnvelopeTests(unittest.TestCase):
+    assertEnvelope = EnvelopeShapeTests.assertEnvelope
+    ITINERARY = {"split_ticket": True, "total": 700.0}
+    EMPTY = _split_error(SearchErrorCode.NO_RESULTS, "No flights")
+
+    def test_an_itinerary_is_ok_and_complete(self) -> None:
+        payload = stamp_split(_split_payload([_leg(), _leg()], [self.ITINERARY]))
+        self.assertEnvelope(
+            payload,
+            status="ok",
+            completeness="complete",
+            empty_reason=None,
+            error_code=None,
+            retry_after=None,
+            retry_after_seconds=None,
+            observed_at=SPLIT_AT,
+            observed_at_basis="fetch",
+        )
+        self.assertEqual(payload["itineraries"], [self.ITINERARY])
+
+    def test_an_itinerary_beside_a_failed_leg_is_ok_but_partial(self) -> None:
+        timeout = _split_error(SearchErrorCode.FETCH_FAILED, "slow", timeout=True)
+        payload = stamp_split(_split_payload([_leg(), _leg(timeout)], [self.ITINERARY]))
+        self.assertEnvelope(
+            payload,
+            status="ok",
+            completeness="partial",
+            empty_reason=None,
+            error_code="fetch_failed",
+            observed_at=SPLIT_AT,
+            observed_at_basis="fetch",
+        )
+
+    def test_a_failed_leg_with_no_itinerary_names_that_failure(self) -> None:
+        cases = {
+            "blocked": _split_error(SearchErrorCode.BLOCKED, "wall"),
+            "timeout": _split_error(SearchErrorCode.FETCH_FAILED, "slow", timeout=True),
+            "failed": _split_error(SearchErrorCode.FETCH_FAILED, "boom"),
+            "rate_limited": _split_error(SearchErrorCode.BLOCKED, "429", rate_limited=True),
+        }
+        for status, error in cases.items():
+            with self.subTest(status=status):
+                payload = stamp_split(_split_payload([_leg(error)]))
+                self.assertEnvelope(
+                    payload,
+                    status=status,
+                    completeness="blocked",
+                    empty_reason="not_loaded",
+                    error_code=error["code"],
+                    observed_at=SPLIT_AT,
+                    observed_at_basis="fetch",
+                )
+
+    def test_a_failure_beside_an_answered_leg_is_partial_not_blocked(self) -> None:
+        error = _split_error(SearchErrorCode.BLOCKED, "wall")
+        payload = stamp_split(_split_payload([_leg(), _leg(error)]))
+        self.assertEnvelope(
+            payload, status="blocked", completeness="partial", empty_reason="not_loaded"
+        )
+        empty_leg = stamp_split(_split_payload([_leg(self.EMPTY), _leg(error)]))
+        self.assertEnvelope(empty_leg, completeness="partial", empty_reason="not_loaded")
+
+    def test_the_worst_failure_wins_and_a_repeated_one_counts_once(self) -> None:
+        legs = [
+            _leg(_split_error(SearchErrorCode.FETCH_FAILED, "boom")),
+            _leg(_split_error(SearchErrorCode.BLOCKED, "429", rate_limited=True)),
+            _leg(_split_error(SearchErrorCode.BLOCKED, "wall")),
+        ]
+        payload = stamp_split(_split_payload(legs, error=legs[1]["error"]))
+        self.assertEnvelope(payload, status="rate_limited", error_code="blocked")
+
+    def test_a_cooldown_carries_the_errors_own_retry_fields(self) -> None:
+        error = self._cooldown()
+        self.assertIn("retry_after", error)
+        packaged = {"queries": [{"query": {}, "status": "error", "error": error}]}
+        for payload in (
+            _split_payload([_leg(error)], error=error),
+            _split_payload([], error=error),
+            _split_payload([], error=dict(error), packaged_report=packaged),
+        ):
+            with self.subTest(legs=len(payload["legs"])):
+                stamped = stamp_split(payload)
+                self.assertEnvelope(
+                    stamped,
+                    status="rate_limited",
+                    completeness="blocked",
+                    empty_reason="not_loaded",
+                    error_code="blocked",
+                    retry_after=error["retry_after"],
+                    retry_after_seconds=error["retry_after_seconds"],
+                    observed_at=None,
+                    observed_at_basis=None,
+                )
+
+    def test_a_cooldown_beside_an_answered_packaged_search_was_observed(self) -> None:
+        error = self._cooldown()
+        offers = {"query": {}, "status": "ok", "offers": [{}], "raw_count": 1}
+        payload = stamp_split(
+            _split_payload([], error=error, packaged_report={"queries": [offers]})
+        )
+        self.assertEnvelope(
+            payload,
+            status="rate_limited",
+            completeness="partial",
+            observed_at=SPLIT_AT,
+            observed_at_basis="fetch",
+        )
+
+    def test_a_real_429_is_observed_but_a_recorded_cooldown_is_not(self) -> None:
+        real = _split_error(SearchErrorCode.BLOCKED, "HTTP 429", rate_limited=True)
+        payload = stamp_split(_split_payload([_leg(real)], error=real))
+        self.assertEnvelope(payload, status="rate_limited", observed_at=SPLIT_AT)
+
+    @staticmethod
+    def _cooldown() -> dict:
+        return _split_error(
+            SearchErrorCode.BLOCKED,
+            f"{NOT_SENT}Google is paused",
+            rate_limited=True,
+            retry_until=time.time() + 300,
+        )
+
+    def test_a_cooldown_after_an_answered_leg_is_partial(self) -> None:
+        error = _split_error(
+            SearchErrorCode.BLOCKED, "429", rate_limited=True, retry_until=time.time() + 300
+        )
+        payload = stamp_split(_split_payload([_leg(), _leg(error)], error=error))
+        self.assertEnvelope(
+            payload,
+            status="rate_limited",
+            completeness="partial",
+            retry_after=error["retry_after"],
+            retry_after_seconds=error["retry_after_seconds"],
+        )
+
+    def test_a_failed_packaged_search_is_a_failure_too(self) -> None:
+        error = _split_error(SearchErrorCode.BLOCKED, "wall")
+        packaged = {"queries": [{"query": {}, "status": "error", "error": error}]}
+        payload = stamp_split(_split_payload([], packaged_report=packaged))
+        self.assertEnvelope(
+            payload, status="blocked", completeness="blocked", empty_reason="not_loaded"
+        )
+
+    def test_answered_legs_whose_pairings_were_all_rejected_are_filtered_out(self) -> None:
+        payload = stamp_split(
+            _split_payload([_leg(), _leg()], rejected={"connection_too_short": 2})
+        )
+        self.assertEnvelope(
+            payload,
+            status="no_results",
+            completeness="complete",
+            empty_reason="filtered_out",
+            error_code=None,
+            observed_at=SPLIT_AT,
+            observed_at_basis="fetch",
+        )
+        mixed = stamp_split(_split_payload([_leg(self.EMPTY), _leg()]))
+        self.assertEnvelope(mixed, status="no_results", empty_reason="filtered_out")
+
+    def test_only_provider_empty_legs_are_provider_empty(self) -> None:
+        payload = stamp_split(_split_payload([_leg(self.EMPTY), _leg(self.EMPTY)]))
+        self.assertEnvelope(
+            payload,
+            status="no_results",
+            completeness="complete",
+            empty_reason="provider_empty",
+            error_code="no_results",
+            observed_at=SPLIT_AT,
+            observed_at_basis="fetch",
+        )
+
+    def test_legs_decide_provider_empty_not_the_packaged_baseline(self) -> None:
+        offers = {"query": {}, "status": "ok", "offers": [{}], "raw_count": 1}
+        packaged = {"queries": [offers]}
+        empty = stamp_split(
+            _split_payload([_leg(self.EMPTY), _leg(self.EMPTY)], packaged_report=packaged)
+        )
+        self.assertEnvelope(
+            empty,
+            status="no_results",
+            completeness="complete",
+            empty_reason="provider_empty",
+            error_code="no_results",
+        )
+        one_answered = stamp_split(
+            _split_payload([_leg(), _leg(self.EMPTY)], packaged_report=packaged)
+        )
+        self.assertEnvelope(one_answered, empty_reason="filtered_out", error_code=None)
+
+    def test_a_leg_with_no_raw_cards_is_provider_empty_but_unknown_counts_are_not(self) -> None:
+        empty_leg = {**_leg(offers=0), "raw_count": 0}
+        payload = stamp_split(_split_payload([empty_leg, _leg(self.EMPTY)]))
+        self.assertEnvelope(payload, empty_reason="provider_empty", error_code="no_results")
+        unknown = stamp_split(_split_payload([_leg(offers=0), _leg(self.EMPTY)]))
+        self.assertEnvelope(unknown, empty_reason="filtered_out")
+        removed = stamp_split(_split_payload([{**_leg(offers=0), "raw_count": 4}]))
+        self.assertEnvelope(removed, empty_reason="filtered_out")
+
+    def test_an_unreadable_shape_is_refused(self) -> None:
+        with self.assertRaises(EnvelopeShapeError):
+            stamp_split({"searched_at": SPLIT_AT})
+        with self.assertRaises(EnvelopeShapeError):
+            stamp_search(_split_payload([_leg()]))
+
+
 class ErrorTaxonomyTests(unittest.TestCase):
     def test_timeout_flag_is_typed_at_classification(self) -> None:
         class ReadTimeout(Exception):
@@ -955,7 +1193,7 @@ class OutputSchemaTests(unittest.TestCase):
 
     def test_every_tool_but_the_bare_list_advertises_the_envelope_schema(self) -> None:
         tools = {tool.name: tool for tool in asyncio.run(self.server.list_tools())}
-        self.assertEqual(len(tools), 19)
+        self.assertEqual(len(tools), 20)
         for name, tool in tools.items():
             if name == "lookup_airports":
                 self.assertIsNone(tool.outputSchema)

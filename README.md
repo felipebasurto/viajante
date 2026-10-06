@@ -120,6 +120,7 @@ The server exposes nineteen tools:
 | `search_hotel_rooms` | Read Skiplagged room rates for one named hotel. |
 | `get_hotel_details` | Read a hotel offer this process returned, with an optional separate room quote. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
+| `search_split_tickets` | Opt-in separately ticketed itineraries (a self-transfer via a hub, or mixed one-ways for a round trip) built from real one-way quotes. Connections between tickets are not protected. |
 | `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, not found, multiple matches, incomplete identity, or check failed (the check could not complete, which never means the offer is gone). |
 | `lookup_airports` | Look up airport or metro codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
@@ -139,7 +140,7 @@ Each search command accepts `--save FILE` to write a JSON report. Run
 
 | Command | Purpose |
 | --- | --- |
-| `viajante flights` | Search specific routes and dates. |
+| `viajante flights` | Search specific routes and dates. `--split-tickets` opts in to separately ticketed alternatives (not protected if a connection is missed). |
 | `viajante dates` | Compare departure dates across a window of up to 31 days. |
 | `viajante flex` | Search a few days either side of a target date. |
 | `viajante explore` | Find destinations from an origin airport. |

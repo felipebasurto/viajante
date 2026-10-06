@@ -31,7 +31,7 @@ search_dates is the cheapest week, search_flex is +/-N around a named date, sear
 is destination triage. max_stops is 0, 1 or 2.
 recheck_offer re-checks a finalist with one fresh search; check_failed means the check did not run,
 never that the offer is gone.
-Metro codes, get_hotel_details and arrival_deadline are in the guide.
+Also search_split_tickets: separate tickets, so a missed connection is not protected. See the guide.
 """
 
 GUIDE = r"""# viajante MCP guide
@@ -65,6 +65,7 @@ Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
+Also search_split_tickets (see Split tickets), a search that takes the one-search lock.
 Also recheck_offer, a search that takes the one-search lock (see Re-checking an offer).
 Also get_guide, which returns this guide (the same text as the viajante://guide resource).
 Also get_hotel_details, which reads a hotel offer this process returned.
@@ -144,9 +145,10 @@ evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
 product cannot require 3+ stops.
 A metro code (LON, NYC, PAR, TYO, and the rest of the owned table) named on a
-search_flights or search_trip route expands to its member airports. One metro
-call can send up to 18 provider queries (LON has six members, NYC three). A
-route whose origin and destination resolve to the same metro, including an
+search_flights or search_trip route expands to its member airports. One call
+sends at most 18 provider queries (LON has six members, NYC three). A plan
+that would send more is rejected before anything is fetched. A route
+whose origin and destination resolve to the same metro, including an
 airport that belongs to the other side's metro, is rejected. lookup_airports
 with the code lists its members. A metro code is never inferred from an airport
 or a city.
@@ -157,6 +159,29 @@ Skiplagged cards are USD; omit currency or pass USD. Do not copy a
 Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
 
+## Split tickets
+
+search_split_tickets is opt-in and costs extra searches (capped, sequential, stopped at the
+first recorded cooldown). It builds separately ticketed itineraries only from real one-way
+quotes it fetched: a one-way via a connection airport (`via`, up to 5 IATA codes, or layover
+airports seen in the packaged results) or a round trip as two one-ways. Every itinerary says
+split_ticket true, self_transfer true and connection_protected false. Tell the traveller: if
+the first ticket is late, the second ticket does not protect the connection; bags may need to be
+collected and checked in again; each ticket is confirmed on its own link.
+Totals are summed only when every ticket is in one currency, else total is null and the
+parts stay separate. vs_packaged compares only within a currency and carries savings (split
+cheaper) or extra_cost (split dearer), both non-negative. Itineraries rank within one
+currency; other currencies are capped at a few rows. Connection time is measured in UTC with
+each airport's timezone; a missing timezone or a clock time that is ambiguous or does not
+exist (a DST change) leaves timing unproven (timing_proven false, timing_note): say so.
+Arriving at one airport and leaving from another is rejected as airport_mismatch.
+Envelope: any itinerary is ok (partial if a fetch failed). With none, a failed fetch or
+cooldown wins (rate_limited, blocked, timeout, failed; not_loaded; honour retry_after);
+rows that were all rejected are no_results with filtered_out; only provider-empty legs are
+provider_empty (every leg empty, whatever the packaged fare was). coverage is heuristic:
+it never proves other hubs or dates have no fare.
+observed_at is the search time, null when every fetch was a recorded cooldown.
+
 ## Local tools
 
 compare_awards is local points math from a named offer; it does not invent seats.
@@ -165,11 +190,12 @@ plan_stay_blocks and split_stay_costs are local arithmetic over a per-night rost
 the caller supplies; they never search, never convert money, never pick a stay.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
-missing segment, baggage, or fare facts. arrival_deadline compares the final
-arrival with a named instant: an explicit offset is UTC, a naive time is local
-at the arrival airport. chronological checks owned segment instants.
-min_stay_days and max_stay_days use owned dates. Missing, ambiguous, and
-nonexistent civil times stay unknown.
+missing segment, baggage, or fare facts. Pass legs in travel order.
+arrival_deadline and chronological read that order: arrival_deadline compares
+the final arrival with a named instant (an explicit offset is UTC, a naive time
+is local at the arrival airport) and chronological checks owned segment instants.
+min_stay_days and max_stay_days use owned dates between journeys; fewer than two
+journeys is unknown. Missing, ambiguous, and nonexistent civil times stay unknown.
 
 ## Re-checking an offer
 
@@ -205,8 +231,10 @@ error_code ambiguous_city. Occupancy, dates, or coordinates that do not match
 are no_results, empty_reason filtered_out, and error_code occupancy_mismatch,
 dates_mismatch, or property_mismatch; room_quotes stays empty. When both
 occupancy and dates differ, error_code is occupancy_mismatch and both flags
-stay. An echo of nothing is echo unknown and is not a confident match
-(never ok and complete together). An inconclusive read never shows ok/complete.
+stay. An echo of nothing is echo unknown and is not a confident match.
+When room_rates is true and the provider does not echo adults, rooms, and dates,
+a returned quote is partial (never ok and complete together). An inconclusive
+read never shows ok/complete.
 
 ## Hotels and stays
 

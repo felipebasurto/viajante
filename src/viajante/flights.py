@@ -274,6 +274,7 @@ def _nearby_pair_label(
 
 
 _METRO_LABEL = "metro "
+METRO_QUERY_LIMIT = 18
 
 
 def metro_codes_in_label(label: Optional[str]) -> frozenset[str]:
@@ -575,15 +576,23 @@ def parse_flight_plan(
             "name airports for open-jaw or multi-city"
         )
     if kind == "rt":
-        return tuple(
+        plan: FlightPlan = tuple(
             replace(_parse_round_trip_plan([spec], max_stops=max_stops, **shop), nearby_label=label)
             for spec, label in variants
         )
-    return tuple(
-        replace(query, nearby_label=label) if label else query
-        for spec, label in variants
-        for query in parse_route_specs([spec], max_stops=max_stops, **shop)
-    )
+    else:
+        plan = tuple(
+            replace(query, nearby_label=label) if label else query
+            for spec, label in variants
+            for query in parse_route_specs([spec], max_stops=max_stops, **shop)
+        )
+    count = len(as_trips(plan))
+    if count > METRO_QUERY_LIMIT:
+        raise ValueError(
+            f"metro expansion would send {count} provider queries; "
+            f"the limit is {METRO_QUERY_LIMIT} per call"
+        )
+    return plan
 
 
 def _split_route(spec: str, *, grammar: str) -> tuple[str, str, str]:

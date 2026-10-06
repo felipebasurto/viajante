@@ -557,7 +557,9 @@ def _arrival_deadline_check(segments, complete, value):
 
 def _stay_check(constraint, selected, complete, bound):
     journeys = [journey for _, offer in selected for journey in (_journey_legs(offer) or ())]
-    if not complete or not journeys:
+    if len(journeys) < 2:
+        return _status(constraint, "unknown", "no intervening stay between selected journeys")
+    if not complete:
         return _status(constraint, "unknown", "complete journeys are missing")
     unknown = False
     for left, right in zip(journeys, journeys[1:], strict=False):

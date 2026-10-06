@@ -195,7 +195,13 @@ class TemporalEvidenceTests(unittest.TestCase):
             ("max_stay_days", 2, "fail"),
         ]:
             self.assertEqual(check([first, second], constraint, bound), status)
-        self.assertEqual(check([first], "min_stay_days", 100), "pass")
+        self.assertEqual(check([first], "min_stay_days", 100), "unknown")
+        self.assertEqual(check([first], "max_stay_days", 1), "unknown")
+        report = validate_itinerary([first], {"min_stay_days": 1, "max_stay_days": 1})
+        for constraint in ("min_stay_days", "max_stay_days"):
+            item = next(check for check in report.checks if check.constraint == constraint)
+            self.assertEqual(item.status, "unknown")
+            self.assertEqual(item.detail, "no intervening stay between selected journeys")
 
     def test_packaged_stay_and_final_deadline_use_last_journey(self):
         inbound = segment()

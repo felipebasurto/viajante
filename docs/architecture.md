@@ -46,7 +46,7 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 19 tools. |
+| MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 20 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
@@ -61,6 +61,7 @@ One library, three ways in:
 | `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP, Booking browser, or opt-in Skiplagged). |
 | `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
 | `search_trip` | `trip` | Flights then one hotel, plus a sum when both succeed. |
+| `search_split_tickets` | `flights --split-tickets` | Opt-in split tickets from real one-way quotes: a hub self-transfer or mixed one-ways (`split.py`). |
 | `search_hidden_city` | `hidden-city` | Skiplagged, opt-in, never mixed with Google evidence. |
 | `recheck_offer` | `recheck-offer` | One fresh Google Flights search matching an earlier offer by flight numbers and departure times: same price, price changed, not found, multiple matches, incomplete identity, or check failed (substituted only on request). |
 | `lookup_airports` | `airports` | Offline IATA lookup. |
@@ -357,11 +358,12 @@ facts. `completeness.segment_dates` and `segment_timezones` expose those gaps.
 `temporal.py` round-trips both folds of an IANA civil time through UTC. A
 missing zone, nonexistent spring-forward time or ambiguous fall-back time
 has no provable instant. `validate.py` compares UTC instants for chronology.
-An `arrival_deadline` with an explicit offset is that UTC instant, including
+Pass selected legs in travel order. `arrival_deadline` and `chronological` read
+that order. An `arrival_deadline` with an explicit offset is that UTC instant, including
 when the arrival airport's civil offset is different. A naive deadline is
 local civil time at the arrival airport. Stay bounds use local date differences
-between journey arrival and the following departure at the same airport;
-no stay is inferred after the final flight. Existing travel-window and clock
+between journey arrival and the following departure at the same airport.
+Fewer than two journeys is unknown. No stay is inferred after the final flight. Existing travel-window and clock
 constraints retain their previous meanings. Ordering does not prove connection
 protection, immigration eligibility or sufficient transfer margins.
 
@@ -385,7 +387,8 @@ A single place whose provider-resolved name disagrees with the named city is
 an input error. Skiplagged finalists use their own ids. Dates, adults, and
 rooms are sent as requested. When the provider echoes different adults, rooms,
 or dates, the result is `occupancy_mismatch` or `dates_mismatch` and the rates
-are omitted. A missing echo stays unknown. A contradictory Skiplagged city
+are omitted. A missing echo stays unknown. When `room_rates` is true and the
+provider does not echo adults, rooms, and dates, a returned quote is partial. A contradictory Skiplagged city
 echo stops exact-name lookup before requesting room details. Original quotes
 and ordered room rates carry their own provider, currency, timestamp, and
 occupancy. A missing provider label stays unknown. USD room conditions cannot

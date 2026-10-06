@@ -217,6 +217,33 @@ class MetroSurfaceTests(unittest.TestCase):
         self.assertEqual(len(trips), 6)
         self.assertEqual({t.nearby_label for t in trips}, {"metro WAS; metro CHI"})
 
+    def test_metro_fan_out_over_18_sends_nothing(self) -> None:
+        day = self.FUTURE.isoformat()
+        later = (self.FUTURE + timedelta(days=3)).isoformat()
+        routes = [f"LON-NYC:{day}", f"LON-SAO:{day}"]
+        message = "metro expansion would send 36 provider queries; the limit is 18 per call"
+        mcp_handlers._CACHE.clear()
+        with patch("viajante.flights.GoogleFlightsHttpSource") as flights:
+            with self.assertRaisesRegex(ValueError, message):
+                mcp_handlers.search_flights_tool(routes, currency="GBP", fetch="sweep")
+            with self.assertRaisesRegex(ValueError, message):
+                mcp_handlers.search_trip_tool(
+                    routes, "Paris", check_in=day, check_out=later, currency="GBP"
+                )
+            flights.assert_not_called()
+
+    def test_lon_nyc_alone_sends_18_provider_queries(self) -> None:
+        day = self.FUTURE.isoformat()
+        trips = parse_flight_plan([f"LON-NYC:{day}"], max_stops=1)
+        self.assertEqual(len(trips), 18)
+        source = _FaresByOrigin(
+            {code: "£100" for code in ("LHR", "LGW", "STN", "LTN", "LCY", "SEN")}
+        )
+        mcp_handlers._CACHE.clear()
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            mcp_handlers.search_flights_tool([f"LON-NYC:{day}"], currency="GBP", fetch="sweep")
+        self.assertEqual(len(source.fetched), 18)
+
 
 if __name__ == "__main__":
     unittest.main()

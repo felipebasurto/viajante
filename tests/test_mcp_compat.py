@@ -85,6 +85,7 @@ NETWORK_TOOLS = {
     "search_hotels",
     "search_hotel_rooms",
     "search_trip",
+    "search_split_tickets",
     "search_hidden_city",
     "recheck_offer",
     "get_hotel_details",
@@ -577,7 +578,7 @@ class GuideTests(_StateDir):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, guide)
-        self.assertIn("Metro codes, get_hotel_details and arrival_deadline", INSTRUCTIONS)
+        self.assertIn("Also search_split_tickets", INSTRUCTIONS)
 
     def test_guide_lists_get_guide_among_tools_that_may_run_during_a_search(self) -> None:
         text = self._flat(GUIDE)
@@ -833,6 +834,114 @@ class StreamableHttpSessionTests(_StateDir):
         self.assertTrue(bad.isError)
         self.assertEqual(_error_body(bad)["field"], "query")
         self.assertIsInstance(bad.content[0], _sdk().TextContent)
+
+
+# The stdio child imports these fixtures by path, so load them the same way here: the file is
+# not a package member under `python -m unittest tests.test_mcp_compat`.
+_SPLIT_FIXTURES = importlib.util.spec_from_file_location(
+    "split_fixtures", Path(__file__).with_name("test_split.py")
+)
+assert _SPLIT_FIXTURES is not None and _SPLIT_FIXTURES.loader is not None
+_split_fixtures = importlib.util.module_from_spec(_SPLIT_FIXTURES)
+_SPLIT_FIXTURES.loader.exec_module(_split_fixtures)
+SPLIT_ROUTE = _split_fixtures.ROUTE
+
+SPLIT_SERVER = """
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, {tests!r})
+import test_split as t
+from viajante.mcp_server import main
+from viajante.split import search_split_tickets as real
+
+fake = t.FakeSearch(t._hub_table())
+with patch(
+    "viajante.mcp_handlers.search_split_tickets",
+    side_effect=lambda query, **kw: real(
+        query, packaged=t._packaged_via("LAX"), search=fake, **kw
+    ),
+):
+    main([])
+"""
+
+
+@NEEDS_SDK
+class SplitTicketStdioTests(_StateDir):
+    def test_search_split_tickets_round_trips_over_stdio_and_matches_its_output_schema(
+        self,
+    ) -> None:
+        """A real stdio server with only the fetch faked: the SDK checks the structured result."""
+        from jsonschema import validate
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-c", SPLIT_SERVER.format(tests=str(Path(__file__).parent))],
+            env={**os.environ},
+        )
+
+        async def calls():
+            sdk = _sdk()
+            async with stdio_client(params) as (read, write):
+                async with sdk.ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools = {t.name: t for t in (await session.list_tools()).tools}
+                    result = await session.call_tool(
+                        "search_split_tickets", {"route": SPLIT_ROUTE, "via": "LAX"}
+                    )
+                    return tools["search_split_tickets"], result
+
+        tool, result = asyncio.run(asyncio.wait_for(calls(), 60))
+        self.assertFalse(result.isError, _text(result))
+        structured = result.structuredContent
+        validate(structured, tool.outputSchema)
+        self.assertEqual((structured["status"], structured["completeness"]), ("ok", "complete"))
+        self.assertEqual(structured["observed_at"], structured["searched_at"])
+        self.assertEqual(structured["observed_at_basis"], "fetch")
+        row = structured["itineraries"][0]
+        self.assertEqual((row["split_ticket"], row["connection_protected"]), (True, False))
+        self.assertEqual(json.loads(_text(result)), structured)
+        self.assertTrue(tool.annotations.openWorldHint)
+        self.assertEqual(tool.title, "Split-ticket itineraries")
+
+    def test_a_recorded_cooldown_returns_a_null_observation_over_stdio(self) -> None:
+        """No fake at all: the real search stops on the recorded cooldown before any request."""
+        from jsonschema import validate
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        until = time.time() + 300
+        note_rate_limited(300.0, until - 300, file=GOOGLE_RATE_LIMIT_FILE)
+        params = StdioServerParameters(
+            command=sys.executable, args=["-m", "viajante.mcp_server"], env={**os.environ}
+        )
+
+        async def calls():
+            sdk = _sdk()
+            async with stdio_client(params) as (read, write):
+                async with sdk.ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools = {t.name: t for t in (await session.list_tools()).tools}
+                    result = await session.call_tool(
+                        "search_split_tickets", {"route": SPLIT_ROUTE, "via": "LAX"}
+                    )
+                    return tools["search_split_tickets"], result
+
+        tool, result = asyncio.run(asyncio.wait_for(calls(), 60))
+        self.assertFalse(result.isError, _text(result))
+        structured = result.structuredContent
+        validate(structured, tool.outputSchema)
+        self.assertEqual(
+            (structured["status"], structured["completeness"], structured["empty_reason"]),
+            ("rate_limited", "blocked", "not_loaded"),
+        )
+        self.assertIsNone(structured["observed_at"])
+        self.assertIsNone(structured["observed_at_basis"])
+        self.assertEqual(structured["extra_searches"], 0)
+        self.assertEqual(structured["retry_after"], structured["error"]["retry_after"])
+        self.assertTrue(structured["retry_after_seconds"] >= 1)
 
 
 if __name__ == "__main__":
