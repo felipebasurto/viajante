@@ -8,6 +8,12 @@ viajante returns raw provider evidence, not recommendations. Read the payload, w
 price against duration, stops, clocks and rating, and say why. The full guide is the
 resource viajante://guide (or the get_guide tool): read it before a multi-step plan.
 
+Read the envelope first: every tool except lookup_airports puts status, completeness,
+empty_reason, error_code and retry_after beside its payload. Only empty_reason provider_empty
+means "none found"; filtered_out means viajante's own filters removed the rows; not_loaded
+means the search did not complete and availability is unknown. completeness partial: read
+the per-query rows.
+
 Evidence: before replying, pass the draft to verify_answer; it flags amounts, currencies,
 codes, dates and links no search in this process returned. Never invent a fare, bag fee,
 currency, IATA code or exchange rate. Viajante does not convert; you do the FX.
@@ -63,6 +69,21 @@ That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
 validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
 during a search. get_guide may also run during a search.
+
+## The result envelope
+
+Read the envelope first. Every tool except lookup_airports (a bare list) puts
+these top-level fields beside its payload: status (ok, no_results, rate_limited,
+blocked, timeout, failed), completeness (complete, partial, blocked), empty_reason
+(provider_empty, filtered_out, not_loaded; null when rows came back), empty_note,
+error_code, retry_after / retry_after_seconds (a known cooldown), and observed_at
+with observed_at_basis (fetch: when viajante asked; provider is reserved). Only
+provider_empty may be told to a traveller as "no flights/hotels found". filtered_out
+means viajante's own filters removed the provider's rows; not_loaded means the
+search did not complete and availability is unknown. partial means some queries
+failed or part of the window is missing: read the per-query rows. Offline tools
+report status ok and are complete unless they say otherwise (unknown checks,
+unallocated nights). get_guide carries the envelope too, beside its guide key.
 
 ## Evidence and replying
 

@@ -432,6 +432,7 @@ class McpHandlerTests(unittest.TestCase):
     def test_search_flex_calendar_then_one_shop(self) -> None:
         fake = _report(
             chosen_date=FUTURE,
+            days=[],
             offers=[],
             typical=None,
             vs_typical=None,
@@ -470,7 +471,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["country"])
 
     def test_search_flex_forwards_named_occupancy(self) -> None:
-        fake = _report(chosen_date=FUTURE, offers=[])
+        fake = _report(chosen_date=FUTURE, days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool(
                 "BOS-LHR",
@@ -488,7 +489,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["infants_on_lap"], 1)
 
     def test_search_flex_forwards_named_currency_country(self) -> None:
-        fake = _report(chosen_date=FUTURE, offers=[])
+        fake = _report(chosen_date=FUTURE, days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool("JFK-LHR", FUTURE, 3, currency="usd", country="us")
         kwargs = search.call_args.kwargs
@@ -496,7 +497,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["country"], "us")
 
     def test_search_flex_forwards_owned_shop_filters(self) -> None:
-        fake = _report(chosen_date=FUTURE, offers=[])
+        fake = _report(chosen_date=FUTURE, days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool(
                 "BOS-LHR",
@@ -538,7 +539,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["max_duration_hours"], 8)
 
     def test_search_flex_nearby_forwards(self) -> None:
-        fake = _report(offers=[])
+        fake = _report(days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool("BOS-LHR", FUTURE, 3, nearby=True)
         self.assertTrue(search.call_args.kwargs["nearby"])

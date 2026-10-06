@@ -9,9 +9,9 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Callable, NoReturn, Optional, Sequence, TypeVar
+from typing import Callable, Literal, NoReturn, Optional, Sequence, TypeVar
 
-from viajante.evidence import verify_answer as verify_answer_tool
+from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
 from viajante.mcp_errors import structured_error, unknown_arguments_body, validation_body
@@ -31,7 +31,9 @@ from viajante.mcp_handlers import (
     search_trip_tool,
     split_stay_costs_tool,
     validate_itinerary_tool,
+    verify_answer_tool,
 )
+from viajante.models import EmptyReason
 from viajante.runtime import get_runtime_info as runtime_info
 
 _T = TypeVar("_T")
@@ -134,6 +136,25 @@ def _loopback_security(host: str):
 def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
+    from pydantic import BaseModel, ConfigDict
+
+    class ToolEnvelope(BaseModel):
+        """Top-level fields on every tool result except lookup_airports (a bare list).
+
+        Read these first. Every other key of the tool's payload rides alongside them.
+        """
+
+        model_config = ConfigDict(extra="allow")
+
+        status: Literal[STATUSES]
+        completeness: Literal[COMPLETENESS]
+        empty_reason: Optional[EmptyReason]
+        empty_note: Optional[str]
+        error_code: Optional[str]
+        retry_after: Optional[str]
+        retry_after_seconds: Optional[int]
+        observed_at: Optional[str]
+        observed_at_basis: Optional[Literal[OBSERVED_BASES]]
 
     options: dict[str, object] = {}
     if host is not None:
@@ -172,9 +193,9 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
 
     server = ViajanteServer("viajante", instructions=_HELP, **options)
 
-    def tool(title: str, *, network: bool):
+    def tool(title: str, *, network: bool, envelope: bool = True):
         # Every tool only reads; openWorldHint is True only when the tool asks a provider.
-        return server.tool(
+        register = server.tool(
             title=title,
             annotations=ToolAnnotations(
                 readOnlyHint=True,
@@ -183,6 +204,15 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
                 openWorldHint=network,
             ),
         )
+
+        def decorate(fn):
+            if envelope:
+                # `from __future__ import annotations` makes the return a string that cannot
+                # see the class above; FastMCP only builds an outputSchema from a real annotation.
+                fn.__annotations__["return"] = ToolEnvelope
+            return register(fn)
+
+        return decorate
 
     @server.resource(
         "viajante://guide",
@@ -202,7 +232,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         Check before searches; an npm MCP does not upgrade a separate uv tool
         installation. May run during a search. No network or personal paths.
         """
-        return runtime_info()
+        return stamp_local(dict(runtime_info()))
 
     @tool("Search flights", network=True)
     async def search_flights(
@@ -554,7 +584,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         """
         return dict(await run_mcp_tool(search_trip_tool, **locals()))
 
-    @tool("Look up airports", network=False)
+    @tool("Look up airports", network=False, envelope=False)
     async def lookup_airports(query: str, limit: int = 20) -> list:
         return await run_lookup_tool(lookup_airports_tool, **locals())
 
@@ -670,7 +700,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         For clients that do not read MCP resources. Returns {"guide": markdown}. Local;
         may run during a search.
         """
-        return {"guide": GUIDE}
+        return stamp_local({"guide": GUIDE})
 
     return server
 

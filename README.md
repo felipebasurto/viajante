@@ -106,6 +106,8 @@ Once connected, you can ask:
 > Search for hotels in Tokyo from November 12 to November 16, 2026, for two
 > adults. Use JPY and require free cancellation.
 
+Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
+
 The server exposes twelve tools:
 
 | Tool | Use it to |

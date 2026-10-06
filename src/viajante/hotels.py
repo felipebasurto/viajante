@@ -18,6 +18,7 @@ from viajante.booking import (
 )
 from viajante.browser import playwright_available
 from viajante.flights import DEFAULT_TOP
+from viajante.google_flights import SweepTransportError
 from viajante.google_hotels import (
     GoogleHotelsSource,
 )
@@ -371,7 +372,9 @@ def _run_search(
             except Exception as exc:
                 failure = _classify_hotel_failure(exc)
                 source.reset()
-                if failure.code in NON_RETRIABLE_CODES or isinstance(exc, BookingResultsTimeout):
+                if failure.code in NON_RETRIABLE_CODES or isinstance(
+                    exc, (BookingResultsTimeout, SweepTransportError)
+                ):
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     sleep(retry_backoff_seconds(attempt, random_gen))

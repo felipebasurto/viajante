@@ -303,6 +303,12 @@ for the Python interface.
 
 ## MCP tool calls
 
+Each tool result starts with a shared envelope: `status`, `completeness`,
+`empty_reason`, `retry_after`, `observed_at` (`lookup_airports` returns a plain
+list). Only `empty_reason: provider_empty` means the provider found nothing;
+`filtered_out` means filters removed results the provider returned, and
+`not_loaded` means the search did not complete.
+
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request
 to compare seven-night trips across November maps to:
@@ -361,7 +367,8 @@ the same roughly 2.7 KB difference.
 - **Rate limits.** A rate-limited search error keeps `rate_limited: true` and its
   message, and adds `retry_after` (ISO 8601 UTC) and `retry_after_seconds` (integer)
   from the recorded cooldown. Both are omitted when no cooldown was recorded, for
-  example a proxied 429.
+  example a proxied 429. The envelope's top-level `retry_after` fields repeat the
+  latest of these per-error values, so they are null whenever the errors carry none.
 - **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
   [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
   not meant to be hosted. A non-loopback `--host` prints a warning: every client

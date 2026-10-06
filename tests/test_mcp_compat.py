@@ -456,6 +456,27 @@ class RetryFieldTests(_StateDir):
         self.assertIsNone(cooldown_until(advice, GOOGLE_RATE_LIMIT_FILE))
 
 
+@NEEDS_SDK
+class SearchEnvelopeTests(_StateDir):
+    def test_a_paused_search_returns_the_envelope_with_the_per_error_retry_fields(self) -> None:
+        note_rate_limited(300.0)
+        server = mcp_server.build_server()
+
+        async def calls(session):
+            return await session.call_tool(
+                "search_flights", {"routes": [f"JFK-LHR:{FUTURE}"], "fetch": "sweep"}
+            )
+
+        result = _session_call(server, calls)
+        self.assertFalse(result.isError)
+        body = result.structuredContent
+        error = body["queries"][0]["error"]
+        self.assertEqual((body["status"], body["empty_reason"]), ("rate_limited", "not_loaded"))
+        self.assertEqual(body["retry_after"], error["retry_after"])
+        self.assertAlmostEqual(body["retry_after_seconds"], error["retry_after_seconds"], delta=1)
+        self.assertGreater(body["retry_after_seconds"], 290)
+
+
 class GuideTests(_StateDir):
     @staticmethod
     def _flat(text: str) -> str:
@@ -522,7 +543,11 @@ class GuideSurfaceTests(_StateDir):
         self.assertEqual(resource.mimeType, "text/markdown")
         self.assertEqual(read.contents[0].text, GUIDE)
         self.assertFalse(tool.isError)
-        self.assertEqual(json.loads(_text(tool)), {"guide": GUIDE})
+        body = json.loads(_text(tool))
+        self.assertEqual(body["guide"], GUIDE)
+        self.assertEqual((body["status"], body["completeness"]), ("ok", "complete"))
+        self.assertEqual(tool.structuredContent["guide"], GUIDE)
+        self.assertIn("retry_after", body)
         self.assertTrue(GUIDE.startswith("# viajante MCP guide"))
 
     def test_server_instructions_are_the_short_text(self) -> None:
