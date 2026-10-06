@@ -156,6 +156,9 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         observed_at: Optional[str]
         observed_at_basis: Optional[Literal[OBSERVED_BASES]]
 
+    class GuideEnvelope(ToolEnvelope):
+        guide: str
+
     options: dict[str, object] = {}
     if host is not None:
         options = {"host": host, "port": port}
@@ -193,7 +196,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
 
     server = ViajanteServer("viajante", instructions=_HELP, **options)
 
-    def tool(title: str, *, network: bool, envelope: bool = True):
+    def tool(title: str, *, network: bool, envelope: bool = True, returns: type = ToolEnvelope):
         # Every tool only reads; openWorldHint is True only when the tool asks a provider.
         register = server.tool(
             title=title,
@@ -209,7 +212,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
             if envelope:
                 # `from __future__ import annotations` makes the return a string that cannot
                 # see the class above; FastMCP only builds an outputSchema from a real annotation.
-                fn.__annotations__["return"] = ToolEnvelope
+                fn.__annotations__["return"] = returns
             return register(fn)
 
         return decorate
@@ -693,7 +696,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         """
         return dict(await run_lookup_tool(verify_answer_tool, **locals()))
 
-    @tool("Operational guide", network=False)
+    @tool("Operational guide", network=False, returns=GuideEnvelope)
     def get_guide() -> dict:
         """The long operational guide (markdown); the same text as the viajante://guide resource.
 

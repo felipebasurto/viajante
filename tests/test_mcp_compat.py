@@ -46,6 +46,11 @@ from viajante.ratelimit import (
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged import _classify as classify_skiplagged
 
+try:  # a dependency of the mcp extra, absent without it
+    import jsonschema
+except ImportError:
+    jsonschema = None
+
 # test_mcp asserts the SDK is not imported until build_server runs, so import it on demand.
 NEEDS_SDK = unittest.skipIf(importlib.util.find_spec("mcp") is None, "mcp extra missing")
 
@@ -583,6 +588,26 @@ class GuideSurfaceTests(_StateDir):
         self.assertEqual(tool.structuredContent["guide"], GUIDE)
         self.assertIn("retry_after", body)
         self.assertTrue(GUIDE.startswith("# viajante MCP guide"))
+
+    def test_get_guide_schema_declares_the_guide_beside_the_envelope(self) -> None:
+        server = mcp_server.build_server()
+
+        async def calls(session):
+            listed = await session.list_tools()
+            return listed, await session.call_tool("get_guide", {})
+
+        listed, result = _session_call(server, calls)
+        schemas = {tool.name: tool.outputSchema for tool in listed.tools}
+        schema = schemas["get_guide"]
+        self.assertEqual(schema["properties"]["guide"]["type"], "string")
+        self.assertIn("guide", schema["required"])
+        envelope = set(schemas["get_runtime_info"]["properties"])
+        self.assertTrue(envelope <= set(schema["properties"]))
+        self.assertEqual(set(schema["properties"]) - envelope, {"guide"})
+        self.assertNotIn("guide", schemas["get_runtime_info"]["properties"])
+        self.assertIsNone(schemas["lookup_airports"])
+        jsonschema.validate(result.structuredContent, schema)
+        self.assertEqual(result.structuredContent["guide"], GUIDE)
 
     def test_server_instructions_are_the_short_text(self) -> None:
         server = mcp_server.build_server()
