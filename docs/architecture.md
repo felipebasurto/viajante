@@ -168,6 +168,32 @@ Only failures that can succeed on a second try are retried:
   throttling evidence, though it can have another cause. The browser path detects
   `google.com/sorry` right away instead of waiting for result cards.
 
+### 7. One MCP envelope
+
+Every MCP tool except `lookup_airports` returns the same top-level fields,
+stamped in `envelope.py` from the report the handler already built (no second
+code path): `status`, `completeness`, `empty_reason`, `empty_note`, `error_code`,
+`retry_after` / `retry_after_seconds`, `observed_at`, `observed_at_basis`.
+
+The envelope tallies the report's own units (query rows, date rows, explore
+destinations, rooms, hidden-city offers) using their `empty_reason`, error code,
+`rate_limited` and `timeout` flags, so it agrees with the existing counters and
+does not re-derive them. `retry_after` comes only from a cooldown file. Offline
+tools stamp `ok` / `complete` with the rest null.
+
+Contract: `provider_empty` (the provider answered with nothing) is the only empty
+that may be called "no flights/hotels found". `filtered_out` (the provider returned
+rows, viajante's filters removed them all) must say filters removed results.
+`not_loaded` (no usable response) must say the search did not complete.
+`completeness` is `partial` when only some units answered or the search is
+scope-bound, `blocked` when none did.
+
+Machine-readable schema: the mcp SDK (>=1.10) derives `outputSchema` and
+`structuredContent` from a tool's return annotation. The envelope is a pydantic
+model with `extra="allow"`, so tool-specific keys stay in the structured result.
+`lookup_airports` keeps its bare list return and has no output schema (a list
+cannot carry top-level fields without breaking its shape).
+
 ## Dates, flex, explore
 
 - **Dates** asks the calendar RPC for cheapest-per-day prices across a window.

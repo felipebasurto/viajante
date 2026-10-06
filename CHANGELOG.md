@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Every MCP tool except `lookup_airports` returns one typed envelope: `status`, `completeness`, `empty_reason` (`provider_empty`, `filtered_out`, `not_loaded`), `error_code`, `retry_after`, `observed_at` and `observed_at_basis`. It is derived from the existing counters and error codes, and is published as the tool's `outputSchema` / `structuredContent`.
+- `empty_reason` on query, date, and explore rows; `timeout` on typed errors when the cause was a timeout. Both appear only when set.
+- Contract: only `provider_empty` may be called "no flights/hotels found".
+
 ## [1.4.1] - 2026-10-05
 
 ### Added

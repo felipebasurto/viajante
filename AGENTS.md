@@ -31,6 +31,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
+- MCP result envelope (status, completeness, empty_reason, retry_after, observed_at): `src/viajante/envelope.py`
 - Stdio MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
 - Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
@@ -61,6 +62,24 @@ CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hote
 MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
+
+### MCP result envelope
+
+Every MCP tool except `lookup_airports` (a bare list) returns the same top-level
+envelope, stamped by `envelope.py` from the owned payload. Read it first; the
+rest of the payload is unchanged and additive. `status`: `ok`, `no_results`,
+`rate_limited`, `blocked`, `timeout`, `failed`. `completeness`: `complete`,
+`partial` (something answered, something did not, or the search is scope-bound),
+`blocked` (nothing usable). `empty_reason` is set only when `status` is not `ok`:
+`provider_empty`, `filtered_out`, `not_loaded`. Also `error_code`, `retry_after` /
+`retry_after_seconds` (only when a cooldown file names one), and `observed_at`
+with `observed_at_basis` (`fetch` = our fetch clock; `provider` is reserved).
+Offline tools report `ok` / `complete` with the rest null.
+
+Wording rule: only `provider_empty` may be told to a traveller as "no flights/hotels
+found". `filtered_out` means viajante's filters removed rows the provider returned
+(availability is not disproved). `not_loaded` means the search did not complete
+(availability is unknown). Never merge the three.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
 (or other) prompt is caller *input*, not product voice. No implied home hub.
