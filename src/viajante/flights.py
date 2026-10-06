@@ -862,7 +862,10 @@ def _empty_excluded_flight_report(
     return SearchReport(
         searched_at=datetime.now(timezone.utc),
         queries=tuple(
-            QuerySuccess(query=trip, raw_count=0, eligible_count=0, offers=()) for trip in seeds
+            QuerySuccess(
+                query=trip, raw_count=0, eligible_count=0, offers=(), empty_reason="filtered_out"
+            )
+            for trip in seeds
         ),
         currency=currency,
         fetch_ms=0,

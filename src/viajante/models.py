@@ -898,6 +898,9 @@ class StopsCompare:
         return payload
 
 
+EmptyReason = Literal["provider_empty", "filtered_out", "not_loaded"]
+
+
 class SearchErrorCode(str, Enum):
     NO_RESULTS = "no_results"
     REJECTED = "rejected"
@@ -913,11 +916,14 @@ class SearchError:
     code: SearchErrorCode
     message: str
     rate_limited: bool = False
+    timeout: bool = False
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {"code": self.code.value, "message": self.message}
         if self.rate_limited:
             payload["rate_limited"] = True
+        if self.timeout:
+            payload["timeout"] = True
         return payload
 
 
@@ -929,6 +935,7 @@ class QuerySuccess:
     offers: Tuple[FlightOffer, ...]
     google_flights_url: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
+    empty_reason: Optional[EmptyReason] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -936,6 +943,8 @@ class QuerySuccess:
             raise ValueError("raw_count must be >= eligible_count")
         if self.eligible_count < len(self.offers):
             raise ValueError("eligible_count must be >= number of offers")
+        if self.empty_reason is not None and self.offers:
+            raise ValueError("empty_reason applies only to a query with no offers")
 
     def to_dict(self, currency: str) -> Mapping[str, object]:
         query = dict(self.query.to_dict())
@@ -950,6 +959,8 @@ class QuerySuccess:
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.empty_reason is not None:
+            payload["empty_reason"] = self.empty_reason
         return payload
 
 
@@ -1110,8 +1121,11 @@ class DatePriceRow:
     duration_hours: Optional[float] = None
     departure: Optional[str] = None
     arrival: Optional[str] = None
+    empty_reason: Optional[EmptyReason] = None
 
     def __post_init__(self) -> None:
+        if self.empty_reason is not None and self.status != "empty":
+            raise ValueError("empty_reason applies only to empty rows")
         _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
         if (self.status != "ok" or self.price is None) and self.typical is not None:
             raise ValueError("empty/error rows omit typical")
@@ -1151,6 +1165,8 @@ class DatePriceRow:
             payload["departure"] = self.departure
         if self.arrival:
             payload["arrival"] = self.arrival
+        if self.empty_reason is not None:
+            payload["empty_reason"] = self.empty_reason
         payload.update(_typical_json(self.typical, self.vs_typical, self.vs_typical_pct, currency))
         return payload
 
@@ -1421,6 +1437,7 @@ class ExploreReport:
     nearby_label: Optional[str] = None
     coverage: Optional[SearchCoverage] = None
     pricing_errors: Tuple[QueryFailure, ...] = field(default=(), kw_only=True)
+    empty_reason: Optional[EmptyReason] = field(default=None, kw_only=True)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
@@ -1475,6 +1492,8 @@ class ExploreReport:
             payload["error"] = self.error.to_dict()
         if self.pricing_errors:
             payload["pricing_errors"] = [row.to_dict() for row in self.pricing_errors]
+        if self.empty_reason is not None:
+            payload["empty_reason"] = self.empty_reason
         return payload
 
 

@@ -209,6 +209,7 @@ def search_explore(
             fetch_backend="explore",
             fetch_ms=0,
             currency=currency,
+            empty_reason="filtered_out",
         )
     client = source or GoogleFlightsHttpSource(currency=currency, country=country, proxy=proxy)
 
@@ -235,6 +236,7 @@ def search_explore(
         except Exception as exc:
             error = classify_failure(exc)
             places = ()
+        catalog_count = len(places)
         places = tuple(
             place
             for place in places
@@ -279,6 +281,7 @@ def search_explore(
         priced: list[ExploreDestination] = []
         pricing_errors: list[QueryFailure] = []
         succeeded = empty = 0
+        shop_cards = 0
         typical_cache: dict = {}
         for index, (place, shop) in enumerate(zip(chosen, shops, strict=True)):
             if batch is None:
@@ -289,6 +292,8 @@ def search_explore(
             cheapest, compare = _cheapest_shop(
                 cards, shop, filters, baggage_buffer=baggage_buffer, sort=sort
             )
+            if not isinstance(cards, BaseException):
+                shop_cards += len(cards)
             if isinstance(cards, BaseException):
                 pricing_errors.append(QueryFailure(query=shop, error=classify_failure(cards)))
             elif cheapest is None:
@@ -318,6 +323,12 @@ def search_explore(
                 if summary is not None:
                     dest = with_typical_dest(dest, summary.median_price)
             priced.append(dest)
+        empty_reason = None
+        if not priced and error is None and not pricing_errors:
+            if catalog_count == 0 or (places and not shop_cards):
+                empty_reason = "provider_empty"
+            else:
+                empty_reason = "filtered_out"
         return ExploreReport(
             searched_at=datetime.now(timezone.utc),
             origin=code,
@@ -346,6 +357,7 @@ def search_explore(
             ),
             nearby_label=nearby_label,
             currency=currency,
+            empty_reason=empty_reason,
         )
 
     try:
