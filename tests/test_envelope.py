@@ -997,16 +997,13 @@ class SplitEnvelopeTests(unittest.TestCase):
         self.assertEnvelope(payload, status="rate_limited", error_code="blocked")
 
     def test_a_cooldown_carries_the_errors_own_retry_fields(self) -> None:
-        error = _split_error(
-            SearchErrorCode.BLOCKED,
-            f"{NOT_SENT}Google is paused",
-            rate_limited=True,
-            retry_until=time.time() + 300,
-        )
+        error = self._cooldown()
         self.assertIn("retry_after", error)
+        packaged = {"queries": [{"query": {}, "status": "error", "error": error}]}
         for payload in (
             _split_payload([_leg(error)], error=error),
             _split_payload([], error=error),
+            _split_payload([], error=dict(error), packaged_report=packaged),
         ):
             with self.subTest(legs=len(payload["legs"])):
                 stamped = stamp_split(payload)
@@ -1018,9 +1015,37 @@ class SplitEnvelopeTests(unittest.TestCase):
                     error_code="blocked",
                     retry_after=error["retry_after"],
                     retry_after_seconds=error["retry_after_seconds"],
-                    observed_at=SPLIT_AT,
-                    observed_at_basis="fetch",
+                    observed_at=None,
+                    observed_at_basis=None,
                 )
+
+    def test_a_cooldown_beside_an_answered_packaged_search_was_observed(self) -> None:
+        error = self._cooldown()
+        offers = {"query": {}, "status": "ok", "offers": [{}], "raw_count": 1}
+        payload = stamp_split(
+            _split_payload([], error=error, packaged_report={"queries": [offers]})
+        )
+        self.assertEnvelope(
+            payload,
+            status="rate_limited",
+            completeness="partial",
+            observed_at=SPLIT_AT,
+            observed_at_basis="fetch",
+        )
+
+    def test_a_real_429_is_observed_but_a_recorded_cooldown_is_not(self) -> None:
+        real = _split_error(SearchErrorCode.BLOCKED, "HTTP 429", rate_limited=True)
+        payload = stamp_split(_split_payload([_leg(real)], error=real))
+        self.assertEnvelope(payload, status="rate_limited", observed_at=SPLIT_AT)
+
+    @staticmethod
+    def _cooldown() -> dict:
+        return _split_error(
+            SearchErrorCode.BLOCKED,
+            f"{NOT_SENT}Google is paused",
+            rate_limited=True,
+            retry_until=time.time() + 300,
+        )
 
     def test_a_cooldown_after_an_answered_leg_is_partial(self) -> None:
         error = _split_error(
@@ -1070,6 +1095,33 @@ class SplitEnvelopeTests(unittest.TestCase):
             observed_at=SPLIT_AT,
             observed_at_basis="fetch",
         )
+
+    def test_legs_decide_provider_empty_not_the_packaged_baseline(self) -> None:
+        offers = {"query": {}, "status": "ok", "offers": [{}], "raw_count": 1}
+        packaged = {"queries": [offers]}
+        empty = stamp_split(
+            _split_payload([_leg(self.EMPTY), _leg(self.EMPTY)], packaged_report=packaged)
+        )
+        self.assertEnvelope(
+            empty,
+            status="no_results",
+            completeness="complete",
+            empty_reason="provider_empty",
+            error_code="no_results",
+        )
+        one_answered = stamp_split(
+            _split_payload([_leg(), _leg(self.EMPTY)], packaged_report=packaged)
+        )
+        self.assertEnvelope(one_answered, empty_reason="filtered_out", error_code=None)
+
+    def test_a_leg_with_no_raw_cards_is_provider_empty_but_unknown_counts_are_not(self) -> None:
+        empty_leg = {**_leg(offers=0), "raw_count": 0}
+        payload = stamp_split(_split_payload([empty_leg, _leg(self.EMPTY)]))
+        self.assertEnvelope(payload, empty_reason="provider_empty", error_code="no_results")
+        unknown = stamp_split(_split_payload([_leg(offers=0), _leg(self.EMPTY)]))
+        self.assertEnvelope(unknown, empty_reason="filtered_out")
+        removed = stamp_split(_split_payload([{**_leg(offers=0), "raw_count": 4}]))
+        self.assertEnvelope(removed, empty_reason="filtered_out")
 
     def test_an_unreadable_shape_is_refused(self) -> None:
         with self.assertRaises(EnvelopeShapeError):

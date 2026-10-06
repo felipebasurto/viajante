@@ -472,9 +472,11 @@ The MCP result carries the envelope from `stamp_split` (`envelope.py`), which re
 (`partial` when a fetch failed). With none, a failed fetch or a recorded cooldown wins:
 its status (`rate_limited`, `blocked`, `timeout`, `failed`), `not_loaded`, `blocked`
 completeness (`partial` when another fetch answered), and the per-error retry fields.
-Answered legs whose pairings were all rejected are `no_results` / `filtered_out`; only
-provider-empty legs are `provider_empty`. `observed_at` is `searched_at` with basis
-`fetch`. A new split-shaped payload must be readable by `stamp_split`, or the tool fails.
+Answered legs whose pairings were all rejected are `no_results` / `filtered_out`; when
+legs were searched, `provider_empty` (error code `no_results`) needs every leg to be
+provider-empty, whatever the packaged baseline returned. `observed_at` is `searched_at`
+with basis `fetch`, and both are null when nothing reached the provider (every counted
+failure was a recorded cooldown and nothing answered), as in `stamp_search`. A new split-shaped payload must be readable by `stamp_split`, or the tool fails.
 
 ## Trip-planning search strategy
 

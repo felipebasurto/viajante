@@ -875,6 +875,43 @@ class SplitTicketStdioTests(_StateDir):
         self.assertTrue(tool.annotations.openWorldHint)
         self.assertEqual(tool.title, "Split-ticket itineraries")
 
+    def test_a_recorded_cooldown_returns_a_null_observation_over_stdio(self) -> None:
+        """No fake at all: the real search stops on the recorded cooldown before any request."""
+        from jsonschema import validate
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        until = time.time() + 300
+        note_rate_limited(300.0, until - 300, file=GOOGLE_RATE_LIMIT_FILE)
+        params = StdioServerParameters(
+            command=sys.executable, args=["-m", "viajante.mcp_server"], env={**os.environ}
+        )
+
+        async def calls():
+            sdk = _sdk()
+            async with stdio_client(params) as (read, write):
+                async with sdk.ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools = {t.name: t for t in (await session.list_tools()).tools}
+                    result = await session.call_tool(
+                        "search_split_tickets", {"route": SPLIT_ROUTE, "via": "LAX"}
+                    )
+                    return tools["search_split_tickets"], result
+
+        tool, result = asyncio.run(asyncio.wait_for(calls(), 60))
+        self.assertFalse(result.isError, _text(result))
+        structured = result.structuredContent
+        validate(structured, tool.outputSchema)
+        self.assertEqual(
+            (structured["status"], structured["completeness"], structured["empty_reason"]),
+            ("rate_limited", "blocked", "not_loaded"),
+        )
+        self.assertIsNone(structured["observed_at"])
+        self.assertIsNone(structured["observed_at_basis"])
+        self.assertEqual(structured["extra_searches"], 0)
+        self.assertEqual(structured["retry_after"], structured["error"]["retry_after"])
+        self.assertTrue(structured["retry_after_seconds"] >= 1)
+
 
 if __name__ == "__main__":
     unittest.main()

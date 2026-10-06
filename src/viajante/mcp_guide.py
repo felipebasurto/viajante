@@ -165,8 +165,9 @@ Arriving at one airport and leaving from another is rejected as airport_mismatch
 Envelope: any itinerary is ok (partial if a fetch failed). With none, a failed fetch or
 cooldown wins (rate_limited, blocked, timeout, failed; not_loaded; honour retry_after);
 rows that were all rejected are no_results with filtered_out; only provider-empty legs are
-provider_empty. coverage is heuristic: it never proves other hubs or dates have no fare.
-observed_at is the search time.
+provider_empty (every leg empty, whatever the packaged fare was). coverage is heuristic:
+it never proves other hubs or dates have no fare.
+observed_at is the search time, null when every fetch was a recorded cooldown.
 
 ## Local tools
 

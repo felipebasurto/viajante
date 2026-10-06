@@ -575,6 +575,7 @@ def _leg_rows(report: SearchReport, hub: Optional[str] = None) -> list[dict[str,
             row["hub"] = hub
         if isinstance(result, QuerySuccess):
             row["offers"] = len(result.offers)
+            row["raw_count"] = result.raw_count
         elif isinstance(result, QueryFailure):
             row["error"] = dict(result.error.to_dict())
         rows.append(row)
@@ -741,6 +742,8 @@ def search_split_tickets(
         candidates = tuple(
             code for code in candidates if code not in (query.origin, query.destination)
         )
+        if named_via is not None:
+            max_extra = min(max_hubs, len(candidates)) * (3 if allow_overnight else 2)
         if not candidates and error is None:
             stopping = "no_hub_candidates"
         minutes = round(min_connection_hours * 60)

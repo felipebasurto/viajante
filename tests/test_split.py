@@ -1010,7 +1010,7 @@ class SplitMcpTests(unittest.TestCase):
         self.assertEqual(payload["error"]["retry_after"], payload["retry_after"])
         self.assertEqual(payload["error"]["retry_after_seconds"], payload["retry_after_seconds"])
         self.assertIn(payload["retry_after_seconds"], (300, 301))
-        self.assertEqual(payload["observed_at_basis"], "fetch")
+        self.assertEqual((payload["observed_at"], payload["observed_at_basis"]), (None, None))
 
     def test_a_failed_second_ticket_leg_is_a_partial_ok_or_the_failure(self) -> None:
         table = _hub_table()
@@ -1036,6 +1036,68 @@ class SplitMcpTests(unittest.TestCase):
             (payload["status"], payload["empty_reason"], payload["error_code"]),
             ("no_results", "provider_empty", "no_results"),
         )
+
+    def _call_unseeded(self, fake: FakeSearch, **kwargs):
+        """The handler path with no injected packaged report: the fake answers that query too."""
+        real = search_split_tickets
+        with patch(
+            "viajante.mcp_handlers.search_split_tickets",
+            side_effect=lambda query, **kw: real(query, search=fake, **kw),
+        ):
+            return search_split_tickets_tool(ROUTE, via="LAX", **kwargs)
+
+    def _packaged_row(self) -> dict:
+        return {("JFK", "NRT", DAY): _packaged_via("LAX").queries[0].offers}
+
+    def test_the_packaged_fare_does_not_make_empty_legs_filtered_out(self) -> None:
+        payload = self._call_unseeded(FakeSearch(self._packaged_row()))
+        self.assertEqual(payload["itineraries"], [])
+        self.assertEqual(
+            (payload["status"], payload["empty_reason"], payload["error_code"]),
+            ("no_results", "provider_empty", "no_results"),
+        )
+        self.assertEqual(payload["completeness"], "complete")
+        self.assertEqual(payload["observed_at"], payload["searched_at"])
+
+    def test_one_answered_leg_and_one_empty_leg_is_filtered_out(self) -> None:
+        table = self._packaged_row()
+        table[("JFK", "LAX", DAY)] = _hub_table()[("JFK", "LAX", DAY)]
+        payload = self._call_unseeded(FakeSearch(table))
+        self.assertEqual(
+            (payload["status"], payload["empty_reason"]), ("no_results", "filtered_out")
+        )
+
+    def test_a_cooldown_only_search_observed_nothing(self) -> None:
+        now = time.time()
+        state = {"at": now, "until": now + 300, "cooldown_s": 300.0}
+        cooled = {("JFK", "NRT", DAY): _rate_limited_failure(None)}
+        fake = FakeSearch(cooled)
+        with patch("viajante.split.rate_limit_status", return_value=state):
+            payload = self._call_unseeded(fake)
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["empty_reason"]),
+            ("rate_limited", "blocked", "not_loaded"),
+        )
+        self.assertEqual((payload["observed_at"], payload["observed_at_basis"]), (None, None))
+        self.assertEqual(fake.calls, [[("JFK", "NRT", DAY)]])
+
+    def test_the_extra_search_cap_counts_only_named_via_airports_that_can_be_tried(self) -> None:
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            max_hubs=5,
+            search=FakeSearch(_hub_table()),
+        )
+        self.assertEqual(report.max_extra_searches, 2)
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX", "JFK", "NRT"],
+            allow_overnight=True,
+            search=FakeSearch(_hub_table()),
+        )
+        self.assertEqual(report.max_extra_searches, 3)
 
     def test_hub_split_over_the_tool_and_ledger_owns_the_savings(self) -> None:
         payload, split = self._call(ROUTE, FakeSearch(_hub_table()), via="lax", max_hubs=2)

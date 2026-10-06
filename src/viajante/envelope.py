@@ -321,11 +321,17 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
             seen.add(key)
         _error(error, tally, "google")
 
+    leg_empty = 0  # legs the provider answered with nothing at all
     for row in legs:
-        if isinstance(row.get("error"), Mapping):
-            count(row["error"])
+        error = row.get("error")
+        if isinstance(error, Mapping):
+            count(error)
+            leg_empty += error.get("code") == "no_results"
         elif row.get("offers"):
             tally.usable += 1
+        elif row.get("raw_count") == 0:
+            tally.provider_empty += 1
+            leg_empty += 1
         else:
             tally.filtered_out += 1
     packaged = payload.get("packaged_report")
@@ -347,7 +353,12 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
         status, empty_reason = worst, "not_loaded"
     else:
         status = "no_results"
-        only_provider = tally.provider_empty and not (tally.usable or tally.filtered_out)
+        # The packaged fare is a baseline, not a pairing input: when legs were searched
+        # they alone decide whether the provider had nothing to pair.
+        if legs:
+            only_provider = leg_empty == len(legs)
+        else:
+            only_provider = tally.provider_empty and not (tally.usable or tally.filtered_out)
         empty_reason = "provider_empty" if only_provider else "filtered_out"
     if failures:
         completeness = "partial" if itineraries or answered else "blocked"
@@ -358,7 +369,12 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
         error_code = next(
             (code for reason, code in tally.empty_codes if reason == empty_reason), None
         )
+    if error_code is None and empty_reason == "provider_empty":
+        error_code = "no_results"
     retry_after, retry_after_seconds = _retry_after(tally, now)
+    # Nothing was observed when every counted failure was a recorded cooldown and nothing answered.
+    units = answered + len(failures)
+    observed = payload.get("searched_at") if (not units or units > tally.unsent) else None
     payload.update(
         status=status,
         completeness=completeness,
@@ -367,8 +383,8 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
         error_code=error_code,
         retry_after=retry_after,
         retry_after_seconds=retry_after_seconds,
-        observed_at=payload.get("searched_at"),
-        observed_at_basis="fetch",
+        observed_at=observed,
+        observed_at_basis="fetch" if observed else None,
     )
     return payload
 

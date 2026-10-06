@@ -638,6 +638,8 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         via is a comma-separated list of up to 5 connection airports to try;
         unnamed, hubs are the layover airports seen in the packaged results. It stops at a
         recorded rate limit (rate_limited true): do not retry.
+        Currency is currency or inferred from a named origin's owned country. If
+        unknown, ask.
         Every itinerary says split_ticket true, connection_protected false, and
         self_transfer true for a hub. A missed connection between tickets is not
         rebooked by either airline and bags may need to be re-checked: tell the
