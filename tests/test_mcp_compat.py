@@ -26,7 +26,6 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from test_split import ROUTE as SPLIT_ROUTE
 from viajante import mcp_server
 from viajante.envelope import EnvelopeShapeError
 from viajante.flights import classify_failure
@@ -805,6 +804,16 @@ class StreamableHttpSessionTests(_StateDir):
         self.assertEqual(_error_body(bad)["field"], "query")
         self.assertIsInstance(bad.content[0], _sdk().TextContent)
 
+
+# The stdio child imports these fixtures by path, so load them the same way here: the file is
+# not a package member under `python -m unittest tests.test_mcp_compat`.
+_SPLIT_FIXTURES = importlib.util.spec_from_file_location(
+    "split_fixtures", Path(__file__).with_name("test_split.py")
+)
+assert _SPLIT_FIXTURES is not None and _SPLIT_FIXTURES.loader is not None
+_split_fixtures = importlib.util.module_from_spec(_SPLIT_FIXTURES)
+_SPLIT_FIXTURES.loader.exec_module(_split_fixtures)
+SPLIT_ROUTE = _split_fixtures.ROUTE
 
 SPLIT_SERVER = """
 import sys
