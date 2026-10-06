@@ -749,7 +749,7 @@ def _raise_if_blocked(
 
 
 def _is_retriable_sweep_failure(exc: BaseException) -> bool:
-    if isinstance(exc, (NoFlightsFound, GoogleFlightsMarkupError, SweepTransportError)):
+    if isinstance(exc, (NoFlightsFound, GoogleFlightsMarkupError)):
         return True
     if isinstance(exc, GoogleFlightsBlocked):
         status = exc.status
@@ -933,7 +933,10 @@ class GoogleFlightsHttpSource:
     def _plan_replay(
         self, client: SweepHttpClient, outcomes: Sequence[object]
     ) -> tuple[SweepHttpClient, list[int]]:
-        """One replay of retriable failures; any 429 resets TLS and replays those too."""
+        """One replay of retriable failures; a 429 or transport failure resets TLS and replays too.
+
+        Transport failures are replayed only here, as a batch, never again per query.
+        """
         failures = [(i, o) for i, o in enumerate(outcomes) if isinstance(o, BaseException)]
         rate = [
             i
@@ -1184,7 +1187,11 @@ class GoogleFlightsHttpSource:
         except CompactParseMiss:
             raise
         except Exception as exc:
-            raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
+            # No response at all (DNS, reset, timeout) is a transport failure, not drift.
+            raise SweepTransportError(
+                f"Google Flights request failed before any response: {type(exc).__name__}: {exc}",
+                timeout=isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.casefold(),
+            ) from exc
         if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
             _raise_if_blocked(
                 response.status, response.text, response.url, url, response.rate_limit

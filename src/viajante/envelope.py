@@ -156,7 +156,14 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
             if isinstance(row, dict):
                 _date_row(row, tally, provider, calendar=calendar)
     elif isinstance(node.get("destinations"), list):
-        tally.usable += len(node["destinations"])
+        # A catalog destination whose price shop failed or came back empty carries no
+        # price: it proves nothing, so it is unproven rather than usable.
+        priced = sum(
+            isinstance(row, Mapping) and row.get("price") is not None
+            for row in node["destinations"]
+        )
+        tally.usable += priced
+        tally.not_loaded += len(node["destinations"]) - priced
         if not node["destinations"] and not node.get("error") and not node.get("pricing_errors"):
             reason = node.get("empty_reason") or "filtered_out"
             setattr(tally, reason, getattr(tally, reason) + 1)
@@ -228,9 +235,11 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     tally = _Tally()
     _walk(payload, tally)
     if not tally.shapes:
+        # Developer hint: a new provider-backed payload needs its shape in `_walk`; an
+        # offline one uses `stamp_local`. The client only learns the result is unusable.
         raise ValueError(
-            "stamp_search does not recognise this payload shape; "
-            "add its shape to envelope._walk or use stamp_local"
+            "viajante could not read the shape of this search result, so it was not "
+            "returned. This is a viajante bug, not a provider answer; no search outcome is implied."
         )
     failures = tally.failures
     answered = tally.usable + tally.provider_empty + tally.filtered_out

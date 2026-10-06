@@ -80,7 +80,10 @@ Offline tools report `ok` / `complete` with the rest null; `verify_answer`'s
 recorded cooldown answered and nothing was sent. A calendar day with no price is
 `not_loaded` (an unpriced cell does not prove there are no flights), and a
 `partial` completeness. `error_code` only rides with the `empty_reason` it
-supports (never `no_results` beside `filtered_out`). A new search tool must
+supports (never `no_results` beside `filtered_out`); an `ok` / `partial` result
+may still carry the worst failure's `error_code` with `empty_reason` null. An
+explore destination without a price (its shop failed or came back empty) is
+`not_loaded`, not a usable row. A new search tool must
 stamp through `stamp_search`, which raises on a payload shape it does not
 recognise, and must advertise the envelope schema (a test enforces it).
 

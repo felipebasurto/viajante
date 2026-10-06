@@ -189,7 +189,9 @@ rows, viajante's filters removed them all) must say filters removed results.
 unproven, or the search is scope-bound, `blocked` when none did. A calendar day
 that is missing or unpriced is `not_loaded`: the calendar cannot prove there are
 no flights, so only a shop that answered empty is `provider_empty`. `error_code`
-only accompanies the `empty_reason` it supports. `observed_at` is null when a
+only accompanies the `empty_reason` it supports; an `ok` / `partial` result may
+carry the worst failure's code with `empty_reason` null. An explore destination
+without a price is `not_loaded`, never a usable row. `observed_at` is null when a
 recorded cooldown answered every request (nothing was sent). `stamp_search`
 raises on a payload shape it does not recognise instead of defaulting to
 `no_results`. `verify_answer` is local: its `status` follows its verdict.

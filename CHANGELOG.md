@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The MCP extra now requires `mcp>=1.14.1,<2`. Earlier SDKs crash at startup on the server module's postponed annotations (or, on 1.6, serve no output schemas).
 - A calendar day that is missing or unpriced is `not_loaded`, never `provider_empty`; a priced calendar with such gaps is `partial`.
-- A sweep request that raises before any HTTP response (reset, timeout) is a transport failure that replays once on a fresh session and then reports `fetch_failed` (`timeout` when it timed out). It no longer reads as an HTTP 429 rate limit.
+- A sweep request that raises before any HTTP response (reset, timeout) is a transport failure: a multiplexed batch replays once on a fresh session, there is no per-query retry on top, and the result is `fetch_failed` (`timeout` when it timed out). It no longer reads as an HTTP 429 rate limit. Google Hotels multi-post searches replay once too. A calendar/explore POST that raises is `fetch_failed`, not `markup_drift`.
+- An explore destination without a price (its shop failed or came back empty) is `not_loaded`, not a usable row.
 - `verify_answer` reports `status: failed` when its verdict is `ok: false`.
 
 ## [1.4.1] - 2026-10-05

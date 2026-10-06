@@ -96,6 +96,18 @@ class GoogleHotelsSource:
             )
             posts.append(SweepPost(url, body, HOTELS_POST_HEADERS))
         responses = dispatch_posts(client, posts, timeout=self._timeout)
+        lost = [i for i, r in enumerate(responses) if r.status == SWEEP_TRANSPORT_STATUS]
+        if lost:
+            # One replay on a fresh session; a second transport failure is final (the
+            # hotel loop does not retry it).
+            self.reset()
+            client = self._ensure_client()
+            for i, again in zip(
+                lost,
+                dispatch_posts(client, [posts[i] for i in lost], timeout=self._timeout),
+                strict=True,
+            ):
+                responses[i] = again
         first = self._page(responses[0], posts[0].url)
         cards = list(first.cards[:limit])
         for post, response in zip(posts[1:], responses[1:], strict=True):

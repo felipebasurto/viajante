@@ -3,13 +3,14 @@ from __future__ import annotations
 import base64
 import json
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlparse
 
-from viajante.flights import _normalize_offer, classify_failure
+from viajante.dates import search_flex
+from viajante.flights import _normalize_offer, classify_failure, search_flights
 from viajante.google_flights import (
     EMPTY_STATE_TEXT,
     SWEEP_RETRY_BACKOFF_SECONDS,
@@ -2325,6 +2326,46 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
         self.assertTrue(error.timeout)
         self.assertFalse(error.rate_limited)
+
+    def _search_with(self, client, *queries: FlightQuery):
+        def source(**kwargs):
+            return _TrackingHttpSource(client=client, sleep=lambda _s: None)
+
+        with (
+            patch("viajante.flights.GoogleFlightsHttpSource", side_effect=source),
+            patch("viajante.flights.chromium_installed", return_value=False),
+        ):
+            return search_flights(queries, top=3, fetch="sweep", currency="USD")
+
+    def test_one_route_transport_timeout_is_one_attempt_not_retried_per_query(self) -> None:
+        down = SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "Timeout: read timed out")
+        client = _ScriptedMuxClient(((down, down),))
+        report = self._search_with(client, *self._trips(1))
+        error = report.queries[0].error
+        self.assertEqual((client.post_many_calls, len(client.posts)), (1, 2))
+        self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
+        self.assertTrue(error.timeout)
+
+    def test_batch_transport_timeout_replays_the_batch_once_and_never_per_query(self) -> None:
+        down = SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "Timeout: read timed out")
+        client = _ScriptedMuxClient(((down,) * 4, (down,) * 4))
+        report = self._search_with(client, *self._trips(2))
+        self.assertEqual((client.post_many_calls, len(client.posts)), (2, 8))
+        self.assertTrue(all(row.error.timeout for row in report.queries))
+
+    def test_flex_calendar_post_that_raises_is_fetch_failed_not_markup_drift(self) -> None:
+        class _Down:
+            def post(self, url, *, data, headers, timeout):
+                raise ConnectionError("dns failure")
+
+            def close(self) -> None:
+                return None
+
+        source = GoogleFlightsHttpSource(client=_Down(), currency="USD")
+        day = date.today() + timedelta(days=30)
+        report = search_flex("JFK", "LHR", day, 1, source=source, currency="USD")
+        self.assertEqual(report.error.code, SearchErrorCode.FETCH_FAILED)
+        self.assertFalse(report.error.timeout)
 
     def test_a_raising_multiplexed_request_becomes_a_transport_response_not_a_429(self) -> None:
         client = shared_chrome_sweep_client()

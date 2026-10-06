@@ -576,6 +576,36 @@ class DatesFlexExploreTests(_StateDirCase):
             ("blocked", "partial", "not_loaded"),
         )
 
+    def test_explore_unpriced_catalog_dest_after_a_failed_shop_is_not_ok(self) -> None:
+        source = self._ExploreSource(
+            (CompactExplorePlace("LHR", "London", "United Kingdom"),),
+            prices={"LHR": GoogleFlightsBlocked("wall")},
+        )
+        payload = self._explore(source)
+        self.assertEqual(
+            [(d["iata"], d["price"]) for d in payload["destinations"]], [("LHR", None)]
+        )
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["empty_reason"]),
+            ("blocked", "blocked", "not_loaded"),
+        )
+
+    def test_explore_priced_dest_beside_an_unpriced_one_is_ok_and_partial(self) -> None:
+        source = self._ExploreSource(
+            (
+                CompactExplorePlace("LHR", "London", "United Kingdom"),
+                CompactExplorePlace("CDG", "Paris", "France"),
+            ),
+            prices={"LHR": (_card(),), "CDG": GoogleFlightsBlocked("wall")},
+        )
+        payload = self._explore(source)
+        self.assertEqual(
+            (payload["status"], payload["completeness"], payload["empty_reason"]),
+            ("ok", "partial", None),
+        )
+        # An ok/partial result keeps the worst failure's code while empty_reason stays null.
+        self.assertEqual(payload["error_code"], "blocked")
+
     def test_explore_catalog_failure_is_not_loaded(self) -> None:
         payload = self._explore(self._ExploreSource(GoogleFlightsBlocked("wall")))
         self.assertEqual(

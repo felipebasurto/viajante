@@ -1,7 +1,8 @@
 """Stdio MCP smoke: starts viajante-mcp, checks the result envelope end to end.
 
 Run it in an environment that has viajante and an `mcp` SDK installed. CI runs it
-on the minimum supported SDK. Offline: calls only a local tool.
+on the minimum supported SDK. Offline: calls only a local tool. Exits 1 with the
+failed check on stderr.
 """
 
 import asyncio
@@ -25,24 +26,37 @@ ENVELOPE = {
 }
 
 
+def server_command() -> str:
+    beside = Path(sys.executable).with_name("viajante-mcp")
+    return str(beside) if beside.exists() else shutil.which("viajante-mcp") or str(beside)
+
+
+def check(condition: bool, message: str) -> None:
+    if not condition:
+        print(f"mcp smoke failed: {message}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 async def main() -> None:
-    command = shutil.which("viajante-mcp") or str(Path(sys.executable).with_name("viajante-mcp"))
-    async with stdio_client(StdioServerParameters(command=command)) as (read, write):
+    async with stdio_client(StdioServerParameters(command=server_command())) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = (await session.list_tools()).tools
-            assert len(tools) == 16, [tool.name for tool in tools]
+            check(len(tools) == 16, f"expected 16 tools, got {sorted(t.name for t in tools)}")
             bare = {tool.name for tool in tools if tool.outputSchema is None}
-            assert bare == {"lookup_airports"}, bare
+            check(bare == {"lookup_airports"}, f"tools without an output schema: {sorted(bare)}")
             for tool in tools:
                 if tool.outputSchema is not None:
-                    assert ENVELOPE <= set(tool.outputSchema["properties"]), tool.name
+                    missing = ENVELOPE - set(tool.outputSchema["properties"])
+                    check(not missing, f"{tool.name} schema lacks {sorted(missing)}")
             result = await session.call_tool("get_runtime_info", {})
-            assert not result.isError, result
+            check(not result.isError, f"get_runtime_info errored: {result}")
             structured = result.structuredContent
-            assert structured and ENVELOPE <= set(structured), structured
-            assert structured["status"] == "ok", structured
-            assert structured["completeness"] == "complete", structured
+            check(bool(structured), "get_runtime_info returned no structuredContent")
+            missing = ENVELOPE - set(structured)
+            check(not missing, f"structuredContent lacks {sorted(missing)}")
+            check(structured["status"] == "ok", f"status {structured['status']!r}")
+            check(structured["completeness"] == "complete", f"completeness {structured!r}")
     print("mcp smoke ok")
 
 
