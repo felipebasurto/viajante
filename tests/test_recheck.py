@@ -618,6 +618,23 @@ class MalformedInputTests(unittest.TestCase):
             for leak in ("Error:", "NoneType", "object of type", "strip", "not iterable"):
                 self.assertNotIn(leak, str(caught.exception))
 
+    def test_segments_type_is_checked_before_truthiness(self) -> None:
+        good = _previous(OUTBOUND)
+        for bad in ({}, 0, "x", {"a": 1}):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "must be a list"):
+                recheck_offer({**good, "legs": [{"segments": bad}]}, search=_Stub(_report()))
+
+    def test_wrong_typed_wrappers_name_their_own_field(self) -> None:
+        good = _previous(OUTBOUND)
+        for message, offer, kwargs in (
+            ("currency must be an ISO 4217", good, {"currency": 5}),
+            ("currency must be an ISO 4217", {**good, "currency": 5}, {}),
+            ("offer.offer must be an object", {"offer": 5}, {}),
+            ("offer.evidence must be an object", {**good, "evidence": 5}, {}),
+        ):
+            with self.subTest(message), self.assertRaisesRegex(ValueError, message):
+                recheck_offer(offer, search=_Stub(_report()), **kwargs)
+
     def test_a_plain_string_airline_list_is_parsed_not_split_into_letters(self) -> None:
         stub = _Stub(_report(_offer(500.0, (OUTBOUND,))))
         query = {**_query().to_dict(), "airlines": "BA,aa", "alliances": "star-alliance"}
@@ -691,6 +708,42 @@ class McpToolTests(unittest.TestCase):
         other = self._recheck(_previous(OUTBOUND))
         self.assertEqual(other["previous"]["source"], "caller_supplied")
 
+    def test_a_real_id_on_another_itinerary_is_caller_supplied_and_not_owned(self) -> None:
+        evidence.record({"offers": [_previous(OUTBOUND)]})
+        elsewhere = _segment("JFK", "NRT", "19:30", "22:30", "BA999")
+        result = self._recheck(_previous(elsewhere), current=500.0)
+        self.assertEqual(result["previous"]["source"], "caller_supplied")
+        flagged = evidence.verify_answer("Take BA999 JFK-NRT for USD 500")["unowned"]
+        self.assertIn("NRT", [row["text"] for row in flagged])
+
+    def test_another_offers_id_at_the_same_price_does_not_own_this_itinerary(self) -> None:
+        other = _segment("JFK", "LHR", "09:00", "21:00", "BA112")
+        evidence.record({"offers": [_previous(other, evidence_id="gf_other")]})
+        result = self._recheck(_previous(OUTBOUND, evidence_id="gf_other"))
+        self.assertEqual(result["previous"]["source"], "caller_supplied")
+
+    def test_caller_supplied_values_in_differences_are_returned_but_not_recorded(self) -> None:
+        elsewhere = _segment("JFK", "NRT", "19:30", "22:30", "BA999")
+        result = self._recheck(_previous(elsewhere, evidence_id=None), current=500.0)
+        self.assertEqual(result["outcome"], "substituted")
+        route = next(r for r in result["differences"] if r["field"] == "route")
+        self.assertEqual(route["previous"], ["JFK", "NRT"])
+        flagged = [row["text"] for row in evidence.verify_answer("JFK NRT LHR")["unowned"]]
+        self.assertIn("NRT", flagged)
+        self.assertNotIn("LHR", flagged)
+
+    def test_owned_previous_keeps_its_differences_in_the_ledger(self) -> None:
+        previous = _previous(OUTBOUND)
+        evidence.record({"offers": [previous]})
+        retimed = _segment("JFK", "LHR", "20:15", "08:15", "BA178")
+        stub = _Stub(_report(_offer(500.0, (retimed,))))
+        with patch("viajante.recheck.search_flights", stub):
+            result = mcp_handlers.recheck_offer_tool(previous)
+        self.assertEqual(result["previous"]["source"], "search_evidence")
+        self.assertEqual(
+            evidence.verify_answer("It left at 19:30 on 2099-01-15 for JFK LHR")["unowned"], []
+        )
+
     def test_a_hand_typed_previous_price_is_not_recorded_as_owned_evidence(self) -> None:
         result = self._recheck(_previous(OUTBOUND, evidence_id=None))
         self.assertEqual(result["previous"]["source"], "caller_supplied")
@@ -753,6 +806,26 @@ class CliTests(unittest.TestCase):
                 code = main(["recheck-offer", "--offer", str(offer)])
         self.assertEqual(code, 1)
         self.assertIn("error:", err.getvalue())
+
+
+class CliInputTests(unittest.TestCase):
+    def _error(self, name: str, text: str | None) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / name
+            if text is not None:
+                path.write_text(text, encoding="utf-8")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(main(["recheck-offer", "--offer", str(path)]), 1)
+        return err.getvalue()
+
+    def test_bad_json_and_missing_file_get_plain_messages(self) -> None:
+        bad = self._error("offer.json", "{oops")
+        self.assertIn("offer file is not valid JSON (line 1, column 2)", bad)
+        self.assertNotIn("Expecting", bad)
+        missing = self._error("nope.json", None)
+        self.assertIn("offer file not found:", missing)
+        self.assertNotIn("Errno", missing)
 
 
 if __name__ == "__main__":

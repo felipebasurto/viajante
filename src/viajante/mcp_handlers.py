@@ -18,7 +18,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.evidence import failure_codes, owns_offer, record
+from viajante.evidence import failure_codes, find_offer, record
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     month_window,
@@ -847,14 +847,16 @@ def recheck_offer_tool(
             country=country,
             fetch=fetch,
             proxy=proxy,
-            owns=owns_offer,
+            ledger_offer=find_offer,
         )
     )
-    # A previous amount the caller typed by hand is not provider evidence from a search.
-    owned = (
-        result
-        if result["previous"]["source"] == "search_evidence"
-        else {key: value for key, value in result.items() if key != "previous"}
-    )
+    # Caller-typed values are not provider evidence: leave them out of the ledger.
+    owned = dict(result)
+    if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
+        del owned["previous"]
+        owned["differences"] = [
+            {key: value for key, value in row.items() if key != "previous"}
+            for row in result.get("differences", ())  # type: ignore[attr-defined]
+        ]
     record(owned)
     return result

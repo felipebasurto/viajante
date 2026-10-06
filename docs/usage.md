@@ -247,8 +247,9 @@ The offer is matched by itinerary identity: flight numbers plus scheduled
 departure time for every segment. If the offer carries no flight numbers, it
 falls back to carrier plus times and says so (`match_basis: carrier_times`).
 The result is exactly one outcome (`previous.source` is `search_evidence` only when the MCP
-ledger holds an offer with that `evidence_id`, price and currency; otherwise
-`caller_supplied`, and the old amount is not recorded as owned evidence):
+ledger holds an offer with that `evidence_id`, price, currency and the same
+segments; otherwise `caller_supplied`, and the old amount, itinerary and
+`differences[].previous` are returned but not recorded as owned evidence):
 
 | Outcome | Meaning |
 | --- | --- |

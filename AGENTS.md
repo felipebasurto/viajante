@@ -108,10 +108,11 @@ provider `error` (`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_
 multi-city offers came back without every journey and nothing matched): the check did not
 run to an answer, which is not evidence the offer is gone. Never branch a rate limit into
 "gone". `substituted` needs a shared flight number, or the same marketing carrier within
-90 minutes of the original departure. `previous.source` is `search_evidence` only when the offer's `evidence_id`, price and
-currency match an offer a search in this process returned; anything else (hand-typed,
-invented id, edited amount, CLI) is `caller_supplied` and is not recorded in the
-evidence ledger. Re-check
+90 minutes of the original departure. `previous.source` is `search_evidence` only when the offer's `evidence_id`, price,
+currency and itinerary (every segment) match an offer a search in this process returned;
+anything else (hand-typed, invented or borrowed id, edited amount or itinerary, CLI) is
+`caller_supplied`, and its `previous` block and `differences[].previous` values are
+returned but not recorded in the evidence ledger. Re-check
 finalists before presenting them as current. A re-check is still not a booking guarantee: confirm the price on the
 provider's own page.
 

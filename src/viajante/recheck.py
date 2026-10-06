@@ -94,7 +94,7 @@ def _journeys(offer: Mapping[str, Any]) -> tuple[tuple[_Segment, ...], ...]:
     for leg in legs:
         leg = _mapping(leg, role="offer.legs[]")
         rows = leg.get("segments")
-        if rows and (not isinstance(rows, Sequence) or isinstance(rows, str)):
+        if rows is not None and (not isinstance(rows, Sequence) or isinstance(rows, str)):
             raise ValueError("offer.legs[].segments must be a list")
         if rows:
             journeys.append(
@@ -313,8 +313,9 @@ def _stamp(moment: datetime) -> str:
 
 
 def _unwrap(offer: Mapping[str, Any]) -> Mapping[str, Any]:
-    inner = offer.get("offer")
-    return _mapping(inner, role="offer.offer") if isinstance(inner, Mapping) else offer
+    if "offer" not in offer:
+        return offer
+    return _mapping(offer["offer"], role="offer.offer")
 
 
 def _departed(day: date, clock: Optional[str], origin: str, now: datetime) -> bool:
@@ -336,13 +337,13 @@ def _prepare(
     query: Optional[Mapping[str, Any]],
     currency: Optional[str],
     now: datetime,
-    owns: Optional[Callable[[str, float, str], bool]],
+    ledger_offer: Optional[Callable[[str, float, str], Optional[Mapping[str, Any]]]],
 ) -> tuple[Mapping[str, Any], Mapping[str, Any], Trip, float, str, tuple, str, str]:
     row = _mapping(offer, role="offer")
     if query is None and isinstance(row.get("query"), Mapping):
         query = row["query"]
     offer = _unwrap(row)
-    evidence = offer.get("evidence") if isinstance(offer.get("evidence"), Mapping) else {}
+    evidence = _mapping(offer.get("evidence") or {}, role="offer.evidence")
     if evidence.get("source", "google_flights") != "google_flights":
         raise ValueError("recheck_offer only re-checks Google Flights offers")
     query = _mapping(query if query is not None else evidence.get("query"), role="query")
@@ -350,6 +351,9 @@ def _prepare(
     if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
         raise ValueError("offer.price must be a positive number")
     carried = offer.get("currency") or evidence.get("currency")
+    for named in (carried, currency):
+        if named is not None and not isinstance(named, str):
+            raise ValueError("currency must be an ISO 4217 code such as USD")
     if carried is None and currency is None:
         raise ValueError("currency is required: the offer carries none and none is guessed")
     own = normalize_currency(carried or currency)  # type: ignore[arg-type]
@@ -378,7 +382,12 @@ def _prepare(
     if basis == "carrier_times" and not all(s.carrier or s.airline for s in segments):
         raise ValueError("offer segments carry neither flight numbers nor carriers")
     evidence_id = evidence.get("evidence_id")
-    owned = isinstance(evidence_id, str) and owns is not None and owns(evidence_id, price, own)
+    recorded = (
+        ledger_offer(evidence_id, float(price), own)
+        if isinstance(evidence_id, str) and ledger_offer is not None
+        else None
+    )
+    owned = recorded is not None and _journeys(recorded) == old
     source = "search_evidence" if owned else "caller_supplied"
     return offer, evidence, trip, float(price), own, old, basis, source
 
@@ -393,7 +402,7 @@ def recheck_offer(
     proxy: Optional[str] = None,
     search: Optional[Callable[..., SearchReport]] = None,
     now: Optional[datetime] = None,
-    owns: Optional[Callable[[str, float, str], bool]] = None,
+    ledger_offer: Optional[Callable[[str, float, str], Optional[Mapping[str, Any]]]] = None,
 ) -> dict[str, object]:
     """Run one fresh Google Flights search and match ``offer`` by itinerary identity.
 
@@ -401,13 +410,14 @@ def recheck_offer(
     of one: ``price`` and ``legs[].segments[]`` with flight numbers and departure clocks.
     ``query`` defaults to the offer's own evidence query. ``currency`` is the offer's own
     currency: an offer that carries none needs it named, and a name that differs from the
-    one the offer carries is refused (viajante does not convert). ``owns(evidence_id,
-    price, currency)`` says whether a search this process ran returned that offer; only then
-    is the previous amount ``search_evidence``, otherwise it is ``caller_supplied``.
+    one the offer carries is refused (viajante does not convert). ``ledger_offer(evidence_id,
+    price, currency)`` returns the offer a search in this process returned under that id.
+    Only when its itinerary also matches the caller's is ``previous`` ``search_evidence``;
+    otherwise it is ``caller_supplied``.
     """
     try:
         offer, evidence, trip, price, own, old, basis, source = _prepare(
-            offer, query, currency, now or datetime.now(timezone.utc), owns
+            offer, query, currency, now or datetime.now(timezone.utc), ledger_offer
         )
     except (KeyError, TypeError, AttributeError):
         raise ValueError("offer or query has a malformed field; check its types") from None
@@ -589,16 +599,24 @@ def format_recheck(result: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _load(path: str) -> Any:
-    text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
-    return json.loads(text)
+def _load(path: str, role: str) -> Any:
+    try:
+        text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ValueError(f"{role} not found: {path}") from None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{role} is not valid JSON (line {exc.lineno}, column {exc.colno})"
+        ) from None
 
 
 def run_recheck_cli(args: argparse.Namespace) -> int:
     """0: check completed (any outcome). 1: bad input. 2: check could not be completed."""
     try:
-        offer = _mapping(_load(args.offer), role="offer file")
-        query = _mapping(_load(args.query), role="query file") if args.query else None
+        offer = _mapping(_load(args.offer, "offer file"), role="offer file")
+        query = _mapping(_load(args.query, "query file"), role="query file") if args.query else None
         result = recheck_offer(
             offer,
             query=query,
