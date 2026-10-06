@@ -18,7 +18,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.evidence import failure_codes, record
+from viajante.evidence import failure_codes, owns_offer, record
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     month_window,
@@ -841,7 +841,13 @@ def recheck_offer_tool(
     """One fresh search, never the replay cache, under the one-search process lock."""
     result = _with_search_lock(
         lambda: recheck_offer(
-            offer, query=query, currency=currency, country=country, fetch=fetch, proxy=proxy
+            offer,
+            query=query,
+            currency=currency,
+            country=country,
+            fetch=fetch,
+            proxy=proxy,
+            owns=owns_offer,
         )
     )
     # A previous amount the caller typed by hand is not provider evidence from a search.

@@ -94,6 +94,8 @@ def _journeys(offer: Mapping[str, Any]) -> tuple[tuple[_Segment, ...], ...]:
     for leg in legs:
         leg = _mapping(leg, role="offer.legs[]")
         rows = leg.get("segments")
+        if rows and (not isinstance(rows, Sequence) or isinstance(rows, str)):
+            raise ValueError("offer.legs[].segments must be a list")
         if rows:
             journeys.append(
                 tuple(
@@ -221,24 +223,50 @@ def _differences(
     return rows
 
 
+def _place(row: Mapping[str, Any], key: str, role: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{role} is missing {key} (an IATA code)")
+    return value
+
+
+def _whole(query: Mapping[str, Any], key: str) -> int:
+    value = query[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"query.{key} must be a whole number")
+    return value
+
+
+def _list_field(query: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    value = query[key]
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, Sequence) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    kind = "alliance names" if "alliance" in key else "IATA codes"
+    raise ValueError(f"query.{key} must be a list of {kind} or a string")
+
+
 def _trip_from_query(query: Mapping[str, Any]) -> Trip:
     kind = query.get("trip", "one-way")
     for key in (*_SHOP_KEYS, "max_stops"):
         if query.get(key) is None:
             raise ValueError(f"query.{key} is required; it is never guessed")
-    shop: dict[str, Any] = {key: query[key] for key in ("adults", "cabin")}
+    if not isinstance(query["cabin"], str):
+        raise ValueError("query.cabin must be a string")
+    shop: dict[str, Any] = {"adults": _whole(query, "adults"), "cabin": query["cabin"]}
     for key in ("children", "infants_in_seat", "infants_on_lap", "bags", "carry_on"):
         if query.get(key) is not None:
-            shop[key] = query[key]
+            shop[key] = _whole(query, key)
     for key, parse in (
         ("airlines", parse_airline_codes),
         ("exclude_airlines", parse_airline_codes),
         ("alliances", parse_alliances),
         ("exclude_alliances", parse_alliances),
     ):
-        value = query.get(key)
-        if value:
-            shop[key] = parse(value) if isinstance(value, str) else tuple(value)
+        if query.get(key):
+            names = _list_field(query, key)
+            shop[key] = parse(",".join(names)) if isinstance(query[key], str) else names
     stops = query["max_stops"]
 
     def day(value: object, role: str) -> date:
@@ -251,19 +279,23 @@ def _trip_from_query(query: Mapping[str, Any]) -> Trip:
         rows = query.get("legs")
         if not isinstance(rows, Sequence) or isinstance(rows, str):
             raise ValueError("query.legs is required for a multi-city offer")
-        legs = tuple(
-            FlightLeg(
-                row.get("origin"),  # type: ignore[arg-type]
-                row.get("destination"),  # type: ignore[arg-type]
-                day(row.get("departure_date"), "query.legs[].departure_date"),
-                row.get("max_stops", stops),
+        legs = []
+        for index, raw in enumerate(rows):
+            role = f"query.legs[{index}]"
+            row = _mapping(raw, role=role)
+            legs.append(
+                FlightLeg(
+                    _place(row, "origin", role),
+                    _place(row, "destination", role),
+                    day(row.get("departure_date"), f"{role}.departure_date"),
+                    row.get("max_stops", stops),
+                )
             )
-            for row in (_mapping(r, role="query.legs[]") for r in rows)
-        )
+        legs = tuple(legs)
         return MultiCity(legs=legs, **shop)
     head = {
-        "origin": query.get("origin"),
-        "destination": query.get("destination"),
+        "origin": _place(query, "origin", "query"),
+        "destination": _place(query, "destination", "query"),
         "departure_date": day(query.get("departure_date"), "query.departure_date"),
         "max_stops": stops,
     }
@@ -304,6 +336,7 @@ def _prepare(
     query: Optional[Mapping[str, Any]],
     currency: Optional[str],
     now: datetime,
+    owns: Optional[Callable[[str, float, str], bool]],
 ) -> tuple[Mapping[str, Any], Mapping[str, Any], Trip, float, str, tuple, str, str]:
     row = _mapping(offer, role="offer")
     if query is None and isinstance(row.get("query"), Mapping):
@@ -344,7 +377,9 @@ def _prepare(
     basis = "flight_numbers" if all(s.flight_number for s in segments) else "carrier_times"
     if basis == "carrier_times" and not all(s.carrier or s.airline for s in segments):
         raise ValueError("offer segments carry neither flight numbers nor carriers")
-    source = "search_evidence" if evidence.get("evidence_id") else "caller_supplied"
+    evidence_id = evidence.get("evidence_id")
+    owned = isinstance(evidence_id, str) and owns is not None and owns(evidence_id, price, own)
+    source = "search_evidence" if owned else "caller_supplied"
     return offer, evidence, trip, float(price), own, old, basis, source
 
 
@@ -358,6 +393,7 @@ def recheck_offer(
     proxy: Optional[str] = None,
     search: Optional[Callable[..., SearchReport]] = None,
     now: Optional[datetime] = None,
+    owns: Optional[Callable[[str, float, str], bool]] = None,
 ) -> dict[str, object]:
     """Run one fresh Google Flights search and match ``offer`` by itinerary identity.
 
@@ -365,14 +401,16 @@ def recheck_offer(
     of one: ``price`` and ``legs[].segments[]`` with flight numbers and departure clocks.
     ``query`` defaults to the offer's own evidence query. ``currency`` is the offer's own
     currency: an offer that carries none needs it named, and a name that differs from the
-    one the offer carries is refused (viajante does not convert).
+    one the offer carries is refused (viajante does not convert). ``owns(evidence_id,
+    price, currency)`` says whether a search this process ran returned that offer; only then
+    is the previous amount ``search_evidence``, otherwise it is ``caller_supplied``.
     """
     try:
         offer, evidence, trip, price, own, old, basis, source = _prepare(
-            offer, query, currency, now or datetime.now(timezone.utc)
+            offer, query, currency, now or datetime.now(timezone.utc), owns
         )
-    except (KeyError, TypeError, AttributeError) as exc:
-        raise ValueError(f"malformed offer or query: {type(exc).__name__}: {exc}") from None
+    except (KeyError, TypeError, AttributeError):
+        raise ValueError("offer or query has a malformed field; check its types") from None
     segments = [s for journey in old for s in journey]
 
     packaged = len(trip.legs) > 1

@@ -50,6 +50,28 @@ def record(payload: Mapping[str, object]) -> Mapping[str, object]:
     return payload
 
 
+def owns_offer(evidence_id: str, price: float, currency: str) -> bool:
+    """True when a recorded search returned an offer with this id, price and currency."""
+
+    def found(node: object) -> bool:
+        if isinstance(node, Mapping):
+            proof = node.get("evidence")
+            if (
+                isinstance(proof, Mapping)
+                and proof.get("evidence_id") == evidence_id
+                and node.get("price") == price
+                and str(node.get("currency") or proof.get("currency")).upper() == currency
+            ):
+                return True
+            return any(found(child) for child in node.values())
+        if isinstance(node, (list, tuple)):
+            return any(found(child) for child in node)
+        return False
+
+    with _lock:
+        return any(found(payload) for payload in _ledger)
+
+
 def clear() -> None:
     with _lock:
         _ledger.clear()

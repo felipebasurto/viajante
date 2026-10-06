@@ -582,6 +582,42 @@ class MalformedInputTests(unittest.TestCase):
             with self.subTest(label):
                 self._refused(offer)
 
+    def test_errors_name_the_field_and_never_leak_python(self) -> None:
+        good = _previous(OUTBOUND)
+        leg = {"destination": "LHR", "departure_date": FAR.isoformat()}
+        multi = {
+            "trip": "multi",
+            "adults": 1,
+            "cabin": "economy",
+            "max_stops": 1,
+            "legs": [leg, {**leg, "origin": "LHR"}],
+        }
+        cases = {
+            "query.legs[0] is missing origin": _previous(OUTBOUND, query=multi),
+            "query.airlines must be a list of IATA codes or a string": _previous(
+                OUTBOUND, query={**_query().to_dict(), "airlines": 5}
+            ),
+            "query.alliances must be a list of alliance names": _previous(
+                OUTBOUND, query={**_query().to_dict(), "alliances": 5}
+            ),
+            "query.exclude_airlines must be a list": _previous(
+                OUTBOUND, query={**_query().to_dict(), "exclude_airlines": ["BA", 3]}
+            ),
+            "query.adults must be a whole number": _previous(
+                OUTBOUND, query={**_query().to_dict(), "adults": "two"}
+            ),
+            "query is missing origin": _previous(
+                OUTBOUND, query={**_query().to_dict(), "origin": None}
+            ),
+            "segments must be a list": {**good, "legs": [{"segments": 3}]},
+        }
+        for message, offer in cases.items():
+            with self.subTest(message), self.assertRaises(ValueError) as caught:
+                recheck_offer(offer, search=_Stub(_report()))
+            self.assertIn(message, str(caught.exception))
+            for leak in ("Error:", "NoneType", "object of type", "strip", "not iterable"):
+                self.assertNotIn(leak, str(caught.exception))
+
     def test_a_plain_string_airline_list_is_parsed_not_split_into_letters(self) -> None:
         stub = _Stub(_report(_offer(500.0, (OUTBOUND,))))
         query = {**_query().to_dict(), "airlines": "BA,aa", "alliances": "star-alliance"}
@@ -625,21 +661,45 @@ class McpToolTests(unittest.TestCase):
         self.assertNotIn("cached", first)
         self.assertNotIn("cached", second)
 
-    def test_result_is_recorded_so_verify_answer_owns_both_amounts(self) -> None:
-        stub = _Stub(_report(_offer(540.0, (OUTBOUND,))))
+    def _recheck(self, previous: dict, current: float = 540.0) -> dict:
+        stub = _Stub(_report(_offer(current, (OUTBOUND,))))
         with patch("viajante.recheck.search_flights", stub):
-            mcp_handlers.recheck_offer_tool(_previous(OUTBOUND))
-        verdict = evidence.verify_answer("It was USD 500 and is now USD 540.")
-        self.assertTrue(verdict["ok"], verdict)
+            return mcp_handlers.recheck_offer_tool(previous)
+
+    def _unowned(self) -> list[str]:
+        verdict = evidence.verify_answer("It is now USD 540 and was USD 500.")
+        return [row["text"] for row in verdict["unowned"]]
+
+    def test_an_offer_this_process_returned_has_its_previous_price_owned(self) -> None:
+        previous = _previous(OUTBOUND)
+        evidence.record({"offers": [previous]})
+        result = self._recheck(previous)
+        self.assertEqual(result["previous"]["source"], "search_evidence")
+        self.assertEqual(self._unowned(), [])
+
+    def test_an_invented_evidence_id_is_caller_supplied_and_not_owned(self) -> None:
+        result = self._recheck(_previous(OUTBOUND, evidence_id="gf_invented"))
+        self.assertEqual(result["previous"]["source"], "caller_supplied")
+        self.assertEqual(self._unowned(), ["USD 500"])
+
+    def test_a_real_id_with_an_edited_amount_or_currency_is_caller_supplied(self) -> None:
+        evidence.record({"offers": [_previous(OUTBOUND)]})
+        edited = self._recheck(_previous(OUTBOUND, price=480.0))
+        self.assertEqual(edited["previous"]["source"], "caller_supplied")
+        evidence.clear()
+        evidence.record({"offers": [_previous(OUTBOUND, currency="GBP")]})
+        other = self._recheck(_previous(OUTBOUND))
+        self.assertEqual(other["previous"]["source"], "caller_supplied")
 
     def test_a_hand_typed_previous_price_is_not_recorded_as_owned_evidence(self) -> None:
-        stub = _Stub(_report(_offer(540.0, (OUTBOUND,))))
-        with patch("viajante.recheck.search_flights", stub):
-            result = mcp_handlers.recheck_offer_tool(_previous(OUTBOUND, evidence_id=None))
+        result = self._recheck(_previous(OUTBOUND, evidence_id=None))
         self.assertEqual(result["previous"]["source"], "caller_supplied")
         self.assertEqual(result["previous"]["price"], 500.0)
-        verdict = evidence.verify_answer("It is now USD 540 and was USD 500.")
-        self.assertEqual([row["text"] for row in verdict["unowned"]], ["USD 500"])
+        self.assertEqual(self._unowned(), ["USD 500"])
+
+    def test_the_cli_has_no_ledger_so_nothing_there_claims_search_evidence(self) -> None:
+        result = recheck_offer(_previous(OUTBOUND), search=_Stub(_report()))
+        self.assertEqual(result["previous"]["source"], "caller_supplied")
 
     def test_the_one_search_lock_applies(self) -> None:
         stub = _Stub(_report())
