@@ -138,14 +138,20 @@ the currency's minor unit. `vs_packaged` compares with the cheapest returned
 packaged offer quoted in the same currency, and carries a non-negative `savings`
 (`direction: "cheaper"`) or `extra_cost` (`direction: "costlier"`). Results are
 ordered within one currency at a time (the requested currency first, unknown
-totals last), and `--top` applies per currency. A hub connection needs ticket 1
+totals last), and `--top` applies to the requested currency (other groups are capped, below). A hub connection needs ticket 1
 to land at the hub airport and ticket 2 to leave from it (owned segment
 airports), plus an owned arrival and departure time at the hub; other pairs are
 counted in `rejected` (`airport_mismatch`, `airport_unproven`,
 `timing_unproven`, `connection_too_short`), not shown. Mixed one-ways pair the
 cheapest outbound and return where the return departs after the outbound lands
-(`return_before_arrival` is rejected); without an owned arrival date a pair is
-kept only when no proven pair exists and says `timing_proven: false`. A recorded
+(`return_before_arrival` is rejected), one pair per currency. Without an owned
+arrival date a pair is kept only when no proven pair exists in its currency; it
+says `timing_proven: false` with a `timing_note` (the return may leave before
+the outbound lands; not verified), and is counted in `rejected.timing_unproven`
+(dropped) and `coverage.scope.timing_unproven_kept` (kept). Rows in other
+currencies and rows with an unknown total are capped at 3 per group
+(`other_currency_row_cap`); `omitted_other_currency` counts the rest and the CLI
+says so. A recorded
 Google cooldown stops the extra searches and the command exits non-zero. `--save` adds the report under `split_tickets`. The MCP tool is
 `search_split_tickets`; one-way routes use hubs, `trip="rt"` uses mixed one-ways.
 

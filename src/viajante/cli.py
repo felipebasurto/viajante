@@ -101,7 +101,9 @@ from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.split import (
     DEFAULT_MIN_CONNECTION_HOURS,
     DEFAULT_SPLIT_HUBS,
+    MAX_OTHER_CURRENCY_ROWS,
     MAX_SPLIT_HUBS,
+    TIMING_UNPROVEN_NOTE,
     SplitReport,
     search_split_tickets,
     validate_split_request,
@@ -938,9 +940,9 @@ def _print_split_report(report: SplitReport) -> None:
             overnight = ", overnight" if row.overnight_at_hub else ""
             via = f"  via {row.hub}, {_format_connection(row.connection_minutes)} connection"
             via += overnight
-        elif not row.timing_proven:
-            via = "  (return timing not proven: no owned outbound arrival date)"
         print(f"\n  {number}. {total}{via}")
+        if row.kind == "mixed_one_ways" and not row.timing_proven:
+            print(f"     NOTE: {TIMING_UNPROVEN_NOTE}")
         if row.savings is not None and row.packaged is not None:
             amount = format_money(abs(row.savings), row.packaged.currency)
             verb = "saves" if row.savings >= 0 else "costs"
@@ -959,6 +961,11 @@ def _print_split_report(report: SplitReport) -> None:
             )
             print(f"  {_format_offer_row(part.offer, part.currency)}")
             _print_google_flights_url(part.google_flights_url, indent="       ")
+    if report.omitted_other_currency:
+        print(
+            f"\n  {report.omitted_other_currency} more row(s) in other currencies or with an "
+            f"unknown total not shown (at most {MAX_OTHER_CURRENCY_ROWS} per group)"
+        )
     if report.rejected:
         rejected = ", ".join(f"{key.replace('_', ' ')} {n}" for key, n in report.rejected.items())
         print(f"\n  Pairings rejected: {rejected}")

@@ -49,6 +49,8 @@ DEFAULT_SPLIT_HUBS = 3
 # Hard ceiling: each hub costs 2 searches (3 with overnight), so at most 12 extra searches.
 MAX_SPLIT_HUBS = 4
 SPLIT_LEG_TOP = 10
+# Rows kept from each non-requested currency group and from the unknown-total group.
+MAX_OTHER_CURRENCY_ROWS = 3
 
 # ISO 4217 minor units for the currencies that are not 2-digit; used only to round a sum.
 _ZERO_DECIMAL = frozenset("BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX VND VUV XAF XOF XPF".split())
@@ -61,6 +63,10 @@ SELF_TRANSFER_WARNING = (
     "Separate tickets: a missed connection between them is not protected or rebooked by "
     "either airline, bags may need to be collected and checked in again, and each ticket "
     "must be confirmed on its own link."
+)
+TIMING_UNPROVEN_NOTE = (
+    "Return timing is not verified: the outbound has no owned arrival date, so the return "
+    "may leave before the outbound lands."
 )
 MIXED_WARNING = (
     "Two separate one-way tickets: confirm the fare, bags, and changes of each on its own "
@@ -174,6 +180,7 @@ class SplitItinerary:
             payload["overnight_at_hub"] = self.overnight_at_hub
         else:
             payload["timing_proven"] = bool(self.timing_proven)
+            payload["timing_note"] = None if self.timing_proven else TIMING_UNPROVEN_NOTE
         saved = self.savings
         if saved is not None and self.packaged is not None:
             # Both amounts are non-negative so each direction is a verifiable positive number.
@@ -213,6 +220,7 @@ class SplitReport:
     packaged_report: Optional[SearchReport] = None
     rejected: Mapping[str, int] = field(default_factory=dict)
     error: Optional[SearchError] = None
+    omitted_other_currency: int = 0
     schema_version: int = field(init=False, default=1)
 
     @property
@@ -241,6 +249,8 @@ class SplitReport:
             "warning": self.warning,
             "itineraries": [row.to_dict() for row in self.itineraries],
             "rejected": dict(self.rejected),
+            "other_currency_row_cap": MAX_OTHER_CURRENCY_ROWS,
+            "omitted_other_currency": self.omitted_other_currency,
             "legs": [dict(row) for row in self.legs],
             "coverage": self.coverage.to_dict(),
         }
@@ -397,9 +407,10 @@ def pair_mixed_one_ways(
 
     A pair is feasible when the return departs after the outbound lands, both owned. A pair
     that provably overlaps is rejected. A pair without an owned arrival date stays eligible
-    only when nothing proven exists, and is flagged ``timing_proven: false``. Within one
-    currency the cheapest total wins; across currencies the total is unknown and each
-    ticket is the cheapest of its own search.
+    only when nothing proven exists in its currency, and is flagged ``timing_proven: false``
+    with a ``timing_note``. One pair per currency (the cheapest total within it); prices in
+    different currencies never compete. When no currency has both tickets the total is
+    unknown and each ticket is the cheapest of its own search.
     """
     rejected: Counter[str] = Counter()
     if len(report.queries) != 2:
@@ -439,35 +450,52 @@ def pair_mixed_one_ways(
                 timing_proven=known,
             )
             (proven if known else unproven).append(row)
-    pool = proven or unproven
-    if not pool:
-        return [], rejected
-    same = [row for row in pool if row.total is not None]
-    if same:
-        return [min(same, key=lambda row: row.total)], rejected  # type: ignore[arg-type,return-value]
-    return [
-        min(pool, key=lambda row: (row.parts[0].offer.price, row.parts[1].offer.price))
-    ], rejected
+    chosen: list[SplitItinerary] = []
+    for code in dict.fromkeys(row.currency for row in (*proven, *unproven)):
+        if code is None:
+            continue
+        # Per currency: the cheapest proven pair, else the cheapest unproven one.
+        pool = [row for row in proven if row.currency == code] or [
+            row for row in unproven if row.currency == code
+        ]
+        chosen.append(min(pool, key=lambda row: row.total))  # type: ignore[arg-type,return-value]
+    if not chosen:
+        pool = proven or unproven
+        if pool:
+            chosen.append(
+                min(pool, key=lambda row: (row.parts[0].offer.price, row.parts[1].offer.price))
+            )
+    dropped = len(unproven) - sum(row.timing_proven is False for row in chosen)
+    if dropped:
+        rejected["timing_unproven"] = dropped
+    return chosen, rejected
 
 
-def _rank(rows: Sequence[SplitItinerary], currency: str, top: int) -> list[SplitItinerary]:
+def _rank(
+    rows: Sequence[SplitItinerary], currency: str, top: int
+) -> tuple[list[SplitItinerary], int]:
     """Order and cut within one currency at a time; raw sums of different currencies never compare.
 
-    The requested currency comes first, other currencies follow in first-seen order, and
-    rows whose total is unknown (parts in different currencies) come last. ``top`` applies
-    to each group.
+    The requested currency comes first with ``top`` rows. Other currencies follow in
+    first-seen order, then rows whose total is unknown (parts in different currencies);
+    each of those groups is cut to at most ``MAX_OTHER_CURRENCY_ROWS``. Returns the rows
+    and how many other-currency rows were left out.
     """
     groups: dict[Optional[str], list[SplitItinerary]] = {}
     for row in rows:
         groups.setdefault(row.currency, []).append(row)
     order = sorted(groups, key=lambda code: (code is None, code != currency))
     ranked: list[SplitItinerary] = []
+    omitted = 0
     for code in order:
         group = sorted(
             groups[code], key=lambda row: (row.total or 0.0, row.connection_minutes or 0)
         )
-        ranked.extend(group[:top])
-    return ranked
+        limit = top if code == currency else min(top, MAX_OTHER_CURRENCY_ROWS)
+        ranked.extend(group[:limit])
+        if code != currency:
+            omitted += max(len(group) - limit, 0)
+    return ranked, omitted
 
 
 def with_carrier_filters(
@@ -694,7 +722,7 @@ def search_split_tickets(
             for row in itineraries
             if row.currency == currency and row.total is not None and row.total <= query.price_cap
         ]
-    ranked = _rank(itineraries, currency, top)
+    ranked, omitted = _rank(itineraries, currency, top)
     leg_total = len(legs)
     ok = sum(row["status"] == "ok" for row in legs)
     empty = sum(
@@ -702,7 +730,12 @@ def search_split_tickets(
         for row in legs
     )
     coverage = SearchCoverage(
-        scope={"kind": "split_tickets", "mode": kind, "hubs": tried},
+        scope={
+            "kind": "split_tickets",
+            "mode": kind,
+            "hubs": tried,
+            "timing_unproven_kept": sum(row.timing_proven is False for row in ranked),
+        },
         attempted=leg_total,
         succeeded=ok,
         empty=empty,
@@ -734,4 +767,5 @@ def search_split_tickets(
         packaged_report=packaged if packaged_searched else None,
         rejected=dict(rejected),
         error=error,
+        omitted_other_currency=omitted,
     )

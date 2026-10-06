@@ -12,7 +12,7 @@ from typing import Optional, Sequence
 from unittest.mock import patch
 
 from viajante import mcp_handlers
-from viajante.cli import main
+from viajante.cli import _print_split_report, main
 from viajante.evidence import clear, verify_answer
 from viajante.mcp_handlers import search_split_tickets_tool
 from viajante.models import (
@@ -466,6 +466,37 @@ class HubSplitTests(unittest.TestCase):
         )
         self.assertEqual([row.hub for row in capped.itineraries], ["SFO"])
 
+    def test_other_currency_rows_are_capped_and_the_cut_is_reported(self) -> None:
+        table = {
+            ("JFK", "LAX", DAY): [
+                _offer(
+                    100.0 + n,
+                    (_segment("JFK", "LAX", "08:00", "11:30"),),
+                    airline=f"A{n}",
+                    currency="JPY",
+                )
+                for n in range(5)
+            ],
+            ("LAX", "NRT", DAY): [
+                _offer(500.0, (_segment("LAX", "NRT", "15:00", "23:00"),), currency="JPY")
+            ],
+        }
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            top=10,
+            search=FakeSearch(table),
+        )
+        self.assertEqual([row.total for row in report.itineraries], [600.0, 601.0, 602.0])
+        self.assertEqual(report.omitted_other_currency, 2)
+        payload = report.to_dict()
+        self.assertEqual(payload["omitted_other_currency"], 2)
+        self.assertEqual(payload["other_currency_row_cap"], 3)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            _print_split_report(report)
+        self.assertIn("2 more row(s) in other currencies", out.getvalue())
+
     def test_packaged_baseline_ignores_cheaper_offers_in_other_currencies(self) -> None:
         query = FlightQuery("JFK", "NRT", DAY)
         seg = (_segment("JFK", "LAX", "08:00", "11:00"), _segment("LAX", "NRT", "13:00", "20:00"))
@@ -583,12 +614,55 @@ class MixedOneWayTests(unittest.TestCase):
         row = only_unproven.itineraries[0]
         self.assertIs(row.timing_proven, False)
         self.assertIs(row.to_dict()["timing_proven"], False)
+        self.assertIn("not verified", row.to_dict()["timing_note"])
+        self.assertEqual(only_unproven.rejected, {"timing_unproven": 1})
+        self.assertEqual(only_unproven.coverage.scope["timing_unproven_kept"], 1)
+        self.assertIn("timing_unproven_kept", only_unproven.to_dict()["coverage"]["scope"])
         table[("JFK", "NRT", DAY)].append(proven_out)
         both = search_split_tickets(
             RoundTrip("JFK", "NRT", DAY, BACK), packaged=self._packaged(), search=FakeSearch(table)
         )
         self.assertEqual(both.itineraries[0].parts[0].offer.airline, "P")
         self.assertIs(both.itineraries[0].timing_proven, True)
+        self.assertIsNone(both.itineraries[0].to_dict()["timing_note"])
+        self.assertEqual(both.rejected, {"timing_unproven": 2})
+        self.assertEqual(both.coverage.scope["timing_unproven_kept"], 0)
+
+    def test_mixed_pairs_are_chosen_within_one_currency_never_across(self) -> None:
+        def one_way(origin, dest, day, price, currency):
+            return _offer(
+                price, (_segment(origin, dest, "10:00", "14:00", on=day),), currency=currency
+            )
+
+        table = {
+            ("JFK", "NRT", DAY): [
+                one_way("JFK", "NRT", DAY, 300.0, "USD"),
+                one_way("JFK", "NRT", DAY, 150.0, "JPY"),
+            ],
+            ("NRT", "JFK", BACK): [
+                one_way("NRT", "JFK", BACK, 200.0, "USD"),
+                one_way("NRT", "JFK", BACK, 100.0, "JPY"),
+            ],
+        }
+        report = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, BACK), packaged=self._packaged(), search=FakeSearch(table)
+        )
+        self.assertEqual(
+            [(row.currency, row.total) for row in report.itineraries],
+            [("USD", 500.0), ("JPY", 250.0)],
+        )
+        usd, jpy = (row.to_dict() for row in report.itineraries)
+        self.assertEqual(usd["vs_packaged"]["savings"], 200.0)
+        self.assertNotIn("vs_packaged", jpy)
+        only_jpy = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, BACK),
+            packaged=self._packaged(currency="EUR"),
+            search=FakeSearch(
+                {k: [o for o in v if o.evidence.currency == "JPY"] for k, v in table.items()}
+            ),
+        )
+        self.assertEqual([row.currency for row in only_jpy.itineraries], ["JPY"])
+        self.assertNotIn("vs_packaged", only_jpy.itineraries[0].to_dict())
 
     def test_each_direction_in_its_own_currency_leaves_the_total_unknown(self) -> None:
         table = self._table()

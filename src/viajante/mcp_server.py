@@ -577,9 +577,11 @@ def build_server():
         otherwise it is null. vs_packaged is present only when the split and the best
         packaged offer share a currency and carries a non-negative savings (split
         cheaper) or extra_cost (split dearer). Itineraries rank within one currency;
-        top applies per currency. Hub tickets must meet at the hub airport; mixed
-        one-ways need the return to leave after the outbound lands, else
-        timing_proven is false. Nothing is split out of a round-trip price,
+        top applies to the requested currency; other currencies and unknown totals
+        keep at most 3 rows each (omitted_other_currency counts the rest). Hub
+        tickets must meet at the hub airport; mixed one-ways need the return to
+        leave after the outbound lands, else timing_proven is false and
+        timing_note says so. Nothing is split out of a round-trip price,
         estimated, or converted. Not for multi-city.
         """
         return dict(await run_mcp_tool(search_split_tickets_tool, **locals()))

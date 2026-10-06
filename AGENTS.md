@@ -328,11 +328,14 @@ and an owned departure moment; unproven pairs are rejected (`timing_unproven`), 
 under `min_connection_hours` (default 3, a planning default, not provider evidence)
 are rejected (`connection_too_short`). Mixed one-ways pair the cheapest outbound and
 return where the return departs after the outbound lands (`return_before_arrival`);
-without an owned arrival date the pair says `timing_proven: false` and is used only
-when no proven pair exists. `total` is summed only when every part has the same owned
+one pair per currency, cheapest within it. Without an owned arrival date the pair says
+`timing_proven: false` with a `timing_note` and is used only when no proven pair exists
+in its currency (counted in `rejected.timing_unproven` and
+`coverage.scope.timing_unproven_kept`). `total` is summed only when every part has the same owned
 currency, else `null`, and rounded to the currency's minor unit. Ranking and `top`
 work within one currency at a time (requested currency first, unknown totals last);
-raw sums of different currencies never compare. `vs_packaged` compares only against
+raw sums of different currencies never compare. Other-currency groups and the
+unknown-total group keep at most 3 rows each (`omitted_other_currency` counts the rest). `vs_packaged` compares only against
 the cheapest packaged offer in the same currency and carries a non-negative `savings`
 or `extra_cost`. Hubs are named or the layover airports in the packaged segments.
 Extra searches are capped (`MAX_SPLIT_HUBS`, 2 queries per hub, 3 with overnight,
