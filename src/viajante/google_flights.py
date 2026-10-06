@@ -16,7 +16,7 @@ from urllib.parse import urlencode, urljoin
 from selectolax.lexbor import LexborHTMLParser
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
-from viajante.control import checkpoint, wait_for_future
+from viajante.control import SearchDeadline, checkpoint, wait_for_future
 from viajante.google_flights_rpc import (
     SHOPPING_POST_HEADERS,
     CompactCalendarDay,
@@ -372,6 +372,7 @@ class SweepHttpResponse:
     text: str
     url: str = ""
     rate_limit: Optional[str] = None
+    deadline: bool = False
 
 
 # ponytail: Google answers a throttled IP with a data-less wrb.fr envelope, status 13.
@@ -604,19 +605,27 @@ class ChromeSweepClient:
         if len(jobs) == 1:
             job = jobs[0]
             return [self.post(job.url, data=job.data, headers=job.headers, timeout=timeout)]
-        return list(self._submit(self._apost_many(jobs, timeout), timeout=timeout))
+        out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        try:
+            return list(self._submit(self._apost_many(jobs, timeout, out), timeout=timeout))
+        except SearchDeadline:
+            # Responses that already arrived are real; only the rest were not loaded.
+            return [
+                item if item is not None else SweepHttpResponse(0, "", job.url, deadline=True)
+                for item, job in zip(out, jobs, strict=True)
+            ]
 
     async def _apost_many(
         self,
         jobs: Sequence[SweepPost],
         timeout: float,
+        out: list[SweepHttpResponse | None],
     ) -> list[SweepHttpResponse]:
         # Keep HTTP/2 multiplex on the happy path. After HTTP 429, stop
         # feeding this TLS session; unsent jobs are marked 429 so the
         # caller can continue them on a fresh session.
         semaphore = self._asyncio.Semaphore(_SWEEP_STREAMS)
         stop = self._asyncio.Event()
-        out: list[SweepHttpResponse | None] = [None] * len(jobs)
 
         async def _one(index: int, job: SweepPost) -> None:
             if stop.is_set():
@@ -1010,7 +1019,7 @@ class GoogleFlightsHttpSource:
             response = client.post(
                 post.url, data=post.data, headers=post.headers, timeout=self._timeout
             )
-        except CompactParseMiss:
+        except (CompactParseMiss, SearchDeadline):
             raise
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
@@ -1061,6 +1070,8 @@ class GoogleFlightsHttpSource:
         *,
         allow_html_fallback: bool = True,
     ) -> tuple[RawFlightCard, ...]:
+        if response.deadline:
+            raise SearchDeadline()
         if (
             response.status in {403, 429}
             or response.status >= 500
@@ -1093,7 +1104,11 @@ class GoogleFlightsHttpSource:
         self, response: SweepHttpResponse
     ) -> tuple[CompactCalendarDay, ...]:
         """Typical side of a paired POST: a block, HTTP error, or miss is no typical, not a fail."""
-        if response.status >= 400 or looks_blocked(response.text, response.url):
+        if (
+            response.deadline
+            or response.status >= 400
+            or looks_blocked(response.text, response.url)
+        ):
             return ()
         try:
             return parse_calendar_body(response.text)
@@ -1156,7 +1171,7 @@ class GoogleFlightsHttpSource:
             response = client.post(
                 url, data=body, headers=SHOPPING_POST_HEADERS, timeout=self._timeout
             )
-        except CompactParseMiss:
+        except (CompactParseMiss, SearchDeadline):
             raise
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc

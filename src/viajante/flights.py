@@ -15,7 +15,13 @@ from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, 
 from viajante.airports import get_airport, is_known_iata, same_city_iata
 from viajante.browser import chromium_installed, playwright_available
 from viajante.carriers import AIRLINE_CODE_ALIASES
-from viajante.control import checkpoint, controlled, current_control, interruptible_sleep
+from viajante.control import (
+    SearchDeadline,
+    checkpoint,
+    controlled,
+    current_control,
+    interruptible_sleep,
+)
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
@@ -1492,6 +1498,8 @@ def _calendar_summary_from_source(
     start, end = _typical_window(trip.departure_date)
     try:
         days = fetch_calendar(trip, start, end)
+    except SearchDeadline:
+        raise
     except Exception:
         cache[key] = None
         return None
@@ -1670,12 +1678,16 @@ def _attach_missing_legs(
         return offers
     try:
         results = fetch(trip, [selected for _, selected in pending])
+    except SearchDeadline:
+        raise
     except Exception:
         return offers
     if not isinstance(results, Sequence) or len(results) != len(pending):
         return offers
     updated = list(offers)
     for (index, _), result in zip(pending, results, strict=True):
+        if isinstance(result, SearchDeadline):
+            raise result
         if isinstance(result, BaseException):
             continue
         offer = updated[index]
@@ -1886,7 +1898,12 @@ def _run_search(
                         typical_cache[_typical_cache_key(seed)] = _summary_from_calendar_days(
                             days, start, end
                         )
-                    results.append(_stamp(_success_from_cards(trip, cards_or_exc)))
+                    try:
+                        results.append(_stamp(_success_from_cards(trip, cards_or_exc)))
+                    except SearchDeadline as exc:
+                        results.append(
+                            _stamp(QueryFailure(query=trip, error=classify_failure(exc)))
+                        )
                     continue
                 failure = classify_failure(cards_or_exc)
                 if failure.code in NON_RETRIABLE_CODES:

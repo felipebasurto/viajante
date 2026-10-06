@@ -155,7 +155,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
  `deadline_seconds` (flights, dates, flex, explore, hotels, trip; env default
  `VIAJANTE_MCP_DEADLINE_SECONDS`) returns a partial result: unfinished queries
  are error code `deadline` (never `no_results`), `coverage.complete` false,
- `stopping_reason` `deadline`, not cached. MCP text is compact JSON. Core is
+ `stopping_reason` `deadline`, not cached. Never swallow `SearchDeadline` in a
+ broad `except Exception` around a provider call (re-raise it); a cancel is a
+ `BaseException` and passes through. MCP text is compact JSON. Core is
  `src/viajante/control.py`; do not add summary prose to partial results.
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still

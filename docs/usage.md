@@ -332,7 +332,11 @@ stdio and runs one search at a time. See the signatures in
 - **Progress.** If the client sends a `progressToken`, the server emits
   `notifications/progress` while a search runs: `[i/n]` lines become
   `progress=i`, `total=n`; other lines carry a message and a still-increasing
-  value. At most about one notification per 250 ms. No token, no notifications.
+  value. `[i/n]` marks the i-th query starting, not finishing. At most about one
+  notification per 250 ms; the newest held line is flushed when the search
+  finishes, and progress never passes the total. A notification that cannot be
+  sent (including on older SDKs without a message field) never breaks the search.
+  No token, no notifications.
 - **Cancellation.** A client `notifications/cancelled` stops the search between
   queries, retries, and sleeps and frees the search lock, so the next call does
   not hit `a viajante search is already running`. A query already in flight at
@@ -341,13 +345,21 @@ stdio and runs one search at a time. See the signatures in
   no rate-limit cooldown.
 - **Deadline.** `deadline_seconds` (positive, finite) on `search_flights`,
   `search_dates`, `search_flex`, `search_explore`, `search_hotels`, and
-  `search_trip` bounds a call. `VIAJANTE_MCP_DEADLINE_SECONDS` sets a default
-  for the MCP process; an explicit argument wins. On expiry the payload is
+  `search_trip` bounds a call and must be a number (a string or boolean is
+  rejected). `VIAJANTE_MCP_DEADLINE_SECONDS` sets a default for the MCP process,
+  is validated at startup (the server exits with a clear error if it is not a
+  positive number), and an explicit argument wins. On expiry the payload is
   partial: queries that finished keep their rows, the rest are errors with
   `error.code` `deadline`, `coverage.complete` is `false`, and
   `coverage.stopping_reason` is `"deadline"`. An unfinished query is not proof of
-  no availability. Deadline results are not cached. A sweep batch is one request
-  group, so it cannot be split mid-flight.
+  no availability. Deadline results are not cached, and neither is any result that
+  used up its whole deadline. A deadline inside a follow-up call (for example the
+  return leg of a round trip) makes that query a `deadline` row; it is never
+  reported as a complete result with fewer legs. Hotel payloads carry a
+  `coverage` object only when a deadline cut them. When several routes share one
+  multiplexed request, responses that had already arrived are kept and only the
+  rest are `deadline`; a response still in flight is not interrupted until it
+  returns or the deadline cuts the wait.
 - **Output.** MCP text is compact JSON (no indentation); keys are unchanged.
 
 

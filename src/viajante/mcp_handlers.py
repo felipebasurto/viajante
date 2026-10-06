@@ -101,7 +101,11 @@ def _cached(fn):
         if hit is not None and now - hit[0] < CACHE_SECONDS:
             return _owned({**hit[1], "cached": True})
         result = fn(*args, **kwargs)
-        if not failure_codes(result):
+        deadline = kwargs.get("deadline_seconds")
+        # ponytail: a result that took the whole deadline may have degraded a step quietly,
+        # so it is never replayed; a complete result just under the deadline is cached.
+        ran_out = deadline is not None and time.monotonic() - now >= deadline
+        if not ran_out and not failure_codes(result):
             for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
                 del _CACHE[stale]
             _CACHE[key] = (now, result)

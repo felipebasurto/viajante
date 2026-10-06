@@ -1323,6 +1323,8 @@ class FlexSearchReport:
             expected = (self.end_date - self.start_date).days + 1
             codes = [row.error.code if row.error else None for row in self.days]
             cut = _deadline_stop(codes + [self.error.code if self.error else None])
+            # A shop cut by the deadline is one more unit that was attempted and failed.
+            shop_cut = self.error is not None and self.error.code == SearchErrorCode.DEADLINE
             coverage_complete = (
                 cut is None and len({row.departure_date for row in self.days}) == expected
             )
@@ -1336,10 +1338,10 @@ class FlexSearchReport:
                         "from": self.start_date.isoformat(),
                         "to": self.end_date.isoformat(),
                     },
-                    attempted=len(self.days),
+                    attempted=len(self.days) + shop_cut,
                     succeeded=succeeded,
                     empty=empty,
-                    failed=failed,
+                    failed=failed + shop_cut,
                     complete=coverage_complete,
                     stopping_reason=(
                         "completed_scope"

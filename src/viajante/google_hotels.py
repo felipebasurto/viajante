@@ -6,6 +6,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Optional
 
+from viajante.control import SearchDeadline
 from viajante.google_flights import (
     COOLDOWN_UNCHECKED,
     NOT_SENT,
@@ -115,6 +116,8 @@ class GoogleHotelsSource:
 
     @staticmethod
     def _page(response: SweepHttpResponse, url: str) -> HotelPage:
+        if response.deadline:
+            raise SearchDeadline()
         advice = response.rate_limit
         if advice and response.status < 400:
             # A data-less RPC status 13 envelope: the cooldown is already recorded.
