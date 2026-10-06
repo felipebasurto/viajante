@@ -17,7 +17,10 @@ That split explains most design choices:
 
 - **Evidence, not a verdict.** Every offer keeps the raw provider text next to
   the parsed number. Results are ordered, not ranked into advice. There is no
-  "best deal" line to parrot. The agent reads price, duration, stops, layover
+  "best deal" line to parrot. The optional `recommendation` block is a
+  transparent shortlist, not a verdict: its score dimensions and weights are
+  published, and every highlight or trade-off restates a returned field (or
+  says the field is unknown). The agent reads price, duration, stops, layover
   cities, clocks, rating, review count, and coordinates, and says *why*.
 - **Primitives that compose.** `search_dates` (cheapest week), `search_flex`
   (±N days), `search_explore` (where can I go), `search_flights` (shop one
@@ -149,6 +152,10 @@ clock; keep the top N. Then it stamps:
   selected outbound slices.
 - `evidence` / `completeness`: when and how each offer was fetched, and what
   is still unknown.
+- `recommendation` (`recommend.py`): see "Recommendation and shortlist" in
+  [usage](usage.md). It is built from the same parsed cards before the
+  requirement filters, so a relaxation can be reported; it never changes
+  `offers`.
 
 ### 6. Failures are typed
 

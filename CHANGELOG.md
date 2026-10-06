@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Flight results carry an additive `recommendation` block per successful query (`search_flights`, `search_trip`, and the CLI). It holds one recommended offer plus a shortlist of up to three genuinely different offers (different stop count or departure slot), labelled `recommended`, `cheapest`, `fastest`, `*_distinct`, or `alternative`. Each entry has `highlights` and `tradeoffs` written only from fields the provider returned; a missing field is worded as unknown ("Checked bag fee unknown", "Fare rules (refund, change) not shown").
+- The recommendation respects the named hard requirements (`max_stops`, `depart_window`, `depart_after`, `arrive_before`, `max_duration`, `bags`, `carry_on`). When no offer meets all of them it relaxes the fewest, breaking ties in a fixed documented order, and reports them in `relaxed_requirements`; each entry carries per-requirement `met` / `unmet` / `unknown`. Round-trip and multi-city packages are not relaxed.
+- Scoring is deterministic and documented: price 0.5, duration 0.35, stops 0.15, penalties relative to the best offer in the compared pool (capped at 1), unknown values take the worst penalty. Offers with different or unproven currencies are never price-compared or price-scored (`price_comparison`). Near-identical offers (same carrier, clocks, and stop count) are deduplicated to the cheaper fare. Existing `offers`, their order, and the `ranked` sort are unchanged.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added

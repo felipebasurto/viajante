@@ -202,6 +202,12 @@ a browser.
 - **Hotels:** Prices cover the requested stay. Free cancellation is required
   by default, but an applied search filter and a property's stated terms are
   recorded separately. Google ratings use a 0–5 scale; Booking.com uses 0–10.
+- **Recommendation:** Each flights query also carries a `recommendation`
+  block: a pick that respects the requirements you named (and reports any it
+  had to relax), plus up to three genuinely different options with factual
+  `highlights` and `tradeoffs`. The score weights are published, unknown
+  fields are labelled unknown, and prices in different currencies are never
+  compared. It adds to the offer list; it does not replace it.
 - **Price comparisons:** When present, `typical` is a median from the same
   route's date calendar. It is not a historical market average.
 - **Trip totals:** A combined total is shown only when both searches return
