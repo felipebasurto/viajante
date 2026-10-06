@@ -352,9 +352,11 @@ the same roughly 2.7 KB difference.
   `{"error": {"code": "invalid_parameter", "field": "origin", "message": "..."}}`.
   Strip that prefix and parse the remainder only if it starts with `{`; any other
   error text is not from this contract. This covers handler checks and missing or
-  mistyped arguments (`field` is the first failing parameter, `message` lists every
-  failure as `name: reason`). Otherwise `field` is `null` when the message does not
-  name exactly one parameter. A concurrent search is `code: "search_in_progress"`.
+  mistyped arguments, and a top-level argument the tool does not declare (a
+  misspelled filter is rejected, never ignored). `message` lists every failure as
+  `name: reason`. `field` is set only when every failure is on one top-level
+  parameter; otherwise it is `null`, as it is when a handler message does not name
+  exactly one parameter. A concurrent search is `code: "search_in_progress"`.
   The `message` of a handler check is the same sentence earlier versions raised.
 - **Rate limits.** A rate-limited search error keeps `rate_limited: true` and its
   message, and adds `retry_after` (ISO 8601 UTC) and `retry_after_seconds` (integer)

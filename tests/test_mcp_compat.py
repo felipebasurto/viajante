@@ -317,14 +317,43 @@ class InvalidParameterTests(_StateDir):
                 self.assertNotIn("input_value", text)
                 self.assertNotIn("errors.pydantic.dev", text)
 
-    def test_several_bad_arguments_are_listed_and_the_first_is_the_field(self) -> None:
+    def test_several_bad_arguments_are_listed_and_field_needs_a_single_parameter(self) -> None:
         async def calls(session):
             return await session.call_tool("search_dates", {"route": "JFK-LHR"})
 
-        result = _session_call(self.server, calls)
-        body = _error_body(result)
-        self.assertEqual(body["field"], "start")
+        body = _error_body(_session_call(self.server, calls))
+        self.assertIsNone(body["field"])
         self.assertIn("start: Field required; end: Field required", body["message"])
+
+        async def same_parameter(session):
+            return await session.call_tool("search_flights", {"routes": [1, 2]})
+
+        body = _error_body(_session_call(self.server, same_parameter))
+        self.assertEqual(body["field"], "routes")
+        self.assertIn("routes.0", body["message"])
+        self.assertIn("routes.1", body["message"])
+
+    def test_unknown_arguments_are_rejected_not_ignored(self) -> None:
+        cases = [
+            (
+                {"routes": ["JFK-LHR:" + FUTURE], "max_stop": 1},
+                "max_stop",
+                "unknown argument: max_stop",
+            ),
+            ({"routes": ["JFK-LHR:" + FUTURE], "max_stop": 1, "tpo": 2}, None, "max_stop, tpo"),
+        ]
+        for args, field, message in cases:
+            with self.subTest(args=args):
+
+                async def calls(session, args=args):
+                    return await session.call_tool("search_flights", args)
+
+                result = _session_call(self.server, calls)
+                self.assertTrue(result.isError)
+                body = _error_body(result)
+                self.assertEqual(body["code"], "invalid_parameter")
+                self.assertEqual(body["field"], field)
+                self.assertIn(message, body["message"])
 
     def test_decode_failures_are_not_blamed_on_the_caller(self) -> None:
         for exc in (

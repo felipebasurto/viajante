@@ -290,7 +290,8 @@ whose text is the SDK's exact `Error executing tool <name>: ` prefix followed by
 `{"error": {"code": "invalid_parameter", "field": <param or null>, "message"}}`;
 clients strip that prefix and parse the rest only if it starts with `{`.
 `search_in_progress` is the busy code. Missing or mistyped arguments (the SDK's
-pydantic check) get the same body, `field` being the first failing parameter. Other
+pydantic check) and undeclared top-level arguments (a misspelled filter) get the same
+body; `field` is set only when every failure is on one top-level parameter. Other
 `field` values are set only when the message names exactly one parameter or quotes
 exactly one parameter's value; never guess it. Decode errors are not blamed on the caller.
 Long guidance lives in `viajante://guide` / `get_guide`; the server instructions

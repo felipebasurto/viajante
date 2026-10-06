@@ -65,8 +65,8 @@ and parse the rest only if it starts with `{`:
 ```
 
 `field` is the parameter the message names, or `null` when it does not single one
-out. Missing or mistyped arguments get the same body (`field` is the first failing
-parameter). A second search while one runs is `code: "search_in_progress"` with the same
+out. Missing, mistyped and undeclared arguments get the same body (`field` is set only
+when every failure is on one parameter). A second search while one runs is `code: "search_in_progress"` with the same
 sentence as before. Rate-limited search errors keep `rate_limited: true` and their
 message, and add `retry_after` (ISO 8601 UTC) and `retry_after_seconds` only while a
 recorded cooldown is running.

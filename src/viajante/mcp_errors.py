@@ -86,9 +86,17 @@ def validation_body(errors: Sequence[Mapping[str, object]]) -> str:
     for error in errors:
         loc = ".".join(str(item) for item in error.get("loc", ()))
         parts.append(f"{loc}: {error.get('msg')}" if loc else str(error.get("msg")))
-    first = errors[0].get("loc") if errors else None
-    field = str(first[0]) if first else None
+    tops = {str(error["loc"][0]) if error.get("loc") else None for error in errors}
+    field = tops.pop() if len(tops) == 1 else None
     return json.dumps(error_body(INVALID_PARAMETER, "; ".join(parts), field))
+
+
+def unknown_arguments_body(unknown: Sequence[str]) -> str:
+    """JSON error body for top-level argument keys the tool does not declare."""
+    message = "unknown argument: " + ", ".join(unknown)
+    return json.dumps(
+        error_body(INVALID_PARAMETER, message, unknown[0] if len(unknown) == 1 else None)
+    )
 
 
 def structured_error(exc: ValueError, params: Mapping[str, object]) -> ValueError:

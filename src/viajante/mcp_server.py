@@ -14,7 +14,7 @@ from typing import Callable, NoReturn, Optional, Sequence, TypeVar
 from viajante.evidence import verify_answer as verify_answer_tool
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
-from viajante.mcp_errors import structured_error, validation_body
+from viajante.mcp_errors import structured_error, unknown_arguments_body, validation_body
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
     compare_awards_tool,
@@ -145,6 +145,20 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         async def call_tool(self, name, arguments):
             # The SDK rejects missing or mistyped arguments before any handler runs, with
             # pydantic text. Give those the same JSON body as a handler's ValueError.
+            # An argument the tool does not declare is a misspelled filter, never ignored.
+            declared = next(
+                (
+                    t.inputSchema.get("properties", {})
+                    for t in await self.list_tools()
+                    if t.name == name
+                ),
+                None,
+            )
+            unknown = sorted(set(arguments or {}) - set(declared)) if declared is not None else []
+            if unknown:
+                raise ValueError(
+                    _TOOL_ERROR_PREFIX.format(name=name) + unknown_arguments_body(unknown)
+                )
             try:
                 return await super().call_tool(name, arguments)
             except Exception as exc:
