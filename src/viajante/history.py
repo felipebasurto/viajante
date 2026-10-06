@@ -14,6 +14,7 @@ are never logged as new observations.
 from __future__ import annotations
 
 import contextlib
+import errno
 import functools
 import hashlib
 import inspect
@@ -116,17 +117,33 @@ def _valid(line: bytes) -> Optional[dict]:
     return row
 
 
+class HistoryReadError(OSError):
+    """The log exists but could not be read. Never the same as an empty history."""
+
+
 def _raw_lines() -> list[bytes]:
+    """Non-empty lines of the log. A missing file is empty; any other read error raises."""
     try:
         data = _path().read_bytes()
-    except OSError:
+    except FileNotFoundError:
         return []
+    except OSError as exc:
+        raise HistoryReadError(exc.errno, exc.strerror, exc.filename) from exc
     return [line for line in data.split(b"\n") if line.strip()]
 
 
-def read_observations() -> list[dict]:
-    """Every readable entry, oldest first. Unreadable lines are skipped one by one."""
-    return [row for row in map(_valid, _raw_lines()) if row is not None]
+def read_observations(*, strict: bool = False) -> list[dict]:
+    """Every readable entry, oldest first. Unparsable lines are skipped one by one.
+
+    An unreadable file reads as empty unless ``strict``, which raises HistoryReadError.
+    """
+    try:
+        lines = _raw_lines()
+    except HistoryReadError:
+        if strict:
+            raise
+        return []
+    return [row for row in map(_valid, lines) if row is not None]
 
 
 def append_observations(entries: Sequence[Mapping[str, Any]]) -> None:
@@ -149,19 +166,26 @@ def append_observations(entries: Sequence[Mapping[str, Any]]) -> None:
     write_bytes_atomic(b"\n".join(kept) + b"\n", _path())
 
 
-def clear_history() -> int:
-    """Delete the log. Returns how many entries it held."""
-    count = len(read_observations())
+def clear_history() -> tuple[int, int]:
+    """Delete the log. Returns (observations, unreadable lines) it held.
+
+    Refuses (HistoryReadError) when the file exists but cannot be read, so it never
+    reports an unseen history as empty.
+    """
+    lines = _raw_lines()
+    valid = sum(_valid(line) is not None for line in lines)
     _path().unlink(missing_ok=True)
-    return count
+    return valid, len(lines) - valid
 
 
 def short_reason(exc: BaseException) -> str:
     """A reason safe to hand to an MCP client: no paths, no temp file names."""
-    if isinstance(exc, PermissionError):
-        return "permission denied writing price history"
     if isinstance(exc, OSError):
-        return f"could not write price history ({exc.strerror or type(exc).__name__})"
+        reading = isinstance(exc, HistoryReadError)
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            return f"permission denied {'accessing' if reading else 'writing'} price history"
+        verb = "access" if reading else "write"
+        return f"could not {verb} price history ({exc.strerror or type(exc).__name__})"
     return f"price history could not be recorded ({type(exc).__name__})"
 
 
@@ -428,7 +452,11 @@ def price_history(
     """Recorded observations and per-series facts. Local read; sends no request."""
     if kind not in (None, "flight", "hotel"):
         raise ValueError("kind must be flight or hotel")
-    stored = read_observations()
+    read_error: Optional[str] = None
+    try:
+        stored = read_observations(strict=True)
+    except HistoryReadError as exc:
+        stored, read_error = [], short_reason(exc)
     matched = select(
         stored,
         kind=kind,
@@ -444,7 +472,13 @@ def price_history(
         "stored_entries": len(stored),
         "series": series(matched, limit=limit),
     }
-    if not matched:
+    if read_error is not None:
+        payload["read_error"] = read_error
+        payload["note"] = (
+            f"The price history file exists but could not be read ({read_error}); "
+            "this is not an empty history and nothing is inferred."
+        )
+    elif not matched:
         payload["note"] = (
             "No recorded observation matches. Recording is off unless "
             f"{ENV_RECORD}=1 is set (or a watch ran); nothing is inferred."

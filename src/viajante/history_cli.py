@@ -117,10 +117,15 @@ def _print_change(change: Mapping[str, Any] | None, currency: str) -> None:
 def run_history(args: argparse.Namespace) -> int:
     if args.clear:
         try:
-            print(f"Cleared {clear_history()} recorded observations.")
+            valid, unreadable = clear_history()
         except OSError as exc:
             print(f"error: could not clear the price history: {exc}", file=sys.stderr)
             return 1
+        noun = "observation" if valid == 1 else "observations"
+        extra = ""
+        if unreadable:
+            extra = f" and {unreadable} unreadable line{'' if unreadable == 1 else 's'}"
+        print(f"Cleared {valid} {noun}{extra}.")
         return 0
     try:
         payload = price_history(
@@ -134,6 +139,9 @@ def run_history(args: argparse.Namespace) -> int:
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if payload.get("read_error"):
+        print(f"error: {payload['note']}", file=sys.stderr)
         return 1
     if not payload["series"]:
         print(payload["note"])

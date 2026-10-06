@@ -282,7 +282,9 @@ observation reports no trend. Never forecast, estimate a missing day, or compare
 across series. `watch_price` / `viajante watch` re-run a saved
 `search_flights` / `search_hotels` argument set only when called: no scheduler,
 no notification, no loop; a cached or rate-limited run records nothing. A
-`proxy` is never stored in a watch. A recording failure must not lose the
+`proxy` is never stored in a watch. Only a missing log is an empty log: any other read error must stop an append
+or `--clear` (the file stays) and be reported, never read as empty history.
+A recording failure must not lose the
 search result; a watch run surfaces it (`recording_error`) instead of claiming no offer. `price_history` may run during a search; `watch_price` is a search.
 
 ## Local stay arithmetic and known limits

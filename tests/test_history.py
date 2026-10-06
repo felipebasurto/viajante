@@ -293,10 +293,78 @@ class ImmutabilityAndBoundsTests(_State):
         self.enable()
         self.record_flights(_flight_report(500.0))
         self.record_flights(_flight_report(510.0, at=T0 + timedelta(days=1)))
-        self.assertEqual(history.clear_history(), 2)
+        self.assertEqual(history.clear_history(), (2, 0))
         self.assertEqual(history.read_observations(), [])
         self.assertFalse((self.state / history.HISTORY_FILE).exists())
-        self.assertEqual(history.clear_history(), 0)
+        self.assertEqual(history.clear_history(), (0, 0))
+
+
+def _is_root() -> bool:
+    return getattr(os, "geteuid", lambda: 0)() == 0
+
+
+@unittest.skipIf(_is_root(), "chmod 000 does not stop root")
+class UnreadableFileTests(_State):
+    def setUp(self) -> None:
+        super().setUp()
+        self.enable()
+        for hours in range(5):
+            self.record_flights(_flight_report(500.0 + hours, at=T0 + timedelta(hours=hours)))
+        self.path = self.state / history.HISTORY_FILE
+        self.before = self.path.read_bytes()
+        self.path.chmod(0)
+        self.addCleanup(self.path.chmod, 0o600)
+
+    def test_append_keeps_the_file_and_reports_the_read_error(self) -> None:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.record_flights(_flight_report(400.0, at=T0 + timedelta(days=1)))
+        self.assertIn("not recorded", err.getvalue())
+        self.path.chmod(0o600)
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+    def test_watch_says_accessing_not_writing(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            result = _watch_once(450.0)
+        self.assertEqual(result["recorded"], 0)
+        self.assertEqual(result["recording_error"], "permission denied accessing price history")
+        self.assertIn("recording failed: permission denied accessing price history", result["note"])
+        self.assertNotIn(str(self.state), json.dumps(result))
+        self.path.chmod(0o600)
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+    def test_reader_does_not_present_it_as_empty_history(self) -> None:
+        payload = history.price_history()
+        self.assertEqual(payload["read_error"], "permission denied accessing price history")
+        self.assertIn("not an empty history", payload["note"])
+        with self.assertRaises(history.HistoryReadError):
+            history.read_observations(strict=True)
+
+    def test_clear_refuses_and_keeps_the_file(self) -> None:
+        with self.assertRaises(history.HistoryReadError):
+            history.clear_history()
+        self.path.chmod(0o600)
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+    def test_cli_history_and_clear_fail_without_touching_the_file(self) -> None:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["history"]), 1)
+            self.assertEqual(main(["history", "--clear"]), 1)
+        self.assertIn("could not be read", err.getvalue())
+        self.assertIn("could not clear the price history", err.getvalue())
+        self.path.chmod(0o600)
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+
+def _watch_once(price: float) -> dict:
+    report = _flight_report(price, at=T0 + timedelta(days=2))
+    stub = history.recorded_flights(
+        lambda queries, *, top=3, sort="ranked", baggage_buffer=None, **rest: report
+    )
+    params = {"routes": [f"JFK-LHR:{DEPART.isoformat()}"], "currency": "USD"}
+    with patch("viajante.mcp_handlers.search_flights", stub):
+        return watch.watch_price_tool("nyc-lon", kind="flights", params=params)
 
 
 class TrendTests(_State):
@@ -539,6 +607,14 @@ class CliTests(_State):
         self.record_flights(_flight_report(500.0))
         _, text = self.run_cli("history")
         self.assertIn("Only one observation recorded", text)
+
+    def test_clear_reports_unreadable_lines_it_removes(self) -> None:
+        self.enable()
+        self.record_flights(_flight_report(500.0))
+        path = self.state / history.HISTORY_FILE
+        path.write_bytes(path.read_bytes() + b"\xff broken\n")
+        _, text = self.run_cli("history", "--clear")
+        self.assertIn("Cleared 1 observation and 1 unreadable line.", text)
 
     def test_clear_failure_is_a_clean_error(self) -> None:
         err = io.StringIO()
