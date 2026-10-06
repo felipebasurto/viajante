@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional, Sequence
@@ -403,6 +404,95 @@ class HubSplitTests(unittest.TestCase):
         )
         self.assertEqual(report.itineraries, ())
 
+    def test_tickets_must_meet_at_the_hub_airport(self) -> None:
+        for arrives, departs in (("BUR", "LAX"), ("LAX", "SFO")):
+            table = _hub_table()
+            table[("JFK", "LAX", DAY)] = [
+                _offer(200.0, (_segment("JFK", arrives, "08:00", "11:30"),), airline="A")
+            ]
+            table[("LAX", "NRT", DAY)] = [
+                _offer(500.0, (_segment(departs, "NRT", "15:00", "23:00"),), airline="B")
+            ]
+            report = search_split_tickets(
+                FlightQuery("JFK", "NRT", DAY),
+                packaged=_packaged_via("LAX"),
+                search=FakeSearch(table),
+            )
+            self.assertEqual(report.itineraries, (), (arrives, departs))
+            self.assertEqual(report.rejected, {"airport_mismatch": 1})
+
+    def test_airports_without_owned_segments_are_not_assumed_to_match(self) -> None:
+        table = _hub_table()
+        (bare,) = table[("LAX", "NRT", DAY)]
+        table[("LAX", "NRT", DAY)] = [
+            replace(bare, legs=(RawJourneyLeg(departure="15:00", arrival="23:00"),))
+        ]
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY), packaged=_packaged_via("LAX"), search=FakeSearch(table)
+        )
+        self.assertEqual(report.itineraries, ())
+        self.assertEqual(report.rejected, {"airport_unproven": 1})
+
+    def test_ranking_never_compares_raw_totals_across_currencies(self) -> None:
+        table = {
+            ("JFK", "LAX", DAY): [
+                _offer(100.0, (_segment("JFK", "LAX", "08:00", "11:30"),), currency="JPY")
+            ],
+            ("LAX", "NRT", DAY): [
+                _offer(150.0, (_segment("LAX", "NRT", "15:00", "23:00"),), currency="JPY")
+            ],
+            ("JFK", "SFO", DAY): [
+                _offer(200.0, (_segment("JFK", "SFO", "08:00", "11:30"),), currency="USD")
+            ],
+            ("SFO", "NRT", DAY): [
+                _offer(300.0, (_segment("SFO", "NRT", "15:00", "23:00"),), currency="USD"),
+                _offer(900.0, (_segment("SFO", "NRT", "16:00", "23:50"),), currency="USD"),
+            ],
+        }
+        kwargs = dict(packaged=_packaged_via("LAX"), hubs=["LAX", "SFO"])
+        ranked = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY), top=1, search=FakeSearch(table), **kwargs
+        )
+        self.assertEqual(
+            [(row.hub, row.currency, row.total) for row in ranked.itineraries],
+            [("SFO", "USD", 500.0), ("LAX", "JPY", 250.0)],
+        )
+        self.assertEqual(ranked.itineraries[0].savings, 400.0)
+        self.assertIsNone(ranked.itineraries[1].savings)
+        capped = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY, price_cap=600),
+            search=FakeSearch(table),
+            **kwargs,
+        )
+        self.assertEqual([row.hub for row in capped.itineraries], ["SFO"])
+
+    def test_packaged_baseline_ignores_cheaper_offers_in_other_currencies(self) -> None:
+        query = FlightQuery("JFK", "NRT", DAY)
+        seg = (_segment("JFK", "LAX", "08:00", "11:00"), _segment("LAX", "NRT", "13:00", "20:00"))
+        packaged = _report(
+            [_ok(query, [_offer(90000.0, seg, currency="JPY"), _offer(900.0, seg, currency="USD")])]
+        )
+        report = search_split_tickets(query, packaged=packaged, search=FakeSearch(_hub_table()))
+        self.assertEqual(report.packaged.price, 900.0)
+        self.assertEqual(report.packaged.currency, "USD")
+        self.assertEqual(report.itineraries[0].savings, 200.0)
+
+    def test_totals_are_rounded_to_the_minor_unit(self) -> None:
+        table = _hub_table()
+        table[("JFK", "LAX", DAY)] = [
+            _offer(0.1, (_segment("JFK", "LAX", "08:00", "11:30"),), airline="A")
+        ]
+        table[("LAX", "NRT", DAY)] = [
+            _offer(0.2, (_segment("LAX", "NRT", "15:00", "23:00"),), airline="B")
+        ]
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX", 1.0),
+            search=FakeSearch(table),
+        )
+        self.assertEqual(report.itineraries[0].total, 0.3)
+        self.assertEqual(report.itineraries[0].savings, 0.7)
+
 
 class MixedOneWayTests(unittest.TestCase):
     def _table(self) -> dict:
@@ -446,7 +536,72 @@ class MixedOneWayTests(unittest.TestCase):
             packaged=self._packaged(price=500.0),
             search=FakeSearch(self._table()),
         )
-        self.assertEqual(report.itineraries[0].savings, -30.0)
+        row = report.itineraries[0]
+        self.assertEqual(row.savings, -30.0)
+        comparison = row.to_dict()["vs_packaged"]
+        self.assertEqual(comparison["direction"], "costlier")
+        self.assertEqual(comparison["extra_cost"], 30.0)
+        self.assertNotIn("savings", comparison)
+
+    def test_return_that_leaves_before_the_outbound_lands_is_never_paired(self) -> None:
+        back = DAY + timedelta(days=1)
+        table = {
+            ("JFK", "NRT", DAY): [
+                _offer(300.0, (_segment("JFK", "NRT", "10:00", "15:30", lands=back),)),
+            ],
+            ("NRT", "JFK", back): [
+                _offer(100.0, (_segment("NRT", "JFK", "09:00", "08:00", on=back),), airline="E"),
+                _offer(400.0, (_segment("NRT", "JFK", "18:00", "17:00", on=back),), airline="L"),
+            ],
+        }
+        report = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, back), packaged=self._packaged(), search=FakeSearch(table)
+        )
+        self.assertEqual(report.rejected, {"return_before_arrival": 1})
+        row = report.itineraries[0]
+        self.assertEqual([p.offer.airline for p in row.parts], ["Air", "L"])
+        self.assertEqual(row.total, 700.0)
+        self.assertIs(row.to_dict()["timing_proven"], True)
+
+        table[("NRT", "JFK", back)] = table[("NRT", "JFK", back)][:1]
+        none = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, back), packaged=self._packaged(), search=FakeSearch(table)
+        )
+        self.assertEqual(none.itineraries, ())
+        self.assertEqual(none.rejected, {"return_before_arrival": 1})
+
+    def test_unproven_timing_is_flagged_and_a_proven_pair_wins_over_it(self) -> None:
+        bare = RawSegment(
+            origin="JFK", destination="NRT", departure="10:00", arrival="14:00", departure_date=DAY
+        )
+        proven_out = _offer(320.0, (_segment("JFK", "NRT", "11:00", "15:00"),), airline="P")
+        table = self._table()
+        table[("JFK", "NRT", DAY)] = [_offer(100.0, (bare,), airline="U")]
+        only_unproven = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, BACK), packaged=self._packaged(), search=FakeSearch(table)
+        )
+        row = only_unproven.itineraries[0]
+        self.assertIs(row.timing_proven, False)
+        self.assertIs(row.to_dict()["timing_proven"], False)
+        table[("JFK", "NRT", DAY)].append(proven_out)
+        both = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, BACK), packaged=self._packaged(), search=FakeSearch(table)
+        )
+        self.assertEqual(both.itineraries[0].parts[0].offer.airline, "P")
+        self.assertIs(both.itineraries[0].timing_proven, True)
+
+    def test_each_direction_in_its_own_currency_leaves_the_total_unknown(self) -> None:
+        table = self._table()
+        table[("NRT", "JFK", BACK)] = [
+            _offer(40000.0, (_segment("NRT", "JFK", "12:00", "11:00", on=BACK),), currency="JPY")
+        ]
+        report = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, BACK), packaged=self._packaged(), search=FakeSearch(table)
+        )
+        (row,) = report.itineraries
+        self.assertIsNone(row.total)
+        self.assertEqual([p.currency for p in row.parts], ["USD", "JPY"])
+        self.assertEqual(row.parts[0].offer.price, 280.0)
 
     def test_round_trip_in_another_currency_is_not_compared(self) -> None:
         report = search_split_tickets(
@@ -550,6 +705,21 @@ class SplitCliTests(unittest.TestCase):
         self.assertEqual(data["split_tickets"]["itineraries"][0]["total"], 700.0)
         self.assertIs(data["split_tickets"]["itineraries"][0]["connection_protected"], False)
 
+    def test_a_split_that_stopped_on_the_cooldown_exits_non_zero(self) -> None:
+        state = {"at": 1.0, "until": 4_102_444_800.0, "cooldown_s": 120.0}
+        with patch("viajante.split.rate_limit_status", return_value=state):
+            code, out, _err, _flights, _seen = self._run(["flights", ROUTE, "--split-tickets"])
+        self.assertEqual(code, 3)
+        self.assertIn("ERROR: Not sent", out)
+
+    def test_zero_hubs_is_rejected_not_replaced_by_the_default(self) -> None:
+        code, _out, err, flights, _seen = self._run(
+            ["flights", ROUTE, "--split-tickets", "--split-max-hubs", "0"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("max_hubs", err)
+        flights.assert_not_called()
+
 
 class SplitMcpTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -581,6 +751,20 @@ class SplitMcpTests(unittest.TestCase):
         payload, _split = self._call(RT_ROUTE, fake, trip="rt")
         self.assertEqual(payload["mode"], "mixed_one_ways")
         self.assertEqual(payload["itineraries"][0]["total"], 530.0)
+
+    def test_a_costlier_split_is_verifiable_as_a_positive_extra_cost(self) -> None:
+        fake = FakeSearch(MixedOneWayTests()._table())
+        real = search_split_tickets
+        packaged = MixedOneWayTests()._packaged(price=500.0)
+        with patch(
+            "viajante.mcp_handlers.search_split_tickets",
+            side_effect=lambda query, **kw: real(query, packaged=packaged, search=fake, **kw),
+        ):
+            payload = search_split_tickets_tool(RT_ROUTE, trip="rt")
+        comparison = payload["itineraries"][0]["vs_packaged"]
+        self.assertEqual(comparison["extra_cost"], 30.0)
+        self.assertTrue(verify_answer("The split costs 30 USD more than the round-trip.")["ok"])
+        self.assertFalse(verify_answer("The split costs 35 USD more.")["ok"])
 
     def test_busy_lock_and_bad_input_fail_before_any_search(self) -> None:
         fake = FakeSearch(_hub_table())

@@ -321,17 +321,24 @@ Never a leg price derived from a round-trip price, never an estimated leg, never
 converted. Every itinerary says `split_ticket: true`, `connection_protected: false`,
 and `self_transfer` (true for a hub), and carries each ticket's own offer and
 `google_flights_url`. Say that a missed connection between tickets is not protected
-and bags may need re-checking. A hub connection needs an owned arrival moment (the
-segment `arrival_date` plus clock) and an owned departure moment; unproven pairs are
-rejected (`timing_unproven`), pairs under `min_connection_hours` (default 3, a planning
-default, not provider evidence) are rejected (`connection_too_short`). `total` is
-summed only when every part has the same owned currency, else `null`; `vs_packaged`
-compares only same-currency real quotes against the cheapest returned packaged offer
-and can be negative. Hubs are named or the layover airports in the packaged segments.
+and bags may need re-checking. A hub connection needs ticket 1's last segment to land
+at the hub and ticket 2's first segment to leave from it (`airport_mismatch`,
+`airport_unproven`), an owned arrival moment (the segment `arrival_date` plus clock)
+and an owned departure moment; unproven pairs are rejected (`timing_unproven`), pairs
+under `min_connection_hours` (default 3, a planning default, not provider evidence)
+are rejected (`connection_too_short`). Mixed one-ways pair the cheapest outbound and
+return where the return departs after the outbound lands (`return_before_arrival`);
+without an owned arrival date the pair says `timing_proven: false` and is used only
+when no proven pair exists. `total` is summed only when every part has the same owned
+currency, else `null`, and rounded to the currency's minor unit. Ranking and `top`
+work within one currency at a time (requested currency first, unknown totals last);
+raw sums of different currencies never compare. `vs_packaged` compares only against
+the cheapest packaged offer in the same currency and carries a non-negative `savings`
+or `extra_cost`. Hubs are named or the layover airports in the packaged segments.
 Extra searches are capped (`MAX_SPLIT_HUBS`, 2 queries per hub, 3 with overnight,
 2 for mixed), sequential under the one-search lock, and stop at a recorded Google
-cooldown. Hub splits do not apply to multi-city; `--price-cap` drops splits whose
-total is unknown or above the cap. Ticket queries carry occupancy, cabin, bags and
+cooldown (the CLI then exits non-zero). Hub splits do not apply to multi-city;
+`--price-cap` drops splits whose total is unknown, in another currency, or above the cap. Ticket queries carry occupancy, cabin, bags and
 carrier filters; clock, layover, via, and overnight filters do not apply per ticket.
 
 ## Trip-planning search strategy

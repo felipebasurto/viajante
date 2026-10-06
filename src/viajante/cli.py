@@ -38,7 +38,6 @@ from viajante.flights import (
     FlightSort,
     _clock_minutes,
     _effective_cost,
-    _overlay_carrier_filters,
     as_trips,
     expand_nearby_trips,
     nearby_notes,
@@ -106,6 +105,7 @@ from viajante.split import (
     SplitReport,
     search_split_tickets,
     validate_split_request,
+    with_carrier_filters,
 )
 from viajante.storage import reports_payload, write_json_atomic
 from viajante.trip import (
@@ -852,6 +852,11 @@ def _split_hubs(args: argparse.Namespace) -> Optional[list[str]]:
     return args.split_hubs.split(",") if args.split_hubs else None
 
 
+def _split_max_hubs(args: argparse.Namespace) -> int:
+    named = args.split_max_hubs
+    return DEFAULT_SPLIT_HUBS if named is None else named
+
+
 def _split_min_connection(args: argparse.Namespace) -> float:
     named = args.split_min_connection
     return DEFAULT_MIN_CONNECTION_HOURS if named is None else named
@@ -877,8 +882,8 @@ def _split_query_from_args(
             "--split-tickets takes exactly one one-way route or one --trip rt route "
             "(not --nearby, multi-city, or several routes)"
         )
-    (query,) = _overlay_carrier_filters(
-        queries,
+    query = with_carrier_filters(
+        queries[0],
         airlines=shop["airlines"],  # type: ignore[arg-type]
         exclude_airlines=shop["exclude_airlines"],  # type: ignore[arg-type]
         alliances=shop["alliances"],  # type: ignore[arg-type]
@@ -887,12 +892,12 @@ def _split_query_from_args(
     validate_split_request(
         query,
         hubs=_split_hubs(args),
-        max_hubs=args.split_max_hubs or DEFAULT_SPLIT_HUBS,
+        max_hubs=_split_max_hubs(args),
         min_connection_hours=_split_min_connection(args),
         leg_max_stops=args.split_leg_stops or 0,
         top=args.top,
     )
-    return query  # type: ignore[return-value]
+    return query
 
 
 def _format_connection(minutes: Optional[int]) -> str:
@@ -933,6 +938,8 @@ def _print_split_report(report: SplitReport) -> None:
             overnight = ", overnight" if row.overnight_at_hub else ""
             via = f"  via {row.hub}, {_format_connection(row.connection_minutes)} connection"
             via += overnight
+        elif not row.timing_proven:
+            via = "  (return timing not proven: no owned outbound arrival date)"
         print(f"\n  {number}. {total}{via}")
         if row.savings is not None and row.packaged is not None:
             amount = format_money(abs(row.savings), row.packaged.currency)
@@ -992,7 +999,7 @@ def _run_flights(args: argparse.Namespace) -> int:
                 split_query,
                 packaged=report,
                 hubs=_split_hubs(args),
-                max_hubs=args.split_max_hubs or DEFAULT_SPLIT_HUBS,
+                max_hubs=_split_max_hubs(args),
                 min_connection_hours=_split_min_connection(args),
                 allow_overnight=args.split_overnight,
                 leg_max_stops=args.split_leg_stops or 0,
@@ -1009,7 +1016,10 @@ def _run_flights(args: argparse.Namespace) -> int:
 
     _save(args, report, extra={"split_tickets": split.to_dict()} if split else None)
 
-    return _exit_code(report)
+    code = _exit_code(report)
+    if split is not None and split.error is not None and split.error.rate_limited:
+        return code or 3
+    return code
 
 
 def _run_hotels(args: argparse.Namespace) -> int:

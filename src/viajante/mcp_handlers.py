@@ -28,7 +28,6 @@ from viajante.explore import (
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
-    _overlay_carrier_filters,
     as_trips,
     expand_nearby_trips,
     parse_depart_window,
@@ -63,6 +62,7 @@ from viajante.split import (
     DEFAULT_SPLIT_HUBS,
     search_split_tickets,
     validate_split_request,
+    with_carrier_filters,
 )
 from viajante.stays import plan_stay_blocks, split_stay_costs
 from viajante.storage import reports_payload
@@ -249,19 +249,20 @@ def search_split_tickets_tool(
         carry_on=carry_on,
         price_cap=price_cap,
     )
-    trips = _overlay_carrier_filters(
-        as_trips(plan),
+    trips = as_trips(plan)
+    _reject_past([leg.departure_date for item in trips for leg in item.legs])
+    if len(trips) != 1:
+        raise ValueError("split tickets take one one-way route or one round-trip (trip='rt')")
+    split_query = with_carrier_filters(
+        trips[0],
         airlines=parse_airline_codes(airlines),
         exclude_airlines=parse_airline_codes(exclude_airlines),
         alliances=parse_alliances(alliance),
         exclude_alliances=parse_alliances(exclude_alliance),
     )
-    _reject_past([leg.departure_date for item in trips for leg in item.legs])
-    if len(trips) != 1:
-        raise ValueError("split tickets take one one-way route or one round-trip (trip='rt')")
     hub_codes = parse_via_airports(hubs, role="hub")
     validate_split_request(
-        trips[0],
+        split_query,
         hubs=hub_codes,
         max_hubs=max_hubs,
         min_connection_hours=min_connection_hours,
@@ -270,7 +271,7 @@ def search_split_tickets_tool(
     )
     report = _with_search_lock(
         lambda: search_split_tickets(
-            trips[0],  # type: ignore[arg-type]
+            split_query,
             hubs=hub_codes,
             max_hubs=max_hubs,
             min_connection_hours=min_connection_hours,

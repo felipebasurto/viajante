@@ -133,12 +133,20 @@ rebooked by either airline, and bags may need to be collected and checked in
 again. Confirm each ticket on its own link.
 
 The total is summed only when every ticket has the same currency; otherwise it
-is `null` and the tickets stay listed (nothing converts). `vs_packaged.savings`
-compares with the cheapest returned packaged offer, only in the same currency,
-and is negative when the split costs more. A hub connection needs an owned
-arrival and departure time at the hub; pairs without them or under the minimum
-are counted in `rejected`, not shown. A recorded Google cooldown stops the
-extra searches. `--save` adds the report under `split_tickets`. The MCP tool is
+is `null` and the tickets stay listed (nothing converts). Totals are rounded to
+the currency's minor unit. `vs_packaged` compares with the cheapest returned
+packaged offer quoted in the same currency, and carries a non-negative `savings`
+(`direction: "cheaper"`) or `extra_cost` (`direction: "costlier"`). Results are
+ordered within one currency at a time (the requested currency first, unknown
+totals last), and `--top` applies per currency. A hub connection needs ticket 1
+to land at the hub airport and ticket 2 to leave from it (owned segment
+airports), plus an owned arrival and departure time at the hub; other pairs are
+counted in `rejected` (`airport_mismatch`, `airport_unproven`,
+`timing_unproven`, `connection_too_short`), not shown. Mixed one-ways pair the
+cheapest outbound and return where the return departs after the outbound lands
+(`return_before_arrival` is rejected); without an owned arrival date a pair is
+kept only when no proven pair exists and says `timing_proven: false`. A recorded
+Google cooldown stops the extra searches and the command exits non-zero. `--save` adds the report under `split_tickets`. The MCP tool is
 `search_split_tickets`; one-way routes use hubs, `trip="rt"` uses mixed one-ways.
 
 ## Dates and flexible travel

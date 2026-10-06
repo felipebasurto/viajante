@@ -21,7 +21,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
 
-from viajante.flights import DEFAULT_TOP, parse_code_list, search_flights
+from viajante.flights import (
+    DEFAULT_TOP,
+    _overlay_carrier_filters,
+    parse_code_list,
+    search_flights,
+)
 from viajante.models import (
     FlightOffer,
     FlightQuery,
@@ -45,6 +50,10 @@ DEFAULT_SPLIT_HUBS = 3
 MAX_SPLIT_HUBS = 4
 SPLIT_LEG_TOP = 10
 
+# ISO 4217 minor units for the currencies that are not 2-digit; used only to round a sum.
+_ZERO_DECIMAL = frozenset("BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX VND VUV XAF XOF XPF".split())
+_THREE_DECIMAL = frozenset("BHD IQD JOD KWD LYD OMR TND".split())
+
 SplitKind = Literal["hub", "mixed_one_ways"]
 SearchFn = Callable[..., SearchReport]
 
@@ -57,6 +66,12 @@ MIXED_WARNING = (
     "Two separate one-way tickets: confirm the fare, bags, and changes of each on its own "
     "link; changing or cancelling one does not change the other."
 )
+
+
+def _money(value: float, currency: str) -> float:
+    """Round a sum to the currency's minor unit (0.1 + 0.2 is 0.3, not 0.3000...04)."""
+    digits = 0 if currency in _ZERO_DECIMAL else 3 if currency in _THREE_DECIMAL else 2
+    return round(value, digits)
 
 
 @dataclass(frozen=True)
@@ -112,6 +127,7 @@ class SplitItinerary:
     connection_minutes: Optional[int] = None
     overnight_at_hub: bool = False
     packaged: Optional[PackagedQuote] = None
+    timing_proven: Optional[bool] = None
 
     @property
     def currency(self) -> Optional[str]:
@@ -121,14 +137,21 @@ class SplitItinerary:
     @property
     def total(self) -> Optional[float]:
         """Sum of the parts' fares, only when every part is in one owned currency."""
-        return sum(part.offer.price for part in self.parts) if self.currency else None
+        if self.currency is None:
+            return None
+        return _money(sum(part.offer.price for part in self.parts), self.currency)
 
     @property
     def savings(self) -> Optional[float]:
         """Packaged cheapest minus split total (negative when the split costs more)."""
-        if self.total is None or self.packaged is None or self.packaged.currency != self.currency:
+        if (
+            self.total is None
+            or self.currency is None
+            or self.packaged is None
+            or self.packaged.currency != self.currency
+        ):
             return None
-        return self.packaged.price - self.total
+        return _money(self.packaged.price - self.total, self.currency)
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -149,12 +172,21 @@ class SplitItinerary:
             payload["hub"] = self.hub
             payload["connection_minutes"] = self.connection_minutes
             payload["overnight_at_hub"] = self.overnight_at_hub
-        if self.savings is not None and self.packaged is not None:
-            payload["vs_packaged"] = {
-                "savings": self.savings,
+        else:
+            payload["timing_proven"] = bool(self.timing_proven)
+        saved = self.savings
+        if saved is not None and self.packaged is not None:
+            # Both amounts are non-negative so each direction is a verifiable positive number.
+            comparison: dict[str, object] = {
+                "direction": "cheaper" if saved > 0 else "costlier" if saved < 0 else "same",
                 "currency": self.currency,
                 "packaged": self.packaged.to_dict(),
             }
+            if saved >= 0:
+                comparison["savings"] = saved
+            else:
+                comparison["extra_cost"] = -saved
+            payload["vs_packaged"] = comparison
         return payload
 
 
@@ -248,7 +280,8 @@ def _arrival_at(offer: FlightOffer) -> Optional[datetime]:
     return _at(last.arrival_date, last.arrival)
 
 
-def _packaged_quote(packaged: Optional[SearchReport]) -> Optional[PackagedQuote]:
+def _packaged_quote(packaged: Optional[SearchReport], currency: str) -> Optional[PackagedQuote]:
+    """Cheapest packaged offer quoted in ``currency``; other currencies never compete."""
     if packaged is None:
         return None
     best: Optional[tuple[FlightOffer, str, Optional[str]]] = None
@@ -256,8 +289,10 @@ def _packaged_quote(packaged: Optional[SearchReport]) -> Optional[PackagedQuote]
         if not isinstance(result, QuerySuccess):
             continue
         for offer in result.offers:
+            if _offer_currency(offer, packaged) != currency:
+                continue
             if best is None or offer.price < best[0].price:
-                best = (offer, _offer_currency(offer, packaged), result.google_flights_url)
+                best = (offer, currency, result.google_flights_url)
     if best is None:
         return None
     offer, currency, query_url = best
@@ -281,6 +316,17 @@ def layover_hubs(report: SearchReport, origin: str, destination: str) -> tuple[s
     return tuple(code for code, _count in sorted(seen.items(), key=lambda row: (-row[1], row[0])))
 
 
+def _hub_airport_problem(early: FlightOffer, late: FlightOffer, hub: str) -> Optional[str]:
+    """Why two tickets do not meet at the hub airport (None when both segments name it)."""
+    arrives = early.legs[0].segments[-1].destination if early.legs[0].segments else None
+    departs = late.legs[0].segments[0].origin if late.legs[0].segments else None
+    if not arrives or not departs:
+        return "airport_unproven"
+    if arrives.upper() != hub or departs.upper() != hub:
+        return "airport_mismatch"
+    return None
+
+
 def pair_hub_quotes(
     first: SearchReport,
     hub: str,
@@ -289,8 +335,9 @@ def pair_hub_quotes(
 ) -> tuple[list[SplitItinerary], Counter[str]]:
     """Pair origin->hub quotes (first query) with hub->destination quotes (the rest).
 
-    A pair needs an owned arrival moment and an owned departure moment at the hub and a
-    gap of at least the minimum connection. Anything unproven is rejected, never guessed.
+    Ticket 1 must land at the hub airport and ticket 2 must leave from it (owned segment
+    airports), then an owned arrival moment and departure moment must be at least the
+    minimum connection apart. Anything unproven is rejected, never guessed.
     """
     rejected: Counter[str] = Counter()
     found: list[SplitItinerary] = []
@@ -303,6 +350,10 @@ def pair_hub_quotes(
         for early in leg_one.offers:
             arrives = _arrival_at(early)
             for late in second.offers:
+                problem = _hub_airport_problem(early, late, hub)
+                if problem is not None:
+                    rejected[problem] += 1
+                    continue
                 departs = _departure_at(late, second.query)  # type: ignore[arg-type]
                 if arrives is None or departs is None:
                     rejected["timing_unproven"] += 1
@@ -341,25 +392,101 @@ def pair_hub_quotes(
 
 def pair_mixed_one_ways(
     report: SearchReport, packaged: Optional[PackagedQuote] = None
-) -> Optional[SplitItinerary]:
-    """Cheapest outbound one-way plus cheapest return one-way (two queries in the report)."""
-    parts: list[SplitPart] = []
-    for role, result in zip(("outbound", "return"), report.queries, strict=False):
-        if not isinstance(result, QuerySuccess) or not result.offers:
-            return None
-        offer = min(result.offers, key=lambda row: row.price)
-        parts.append(
-            SplitPart(
-                role,  # type: ignore[arg-type]
-                result.query,  # type: ignore[arg-type]
-                offer,
-                _offer_currency(offer, report),
-                result.google_flights_url,
+) -> tuple[list[SplitItinerary], Counter[str]]:
+    """Cheapest feasible outbound one-way plus return one-way (two queries in the report).
+
+    A pair is feasible when the return departs after the outbound lands, both owned. A pair
+    that provably overlaps is rejected. A pair without an owned arrival date stays eligible
+    only when nothing proven exists, and is flagged ``timing_proven: false``. Within one
+    currency the cheapest total wins; across currencies the total is unknown and each
+    ticket is the cheapest of its own search.
+    """
+    rejected: Counter[str] = Counter()
+    if len(report.queries) != 2:
+        return [], rejected
+    out, back = report.queries
+    if not isinstance(out, QuerySuccess) or not isinstance(back, QuerySuccess):
+        return [], rejected
+    proven: list[SplitItinerary] = []
+    unproven: list[SplitItinerary] = []
+    for early in out.offers:
+        arrives = _arrival_at(early)
+        for late in back.offers:
+            departs = _departure_at(late, back.query)  # type: ignore[arg-type]
+            known = arrives is not None and departs is not None
+            if known and departs <= arrives:  # type: ignore[operator]
+                rejected["return_before_arrival"] += 1
+                continue
+            row = SplitItinerary(
+                kind="mixed_one_ways",
+                parts=(
+                    SplitPart(
+                        "outbound",
+                        out.query,  # type: ignore[arg-type]
+                        early,
+                        _offer_currency(early, report),
+                        out.google_flights_url,
+                    ),
+                    SplitPart(
+                        "return",
+                        back.query,  # type: ignore[arg-type]
+                        late,
+                        _offer_currency(late, report),
+                        back.google_flights_url,
+                    ),
+                ),
+                packaged=packaged,
+                timing_proven=known,
             )
+            (proven if known else unproven).append(row)
+    pool = proven or unproven
+    if not pool:
+        return [], rejected
+    same = [row for row in pool if row.total is not None]
+    if same:
+        return [min(same, key=lambda row: row.total)], rejected  # type: ignore[arg-type,return-value]
+    return [
+        min(pool, key=lambda row: (row.parts[0].offer.price, row.parts[1].offer.price))
+    ], rejected
+
+
+def _rank(rows: Sequence[SplitItinerary], currency: str, top: int) -> list[SplitItinerary]:
+    """Order and cut within one currency at a time; raw sums of different currencies never compare.
+
+    The requested currency comes first, other currencies follow in first-seen order, and
+    rows whose total is unknown (parts in different currencies) come last. ``top`` applies
+    to each group.
+    """
+    groups: dict[Optional[str], list[SplitItinerary]] = {}
+    for row in rows:
+        groups.setdefault(row.currency, []).append(row)
+    order = sorted(groups, key=lambda code: (code is None, code != currency))
+    ranked: list[SplitItinerary] = []
+    for code in order:
+        group = sorted(
+            groups[code], key=lambda row: (row.total or 0.0, row.connection_minutes or 0)
         )
-    if len(parts) != 2:
-        return None
-    return SplitItinerary(kind="mixed_one_ways", parts=tuple(parts), packaged=packaged)
+        ranked.extend(group[:top])
+    return ranked
+
+
+def with_carrier_filters(
+    query: FlightQuery | RoundTrip,
+    *,
+    airlines: Optional[Sequence[str]] = None,
+    exclude_airlines: Optional[Sequence[str]] = None,
+    alliances: Optional[Sequence[str]] = None,
+    exclude_alliances: Optional[Sequence[str]] = None,
+) -> FlightQuery | RoundTrip:
+    """The query with the caller's carrier filters applied to it."""
+    (row,) = _overlay_carrier_filters(
+        (query,),
+        airlines=airlines,
+        exclude_airlines=exclude_airlines,
+        alliances=alliances,
+        exclude_alliances=exclude_alliances,
+    )
+    return row  # type: ignore[return-value]
 
 
 def _leg_rows(report: SearchReport, hub: Optional[str] = None) -> list[dict[str, object]]:
@@ -486,7 +613,7 @@ def search_split_tickets(
     packaged_searched = packaged is None
     if packaged is None:
         packaged = search([query], top=top, **shop)
-    baseline = _packaged_quote(packaged)
+    baseline = _packaged_quote(packaged, currency)
     legs: list[Mapping[str, object]] = []
     itineraries: list[SplitItinerary] = []
     rejected: Counter[str] = Counter()
@@ -517,9 +644,9 @@ def search_split_tickets(
             legs.extend(_leg_rows(report))
             error = _rate_limited([report])
             stopping = "rate_limited" if error else stopping
-            itinerary = pair_mixed_one_ways(report, baseline)
-            if itinerary is not None:
-                itineraries.append(itinerary)
+            found, short = pair_mixed_one_ways(report, baseline)
+            itineraries.extend(found)
+            rejected.update(short)
     else:
         assert isinstance(query, FlightQuery)
         if named_hubs is not None:
@@ -561,12 +688,13 @@ def search_split_tickets(
             stopping = "rate_limited" if error else stopping
 
     if query.price_cap is not None:
+        # The cap is in the quote currency; a total in another currency or unknown cannot prove it.
         itineraries = [
-            row for row in itineraries if row.total is not None and row.total <= query.price_cap
+            row
+            for row in itineraries
+            if row.currency == currency and row.total is not None and row.total <= query.price_cap
         ]
-    itineraries.sort(
-        key=lambda row: (row.total is None, row.total or 0.0, row.connection_minutes or 0)
-    )
+    ranked = _rank(itineraries, currency, top)
     leg_total = len(legs)
     ok = sum(row["status"] == "ok" for row in legs)
     empty = sum(
@@ -589,7 +717,7 @@ def search_split_tickets(
         kind=kind,
         query=query,
         currency=currency,
-        itineraries=tuple(itineraries[:top]),
+        itineraries=tuple(ranked),
         legs=tuple(legs),
         coverage=coverage,
         min_connection_minutes=round(min_connection_hours * 60) if kind == "hub" else None,
