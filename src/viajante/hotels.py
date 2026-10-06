@@ -371,6 +371,7 @@ def _run_search(
                     offers=ranked[:top],
                     resolved_place=page.resolved_place,
                     place_bounds=page.place_bounds,
+                    page_errors=page.page_errors,
                 )
                 break
             except Exception as exc:

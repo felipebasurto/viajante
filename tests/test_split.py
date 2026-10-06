@@ -905,6 +905,60 @@ class MixedOneWayTests(unittest.TestCase):
 
 
 class SplitCliTests(unittest.TestCase):
+    def test_split_rejects_unsupported_filters_before_any_search(self):
+        flags = (
+            ("--arrive-before", "09:00"),
+            ("--depart-after", "10:00"),
+            ("--depart-window", "08:00-10:00"),
+            ("--max-duration", "8"),
+            ("--min-layover", "1"),
+            ("--max-layover", "4"),
+            ("--via", "LAX"),
+            ("--exclude-via", "LAX"),
+            ("--no-overnight", "LAX"),
+            ("--require-overnight", "LAX"),
+            ("--exclude-airports", "LAX"),
+            ("--include-airports", "NRT"),
+            ("--baggage-buffer", "10"),
+        )
+        for flag, value in flags:
+            with self.subTest(flag=flag):
+                code, _out, err, flights, seen = self._run(
+                    ["flights", ROUTE, "--split-tickets", "--split-via", "LAX", flag, value]
+                )
+                self.assertEqual(code, 1)
+                self.assertIn(flag, err)
+                flights.assert_not_called()
+                self.assertEqual(seen, {})
+
+    def test_top_caps_split_output_and_saved_pairings(self):
+        table = _hub_table()
+        second = table[("LAX", "NRT", DAY)][0]
+        table[("LAX", "NRT", DAY)] = [
+            replace(second, airline=f"B{i}", price=second.price + i) for i in range(4)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "out.json"
+            code, out, _err, _flights, seen = self._run(
+                [
+                    "flights",
+                    ROUTE,
+                    "--split-tickets",
+                    "--split-via",
+                    "LAX",
+                    "--top",
+                    "1",
+                    "--save",
+                    str(target),
+                ],
+                split_search=FakeSearch(table),
+            )
+            payload = json.loads(target.read_text())
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["top"], 1)
+        self.assertEqual(len(payload["split_tickets"]["itineraries"]), 1)
+        self.assertNotIn("\n  2.", out)
+
     def _run(self, argv, *, split_search=None):
         packaged = _packaged_via("LAX")
         real = search_split_tickets

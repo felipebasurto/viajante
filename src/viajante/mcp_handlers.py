@@ -1065,4 +1065,9 @@ def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Ma
     # room_rates false stays off the search lock; the server runs it on the lookup worker.
     detail = _with_search_lock(action) if room_rates else action()
     detail["original_quote"]["offer"]["selection_id"] = selection_id
+    quotes = detail.get("room_quotes")
+    if room_rates and quotes and quotes.get("rates") and not failure_codes(quotes):
+        # Only the separate, newly fetched quote is new provider evidence.
+        # Local reads do not renew the original snapshot or ledger.
+        record(quotes)
     return detail

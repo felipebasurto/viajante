@@ -143,9 +143,9 @@ def _segment_match(old: _Segment, new: _Segment, basis: str) -> bool:
         return False
     if old.day and new.day and old.day != new.day:
         return False
-    if old.origin and new.origin and old.origin != new.origin:
+    if old.origin and old.origin != new.origin:
         return False
-    if old.destination and new.destination and old.destination != new.destination:
+    if old.destination and old.destination != new.destination:
         return False
     if old.flight_number is not None:
         return old.flight_number == new.flight_number
@@ -675,7 +675,27 @@ def recheck_offer(
         return _check_failed(out, reason, dict(error.to_dict()))
 
     fresh = [item.to_dict(report.currency) for item in result.offers]
-    complete = [(d, _journeys(d)) for d in fresh if len(d["legs"]) == len(old)]  # type: ignore[arg-type]
+    complete = []
+    for item in fresh:
+        if len(item["legs"]) != len(old):
+            continue
+        journeys = _journeys(item)
+        _, missing = _missing_identity(
+            journeys, basis == "carrier_times", item["legs"], item.get("stops_count")
+        )
+        # Loose matching may use a known nonstop's carrier and clock, but must
+        # not erase airport evidence that the original segments carried.
+        airports_missing = any(s.origin or s.destination for leg in old for s in leg) and any(
+            not s.origin or not s.destination for leg in journeys for s in leg
+        )
+        numbers_missing = any(
+            a.flight_number and not b.flight_number
+            for previous, current in zip(old, journeys, strict=True)
+            if len(previous) == len(current)
+            for a, b in zip(previous, current, strict=True)
+        )
+        if not missing and not airports_missing and not numbers_missing:
+            complete.append((item, journeys))
     if result.eligible_count > len(result.offers):
         out["offers_truncated"] = True
         notes.append(
@@ -721,9 +741,8 @@ def recheck_offer(
             {
                 "code": "incomplete_offers",
                 "message": (
-                    f"{missing} fresh offer(s) came back without every journey (the follow-up "
-                    "search for the next journey failed or was ambiguous), so the original "
-                    "itinerary cannot be ruled out."
+                    f"{missing} fresh offer(s) came back without complete journey or segment "
+                    "identity, so the original itinerary cannot be ruled out."
                 ),
             },
         )

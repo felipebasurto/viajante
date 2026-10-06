@@ -39,6 +39,8 @@ from viajante.models import (
     AppliedHotelFilters,
     HotelPage,
     HotelQuery,
+    SearchError,
+    SearchErrorCode,
 )
 
 HTTP_TIMEOUT_SECONDS = 30
@@ -111,6 +113,7 @@ class GoogleHotelsSource:
                 responses[i] = again
         first = self._page(responses[0], posts[0].url)
         cards = list(first.cards[:limit])
+        page_errors = []
         for post, response in zip(posts[1:], responses[1:], strict=True):
             try:
                 cards.extend(self._page(response, post.url).cards[:limit])
@@ -118,6 +121,12 @@ class GoogleHotelsSource:
                 # The price page already arrived; only the widening page was cut.
                 note_cut()
                 continue
+            except SweepTransportError as exc:
+                page_errors.append(
+                    SearchError(
+                        code=SearchErrorCode.FETCH_FAILED, message=str(exc), timeout=exc.timeout
+                    )
+                )
             except (HotelsBlocked, HotelsParseMiss, EmptyHotelResults, HotelsRejected):
                 continue
         params = hotel_navigation_params(query, currency=self._currency, html_lang=self._html_lang)
@@ -128,6 +137,7 @@ class GoogleHotelsSource:
                 else card
                 for card in cards
             ),
+            page_errors=tuple(page_errors),
             resolved_place=first.resolved_place,
             place_bounds=first.place_bounds,
         )

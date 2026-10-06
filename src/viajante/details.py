@@ -167,7 +167,7 @@ def _city_decision(result, offer):
             raise ValueError(
                 "resolved place differs from the named city; room-rate city is unproven"
             )
-        return location, None
+        return location, point
     if point and len(_near_places(hits, groups, point)) == 1:
         return location, point
     names = ", ".join(sorted({hits[group[0]].iata for group in groups}))

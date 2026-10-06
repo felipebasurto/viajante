@@ -202,6 +202,14 @@ sequentially.
 
 ### Split tickets (opt-in)
 
+The CLI rejects `--split-tickets` combined with `--arrive-before`, `--depart-after`,
+`--depart-window`, `--max-duration`, `--min-layover`, `--max-layover`, `--via`,
+`--exclude-via`, `--no-overnight`, `--require-overnight`, `--exclude-airports`,
+`--include-airports`, or a non-zero `--baggage-buffer` before any search runs.
+These filters do not yet apply to split itineraries. `--split-via` and
+`--split-min-connection` are the split connection controls. `--top` also caps
+split pairings in the requested currency.
+
 `--split-tickets` adds separately ticketed alternatives built only from real
 one-way quotes. It costs extra searches, so it is off by default and capped.
 
