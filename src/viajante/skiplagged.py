@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
+from viajante.control import checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
     HIDDEN_CITY_SOURCE,
@@ -75,7 +76,7 @@ def _pace(rpc: RpcPost) -> None:
     with _PACE_LOCK:
         wait = _LAST_CALL[0] + MIN_CALL_INTERVAL_SECONDS - time.monotonic()
         if wait > 0:
-            time.sleep(wait)
+            interruptible_sleep(wait)
         _LAST_CALL[0] = time.monotonic()
 
 
@@ -203,6 +204,7 @@ def _call_mcp(
     url: str = SKIPLAGGED_MCP_URL,
     tool: str = SKIPLAGGED_FLIGHTS_TOOL,
 ) -> Any:
+    checkpoint()
     _guard_cooldown(rpc)
     _pace(rpc)
     session_id = _session_id(rpc, url)
@@ -584,6 +586,7 @@ def _report_currency(
     return None
 
 
+@controlled
 def search_hidden_city(
     origin: str,
     destination: str,
@@ -594,6 +597,7 @@ def search_hidden_city(
     top: int = 8,
     currency: Optional[str] = None,
     rpc: Optional[RpcPost] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> HiddenCityReport:
     """Search Skiplagged via its public MCP. Opt-in. Does not mix Google results.
 

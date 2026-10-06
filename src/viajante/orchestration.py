@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from viajante.control import SearchDeadline
 from viajante.models import SearchError, SearchErrorCode
 
 REQUEST_DELAY_SECONDS = 4.5
@@ -27,6 +28,7 @@ NON_RETRIABLE_CODES = frozenset(
         SearchErrorCode.BLOCKED,
         SearchErrorCode.MARKUP_DRIFT,
         SearchErrorCode.BROWSER_UNAVAILABLE,
+        SearchErrorCode.DEADLINE,
     }
 )
 
@@ -45,6 +47,8 @@ def _clip_error_message(text: str) -> str:
 
 
 def classify_failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, SearchDeadline):
+        return SearchError(code=SearchErrorCode.DEADLINE, message=str(exc))
     text = f"{type(exc).__name__}: {exc}".strip()
     lowered = text.casefold()
     if any(marker in lowered for marker in BROWSER_UNAVAILABLE_MARKERS):

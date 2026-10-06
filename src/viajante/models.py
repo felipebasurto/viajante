@@ -906,6 +906,7 @@ class SearchErrorCode(str, Enum):
     FETCH_FAILED = "fetch_failed"
     BROWSER_UNAVAILABLE = "browser_unavailable"
     CURRENCY_MISMATCH = "currency_mismatch"
+    DEADLINE = "deadline"
 
 
 @dataclass(frozen=True)
@@ -976,7 +977,21 @@ QueryResult = Union[QuerySuccess, QueryFailure]
 FetchBackend = Literal["sweep", "detail", "sweep_then_detail"]
 
 
+def _deadline_stop(codes: Sequence[Optional[SearchErrorCode]]) -> Optional[str]:
+    """Why a deadline made a scope incomplete, from the rows' own error codes."""
+    cut = sum(code == SearchErrorCode.DEADLINE for code in codes)
+    if not cut:
+        return None
+    return (
+        f"{cut} of {len(codes)} units did not finish before deadline_seconds: "
+        "not loaded, not proven empty"
+    )
+
+
 def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
+    cut = _deadline_stop(
+        [result.error.code if isinstance(result, QueryFailure) else None for result in results]
+    )
     succeeded = sum(isinstance(result, QuerySuccess) for result in results)
     empty = sum(
         isinstance(result, QueryFailure) and result.error.code == SearchErrorCode.NO_RESULTS
@@ -989,8 +1004,13 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
         succeeded=succeeded,
         empty=empty,
         failed=failed,
-        complete=True,
-        unsearched="queries outside the submitted finite scope",
+        complete=cut is None,
+        stopping_reason="completed_scope" if cut is None else "deadline",
+        unsearched=(
+            "queries outside the submitted finite scope"
+            if cut is None
+            else f"{cut}; queries outside the submitted finite scope"
+        ),
     )
 
 
@@ -1194,7 +1214,10 @@ class DateCalendarReport:
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
             expected = (self.end_date - self.start_date).days + 1
-            coverage_complete = len({row.departure_date for row in self.days}) == expected
+            cut = _deadline_stop([row.error.code if row.error else None for row in self.days])
+            coverage_complete = (
+                cut is None and len({row.departure_date for row in self.days}) == expected
+            )
             object.__setattr__(
                 self,
                 "coverage",
@@ -1209,9 +1232,17 @@ class DateCalendarReport:
                     empty=empty,
                     failed=failed,
                     complete=coverage_complete,
-                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    stopping_reason=(
+                        "completed_scope"
+                        if coverage_complete
+                        else "deadline"
+                        if cut
+                        else "partial_results"
+                    ),
                     unsearched=(
-                        None if coverage_complete else "dates missing from the requested window"
+                        None
+                        if coverage_complete
+                        else cut or "dates missing from the requested window"
                     ),
                 ),
             )
@@ -1290,7 +1321,11 @@ class FlexSearchReport:
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
             expected = (self.end_date - self.start_date).days + 1
-            coverage_complete = len({row.departure_date for row in self.days}) == expected
+            codes = [row.error.code if row.error else None for row in self.days]
+            cut = _deadline_stop(codes + [self.error.code if self.error else None])
+            coverage_complete = (
+                cut is None and len({row.departure_date for row in self.days}) == expected
+            )
             object.__setattr__(
                 self,
                 "coverage",
@@ -1306,11 +1341,17 @@ class FlexSearchReport:
                     empty=empty,
                     failed=failed,
                     complete=coverage_complete,
-                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    stopping_reason=(
+                        "completed_scope"
+                        if coverage_complete
+                        else "deadline"
+                        if cut
+                        else "partial_results"
+                    ),
                     unsearched=(
                         None
                         if coverage_complete
-                        else "dates missing from the requested flex window"
+                        else cut or "dates missing from the requested flex window"
                     ),
                 ),
             )
@@ -1405,6 +1446,19 @@ class ExploreDestination:
         return payload
 
 
+def explore_stop(
+    error: Optional["SearchError"], pricing_errors: Sequence["QueryFailure"]
+) -> tuple[str, str]:
+    """Explore never proves the catalog; a deadline is named when it cut the search short."""
+    cut = _deadline_stop(
+        [error.code if error else None] + [row.error.code for row in pricing_errors]
+    )
+    shortlist = "destinations outside the provider shortlist and local top limit"
+    if cut is None:
+        return "shortlist_limit", shortlist
+    return "deadline", f"{cut}; {shortlist}"
+
+
 @dataclass(frozen=True)
 class ExploreReport:
     searched_at: datetime
@@ -1434,6 +1488,7 @@ class ExploreReport:
                 for row in self.destinations
             )
             failed = len(self.pricing_errors) + int(self.error is not None)
+            reason, unsearched = explore_stop(self.error, self.pricing_errors)
             object.__setattr__(
                 self,
                 "coverage",
@@ -1450,8 +1505,8 @@ class ExploreReport:
                     failed=failed,
                     complete=False,
                     strategy="heuristic",
-                    stopping_reason="shortlist_limit",
-                    unsearched="destinations outside the provider shortlist and local top limit",
+                    stopping_reason=reason,
+                    unsearched=unsearched,
                 ),
             )
 
@@ -1729,7 +1784,7 @@ class HotelSearchReport:
     def to_dict(self) -> Mapping[str, object]:
         from viajante.runtime import package_version
 
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "viajante_version": package_version(),
             "provider": self.provider,
@@ -1744,6 +1799,27 @@ class HotelSearchReport:
             "property_matrix": _property_matrix(self.queries),
             "queries": [result.to_dict() for result in self.queries],
         }
+        cut = _deadline_stop(
+            [r.error.code if isinstance(r, HotelQueryFailure) else None for r in self.queries]
+        )
+        if cut is not None:
+            payload["coverage"] = SearchCoverage(
+                scope={"kind": "submitted_queries", "size": len(self.queries)},
+                attempted=len(self.queries),
+                succeeded=sum(isinstance(r, HotelQuerySuccess) for r in self.queries),
+                empty=sum(
+                    isinstance(r, HotelQueryFailure) and r.error.code == SearchErrorCode.NO_RESULTS
+                    for r in self.queries
+                ),
+                failed=sum(
+                    isinstance(r, HotelQueryFailure) and r.error.code != SearchErrorCode.NO_RESULTS
+                    for r in self.queries
+                ),
+                complete=False,
+                stopping_reason="deadline",
+                unsearched=f"{cut}; stays outside the submitted finite scope",
+            ).to_dict()
+        return payload
 
 
 def _property_key(offer: "HotelOffer") -> Tuple[str, str]:

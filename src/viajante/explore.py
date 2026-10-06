@@ -6,11 +6,13 @@ Catalog RPC, then price the first --top dests on the start date.
 from __future__ import annotations
 
 import calendar
+import threading
 import time
 from datetime import date, datetime, timezone
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
 from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
+from viajante.control import checkpoint, controlled
 from viajante.dates import _fetch_or_exception, calendar_trip, one_or_many
 from viajante.flights import (
     FlightSort,
@@ -43,6 +45,7 @@ from viajante.models import (
     SearchError,
     StopsCompare,
     Trip,
+    explore_stop,
     normalize_country,
 )
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
@@ -116,6 +119,7 @@ def _rank_explore_destinations(
     return tuple(sorted(dests, key=sort_key))
 
 
+@controlled
 def search_explore(
     origin: str,
     start: date,
@@ -156,6 +160,8 @@ def search_explore(
     baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[ExploreSource] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> ExploreReport | tuple[ExploreReport, ...]:
     country = normalize_country(country)
     validate_explore_window(start, days)
@@ -221,6 +227,7 @@ def search_explore(
         started = time.perf_counter()
         error: Optional[SearchError] = None
         try:
+            checkpoint()
             places = tuple(
                 client.fetch_explore(
                     code,
@@ -273,6 +280,7 @@ def search_explore(
         if callable(fetch_batch) and len(shops) > 1:
             report_progress(f"pricing {len(shops)} dests on one multiplexed round-trip")
             try:
+                checkpoint()
                 batch = fetch_batch([(shop, typical_start, typical_end) for shop in shops])
             except Exception:
                 batch = None
@@ -318,6 +326,7 @@ def search_explore(
                 if summary is not None:
                     dest = with_typical_dest(dest, summary.median_price)
             priced.append(dest)
+        stop_reason, stop_note = explore_stop(error, pricing_errors)
         return ExploreReport(
             searched_at=datetime.now(timezone.utc),
             origin=code,
@@ -341,8 +350,8 @@ def search_explore(
                 failed=len(pricing_errors) + int(error is not None),
                 complete=False,
                 strategy="heuristic",
-                stopping_reason="shortlist_limit",
-                unsearched="destinations outside the provider shortlist and local top limit",
+                stopping_reason=stop_reason,
+                unsearched=stop_note,
             ),
             nearby_label=nearby_label,
             currency=currency,

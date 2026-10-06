@@ -10,6 +10,7 @@ from __future__ import annotations
 import difflib
 import random
 import re
+import threading
 import time
 import unicodedata
 from dataclasses import replace
@@ -17,6 +18,7 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
+from viajante.control import checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -352,6 +354,7 @@ def resolve_hotel_id(
     )
 
 
+@controlled
 def search_hotel_rooms(
     hotel_id: Optional[int],
     check_in: date,
@@ -362,8 +365,9 @@ def search_hotel_rooms(
     adults: int = 2,
     rooms: int = 1,
     rpc: RpcPost = _rpc_post,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] = interruptible_sleep,
     random_gen: Any = None,
+    cancel: Optional[threading.Event] = None,
 ) -> HotelRoomsReport:
     """Room rates for one Skiplagged hotel, by id or by exact name in a city.
 
@@ -389,6 +393,7 @@ def search_hotel_rooms(
     resolved_id = hotel_id
     for attempt in range(MAX_ATTEMPTS):
         try:
+            checkpoint()
             if resolved_id is None:
                 resolved_id, _matched = resolve_hotel_id(
                     hotel_name or "", city or "", check_in, check_out, adults=adults, rpc=rpc

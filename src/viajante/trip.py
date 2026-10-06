@@ -6,10 +6,12 @@ flight then hotel loops sequentially. Never invents a fare or a stay.
 
 from __future__ import annotations
 
+import threading
 from datetime import date
 from typing import Callable, Optional, Sequence, Tuple
 
 from viajante.airports import get_airport
+from viajante.control import controlled
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
@@ -155,6 +157,7 @@ def owned_trip_total(
     )
 
 
+@controlled
 def search_trip(
     trips: Sequence[Trip],
     hotel_query: HotelQuery,
@@ -186,6 +189,8 @@ def search_trip(
     currency: Optional[str] = None,
     country: Optional[str] = None,
     hotel_source: HotelSourceName = "google",
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> TripSearchReport:
     """Run flights then hotels sequentially. Omit trip_total when either misses."""
     if not trips:

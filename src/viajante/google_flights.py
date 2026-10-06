@@ -16,6 +16,7 @@ from urllib.parse import urlencode, urljoin
 from selectolax.lexbor import LexborHTMLParser
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
+from viajante.control import checkpoint, wait_for_future
 from viajante.google_flights_rpc import (
     SHOPPING_POST_HEADERS,
     CompactCalendarDay,
@@ -512,8 +513,13 @@ class ChromeSweepClient:
             raise self._error
 
     def _submit(self, coro: Any, *, timeout: float) -> Any:
+        try:
+            checkpoint()
+        except BaseException:
+            coro.close()
+            raise
         future = self._asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=max(timeout + 5.0, 10.0))
+        return wait_for_future(future, max(timeout + 5.0, 10.0))
 
     async def _dismiss_consent(self, response: Any, timeout: float) -> bool:
         async with self._consent_lock:
