@@ -2,7 +2,7 @@
 
 Stdio process. No API keys. No Streamable HTTP. One search at a time.
 
-A second search while one is running raises `a viajante search is already running in this process` immediately. That busy error is not `MCP error -32001: Request timed out`. Do not treat timeouts as lock-busy. `lookup_airports` and the offline `validate_itinerary` may run during a search. Optional `country` is Google `gl` (origin market); omit when unset; do not pass a destination ISO. `max_stops` is 0, 1, or 2. If a calendar returns `blocked`, stop that request.
+A second search while one is running raises `a viajante search is already running in this process` immediately. That busy error is not `MCP error -32001: Request timed out`. Do not treat timeouts as lock-busy. `lookup_airports` and the offline `validate_itinerary` may run during a search. A cancelled search frees the lock. Optional `deadline_seconds` on flights, dates, flex, explore, hotels, and trip returns a partial result (`coverage.complete: false`, `stopping_reason: "deadline"`, unfinished rows `error.code: "deadline"`); `VIAJANTE_MCP_DEADLINE_SECONDS` sets a default. Optional `country` is Google `gl` (origin market); omit when unset; do not pass a destination ISO. `max_stops` is 0, 1, or 2. If a calendar returns `blocked`, stop that request.
 
 Paste this into Cursor Settings → MCP, Claude Desktop, or any `mcpServers` client. Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.10+. No clone.
 

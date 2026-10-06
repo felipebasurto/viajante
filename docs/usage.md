@@ -327,6 +327,29 @@ These are tool-call examples, not Python library calls. The MCP server uses
 stdio and runs one search at a time. See the signatures in
 [`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
 
+### Progress, cancellation, and deadlines
+
+- **Progress.** If the client sends a `progressToken`, the server emits
+  `notifications/progress` while a search runs: `[i/n]` lines become
+  `progress=i`, `total=n`; other lines carry a message and a still-increasing
+  value. At most about one notification per 250 ms. No token, no notifications.
+- **Cancellation.** A client `notifications/cancelled` stops the search between
+  queries, retries, and sleeps and frees the search lock, so the next call does
+  not hit `a viajante search is already running`. A query already in flight at
+  the provider is not interrupted; the search stops as soon as it returns. A
+  cancelled search is not cached, not recorded for `verify_answer`, and writes
+  no rate-limit cooldown.
+- **Deadline.** `deadline_seconds` (positive, finite) on `search_flights`,
+  `search_dates`, `search_flex`, `search_explore`, `search_hotels`, and
+  `search_trip` bounds a call. `VIAJANTE_MCP_DEADLINE_SECONDS` sets a default
+  for the MCP process; an explicit argument wins. On expiry the payload is
+  partial: queries that finished keep their rows, the rest are errors with
+  `error.code` `deadline`, `coverage.complete` is `false`, and
+  `coverage.stopping_reason` is `"deadline"`. An unfinished query is not proof of
+  no availability. Deadline results are not cached. A sweep batch is one request
+  group, so it cannot be split mid-flight.
+- **Output.** MCP text is compact JSON (no indentation); keys are unchanged.
+
 
 To diagnose installation drift, run `viajante --version` or call MCP
 `get_runtime_info` (both available in 1.4.0+). Hotel JSON includes the executing

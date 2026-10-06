@@ -148,6 +148,15 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Detail delays: 4.5s + up to 1.5s jitter between queries; 3 attempts with 8s
   exponential backoff + jitter; browser reset after each failed attempt. No flags
   to shorten detail delays or parallelize requests. Progress goes to stderr.
+- MCP control: a client `progressToken` gets `notifications/progress` (`[i/n]`
+ parsed, throttled ~250 ms); `notifications/cancelled` stops the search between
+ queries, retries, and sleeps and frees the lock; a cancelled search is never
+ cached, recorded in the evidence ledger, or written to a cooldown file. Optional
+ `deadline_seconds` (flights, dates, flex, explore, hotels, trip; env default
+ `VIAJANTE_MCP_DEADLINE_SECONDS`) returns a partial result: unfinished queries
+ are error code `deadline` (never `no_results`), `coverage.complete` false,
+ `stopping_reason` `deadline`, not cached. MCP text is compact JSON. Core is
+ `src/viajante/control.py`; do not add summary prose to partial results.
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining

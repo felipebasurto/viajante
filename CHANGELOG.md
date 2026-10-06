@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP `notifications/progress`: when the client sends a `progressToken`, the library's progress lines are forwarded (`[i/n]` becomes `progress=i`, `total=n`; other lines are message-only with a still-increasing value), throttled to about one per 250 ms. Without a token nothing is sent.
+- Real MCP cancellation. A cancelled search stops between queries, retries, and backoff or pacing sleeps (`threading.Event`, polled every 50 ms), frees the search lock promptly so the next call succeeds, and is never cached, recorded in the evidence ledger, or written to a rate-limit cooldown file. `get_flights`, `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels`, `search_trip`, `search_hidden_city`, and `search_hotel_rooms` take an optional keyword `cancel: threading.Event`; existing calls are unchanged.
+- Optional `deadline_seconds` on `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels`, and `search_trip` (library and MCP), with `VIAJANTE_MCP_DEADLINE_SECONDS` as the MCP default. When it runs out, the result is partial and honest: finished queries keep their rows, unfinished ones carry error code `deadline`, `coverage.complete` is `false` and `coverage.stopping_reason` is `"deadline"`. A deadline result is never cached and an unfinished query is never reported as empty.
+
+### Changed
+
+- MCP text results are compact JSON (no indentation). Keys, order, and values are unchanged; a 3-route flights result shrinks from 9,732 B to 6,336 B. Library and CLI `--save` output are unchanged.
+- The server instructions keep "every call is synchronous" and now note that `notifications/progress` is informational and that a `deadline_seconds` result is partial.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added

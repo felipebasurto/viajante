@@ -61,7 +61,10 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 - validate_itinerary: local pass/fail/unknown check of selected offers against
   named constraints (layovers, stay length, bags). Unknown never becomes pass.
 
-One search at a time in the MCP process.
+One search at a time in the MCP process. A cancelled call frees the lock.
+`deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
+partial result: `coverage.complete=false`, `coverage.stopping_reason="deadline"`,
+unfinished queries `error.code="deadline"`. Not proof of no availability.
 
 Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
 cooldown (error `rate_limited: true`; its message names the UTC time to wait
