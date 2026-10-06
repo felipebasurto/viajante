@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 import _isolate  # noqa: F401
-from viajante.mcp_server import _HELP
+from viajante.mcp_guide import GUIDE
 
 
 class ValidationGuidanceTests(unittest.TestCase):
@@ -23,9 +23,10 @@ class ValidationGuidanceTests(unittest.TestCase):
                 self.assertIn(phrase, text)
 
     def test_mcp_help_calls_validation_local_and_offline(self) -> None:
-        self.assertIn("validate_itinerary", _HELP)
-        self.assertIn("local and offline", _HELP)
-        self.assertIn("unknown evidence never becomes pass", _HELP)
+        guide = " ".join(GUIDE.split())
+        self.assertIn("validate_itinerary", guide)
+        self.assertIn("local and offline", guide)
+        self.assertIn("unknown evidence never becomes pass", guide)
 
     def test_mcp_install_doc_lists_validation(self) -> None:
         text = Path(".cursor/skills/viajante/mcp.md").read_text(encoding="utf-8")

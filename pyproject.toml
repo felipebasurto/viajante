@@ -23,7 +23,7 @@ Documentation = "https://github.com/felipebasurto/viajante/blob/main/docs/usage.
 Issues = "https://github.com/felipebasurto/viajante/issues"
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.6,<2"]
+mcp = ["mcp>=1.14.1,<2"]
 browser = ["playwright==1.60.0"]
 
 [project.scripts]
@@ -46,7 +46,7 @@ select = ["E", "F", "I", "B"]
 
 [dependency-groups]
 dev = [
-    "mcp>=1.6,<2",
+    "mcp>=1.14.1,<2",
     "playwright==1.60.0",
     "pre-commit>=4.3.0",
     "ruff==0.15.12",

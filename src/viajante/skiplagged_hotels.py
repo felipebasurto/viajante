@@ -29,6 +29,7 @@ from viajante.models import (
     SearchErrorCode,
 )
 from viajante.orchestration import MAX_ATTEMPTS, retry_backoff_seconds
+from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import (
     SKIPLAGGED_MCP_URL,
     RpcPost,
@@ -289,7 +290,12 @@ def parse_rooms_report(
 
 def _failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
-        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+        return SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message=str(exc),
+            rate_limited=True,
+            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+        )
     if isinstance(exc, (SkiplaggedNoHotels, SkiplaggedAmbiguousName)):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):

@@ -133,6 +133,14 @@ class GoogleFlightsBlocked(RuntimeError):
         self.status = status
 
 
+class SweepTransportError(RuntimeError):
+    """The request never produced an HTTP response (connection reset, timeout, TLS)."""
+
+    def __init__(self, message: str = "", *, timeout: bool = False) -> None:
+        super().__init__(message)
+        self.timeout = timeout
+
+
 class GoogleFlightsRejected(RuntimeError):
     """Shopping RPC rejected the query without an owned cause."""
 
@@ -373,6 +381,10 @@ class SweepHttpResponse:
     rate_limit: Optional[str] = None
 
 
+# Not an HTTP status: marks a multiplexed job whose request raised before any response.
+SWEEP_TRANSPORT_STATUS = 599
+
+
 # ponytail: Google answers a throttled IP with a data-less wrb.fr envelope, status 13.
 RPC_THROTTLE_STATUS = 13
 
@@ -605,14 +617,16 @@ class ChromeSweepClient:
         jobs: Sequence[SweepPost],
         timeout: float,
     ) -> list[SweepHttpResponse]:
-        # Keep HTTP/2 multiplex on the happy path. After HTTP 429, stop
-        # feeding this TLS session; unsent jobs are marked 429 so the
-        # caller can continue them on a fresh session.
+        # Keep HTTP/2 multiplex on the happy path. After HTTP 429 or a transport
+        # failure, stop feeding this TLS session; unsent jobs carry the same status
+        # so the caller can continue them on a fresh session.
         semaphore = self._asyncio.Semaphore(_SWEEP_STREAMS)
         stop = self._asyncio.Event()
         out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        stop_status = 429
 
         async def _one(index: int, job: SweepPost) -> None:
+            nonlocal stop_status
             if stop.is_set():
                 return
             async with semaphore:
@@ -620,9 +634,13 @@ class ChromeSweepClient:
                     return
                 try:
                     response = await self._apost(job.url, job.data, job.headers, timeout)
-                except Exception:
+                except Exception as exc:
+                    if not stop.is_set():
+                        stop_status = SWEEP_TRANSPORT_STATUS
                     stop.set()
-                    out[index] = SweepHttpResponse(429, "", job.url)
+                    out[index] = SweepHttpResponse(
+                        SWEEP_TRANSPORT_STATUS, f"{type(exc).__name__}: {exc}", job.url
+                    )
                     return
                 out[index] = response
                 if response.status == 429:
@@ -630,7 +648,15 @@ class ChromeSweepClient:
 
         await self._asyncio.gather(*[_one(index, job) for index, job in enumerate(jobs)])
         return [
-            item if item is not None else SweepHttpResponse(429, "", job.url)
+            item
+            if item is not None
+            else SweepHttpResponse(
+                stop_status,
+                "not sent after an earlier transport failure"
+                if stop_status == SWEEP_TRANSPORT_STATUS
+                else "",
+                job.url,
+            )
             for item, job in zip(out, jobs, strict=True)
         ]
 
@@ -690,6 +716,11 @@ def dispatch_posts(
 def _raise_if_blocked(
     status: int, body: str, final_url: str, fallback_url: str, advice: Optional[str] = None
 ) -> None:
+    if status == SWEEP_TRANSPORT_STATUS:
+        raise SweepTransportError(
+            f"Google Flights request failed before any response: {body}",
+            timeout="timeout" in body.partition(":")[0].casefold(),
+        )
     if status in {403, 429, 503}:
         message = f"Google Flights HTTP {status} from {fallback_url}"
         if status == 429 and advice:
@@ -902,14 +933,17 @@ class GoogleFlightsHttpSource:
     def _plan_replay(
         self, client: SweepHttpClient, outcomes: Sequence[object]
     ) -> tuple[SweepHttpClient, list[int]]:
-        """One replay of retriable failures; any 429 resets TLS and replays those too."""
+        """One replay of retriable failures; a 429 or transport failure resets TLS and replays too.
+
+        Transport failures are replayed only here, as a batch, never again per query.
+        """
         failures = [(i, o) for i, o in enumerate(outcomes) if isinstance(o, BaseException)]
-        rate = [i for i, exc in failures if _is_rate_limited_sweep_failure(exc)]
-        retry = [
+        rate = [
             i
             for i, exc in failures
-            if not _is_rate_limited_sweep_failure(exc) and _is_retriable_sweep_failure(exc)
+            if _is_rate_limited_sweep_failure(exc) or isinstance(exc, SweepTransportError)
         ]
+        retry = [i for i, exc in failures if i not in rate and _is_retriable_sweep_failure(exc)]
         replay = sorted(rate + retry) if rate else retry
         if not replay or SWEEP_RETRY_LIMIT < 1:
             return client, []
@@ -1153,7 +1187,11 @@ class GoogleFlightsHttpSource:
         except CompactParseMiss:
             raise
         except Exception as exc:
-            raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
+            # No response at all (DNS, reset, timeout) is a transport failure, not drift.
+            raise SweepTransportError(
+                f"Google Flights request failed before any response: {type(exc).__name__}: {exc}",
+                timeout=isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.casefold(),
+            ) from exc
         if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
             _raise_if_blocked(
                 response.status, response.text, response.url, url, response.rate_limit

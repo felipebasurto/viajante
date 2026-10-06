@@ -13,10 +13,16 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import _isolate  # noqa: F401
+from test_recheck import OUTBOUND, _previous
+from test_recheck import _offer as _recheck_offer
+from test_recheck import _report as _recheck_report
 from viajante import history, mcp_handlers, watch
 from viajante.cli import main
+from viajante.envelope import ENVELOPE_KEYS
 from viajante.evidence import _Owned
 from viajante.flights import DEFAULT_TOP, search_flights
+from viajante.mcp_errors import structured_error
+from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import search_flights_tool
 from viajante.models import (
     AppliedHotelFilters,
@@ -585,6 +591,103 @@ class WatchTests(_State):
         self.assertEqual([w["name"] for w in watch.watch_price_tool()["watches"]], ["a"])
         self.assertTrue(watch.remove_watch("a"))
         self.assertFalse(watch.remove_watch("a"))
+
+
+class EnvelopeTests(_State):
+    DENIED = history.HistoryReadError(13, "Permission denied", "/secret/path/history")
+
+    def params(self) -> dict:
+        return {"routes": [f"JFK-LHR:{DEPART.isoformat()}"], "currency": "USD"}
+
+    def run_watch(self, *prices: float, **kw: object) -> dict:
+        report = _flight_report(*prices, at=T0)
+        stub = history.recorded_flights(
+            lambda queries, *, top=3, sort="ranked", baggage_buffer=None, **rest: report
+        )
+        with patch("viajante.mcp_handlers.search_flights", stub):
+            return watch.watch_price_tool("nyc-lon", **kw)  # type: ignore[arg-type]
+
+    def test_price_history_is_a_local_complete_result(self) -> None:
+        self.enable()
+        self.record_flights(_flight_report(500.0))
+        payload = watch.price_history_tool(route="JFK-LHR")
+        self.assertTrue(set(ENVELOPE_KEYS) <= set(payload))
+        self.assertEqual((payload["status"], payload["completeness"]), ("ok", "complete"))
+        self.assertIsNone(payload["error_code"])
+        self.assertEqual(len(payload["series"]), 1)
+
+    def test_unreadable_history_is_failed_blocked_and_series_is_null(self) -> None:
+        with patch("viajante.history.read_observations", side_effect=self.DENIED):
+            payload = watch.price_history_tool(route="JFK-LHR")
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["completeness"], "blocked")
+        self.assertEqual(payload["error_code"], "history_unreadable")
+        self.assertIsNone(payload["series"])
+        self.assertIsNone(payload["stored_entries"])
+        self.assertNotIn("secret", json.dumps(payload))
+
+    def test_empty_history_is_an_empty_list_not_null(self) -> None:
+        payload = watch.price_history_tool()
+        self.assertEqual((payload["status"], payload["series"]), ("ok", []))
+
+    def test_watch_list_mode_is_local(self) -> None:
+        payload = watch.watch_price_tool()
+        self.assertEqual(payload["watches"], [])
+        self.assertEqual((payload["status"], payload["completeness"]), ("ok", "complete"))
+        self.assertTrue(set(ENVELOPE_KEYS) <= set(payload))
+
+    def test_watch_run_carries_the_inner_searchs_envelope(self) -> None:
+        result = self.run_watch(500.0, kind="flights", params=self.params())
+        self.assertTrue(set(ENVELOPE_KEYS) <= set(result))
+        self.assertEqual((result["status"], result["completeness"]), ("ok", "complete"))
+        self.assertEqual(result["observed_at"], "2026-10-06T09:00:00Z")
+        self.assertEqual(result["observed_at_basis"], "fetch")
+
+    def test_watch_run_is_partial_when_history_cannot_be_read(self) -> None:
+        self.run_watch(500.0, kind="flights", params=self.params())
+        mcp_handlers._CACHE.clear()
+        with patch("viajante.watch.read_observations", side_effect=self.DENIED):
+            result = self.run_watch(450.0)
+        self.assertEqual((result["status"], result["completeness"]), ("ok", "partial"))
+        self.assertEqual(result["read_error"], "permission denied accessing price history")
+
+    def test_failed_inner_search_keeps_its_own_status(self) -> None:
+        result = self.run_watch(kind="flights", params=self.params())
+        self.assertEqual(result["status"], "no_results")
+        self.assertEqual(result["empty_reason"], "provider_empty")
+
+    def test_a_proxy_in_a_watch_names_params_as_the_field(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            watch.watch_price_tool("w", kind="flights", params={**self.params(), "proxy": "x"})
+        body = json.loads(str(structured_error(caught.exception, {"name": "w", "params": {}})))
+        self.assertEqual(body["error"]["field"], "params")
+        self.assertEqual(body["error"]["code"], "invalid_parameter")
+
+
+class RecheckRecordingTests(_State):
+    def recheck(self) -> dict:
+        fresh = _recheck_report(_recheck_offer(450.0, (OUTBOUND,)))
+        with patch("viajante.flights._run_search", return_value=fresh):
+            return mcp_handlers.recheck_offer_tool(_previous(OUTBOUND), fetch="sweep")  # type: ignore[return-value]
+
+    def test_recheck_with_history_on_records_exactly_one_observation(self) -> None:
+        self.enable()
+        result = self.recheck()
+        self.assertEqual(result["outcome"], "price_changed")
+        (entry,) = history.read_observations()
+        self.assertEqual((entry["cheapest"], entry["currency"]), (450.0, "USD"))
+
+    def test_guide_documents_history_watch_and_recheck_recording(self) -> None:
+        self.assertIn("## Price history and watches", GUIDE)
+        section = GUIDE.split("## Price history and watches")[1].split("\n## ")[0]
+        for phrase in ("recheck_offer", "series null", "history_unreadable", "not read-only"):
+            self.assertIn(phrase, " ".join(section.split()))
+        self.assertLessEqual(len(INSTRUCTIONS.encode()), 2200)
+        self.assertNotIn("price_history", INSTRUCTIONS)
+
+    def test_recheck_with_history_off_records_nothing(self) -> None:
+        self.recheck()
+        self.assertEqual(history.read_observations(), [])
 
 
 class EvidenceTests(_State):

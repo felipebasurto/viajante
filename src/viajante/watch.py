@@ -14,6 +14,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
+from viajante.envelope import ENVELOPE_KEYS, stamp_local
 from viajante.evidence import record
 from viajante.history import (
     SCHEMA_VERSION,
@@ -70,7 +71,7 @@ def save_watch(name: str, kind: str, params: Mapping[str, Any]) -> dict:
     if kind not in _TOOLS:
         raise ValueError("kind must be flights or hotels")
     if "proxy" in params:
-        raise ValueError("proxy is not stored in a watch; it may carry credentials")
+        raise ValueError("params.proxy is not stored in a watch; it may carry credentials")
     try:
         inspect.signature(_TOOLS[kind]).bind(**params)
     except TypeError as exc:
@@ -105,7 +106,7 @@ def watch_price_tool(
 ) -> dict:
     """List watches (no name), save one (kind + params), or re-run one and report change."""
     if name is None:
-        return {"watches": list_watches()}
+        return stamp_local({"watches": list_watches()})
     if (kind is None) != (params is None):
         raise ValueError("pass kind and params together to save a watch")
     if kind is not None and params is not None:
@@ -159,8 +160,11 @@ def watch_price_tool(
         "results": results,
         "errors": _errors(payload),
     }
+    out.update({key: payload.get(key) for key in ENVELOPE_KEYS})
     if read_error is not None:
         out["read_error"] = read_error
+        if out["status"] == "ok":
+            out["completeness"] = "partial"
     if cached:
         out["note"] = (
             "Replayed from the 5-minute cache; no new request was sent and no observation "
@@ -177,4 +181,11 @@ def watch_price_tool(
 
 
 def price_history_tool(**filters: Any) -> dict:
-    return record(price_history(**filters))  # type: ignore[return-value]
+    payload = price_history(**filters)
+    if payload.get("read_error") is None:
+        stamp_local(payload)
+    else:
+        stamp_local(
+            payload, status="failed", completeness="blocked", error_code="history_unreadable"
+        )
+    return record(payload)  # type: ignore[return-value]

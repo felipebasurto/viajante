@@ -470,7 +470,7 @@ def price_history(
         "schema_version": SCHEMA_VERSION,
         "recording_enabled": recording_enabled(),
         "stored_entries": None if read_error is not None else len(stored),
-        "series": series(matched, limit=limit),
+        "series": None if read_error is not None else series(matched, limit=limit),
     }
     if read_error is not None:
         payload["read_error"] = read_error

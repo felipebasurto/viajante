@@ -8,7 +8,7 @@ from random import Random
 from urllib.parse import parse_qs, unquote, urlparse
 
 import _isolate  # noqa: F401
-from viajante.google_flights import SweepHttpResponse
+from viajante.google_flights import SWEEP_TRANSPORT_STATUS, SweepHttpResponse
 from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
 from viajante.google_hotels_rpc import (
     EmptyHotelResults,
@@ -267,7 +267,49 @@ class _ScriptedHotelClient:
         return None
 
 
+class _TransportDownClient:
+    """Multiplexed transport whose every request raises before a response."""
+
+    def __init__(self) -> None:
+        self.post_many_calls = 0
+        self.posts = 0
+
+    def post_many(self, jobs, *, timeout: float) -> list[SweepHttpResponse]:
+        self.post_many_calls += 1
+        self.posts += len(jobs)
+        return [SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "ConnectError: reset") for _ in jobs]
+
+    def post(self, url: str, *, data: str, headers: object, timeout: float):
+        raise AssertionError("a multiplexed search must not fall back to single posts")
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        raise AssertionError("Google Hotels sweep posts only")
+
+    def close(self) -> None:
+        return None
+
+
 class GoogleHotelsFetchTests(unittest.TestCase):
+    def test_multi_post_transport_failure_replays_once_with_no_backoff_ladder(self) -> None:
+        rated = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), min_rating=4.5)
+        client = _TransportDownClient()
+        sleeps: list[float] = []
+        report = _run_search(
+            (rated,),
+            top=1,
+            source=GoogleHotelsSource(client=client, currency="CZK"),
+            sleep=sleeps.append,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            provider="google-hotels",
+            currency="CZK",
+        )
+        self.assertEqual((client.post_many_calls, client.posts), (2, 4))
+        self.assertEqual(sleeps, [])
+        failure = report.queries[0]
+        self.assertEqual(failure.error.code.value, "fetch_failed")
+        self.assertFalse(failure.error.rate_limited)
+
     def test_temporary_network_failure_can_retry(self) -> None:
         body = _wrap_wrb(_search_payload(_hotel_record()))
         client = _ScriptedHotelClient(
