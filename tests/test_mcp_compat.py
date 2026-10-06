@@ -86,6 +86,7 @@ NETWORK_TOOLS = {
     "search_hotel_rooms",
     "search_trip",
     "search_hidden_city",
+    "recheck_offer",
 }
 LOCAL_TOOLS = {
     "get_runtime_info",

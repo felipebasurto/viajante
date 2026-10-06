@@ -321,3 +321,49 @@ def stamp_local(
         observed_at_basis=None,
     )
     return payload
+
+
+def stamp_recheck(payload: dict, *, now: Optional[float] = None) -> dict:
+    """Stamp the envelope on a ``recheck_offer`` result from its own outcome.
+
+    ``stamp_search`` reads query rows and cannot read this shape. A check that ran to an
+    answer is ``ok``; a completed ``not_found`` is ``no_results`` only when the provider
+    returned nothing or viajante's filters removed every row. A failed check says nothing
+    about the offer, so it is ``not_loaded``.
+    """
+    outcome = payload["outcome"]
+    if outcome == "incomplete_identity":
+        return stamp_local(
+            payload, status="failed", completeness="blocked", error_code="incomplete_identity"
+        )
+    status, completeness, empty_reason, error_code = "ok", "complete", None, None
+    retry: tuple[Optional[str], Optional[int]] = (None, None)
+    observed = payload.get("checked_at")
+    if outcome == "check_failed":
+        error = payload["error"]
+        status = _failure_status(error)
+        error_code = str(error.get("code", payload.get("reason")))
+        empty_reason = "not_loaded"
+        completeness = "partial" if payload.get("reason") == "incomplete_offers" else "blocked"
+        tally = _Tally()
+        _error(error, tally, "google")
+        retry = _retry_after(tally, now)
+    elif outcome == "not_found":
+        reason = payload.get("reason")
+        if reason in ("provider_empty", "filtered"):
+            status = "no_results"
+            empty_reason = "provider_empty" if reason == "provider_empty" else "filtered_out"
+        elif payload.get("offers_truncated"):
+            completeness = "partial"
+    payload.update(
+        status=status,
+        completeness=completeness,
+        empty_reason=empty_reason,
+        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
+        error_code=error_code,
+        retry_after=retry[0],
+        retry_after_seconds=retry[1],
+        observed_at=observed,
+        observed_at_basis="fetch" if observed else None,
+    )
+    return payload

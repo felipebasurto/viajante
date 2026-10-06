@@ -230,6 +230,80 @@ Each requested dated flight journey contributes its cheapest owned fare.
 Only nearby airport alternatives for the same dated journey share a minimum;
 separate dates and different multi-city legs are not collapsed.
 
+## Re-checking an offer
+
+Fares move and flights are retimed. Before presenting a finalist as current,
+re-check it. `viajante recheck-offer` takes an offer from an earlier result (or
+a `{query, offer}` row) and runs one fresh Google Flights search; it never
+replays a cache.
+
+```bash
+viajante flights JFK-LHR:2026-11-15 --fetch sweep --save /tmp/flights.json
+# put one offer (or {"query": ..., "offer": ...}) from that file into offer.json
+viajante recheck-offer --offer offer.json --save /tmp/recheck.json
+```
+
+The offer is matched by itinerary identity: flight numbers plus scheduled
+departure time for every segment. It needs a full segment identity (flight
+number, origin, destination, departure clock); otherwise the result is
+`incomplete_identity`, no search is sent, and `missing` lists what to add.
+`--allow-loose-match` (MCP `allow_loose_match`) opts in to matching by carrier
+plus departure times; the result says `loose_match: true`. The result is
+exactly one outcome (`previous.source` is `search_evidence` only when the MCP
+ledger holds an offer with that `evidence_id`, price, currency and the same
+segments, and previous leg times then come from that offer; otherwise
+`caller_supplied`, and the old amount, itinerary and `differences[].previous`
+are returned but not recorded as owned evidence):
+
+| Outcome | Meaning |
+| --- | --- |
+| `same_price` | The identical itinerary was found at the same amount and currency. |
+| `price_changed` | The identical itinerary was found at another amount. `previous` and `current` carry each amount with its own currency. A `currency` that differs from the offer's own is refused (exit 1): viajante does not convert. |
+| `multiple_matches` | More than one fresh offer matches the identity. None is picked and no price verdict is given; `candidates` lists each price, currency and journey times. Exit 0. |
+| `incomplete_identity` | The offer lacks flight numbers, airports or clocks. `check_completed` is false, `missing` names the fields, and no search was sent (`checked_at` is null). Exit 2. |
+| `not_found` | A completed check found nothing. `reason` is `provider_empty`, `filtered` (Google returned offers but none passed the query's own constraints), or `not_among_offers`. A close alternative (a different flight number at similar times) is listed as `closest_candidate` with its `differences`, for information only. |
+| `substituted` | Only with `--allow-substitute` (MCP `allow_substitute`): no identical itinerary, but a close alternative between the same end airports (a shared flight number, or on every journey a first departure within 90 minutes of the original on the same marketing carrier). `differences` lists what provably differs; `null` is unknown. |
+| `check_failed` | The check did not run to an answer; this says nothing about whether the offer still exists. `check_completed` is false, with `reason` and `error`. `reason` is `blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`, `browser_unavailable`, `currency_mismatch`, or `incomplete_offers` (fresh round-trip or multi-city offers came back without every journey, because the follow-up search for the next journey failed or was ambiguous, and nothing matched). Do not retry a rate limit. |
+
+Over MCP the result also carries the shared envelope (read it first). Found outcomes
+(`same_price`, `price_changed`, `substituted`, `multiple_matches`) are `ok` / `complete`.
+`not_found` is `no_results` / `complete` with `empty_reason` `provider_empty` or
+`filtered_out`; `not_among_offers` stays `ok` because the provider did return flights
+(`partial` when the result notes that only the N cheapest of M offers were compared).
+`check_failed` is the failure's status (`rate_limited`, `blocked`, `timeout`, `failed`),
+`blocked` completeness (`partial` for `incomplete_offers`), `empty_reason` `not_loaded`
+and the error's code, with `retry_after` when a cooldown is recorded. `incomplete_identity`
+is `failed` / `blocked` with `error_code` `incomplete_identity`. `observed_at` is
+`checked_at`, null when nothing was sent. A completed check is recorded in the evidence
+ledger (caller-typed values stripped); `check_failed` and `incomplete_identity` are not.
+
+The query (the offer's evidence query, or `--query FILE`) is replayed: cabin,
+stops, bags, carry-on and airline or alliance filters ride the search request.
+A `price_cap` in it is not sent; instead a matched fresh offer that breaks it is
+reported in `filter_violations` (`price_cap`, and for locally provable cases
+`max_stops`, `airlines`, `exclude_airlines`). `filters_replayed` lists what rode the
+request and `filters_checked` what was only checked locally (`price_cap` is never
+sent). `max_stops` and `exclude_airlines` breaches are defensive, because the search
+already applies them; an `airlines` allow list passes when any carrier on the offer
+is allowed, as in the search. Cabin, bags and alliance filters cannot be proven on
+the offer. With `--allow-loose-match`, a connecting leg without segments is still
+`incomplete_identity` (its stops cannot be compared); origin and destination are
+compared in every match. `incomplete_identity`, `check_failed` and input errors are
+never recorded in the MCP evidence ledger.
+
+Every result has `checked_at` except `incomplete_identity` and a check the machine-wide cooldown refused (nothing was sent), where it is null. A hand-built
+identity needs `price`, `legs[].segments[]` (flight number, origin,
+destination and departure clock), a `query` with `adults`, `cabin`, and
+`max_stops`, and a currency; none of them is guessed. The CLI exits 0 when the
+check ran to an answer (any outcome but `check_failed` and
+`incomplete_identity`), 1 for bad input, and 2 otherwise. Round trips carry a
+note: each fresh outbound carries the one return that is unique at its cheapest
+package price, so a still-buyable original return can read as a different
+itinerary. A re-check is not a booking guarantee: the price and terms are
+confirmed only on the provider's own page. The fresh search compares up to the
+100 cheapest one-way offers (20 for packaged trips); the result notes any
+truncation.
+
 ## Saving results and handling errors
 
 Search commands print tables. Add `--save FILE` to write JSON as well:
@@ -329,6 +403,12 @@ For flights and a hotel stay in one request:
 search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="rt")
 ```
 
+To re-check a finalist from an earlier `search_flights` result, pass its offer:
+
+```text
+recheck_offer(offer={...offer from search_flights...})
+```
+
 These are tool-call examples, not Python library calls. The MCP server uses
 stdio by default (local Streamable HTTP is opt-in, see below) and runs one
 search at a time. See the signatures in
@@ -386,7 +466,7 @@ over a real stdio session as the client sees them:
 absolute bytes (a raw compact-JSON measure read 30615 before and 33303 after) but
 the same roughly 2.7 KB difference.
 
-- **Annotations and titles.** All 17 tools carry a title and read-only
+- **Annotations and titles.** All 18 tools carry a title and read-only
   annotations (`readOnlyHint: true`, `destructiveHint: false`,
   `idempotentHint: true`). `openWorldHint` is `true` for the tools that ask a
   provider (`search_flights`, `search_dates`, `search_flex`, `search_explore`,

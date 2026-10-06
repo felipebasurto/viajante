@@ -35,6 +35,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
+| Re-check a finalist offer is still available (fresh search, never cached) | `recheck_offer` (`offer`; hand-built also `query`, `currency`; opt-ins `allow_loose_match`, `allow_substitute`) | `viajante recheck-offer --offer FILE` |
 | Validate selected flight offers (local) | `validate_itinerary` (`legs`, `constraints`) | — |
 | Per-night roster into check-in/check-out blocks (local) | `plan_stay_blocks` (`roster`) | — |
 | Split stay totals by nights per person (local) | `split_stay_costs` (`stays`, `roster`, `currency`) | — |
@@ -113,6 +114,24 @@ verified itinerary. `needs_bag_verify` means baggage is **UNKNOWN**, not include
 empty `segments` array makes segment count, connection airports, per-segment clocks,
 operators, and overnight checks **UNKNOWN**. A comparative rule such as “unless it
 saves N” is **UNKNOWN** without two owned comparison candidates.
+
+Call `recheck_offer` on each finalist before presenting it as current. It runs one
+fresh search (never the 5-minute replay) and returns exactly one of `same_price`,
+`price_changed`, `not_found`, `multiple_matches`, `incomplete_identity`, `check_failed`, with
+`checked_at` (and `substituted` only when you pass `allow_substitute`). Quote the outcome
+as found. `multiple_matches` gives no verdict: show the candidates and do not pick one.
+`incomplete_identity` sent nothing: add the `missing` fields from the original offer, or
+pass `allow_loose_match` and call the result loose. A `closest_candidate` on a `not_found`
+is a different itinerary listed for information; name what differs and do not call it the
+original. Report `filter_violations` (for example `price_cap`) beside the price.
+`check_failed` (`check_completed: false`: blocked, rate limited, incomplete offers, any
+provider error) means the check did not run; never say the offer is gone, do not retry a
+rate limit, and report the cooldown. `not_found` is a completed check: read the envelope
+first. `empty_reason` `provider_empty` is the only "Google returned nothing"; `filtered_out`
+means filters removed what Google returned; `not_among_offers` is `ok` (flights came back,
+none was the offer). `check_failed` is `not_loaded`. Pass the offer's own
+currency only; a different one is refused. A re-check is still not
+a booking guarantee: the price is confirmed only on the provider's own page.
 
 Call `validate_itinerary` before saying an assembled itinerary is compliant:
 

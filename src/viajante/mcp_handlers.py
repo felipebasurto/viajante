@@ -19,8 +19,8 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.envelope import stamp_local, stamp_search
-from viajante.evidence import failure_codes, record
+from viajante.envelope import stamp_local, stamp_recheck, stamp_search
+from viajante.evidence import failure_codes, find_offer, record
 from viajante.evidence import verify_answer as verify_answer_evidence
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
@@ -58,6 +58,7 @@ from viajante.quote import (
     first_origin_iata,
     resolve_quote_and_buffer,
 )
+from viajante.recheck import recheck_offer
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.stays import plan_stay_blocks, split_stay_costs
@@ -854,6 +855,53 @@ def validate_itinerary_tool(
 ) -> Mapping[str, object]:
     payload = dict(validate_itinerary(legs, constraints, currency=currency).to_dict())
     return stamp_local(payload, partial=payload.get("feasible") is None)
+
+
+def _without_previous(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    return [{key: value for key, value in row.items() if key != "previous"} for row in rows]
+
+
+def recheck_offer_tool(
+    offer: Mapping[str, object],
+    *,
+    query: Optional[Mapping[str, object]] = None,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    fetch: Optional[str] = None,
+    proxy: Optional[str] = None,
+    allow_loose_match: bool = False,
+    allow_substitute: bool = False,
+) -> Mapping[str, object]:
+    """One fresh search, never the replay cache, under the one-search process lock."""
+    result = _with_search_lock(
+        lambda: recheck_offer(
+            offer,
+            query=query,
+            currency=currency,
+            country=country,
+            fetch=fetch,
+            proxy=proxy,
+            allow_loose_match=allow_loose_match,
+            allow_substitute=allow_substitute,
+            ledger_offer=find_offer,
+        )
+    )
+    stamp_recheck(result)
+    # Caller-typed values are not provider evidence: leave them out of the ledger.
+    owned = dict(result)
+    if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
+        del owned["previous"]
+        if "differences" in owned:
+            owned["differences"] = _without_previous(owned["differences"])  # type: ignore[arg-type]
+        if "closest_candidate" in owned:
+            closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
+            closest["differences"] = _without_previous(closest["differences"])
+            owned["closest_candidate"] = closest
+    # Record only a check that ran to a provider answer (a match, a substitution, or a
+    # completed not_found). An unsent or failed check, or incomplete_identity, proves nothing.
+    if result["check_completed"]:
+        record(owned)
+    return result
 
 
 def verify_answer_tool(answer: str) -> Mapping[str, object]:

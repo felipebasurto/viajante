@@ -955,7 +955,7 @@ class OutputSchemaTests(unittest.TestCase):
 
     def test_every_tool_but_the_bare_list_advertises_the_envelope_schema(self) -> None:
         tools = {tool.name: tool for tool in asyncio.run(self.server.list_tools())}
-        self.assertEqual(len(tools), 17)
+        self.assertEqual(len(tools), 18)
         for name, tool in tools.items():
             if name == "lookup_airports":
                 self.assertIsNone(tool.outputSchema)

@@ -27,6 +27,7 @@ from viajante.mcp_handlers import (
     lookup_airports_tool,
     lookup_transfers_tool,
     plan_stay_blocks_tool,
+    recheck_offer_tool,
     search_dates_tool,
     search_explore_tool,
     search_flex_tool,
@@ -75,7 +76,7 @@ Checkout: uv sync --extra mcp && viajante-mcp
 
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
+compare_awards, lookup_transfers, validate_itinerary, recheck_offer, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info, get_guide.
 
 Server instructions (the full guide is the viajante://guide resource):
@@ -872,6 +873,47 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         result is tri-state: unknown evidence never becomes pass.
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
+
+    @tool("Re-check offer", network=True)
+    async def recheck_offer(
+        offer: dict,
+        query: dict | None = None,
+        currency: str | None = None,
+        country: str | None = None,
+        fetch: str | None = None,
+        proxy: str | None = None,
+        allow_loose_match: bool = False,
+        allow_substitute: bool = False,
+    ) -> dict:
+        """Re-check an earlier flight offer with one fresh Google Flights search.
+
+        offer is an offer from a prior search_flights result (or a {query, offer}
+        row), or enough of one: price plus legs[].segments[] with flight_number,
+        origin, destination and departure clock for every segment. query
+        defaults to the offer's evidence query and is replayed (cabin, stops,
+        bags, airline and alliance filters); a price_cap in it is not sent but
+        reported in filter_violations when the fresh offer breaks it. A
+        hand-built offer also needs query adults, cabin and max_stops, and
+        currency. Matches by flight numbers plus departure times. Returns
+        exactly one outcome: same_price, price_changed, not_found,
+        multiple_matches (more than one identical fresh offer: candidates are
+        listed, no price verdict), incomplete_identity (the offer lacks a full
+        segment identity: no search was sent), check_failed, or substituted
+        (only with allow_substitute). allow_loose_match accepts carrier plus
+        departure times when flight numbers are absent (loose_match true).
+        allow_substitute reports a close same-carrier alternative as
+        substituted; by default it is only listed as closest_candidate on a
+        not_found. Positive outcomes always rest on a fresh provider match.
+        check_failed (check_completed false, with reason and error: blocked,
+        rate_limited, incomplete_offers, ...) means the check could not be
+        completed, not that the offer is gone; do not retry a rate limit.
+        currency must be the offer's own: a different one is refused (no
+        conversion). Caller-typed values are not recorded as owned evidence.
+        Read the envelope first: only empty_reason provider_empty means Google
+        returned nothing; check_failed is not_loaded, never "gone".
+        Not a booking guarantee: confirm the price on the provider's own page.
+        """
+        return dict(await run_mcp_tool(recheck_offer_tool, **locals()))
 
     @tool("Plan stay blocks", network=False)
     async def plan_stay_blocks(roster: dict[str, list[str]]) -> dict:

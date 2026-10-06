@@ -108,7 +108,7 @@ Once connected, you can ask:
 
 Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
 
-The server exposes twelve tools:
+The server exposes thirteen tools:
 
 | Tool | Use it to |
 | --- | --- |
@@ -118,6 +118,7 @@ The server exposes twelve tools:
 | `search_explore` | Discover destinations from an origin airport and price a shortlist. |
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
+| `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, not found, multiple matches, incomplete identity, or check failed (the check could not complete, which never means the offer is gone). |
 | `lookup_airports` | Look up airport codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
 | `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
@@ -138,6 +139,7 @@ Each search command accepts `--save FILE` to write a JSON report. Run
 | `viajante explore` | Find destinations from an origin airport. |
 | `viajante hotels` | Search Google Hotels or Booking.com. |
 | `viajante trip` | Search flights and a hotel stay in one request. |
+| `viajante recheck-offer` | Re-check a saved flight offer against a fresh search; exit 2 means the check could not complete (not a booking guarantee). |
 | `viajante airports` | Find airport codes by city or code. |
 | `viajante hidden-city` | Opt-in Skiplagged hidden-city search. |
 | `viajante awards` | Cents-per-point value of a named award offer. |
