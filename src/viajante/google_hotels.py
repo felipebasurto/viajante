@@ -10,9 +10,11 @@ from viajante.control import SearchDeadline, note_cut
 from viajante.google_flights import (
     COOLDOWN_UNCHECKED,
     NOT_SENT,
+    SWEEP_TRANSPORT_STATUS,
     SweepHttpClient,
     SweepHttpResponse,
     SweepPost,
+    SweepTransportError,
     cooldown_client,
     dispatch_posts,
     reset_shared_chrome_sweep_client,
@@ -95,6 +97,18 @@ class GoogleHotelsSource:
             )
             posts.append(SweepPost(url, body, HOTELS_POST_HEADERS))
         responses = dispatch_posts(client, posts, timeout=self._timeout)
+        lost = [i for i, r in enumerate(responses) if r.status == SWEEP_TRANSPORT_STATUS]
+        if lost:
+            # One replay on a fresh session; a second transport failure is final (the
+            # hotel loop does not retry it).
+            self.reset()
+            client = self._ensure_client()
+            for i, again in zip(
+                lost,
+                dispatch_posts(client, [posts[i] for i in lost], timeout=self._timeout),
+                strict=True,
+            ):
+                responses[i] = again
         first = self._page(responses[0], posts[0].url)
         cards = list(first.cards[:limit])
         for post, response in zip(posts[1:], responses[1:], strict=True):
@@ -126,6 +140,11 @@ class GoogleHotelsSource:
         if advice and response.status < 400:
             # A data-less RPC status 13 envelope: the cooldown is already recorded.
             raise HotelsBlocked(advice, rate_limited=True)
+        if response.status == SWEEP_TRANSPORT_STATUS:
+            raise SweepTransportError(
+                f"Google Hotels request failed before any response: {response.text}",
+                timeout="timeout" in response.text.partition(":")[0].casefold(),
+            )
         if response.status == 429 and advice:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
             raise HotelsBlocked(message, rate_limited=True)

@@ -331,7 +331,7 @@ class DeadlineTests(McpControlCase):
         self.assertEqual(statuses, ["ok", "error", "error"])
         for row in payload["queries"][1:]:
             self.assertEqual(row["error"]["code"], "deadline")
-            self.assertNotIn("empty_reason", row)
+            self.assertEqual(row["empty_reason"], "not_loaded")
             self.assertNotEqual(row["error"]["code"], "no_results")
         coverage = payload["coverage"]
         self.assertFalse(coverage["complete"])
@@ -813,21 +813,6 @@ class ReturnLegDeadlineTests(McpControlCase):
 class ProgressRobustnessTests(unittest.TestCase):
     def _relay(self, ctx, interval: float):
         return mcp_server.ProgressRelay(ctx, asyncio.get_running_loop(), interval)
-
-    def test_older_sdk_signature_gets_progress_and_total_only(self) -> None:
-        sent: list[tuple] = []
-
-        class OldCtx:
-            async def report_progress(self, progress, total=None):
-                sent.append((progress, total))
-
-        async def main() -> None:
-            relay = self._relay(OldCtx(), 0)
-            await asyncio.get_running_loop().run_in_executor(None, relay, "[1/3] a")
-            await relay.drain()
-
-        asyncio.run(main())
-        self.assertEqual(sent, [(1.0, 3.0)])
 
     def test_a_failing_notification_is_logged_once_and_never_raised(self) -> None:
         class BrokenCtx:

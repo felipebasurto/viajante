@@ -960,7 +960,15 @@ def _rows_from_calendar(
         found = by_day.get(cursor)
         returning = _return_for(cursor, nights, None if found is None else found.return_date)
         if found is None or found.price is None:
-            rows.append(DatePriceRow(departure_date=cursor, return_date=returning, status="empty"))
+            rows.append(
+                DatePriceRow(
+                    departure_date=cursor,
+                    return_date=returning,
+                    status="empty",
+                    # A cell the calendar left unpriced does not prove there are no flights.
+                    empty_reason="not_loaded",
+                )
+            )
         else:
             rows.append(
                 DatePriceRow(
@@ -985,7 +993,12 @@ def _row_from_day_cards(
     offers = offers_from_cards(cards, query, filters, baggage_buffer=baggage_buffer)
     best = _cheapest_by_ranked(offers)
     if best is None:
-        return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
+        return DatePriceRow(
+            departure_date=cursor,
+            return_date=returning,
+            status="empty",
+            empty_reason="filtered_out" if cards else "provider_empty",
+        )
     return DatePriceRow(
         departure_date=cursor,
         price=best.price,
@@ -1008,7 +1021,12 @@ def _row_from_day_error(
 ) -> DatePriceRow:
     error = classify_failure(exc)
     if error.code == SearchErrorCode.NO_RESULTS:
-        return DatePriceRow(departure_date=cursor, return_date=returning, status="empty")
+        return DatePriceRow(
+            departure_date=cursor,
+            return_date=returning,
+            status="empty",
+            empty_reason="provider_empty",
+        )
     return DatePriceRow(
         departure_date=cursor,
         return_date=returning,

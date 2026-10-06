@@ -46,6 +46,8 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 
 ## Tools
 
+Every result (except lookup_airports) opens with an envelope: status, completeness, empty_reason (provider_empty | filtered_out | not_loaded), retry_after, observed_at. Only provider_empty means "none found".
+
 - search_flights: named routes and dates
 - search_dates: cheapest-per-day calendar (cheapest week). Max 31 days.
 - search_flex: ±N around one date, then one shop. Not a date matrix.
@@ -61,14 +63,25 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 - validate_itinerary: local pass/fail/unknown check of selected offers against
   named constraints (layovers, stay length, bags). Unknown never becomes pass.
 
-One search at a time in the MCP process. A cancelled call frees the lock.
-`deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
+- get_guide: the long operational guide (markdown); same text as the `viajante://guide` resource.
+
+One search at a time in the MCP process. Every tool has a title and read-only
+annotations; only the search tools are open-world. Bad input fails the call with
+JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
+after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=1.14.1`.
+
+A cancelled call frees the lock. `deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
 partial result: `coverage.complete=false`, `coverage.stopping_reason="deadline"`,
 unfinished queries `error.code="deadline"`. Not proof of no availability.
 
+Local HTTP (opt-in, no auth): `viajante-mcp --transport streamable-http` serves
+`http://127.0.0.1:8000/mcp`; client entry `{"mcpServers": {"viajante": {"url": "http://127.0.0.1:8000/mcp"}}}`.
+A non-loopback `--host` warns: every client searches from this machine's IP and
+shares its provider cooldown.
+
 Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
 cooldown (error `rate_limited: true`; its message names the UTC time to wait
-until). Tell the user to wait; do not retry. Identical successful
+until, and `retry_after` / `retry_after_seconds` repeat it when a cooldown was recorded). Tell the user to wait; do not retry. Identical successful
 searches within 5 minutes return `cached: true` without a new request.
 
 ## Currency

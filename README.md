@@ -92,6 +92,12 @@ npx still needs `uvx` (and Python 3.10+) on PATH. If you use an existing
 Python environment instead, install `pip install 'viajante[mcp]'` and configure
 the client to run that environment's `viajante-mcp` executable.
 
+For a client that only connects to a URL, run the server on loopback with
+`viajante-mcp --transport streamable-http` and point the client at
+`http://127.0.0.1:8000/mcp`. This has no authentication; every client shares
+this machine's IP and the provider cooldown, so do not expose it. Details are in
+[usage](docs/usage.md#mcp-client-compatibility).
+
 Once connected, you can ask:
 
 > Find a seven-night round trip from BOS to LHR, departing between November 1
@@ -99,6 +105,8 @@ Once connected, you can ask:
 
 > Search for hotels in Tokyo from November 12 to November 16, 2026, for two
 > adults. Use JPY and require free cancellation.
+
+Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
 
 The server exposes twelve tools:
 
