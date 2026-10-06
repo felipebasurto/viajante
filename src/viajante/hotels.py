@@ -31,6 +31,7 @@ from viajante.google_hotels_rpc import (
     HotelsParseMiss,
     HotelsRejected,
 )
+from viajante.history import recorded_hotels
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -439,6 +440,7 @@ def _skiplagged_currency_mismatch(
     )
 
 
+@recorded_hotels
 def search_hotels(
     queries: Sequence[HotelQuery],
     *,

@@ -24,6 +24,7 @@ from viajante.google_flights import (
     RawFlightCard,
     google_flights_url,
 )
+from viajante.history import recorded_flights
 from viajante.models import (
     DateCalendarSummary,
     FetchBackend,
@@ -2084,6 +2085,7 @@ def get_flights(
     return _search(trips)
 
 
+@recorded_flights
 def search_flights(
     queries: Sequence[Trip],
     *,

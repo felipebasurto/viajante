@@ -29,6 +29,7 @@ from viajante.mcp_handlers import (
     validate_itinerary_tool,
 )
 from viajante.runtime import get_runtime_info as runtime_info
+from viajante.watch import price_history_tool, watch_price_tool
 
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
@@ -47,13 +48,13 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
 Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
-split_stay_costs, verify_answer, get_runtime_info.
+split_stay_costs, verify_answer, price_history, watch_price, get_runtime_info.
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
-validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
-during a search.
+validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, price_history, and
+get_runtime_info may run during a search.
 
 Results are raw owned evidence, not a recommendation. You choose: read the
 payload, weigh price against duration, stops, clocks, and rating, and say why.
@@ -113,6 +114,13 @@ arrival margin; a latest check-out time alone does not prove a flight is reachab
 Keep warnings in the final response. Browser access denial is not a broken URL
 or provider throttling: name the actual limitation and use available permitted
 read-only evidence; never ask for permission the user already granted.
+
+price_history reads this machine's own recorded observations (opt-in: the server env
+needs VIAJANTE_PRICE_HISTORY=1) and reports first/last/lowest/highest/change for one
+query in one currency. One observation means no trend; it never predicts and never
+compares currencies. watch_price re-runs a saved search on demand (it sends no
+notifications and schedules nothing) and reports the change since its last observation.
+Do not call it in a loop; Google rate-limits, and a cached or rate-limited run records nothing.
 
 Currency is currency or inferred from a named origin's owned country.
 If unknown, ask. Hotels require currency (no origin airport). Viajante
@@ -630,6 +638,46 @@ def build_server():
         during a search.
         """
         return dict(await run_lookup_tool(verify_answer_tool, **locals()))
+
+    @server.tool()
+    async def price_history(
+        kind: str | None = None,
+        route: str | None = None,
+        date: str | None = None,
+        location: str | None = None,
+        query_key: str | None = None,
+        currency: str | None = None,
+        limit: int = 20,
+    ) -> dict:
+        """Local: prices this machine observed for a route/date or hotel stay.
+
+        Reads the opt-in log (VIAJANTE_PRICE_HISTORY=1 in the server environment).
+        Each series is one exact query (same dates, passengers, cabin, stops, filters)
+        in one currency, with first_seen, last_seen, lowest, highest and the change
+        since the previous observation. One observation says so and reports no trend.
+        Observations in different currencies are separate series and never compared.
+        route is ORIGIN-DEST; date matches a departure, return, check-in or check-out
+        date; location names a hotel stay. No forecast, no estimate. May run during a
+        search.
+        """
+        return dict(await run_lookup_tool(price_history_tool, **locals()))
+
+    @server.tool()
+    async def watch_price(
+        name: str | None = None,
+        kind: str | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        """Re-run a saved flight or hotel search once and report the change.
+
+        With no name: list saved watches. With name, kind (flights or hotels) and
+        params (the search_flights / search_hotels arguments): save it, then run it.
+        With only a name: run the saved search. The run records its observation even
+        when the global opt-in is off, and reports the change versus the last
+        observation of the same query in the same currency. A cached replay or a
+        failed or rate-limited search records nothing. No scheduler, no notification.
+        """
+        return dict(await run_mcp_tool(watch_price_tool, **locals()))
 
     return server
 

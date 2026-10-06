@@ -1098,6 +1098,8 @@ class McpServerImportTests(unittest.TestCase):
                 "plan_stay_blocks",
                 "split_stay_costs",
                 "verify_answer",
+                "price_history",
+                "watch_price",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))
@@ -1119,6 +1121,7 @@ class McpServerImportTests(unittest.TestCase):
             "search_hotel_rooms",
             "search_trip",
             "search_hidden_city",
+            "watch_price",
         }
 
         async def check_forwarding() -> None:

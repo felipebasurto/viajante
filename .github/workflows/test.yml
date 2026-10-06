@@ -69,6 +69,8 @@ jobs:
                           "plan_stay_blocks",
                           "split_stay_costs",
                           "verify_answer",
+                          "price_history",
+                          "watch_price",
                           "get_runtime_info",
                       }
                       assert names == expected, names ^ expected

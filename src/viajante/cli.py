@@ -51,6 +51,8 @@ from viajante.flights import (
     search_flights,
 )
 from viajante.google_flights import google_flights_url
+from viajante.history_cli import add_parsers as add_history_parsers
+from viajante.history_cli import run_history, run_watch
 from viajante.hotels import (
     resolve_hotel_currency,
     search_hotels,
@@ -2469,6 +2471,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=BENCH_EXAMPLES,
     )
+    add_history_parsers(sub)
     return parser
 
 
@@ -2511,6 +2514,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_points(args)
     if args.cmd == "bench":
         return run_bench()
+    if args.cmd == "history":
+        return run_history(args)
+    if args.cmd == "watch":
+        return run_watch(args)
 
     parser.print_help()
     return 1
