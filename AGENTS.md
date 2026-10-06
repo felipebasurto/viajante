@@ -323,7 +323,7 @@ and `self_transfer` (true for a hub), and carries each ticket's own offer and
 `google_flights_url`. Say that a missed connection between tickets is not protected
 and bags may need re-checking. A hub connection needs ticket 1's last segment to land
 at the hub and ticket 2's first segment to leave from it (`airport_mismatch`,
-`airport_unproven`), an owned arrival moment (the segment `arrival_date` plus clock)
+`airport_unproven`), an owned arrival moment (the segment `arrival_date` plus clock, converted to UTC with the airport's catalogue timezone; a missing zone or a nonexistent or DST-ambiguous local time is unproven, never a number)
 and an owned departure moment; unproven pairs are rejected (`timing_unproven`), pairs
 under `min_connection_hours` (default 3, a planning default, not provider evidence)
 are rejected (`connection_too_short`). Mixed one-ways pair the cheapest outbound and
@@ -338,7 +338,7 @@ raw sums of different currencies never compare. Other-currency groups and the
 unknown-total group keep at most 3 rows each (`omitted_other_currency` counts the rest). `vs_packaged` compares only against
 the cheapest packaged offer in the same currency and carries a non-negative `savings`
 or `extra_cost`. Hubs are named or the layover airports in the packaged segments.
-Extra searches are capped (`MAX_SPLIT_HUBS`, 2 queries per hub, 3 with overnight,
+Extra searches are capped (`MAX_SPLIT_HUBS` = 5, `via` names at most 5 airports (`MAX_VIA`; field-specific errors for unknown codes and the limit), 2 queries per hub, 3 with overnight,
 2 for mixed), sequential under the one-search lock, and stop at a recorded Google
 cooldown (the CLI then exits non-zero). Hub splits do not apply to multi-city;
 `--price-cap` drops splits whose total is unknown, in another currency, or above the cap. Ticket queries carry occupancy, cabin, bags and

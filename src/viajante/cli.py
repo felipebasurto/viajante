@@ -134,7 +134,7 @@ Examples:
   viajante flights JFK-LHR:2026-09-15 --bags 1 --carry-on --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --max-duration 16 --min-layover 1 --max-layover 8
   viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep
-  viajante flights JFK-NRT:2026-11-03 --split-tickets --split-hubs LAX,SFO
+  viajante flights JFK-NRT:2026-11-03 --split-tickets --split-via LAX,SFO
   viajante flights --trip rt JFK-NRT:2026-11-03:2026-11-17 --split-tickets
 """
 
@@ -850,13 +850,8 @@ def _status_exit_code(rows: Sequence) -> int:
     return 2 if failures == len(rows) else 3
 
 
-def _split_hubs(args: argparse.Namespace) -> Optional[list[str]]:
-    return args.split_hubs.split(",") if args.split_hubs else None
-
-
-def _split_max_hubs(args: argparse.Namespace) -> int:
-    named = args.split_max_hubs
-    return DEFAULT_SPLIT_HUBS if named is None else named
+def _split_via(args: argparse.Namespace) -> Optional[list[str]]:
+    return args.split_via.split(",") if args.split_via else None
 
 
 def _split_min_connection(args: argparse.Namespace) -> float:
@@ -869,7 +864,7 @@ def _split_query_from_args(
 ) -> Optional[FlightQuery | RoundTrip]:
     """The one query a split search applies to, validated before any search runs."""
     named = (
-        args.split_hubs,
+        args.split_via,
         args.split_max_hubs,
         args.split_min_connection,
         args.split_overnight,
@@ -877,7 +872,7 @@ def _split_query_from_args(
     )
     if not args.split_tickets:
         if any(value not in (None, False) for value in named):
-            raise ValueError("--split-hubs and the other --split-* options need --split-tickets")
+            raise ValueError("--split-via and the other --split-* options need --split-tickets")
         return None
     if len(queries) != 1 or not isinstance(queries[0], (FlightQuery, RoundTrip)):
         raise ValueError(
@@ -893,8 +888,8 @@ def _split_query_from_args(
     )
     validate_split_request(
         query,
-        hubs=_split_hubs(args),
-        max_hubs=_split_max_hubs(args),
+        via=_split_via(args),
+        max_hubs=args.split_max_hubs,
         min_connection_hours=_split_min_connection(args),
         leg_max_stops=args.split_leg_stops or 0,
         top=args.top,
@@ -1005,8 +1000,8 @@ def _run_flights(args: argparse.Namespace) -> int:
             split = search_split_tickets(
                 split_query,
                 packaged=report,
-                hubs=_split_hubs(args),
-                max_hubs=_split_max_hubs(args),
+                via=_split_via(args),
+                max_hubs=args.split_max_hubs,
                 min_connection_hours=_split_min_connection(args),
                 allow_overnight=args.split_overnight,
                 leg_max_stops=args.split_leg_stops or 0,
@@ -1355,7 +1350,7 @@ def _add_split_flags(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--split-hubs",
+        "--split-via",
         default=None,
         metavar="CODES",
         help="Comma-separated hub IATA codes (default: layover airports in the packaged results)",
@@ -1365,7 +1360,10 @@ def _add_split_flags(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="N",
-        help=f"Hubs to try (default {DEFAULT_SPLIT_HUBS}, at most {MAX_SPLIT_HUBS})",
+        help=(
+            f"Hubs to try (default {DEFAULT_SPLIT_HUBS}, or all named with --split-via; "
+            f"at most {MAX_SPLIT_HUBS})"
+        ),
     )
     parser.add_argument(
         "--split-min-connection",

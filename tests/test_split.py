@@ -30,11 +30,23 @@ from viajante.models import (
 )
 from viajante.split import (
     MAX_SPLIT_HUBS,
+    SplitItinerary,
+    SplitPart,
+    _instant,
+    _rank,
     layover_hubs,
     search_split_tickets,
 )
 
-DAY = date.today() + timedelta(days=30)
+
+def _calm(day: date) -> date:
+    """Skip the weeks around DST changes so fixed-clock gaps in the fixtures stay exact."""
+    while (3, 5) <= (day.month, day.day) <= (3, 31) or (10, 22) <= (day.month, day.day) <= (11, 8):
+        day += timedelta(days=1)
+    return day
+
+
+DAY = _calm(date.today() + timedelta(days=30))
 NEXT = DAY + timedelta(days=1)
 BACK = DAY + timedelta(days=10)
 NOW = datetime(2026, 1, 1, 12, 0)
@@ -325,7 +337,7 @@ class HubSplitTests(unittest.TestCase):
         report = search_split_tickets(
             FlightQuery("JFK", "NRT", DAY),
             packaged=_packaged_via("LAX"),
-            hubs=["LAX", "SFO", "ORD", "SEA", "DEN"],
+            via=["LAX", "SFO", "ORD", "SEA", "DEN"],
             max_hubs=2,
             search=fake,
         )
@@ -354,7 +366,7 @@ class HubSplitTests(unittest.TestCase):
         report = search_split_tickets(
             FlightQuery("JFK", "NRT", DAY),
             packaged=_packaged_via("LAX"),
-            hubs=["JFK", "NRT"],
+            via=["JFK", "NRT"],
             search=fake,
         )
         self.assertEqual(fake.calls, [])
@@ -381,7 +393,7 @@ class HubSplitTests(unittest.TestCase):
         report = search_split_tickets(
             FlightQuery("JFK", "NRT", DAY),
             packaged=_packaged_via("LAX"),
-            hubs=["LAX", "SFO", "ORD"],
+            via=["LAX", "SFO", "ORD"],
             search=fake,
         )
         self.assertEqual(len(fake.calls), 1)
@@ -449,7 +461,7 @@ class HubSplitTests(unittest.TestCase):
                 _offer(900.0, (_segment("SFO", "NRT", "16:00", "23:50"),), currency="USD"),
             ],
         }
-        kwargs = dict(packaged=_packaged_via("LAX"), hubs=["LAX", "SFO"])
+        kwargs = dict(packaged=_packaged_via("LAX"), via=["LAX", "SFO"])
         ranked = search_split_tickets(
             FlightQuery("JFK", "NRT", DAY), top=1, search=FakeSearch(table), **kwargs
         )
@@ -523,6 +535,179 @@ class HubSplitTests(unittest.TestCase):
         )
         self.assertEqual(report.itineraries[0].total, 0.3)
         self.assertEqual(report.itineraries[0].savings, 0.7)
+
+
+def _hub_search(day, hub, first_arr, second_dep, *, origin="JFK", dest="NRT", **kwargs):
+    """One hub split on a fixed date; the first ticket lands on ``day`` at ``first_arr``."""
+    table = {
+        (origin, hub, day): [
+            _offer(
+                200.0,
+                (_segment(origin, hub, "08:00", first_arr, on=day),),
+                airline="A",
+            )
+        ],
+        (hub, dest, day): [
+            _offer(500.0, (_segment(hub, dest, second_dep, "23:00", on=day),), airline="B")
+        ],
+    }
+    return search_split_tickets(
+        FlightQuery(origin, dest, day),
+        packaged=_packaged_via(hub),
+        via=[hub],
+        search=FakeSearch(table),
+        **kwargs,
+    )
+
+
+class ConnectionTimezoneTests(unittest.TestCase):
+    def test_dst_ambiguous_arrival_leaves_the_connection_unproven(self) -> None:
+        # 01:30 on 2026-10-25 happens twice in London: the real gap is 210 or 270 minutes.
+        report = _hub_search(date(2026, 10, 25), "LHR", "01:30", "05:00", min_connection_hours=1)
+        self.assertEqual(report.itineraries, ())
+        self.assertEqual(report.rejected, {"timing_unproven": 1})
+
+    def test_nonexistent_local_departure_leaves_the_connection_unproven(self) -> None:
+        # 01:30 on 2026-03-29 never happens in London (clocks jump 01:00 -> 02:00).
+        report = _hub_search(date(2026, 3, 29), "LHR", "00:30", "01:30", min_connection_hours=0)
+        self.assertEqual(report.itineraries, ())
+        self.assertEqual(report.rejected, {"timing_unproven": 1})
+
+    def test_gap_is_measured_in_utc_across_a_dst_change(self) -> None:
+        # 00:30 BST (23:30Z) to 03:00 GMT (03:00Z) is 210 minutes; the clocks alone say 150.
+        report = _hub_search(date(2026, 10, 25), "LHR", "00:30", "03:00")
+        (row,) = report.itineraries
+        self.assertEqual(row.connection_minutes, 210)
+        self.assertEqual(report.rejected, {})
+
+    def test_missing_timezone_leaves_the_connection_unproven(self) -> None:
+        with patch("viajante.split.airport_geo", return_value=None):
+            report = _hub_search(DAY, "LAX", "11:30", "15:00")
+        self.assertEqual(report.itineraries, ())
+        self.assertEqual(report.rejected, {"timing_unproven": 1})
+        self.assertIsNone(_instant(DAY, "10:00", "ZZZ"))
+        with patch("viajante.split.airport_geo", return_value=("Not/AZone", 0.0, 0.0)):
+            self.assertIsNone(_instant(DAY, "10:00", "LAX"))
+
+    def test_date_line_and_after_midnight_arrivals_stay_correct(self) -> None:
+        day = date(2026, 11, 1)
+        # AKL -> HNL lands the same calendar day it left (date line); HNL -> LAX leaves 2h later.
+        report = _hub_search(
+            day, "HNL", "08:00", "10:00", origin="AKL", dest="LAX", min_connection_hours=2
+        )
+        (row,) = report.itineraries
+        self.assertEqual(row.connection_minutes, 120)
+        self.assertFalse(row.overnight_at_hub)
+        # Lands HNL at 00:30 the next day; the next ticket leaves at 02:30 that day.
+        after = date(2026, 11, 2)
+        table = {
+            ("AKL", "HNL", day): [
+                _offer(200.0, (_segment("AKL", "HNL", "20:00", "00:30", on=day, lands=after),))
+            ],
+            ("HNL", "LAX", after): [
+                _offer(500.0, (_segment("HNL", "LAX", "02:30", "10:00", on=after),))
+            ],
+        }
+        overnight = search_split_tickets(
+            FlightQuery("AKL", "LAX", day),
+            packaged=_packaged_via("HNL"),
+            via=["HNL"],
+            allow_overnight=True,
+            min_connection_hours=2,
+            search=FakeSearch(table),
+        )
+        (night,) = overnight.itineraries
+        self.assertEqual(night.connection_minutes, 120)
+        self.assertFalse(night.overnight_at_hub)
+
+    def test_mixed_one_ways_compare_in_utc_and_unknown_timing_stays_unproven(self) -> None:
+        day, back = date(2026, 10, 24), date(2026, 10, 25)
+        table = {
+            ("JFK", "LHR", day): [
+                _offer(300.0, (_segment("JFK", "LHR", "20:00", "01:30", on=day, lands=back),))
+            ],
+            ("LHR", "JFK", back): [
+                _offer(250.0, (_segment("LHR", "JFK", "09:00", "12:00", on=back),))
+            ],
+        }
+        report = search_split_tickets(
+            RoundTrip("JFK", "LHR", day, back),
+            packaged=MixedOneWayTests()._packaged(),
+            search=FakeSearch(table),
+        )
+        (row,) = report.itineraries
+        self.assertIs(row.timing_proven, False)
+        self.assertIn("not verified", row.to_dict()["timing_note"])
+
+    def test_unknown_timing_never_sorts_above_proven_timing(self) -> None:
+        query = FlightQuery("JFK", "NRT", DAY)
+
+        def row(price: float, proven: bool) -> SplitItinerary:
+            offer = _offer(price, (_segment("JFK", "NRT", "10:00", "14:00"),), currency="USD")
+            part = SplitPart("outbound", query, offer, "USD")
+            return SplitItinerary("mixed_one_ways", (part,), timing_proven=proven)
+
+        ranked, _omitted = _rank([row(100.0, False), row(900.0, True)], "USD", 5)
+        self.assertEqual([r.total for r in ranked], [900.0, 100.0])
+
+
+class ViaTests(unittest.TestCase):
+    def test_several_named_via_airports_are_all_tried(self) -> None:
+        fake = FakeSearch(_hub_table())
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX", "SFO", "ORD", "SEA", "DEN"],
+            search=fake,
+        )
+        self.assertEqual(report.hubs, ("LAX", "SFO", "ORD", "SEA", "DEN"))
+        self.assertEqual(report.hubs_source, "user")
+        self.assertEqual(report.max_hubs, 5)
+        self.assertEqual(len(fake.calls), 5)
+        self.assertEqual(report.skipped_hubs, ())
+        self.assertEqual(len(report.itineraries), 1)
+
+    def test_via_errors_name_the_field(self) -> None:
+        query = FlightQuery("JFK", "NRT", DAY)
+        with self.assertRaisesRegex(ValueError, "unknown via IATA code: 'ZZZ'"):
+            search_split_tickets(query, packaged=_packaged_via("LAX"), via=["LAX", "ZZZ"])
+        with self.assertRaisesRegex(ValueError, "via accepts at most 5 airports \\(got 6\\)"):
+            search_split_tickets(
+                query,
+                packaged=_packaged_via("LAX"),
+                via=["LAX", "SFO", "ORD", "SEA", "DEN", "ATL"],
+            )
+
+    def test_cli_and_mcp_report_the_same_via_errors(self) -> None:
+        for argv in (
+            ["flights", ROUTE, "--split-tickets", "--split-via", "LAX,ZZZ"],
+            ["flights", ROUTE, "--split-tickets", "--split-via", "LAX,SFO,ORD,SEA,DEN,ATL"],
+        ):
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(main(argv), 1)
+            self.assertIn("via", err.getvalue())
+        with self.assertRaisesRegex(ValueError, "unknown via IATA code"):
+            search_split_tickets_tool(ROUTE, via="LAX,ZZZ")
+        with self.assertRaisesRegex(ValueError, "via accepts at most 5"):
+            search_split_tickets_tool(ROUTE, via="LAX,SFO,ORD,SEA,DEN,ATL")
+
+    def test_mismatched_airports_stay_rejected_with_several_via(self) -> None:
+        table = _hub_table()
+        table[("JFK", "SFO", DAY)] = [
+            _offer(100.0, (_segment("JFK", "BUR", "08:00", "11:30"),), airline="C")
+        ]
+        table[("SFO", "NRT", DAY)] = [
+            _offer(100.0, (_segment("SFO", "NRT", "15:00", "23:00"),), airline="D")
+        ]
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["SFO", "LAX"],
+            search=FakeSearch(table),
+        )
+        self.assertEqual([row.hub for row in report.itineraries], ["LAX"])
+        self.assertEqual(report.rejected, {"airport_mismatch": 1})
 
 
 class MixedOneWayTests(unittest.TestCase):
@@ -701,7 +886,7 @@ class MixedOneWayTests(unittest.TestCase):
             search_split_tickets(
                 RoundTrip("JFK", "NRT", DAY, BACK),
                 packaged=self._packaged(),
-                hubs=["LAX"],
+                via=["LAX"],
                 search=FakeSearch({}),
             )
 
@@ -738,7 +923,7 @@ class SplitCliTests(unittest.TestCase):
         return code, out.getvalue(), err.getvalue(), flights, seen
 
     def test_options_without_the_opt_in_are_rejected_before_any_search(self) -> None:
-        code, _out, err, flights, _seen = self._run(["flights", ROUTE, "--split-hubs", "LAX"])
+        code, _out, err, flights, _seen = self._run(["flights", ROUTE, "--split-via", "LAX"])
         self.assertEqual(code, 1)
         self.assertIn("--split-tickets", err)
         flights.assert_not_called()
@@ -746,7 +931,7 @@ class SplitCliTests(unittest.TestCase):
     def test_split_needs_exactly_one_one_way_or_round_trip(self) -> None:
         for argv in (
             ["flights", ROUTE, f"LAX-JFK:{BACK.isoformat()}", "--split-tickets"],
-            ["flights", "--trip", "rt", RT_ROUTE, "--split-tickets", "--split-hubs", "LAX"],
+            ["flights", "--trip", "rt", RT_ROUTE, "--split-tickets", "--split-via", "LAX"],
             ["flights", ROUTE, "--split-tickets", "--split-max-hubs", "9"],
         ):
             code, _out, _err, flights, _seen = self._run(argv)
@@ -811,8 +996,8 @@ class SplitMcpTests(unittest.TestCase):
             return search_split_tickets_tool(route, **kwargs), split
 
     def test_hub_split_over_the_tool_and_ledger_owns_the_savings(self) -> None:
-        payload, split = self._call(ROUTE, FakeSearch(_hub_table()), hubs="lax", max_hubs=2)
-        self.assertEqual(split.call_args.kwargs["hubs"], ("LAX",))
+        payload, split = self._call(ROUTE, FakeSearch(_hub_table()), via="lax", max_hubs=2)
+        self.assertEqual(split.call_args.kwargs["via"], ("LAX",))
         self.assertEqual(split.call_args.kwargs["max_hubs"], 2)
         row = payload["itineraries"][0]
         self.assertIs(row["connection_protected"], False)
@@ -847,7 +1032,7 @@ class SplitMcpTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "past"):
                 search_split_tickets_tool(f"JFK-NRT:{past}")
             with self.assertRaisesRegex(ValueError, "one-way"):
-                search_split_tickets_tool(RT_ROUTE, trip="rt", hubs="LAX")
+                search_split_tickets_tool(RT_ROUTE, trip="rt", via="LAX")
             with self.assertRaisesRegex(ValueError, "max_hubs"):
                 search_split_tickets_tool(ROUTE, max_hubs=99)
             with mcp_handlers._SEARCH_LOCK:

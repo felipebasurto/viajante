@@ -113,15 +113,15 @@ one-way quotes. It costs extra searches, so it is off by default and capped.
 
 ```bash
 # One-way: origin to hub on one ticket, hub to destination on another
-viajante flights JFK-NRT:2026-11-10 --fetch sweep --split-tickets --split-hubs HKG,ICN
+viajante flights JFK-NRT:2026-11-10 --fetch sweep --split-tickets --split-via HKG,ICN
 # Round trip: cheapest outbound one-way plus cheapest return one-way vs the package
 viajante flights --trip rt JFK-NRT:2026-11-10:2026-11-24 --split-tickets
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `--split-hubs CODES` | Hubs to try. Unnamed, hubs are the layover airports in the packaged results shown. |
-| `--split-max-hubs N` | Hubs to try (default 3, at most 4). Each hub is 2 searches, or 3 with `--split-overnight`. |
+| `--split-via CODES` | Up to 5 connection airports to try (every one named is searched). Unnamed, hubs are the layover airports in the packaged results shown. An unknown code or more than 5 is an error naming `via`. |
+| `--split-max-hubs N` | Hubs to try (default 3, or every `--split-via` airport; at most 5). Each hub is 2 searches, or 3 with `--split-overnight`. |
 | `--split-min-connection HOURS` | Minimum gap between tickets at the hub (default 3). A planning default, not provider evidence. |
 | `--split-overnight` | Also search the second ticket on the next day. |
 | `--split-leg-stops N` | Maximum stops on each hub ticket (default 0). |
@@ -138,22 +138,33 @@ the currency's minor unit. `vs_packaged` compares with the cheapest returned
 packaged offer quoted in the same currency, and carries a non-negative `savings`
 (`direction: "cheaper"`) or `extra_cost` (`direction: "costlier"`). Results are
 ordered within one currency at a time (the requested currency first, unknown
-totals last), and `--top` applies to the requested currency (other groups are capped, below). A hub connection needs ticket 1
-to land at the hub airport and ticket 2 to leave from it (owned segment
-airports), plus an owned arrival and departure time at the hub; other pairs are
-counted in `rejected` (`airport_mismatch`, `airport_unproven`,
-`timing_unproven`, `connection_too_short`), not shown. Mixed one-ways pair the
-cheapest outbound and return where the return departs after the outbound lands
-(`return_before_arrival` is rejected), one pair per currency. Without an owned
-arrival date a pair is kept only when no proven pair exists in its currency; it
-says `timing_proven: false` with a `timing_note` (the return may leave before
-the outbound lands; not verified), and is counted in `rejected.timing_unproven`
-(dropped) and `coverage.scope.timing_unproven_kept` (kept). Rows in other
-currencies and rows with an unknown total are capped at 3 per group
-(`other_currency_row_cap`); `omitted_other_currency` counts the rest and the CLI
-says so. A recorded
-Google cooldown stops the extra searches and the command exits non-zero. `--save` adds the report under `split_tickets`. The MCP tool is
-`search_split_tickets`; one-way routes use hubs, `trip="rt"` uses mixed one-ways.
+totals last), and `--top` applies to the requested currency (other groups are
+capped, below).
+
+A hub connection needs ticket 1 to land at the hub airport and ticket 2 to leave
+from it (owned segment airports), plus an owned arrival and departure time at the
+hub. The gap is measured in UTC, each time converted with the hub's catalogue
+timezone, so date-line and after-midnight arrivals stay correct. A missing
+timezone, or a local time that does not exist or happens twice around a DST
+change, leaves the timing unproven: the pair is never given a number. Rejected
+hub pairs are counted in `rejected` (`airport_mismatch`, `airport_unproven`,
+`timing_unproven`, `connection_too_short`), not shown.
+
+Mixed one-ways pair the cheapest outbound and return where the return departs
+after the outbound lands, compared the same way in UTC (`return_before_arrival`
+is rejected), one pair per currency. When the timing cannot be proven, a pair is
+kept only if no proven pair exists in its currency; it says `timing_proven: false`
+with a `timing_note` (the return may leave before the outbound lands; not
+verified), and is counted in `rejected.timing_unproven` (dropped) and
+`coverage.scope.timing_unproven_kept` (kept). Unknown timing never sorts above
+proven timing. Rows in other currencies and rows with an unknown total are capped
+at 3 per group (`other_currency_row_cap`); `omitted_other_currency` counts the
+rest and the CLI says so.
+
+A recorded Google cooldown stops the extra searches and the command exits
+non-zero. `--save` adds the report under `split_tickets`. The MCP tool is
+`search_split_tickets`; one-way routes use `via` / hubs, `trip="rt"` uses mixed
+one-ways.
 
 ## Dates and flexible travel
 

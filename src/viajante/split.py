@@ -20,7 +20,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from viajante.airports import airport_geo
 from viajante.flights import (
     DEFAULT_TOP,
     _overlay_carrier_filters,
@@ -46,8 +48,10 @@ from viajante.ratelimit import rate_limit_advice, rate_limit_status
 # re-check, or a terminal change can need longer: it is a parameter on purpose.
 DEFAULT_MIN_CONNECTION_HOURS = 3.0
 DEFAULT_SPLIT_HUBS = 3
-# Hard ceiling: each hub costs 2 searches (3 with overnight), so at most 12 extra searches.
-MAX_SPLIT_HUBS = 4
+# Hard ceiling: each hub costs 2 searches (3 with overnight), so at most 15 extra searches.
+MAX_SPLIT_HUBS = 5
+# Airports a caller may name explicitly as connection points (``via``).
+MAX_VIA = 5
 SPLIT_LEG_TOP = 10
 # Rows kept from each non-requested currency group and from the unknown-total group.
 MAX_OTHER_CURRENCY_ROWS = 3
@@ -65,8 +69,9 @@ SELF_TRANSFER_WARNING = (
     "must be confirmed on its own link."
 )
 TIMING_UNPROVEN_NOTE = (
-    "Return timing is not verified: the outbound has no owned arrival date, so the return "
-    "may leave before the outbound lands."
+    "Return timing is not verified: the outbound arrival or the return departure lacks an "
+    "owned date, clock, or unambiguous airport-local time, so the return may leave before "
+    "the outbound lands."
 )
 MIXED_WARNING = (
     "Two separate one-way tickets: confirm the fare, bags, and changes of each on its own "
@@ -265,29 +270,59 @@ def _offer_currency(offer: FlightOffer, report: SearchReport) -> str:
     return offer.evidence.currency if offer.evidence is not None else report.currency
 
 
-def _at(day: Optional[date], clock: Optional[str]) -> Optional[datetime]:
+def _zone(code: Optional[str]) -> Optional[ZoneInfo]:
+    """The airport catalogue's IANA zone, or None when the code or zone is unknown."""
+    geo = airport_geo(code) if code else None
+    if geo is None:
+        return None
+    try:
+        return ZoneInfo(geo[0])
+    except (ValueError, ZoneInfoNotFoundError):
+        return None
+
+
+def _instant(day: Optional[date], clock: Optional[str], code: Optional[str]) -> Optional[datetime]:
+    """UTC instant of a local civil time at an airport.
+
+    None when the day, clock, or zone is missing, or the civil time is nonexistent or
+    ambiguous (a DST change): a gap that depends on a guess is never a number.
+    """
     owned = normalize_clock(clock)
-    if day is None or owned is None:
+    zone = _zone(code)
+    if day is None or owned is None or zone is None:
         return None
     hour, minute = owned.split(":", 1)
-    return datetime(day.year, day.month, day.day, int(hour), int(minute))
+    civil = datetime(day.year, day.month, day.day, int(hour), int(minute))
+    instants = set()
+    for fold in (0, 1):
+        utc = civil.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc)
+        if utc.astimezone(zone).replace(tzinfo=None) == civil:
+            instants.add(utc)
+    return next(iter(instants)) if len(instants) == 1 else None
 
 
-def _departure_at(offer: FlightOffer, query: FlightQuery) -> Optional[datetime]:
-    """Local departure moment. The first segment leaves on the queried date unless it says so."""
+def _departure_point(
+    offer: FlightOffer, query: FlightQuery
+) -> tuple[Optional[date], Optional[datetime]]:
+    """Local departure day and UTC instant (the queried date unless the segment says so)."""
     journey = offer.legs[0]
     first = journey.segments[0] if journey.segments else None
     day = (first.departure_date if first else None) or query.departure_date
-    return _at(day, first.departure if first and first.departure else journey.departure)
+    clock = first.departure if first and first.departure else journey.departure
+    code = (first.origin if first else None) or query.origin
+    return day, _instant(day, clock, code)
 
 
-def _arrival_at(offer: FlightOffer) -> Optional[datetime]:
-    """Local arrival moment, only from an owned arrival date. A clock alone never proves one."""
-    journey = offer.legs[0]
-    last = journey.segments[-1] if journey.segments else None
+def _arrival_point(
+    offer: FlightOffer, query: FlightQuery
+) -> tuple[Optional[date], Optional[datetime]]:
+    """Local arrival day and UTC instant, only from an owned arrival date."""
+    last = offer.legs[0].segments[-1] if offer.legs[0].segments else None
     if last is None:
-        return None
-    return _at(last.arrival_date, last.arrival)
+        return None, None
+    return last.arrival_date, _instant(
+        last.arrival_date, last.arrival, last.destination or query.destination
+    )
 
 
 def _packaged_quote(packaged: Optional[SearchReport], currency: str) -> Optional[PackagedQuote]:
@@ -346,8 +381,10 @@ def pair_hub_quotes(
     """Pair origin->hub quotes (first query) with hub->destination quotes (the rest).
 
     Ticket 1 must land at the hub airport and ticket 2 must leave from it (owned segment
-    airports), then an owned arrival moment and departure moment must be at least the
-    minimum connection apart. Anything unproven is rejected, never guessed.
+    airports), then the gap between the two instants, each converted to UTC with the hub's
+    catalogue timezone, must be at least the minimum connection. A missing timezone or a
+    nonexistent or ambiguous local time (a DST change) leaves the gap unproven: the pair
+    is rejected, never guessed.
     """
     rejected: Counter[str] = Counter()
     found: list[SplitItinerary] = []
@@ -358,13 +395,13 @@ def pair_hub_quotes(
         if not isinstance(second, QuerySuccess):
             continue
         for early in leg_one.offers:
-            arrives = _arrival_at(early)
+            arrival_day, arrives = _arrival_point(early, leg_one.query)  # type: ignore[arg-type]
             for late in second.offers:
                 problem = _hub_airport_problem(early, late, hub)
                 if problem is not None:
                     rejected[problem] += 1
                     continue
-                departs = _departure_at(late, second.query)  # type: ignore[arg-type]
+                departure_day, departs = _departure_point(late, second.query)  # type: ignore[arg-type]
                 if arrives is None or departs is None:
                     rejected["timing_unproven"] += 1
                     continue
@@ -393,7 +430,7 @@ def pair_hub_quotes(
                         ),
                         hub=hub,
                         connection_minutes=gap,
-                        overnight_at_hub=departs.date() != arrives.date(),
+                        overnight_at_hub=departure_day != arrival_day,
                         packaged=packaged,
                     )
                 )
@@ -405,7 +442,9 @@ def pair_mixed_one_ways(
 ) -> tuple[list[SplitItinerary], Counter[str]]:
     """Cheapest feasible outbound one-way plus return one-way (two queries in the report).
 
-    A pair is feasible when the return departs after the outbound lands, both owned. A pair
+    A pair is feasible when the return departs after the outbound lands, compared in UTC
+    through each airport's catalogue timezone (a missing zone or a DST-ambiguous or
+    nonexistent local time leaves the timing unproven). A pair
     that provably overlaps is rejected. A pair without an owned arrival date stays eligible
     only when nothing proven exists in its currency, and is flagged ``timing_proven: false``
     with a ``timing_note``. One pair per currency (the cheapest total within it); prices in
@@ -421,9 +460,9 @@ def pair_mixed_one_ways(
     proven: list[SplitItinerary] = []
     unproven: list[SplitItinerary] = []
     for early in out.offers:
-        arrives = _arrival_at(early)
+        _, arrives = _arrival_point(early, out.query)  # type: ignore[arg-type]
         for late in back.offers:
-            departs = _departure_at(late, back.query)  # type: ignore[arg-type]
+            _, departs = _departure_point(late, back.query)  # type: ignore[arg-type]
             known = arrives is not None and departs is not None
             if known and departs <= arrives:  # type: ignore[operator]
                 rejected["return_before_arrival"] += 1
@@ -488,8 +527,14 @@ def _rank(
     ranked: list[SplitItinerary] = []
     omitted = 0
     for code in order:
+        # Unproven timing never sorts above proven timing.
         group = sorted(
-            groups[code], key=lambda row: (row.total or 0.0, row.connection_minutes or 0)
+            groups[code],
+            key=lambda row: (
+                row.timing_proven is False,
+                row.total or 0.0,
+                row.connection_minutes or 0,
+            ),
         )
         limit = top if code == currency else min(top, MAX_OTHER_CURRENCY_ROWS)
         ranked.extend(group[:limit])
@@ -572,13 +617,13 @@ def _one_way(source: FlightQuery | RoundTrip, origin: str, destination: str, day
 def validate_split_request(
     query: object,
     *,
-    hubs: Optional[Sequence[str]] = None,
-    max_hubs: int = DEFAULT_SPLIT_HUBS,
+    via: Optional[Sequence[str]] = None,
+    max_hubs: Optional[int] = None,
     min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
     leg_max_stops: int = 0,
     top: int = DEFAULT_TOP,
 ) -> tuple[SplitKind, Optional[tuple[str, ...]]]:
-    """Reject a bad split request before any search runs. Returns the kind and named hubs."""
+    """Reject a bad split request before any search runs. Returns the kind and named via."""
     if isinstance(query, FlightQuery):
         kind: SplitKind = "hub"
     elif isinstance(query, RoundTrip):
@@ -588,9 +633,9 @@ def validate_split_request(
             "split tickets take one one-way query (via a hub) or one round-trip "
             "(mixed one-ways); multi-city is not supported"
         )
-    if kind == "mixed_one_ways" and hubs:
-        raise ValueError("hubs apply only to a one-way query")
-    if not 1 <= max_hubs <= MAX_SPLIT_HUBS:
+    if kind == "mixed_one_ways" and via:
+        raise ValueError("via applies only to a one-way query")
+    if max_hubs is not None and not 1 <= max_hubs <= MAX_SPLIT_HUBS:
         raise ValueError(f"max_hubs must be between 1 and {MAX_SPLIT_HUBS}")
     if not math.isfinite(min_connection_hours) or min_connection_hours < 0:
         raise ValueError("min_connection_hours must be a non-negative number")
@@ -598,15 +643,18 @@ def validate_split_request(
         raise ValueError("leg_max_stops must be 0, 1, or 2")
     if top <= 0:
         raise ValueError("top must be positive")
-    return kind, parse_code_list(hubs, role="hub")
+    named = parse_code_list(via, role="via")
+    if named is not None and len(named) > MAX_VIA:
+        raise ValueError(f"via accepts at most {MAX_VIA} airports (got {len(named)})")
+    return kind, named
 
 
 def search_split_tickets(
     query: FlightQuery | RoundTrip,
     *,
     packaged: Optional[SearchReport] = None,
-    hubs: Optional[Sequence[str]] = None,
-    max_hubs: int = DEFAULT_SPLIT_HUBS,
+    via: Optional[Sequence[str]] = None,
+    max_hubs: Optional[int] = None,
     min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
     allow_overnight: bool = False,
     leg_max_stops: int = 0,
@@ -621,14 +669,16 @@ def search_split_tickets(
     """Search split tickets for one one-way (via hubs) or one round-trip (mixed one-ways).
 
     ``packaged`` is the caller's own packaged report for the same query: it is the savings
-    baseline and, for a one-way without named ``hubs``, the source of hub candidates. When
-    omitted it is searched once first. Extra searches are capped (``max_hubs`` hubs of 2
+    baseline and, for a one-way without named ``via``, the source of hub candidates. When
+    omitted it is searched once first. ``via`` names up to ``MAX_VIA`` connection airports
+    to try (all of them unless ``max_hubs`` says fewer); unnamed, hubs are discovered from
+    the packaged layovers. Extra searches are capped (``max_hubs`` hubs of 2
     queries, or 3 with ``allow_overnight``; mixed one-ways use 2) and stop at the first
     recorded rate limit.
     """
-    kind, named_hubs = validate_split_request(
+    kind, named_via = validate_split_request(
         query,
-        hubs=hubs,
+        via=via,
         max_hubs=max_hubs,
         min_connection_hours=min_connection_hours,
         leg_max_stops=leg_max_stops,
@@ -652,6 +702,7 @@ def search_split_tickets(
     error: Optional[SearchError] = _rate_limited(reports)
     stopping = "rate_limited" if error else "completed_scope"
     hubs_source: Optional[Literal["user", "packaged_layovers"]] = None
+    max_hubs = max_hubs or (len(named_via) if named_via else DEFAULT_SPLIT_HUBS)
     max_extra = 2 if kind == "mixed_one_ways" else max_hubs * (3 if allow_overnight else 2)
 
     if kind == "mixed_one_ways":
@@ -677,8 +728,8 @@ def search_split_tickets(
             rejected.update(short)
     else:
         assert isinstance(query, FlightQuery)
-        if named_hubs is not None:
-            hubs_source, candidates = "user", named_hubs
+        if named_via is not None:
+            hubs_source, candidates = "user", named_via
         else:
             hubs_source, candidates = (
                 "packaged_layovers",

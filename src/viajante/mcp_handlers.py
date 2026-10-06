@@ -59,7 +59,6 @@ from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.split import (
     DEFAULT_MIN_CONNECTION_HOURS,
-    DEFAULT_SPLIT_HUBS,
     search_split_tickets,
     validate_split_request,
     with_carrier_filters,
@@ -227,8 +226,8 @@ def search_split_tickets_tool(
     bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
-    hubs: Optional[str] = None,
-    max_hubs: int = DEFAULT_SPLIT_HUBS,
+    via: Optional[str] = None,
+    max_hubs: Optional[int] = None,
     min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
     allow_overnight: bool = False,
     leg_max_stops: int = 0,
@@ -260,10 +259,10 @@ def search_split_tickets_tool(
         alliances=parse_alliances(alliance),
         exclude_alliances=parse_alliances(exclude_alliance),
     )
-    hub_codes = parse_via_airports(hubs, role="hub")
+    via_codes = parse_via_airports(via, role="via")
     validate_split_request(
         split_query,
-        hubs=hub_codes,
+        via=via_codes,
         max_hubs=max_hubs,
         min_connection_hours=min_connection_hours,
         leg_max_stops=leg_max_stops,
@@ -272,7 +271,7 @@ def search_split_tickets_tool(
     report = _with_search_lock(
         lambda: search_split_tickets(
             split_query,
-            hubs=hub_codes,
+            via=via_codes,
             max_hubs=max_hubs,
             min_connection_hours=min_connection_hours,
             allow_overnight=allow_overnight,

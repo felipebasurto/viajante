@@ -30,7 +30,7 @@ from viajante.mcp_handlers import (
     validate_itinerary_tool,
 )
 from viajante.runtime import get_runtime_info as runtime_info
-from viajante.split import DEFAULT_MIN_CONNECTION_HOURS, DEFAULT_SPLIT_HUBS
+from viajante.split import DEFAULT_MIN_CONNECTION_HOURS
 
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
@@ -548,8 +548,8 @@ def build_server():
         bags: int | None = None,
         carry_on: int | None = None,
         price_cap: int | None = None,
-        hubs: str | None = None,
-        max_hubs: int = DEFAULT_SPLIT_HUBS,
+        via: str | None = None,
+        max_hubs: int | None = None,
         min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
         allow_overnight: bool = False,
         leg_max_stops: int = 0,
@@ -564,9 +564,10 @@ def build_server():
         trip="rt", ORIGIN-DEST:OUT:BACK (the cheapest outbound one-way plus the
         cheapest return one-way, compared with the packaged round-trip). It runs the
         packaged search itself (returned as packaged_report) and then a capped number
-        of extra searches: max_hubs (at most 4) hubs of 2 queries, 3 with
-        allow_overnight; mixed one-ways use 2. hubs is a named IATA list; unnamed,
-        hubs are the layover airports seen in the packaged results. It stops at a
+        of extra searches: max_hubs (default 3, or every named via airport; at
+        most 5) hubs of 2 queries, 3 with allow_overnight; mixed one-ways use 2.
+        via is a comma-separated list of up to 5 connection airports to try;
+        unnamed, hubs are the layover airports seen in the packaged results. It stops at a
         recorded rate limit (rate_limited true): do not retry.
         Every itinerary says split_ticket true, connection_protected false, and
         self_transfer true for a hub. A missed connection between tickets is not
@@ -581,8 +582,10 @@ def build_server():
         keep at most 3 rows each (omitted_other_currency counts the rest). Hub
         tickets must meet at the hub airport; mixed one-ways need the return to
         leave after the outbound lands, else timing_proven is false and
-        timing_note says so. Nothing is split out of a round-trip price,
-        estimated, or converted. Not for multi-city.
+        timing_note says so. Gaps are measured in UTC through each airport's
+        catalogue timezone; a missing timezone or a nonexistent or ambiguous
+        local time (a DST change) leaves the timing unproven, never a number.
+        Nothing is split out of a round-trip price, estimated, or converted. Not for multi-city.
         """
         return dict(await run_mcp_tool(search_split_tickets_tool, **locals()))
 
