@@ -9,9 +9,11 @@ from typing import Optional
 from viajante.google_flights import (
     COOLDOWN_UNCHECKED,
     NOT_SENT,
+    SWEEP_TRANSPORT_STATUS,
     SweepHttpClient,
     SweepHttpResponse,
     SweepPost,
+    SweepTransportError,
     cooldown_client,
     dispatch_posts,
     reset_shared_chrome_sweep_client,
@@ -119,6 +121,11 @@ class GoogleHotelsSource:
         if advice and response.status < 400:
             # A data-less RPC status 13 envelope: the cooldown is already recorded.
             raise HotelsBlocked(advice, rate_limited=True)
+        if response.status == SWEEP_TRANSPORT_STATUS:
+            raise SweepTransportError(
+                f"Google Hotels request failed before any response: {response.text}",
+                timeout="timeout" in response.text.partition(":")[0].casefold(),
+            )
         if response.status == 429 and advice:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
             raise HotelsBlocked(message, rate_limited=True)

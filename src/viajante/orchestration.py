@@ -46,7 +46,11 @@ def _clip_error_message(text: str) -> str:
 
 def _is_timeout(exc: BaseException) -> bool:
     # Playwright and curl_cffi timeouts do not subclass the builtin TimeoutError.
-    return isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.casefold()
+    return (
+        isinstance(exc, TimeoutError)
+        or getattr(exc, "timeout", False) is True
+        or "timeout" in type(exc).__name__.casefold()
+    )
 
 
 def classify_failure(exc: BaseException) -> SearchError:

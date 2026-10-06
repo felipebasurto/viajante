@@ -9,10 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlparse
 
-from viajante.flights import _normalize_offer
+from viajante.flights import _normalize_offer, classify_failure
 from viajante.google_flights import (
     EMPTY_STATE_TEXT,
     SWEEP_RETRY_BACKOFF_SECONDS,
+    SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
     GoogleFlightsMarkupError,
@@ -20,6 +21,8 @@ from viajante.google_flights import (
     GoogleFlightsSource,
     NoFlightsFound,
     SweepHttpResponse,
+    SweepPost,
+    SweepTransportError,
     _consent_reject_form,
     _is_consent_interstitial,
     build_itinerary_url,
@@ -44,7 +47,7 @@ from viajante.google_flights_rpc import (
     parse_shopping_body,
     shopping_stop_code,
 )
-from viajante.models import FlightLeg, FlightQuery, MultiCity, RoundTrip
+from viajante.models import FlightLeg, FlightQuery, MultiCity, RoundTrip, SearchErrorCode
 from viajante.tfs import _encode_legs, encode_tfs
 
 GOLDEN_TFS_DIRECT = "GhwSCjIwMjYtMTItMDQoAGoFEgNNQURyBRIDQkNOQgEBSAGYAQI="
@@ -2289,6 +2292,52 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         self.assertEqual(client.post_many_calls, 2)
         self.assertEqual(source.reset_calls, 1)
         self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+
+    def test_fetch_many_transport_failure_replays_on_a_fresh_session(self) -> None:
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "ConnectionError: reset"),
+                ),
+                (SweepHttpResponse(200, shop),),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(2))
+        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
+        self.assertEqual(client.post_many_calls, 2)
+        self.assertEqual(source.reset_calls, 1)
+
+    def test_fetch_many_transport_failure_is_not_a_rate_limit(self) -> None:
+        client = _ScriptedMuxClient(
+            (
+                (SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "ReadTimeout: 30s"),),
+                (SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "ReadTimeout: 30s"),),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=lambda _s: None)
+        failure = source.fetch_many(self._trips(1))[0]
+        self.assertIsInstance(failure, SweepTransportError)
+        error = classify_failure(failure)
+        self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
+        self.assertTrue(error.timeout)
+        self.assertFalse(error.rate_limited)
+
+    def test_a_raising_multiplexed_request_becomes_a_transport_response_not_a_429(self) -> None:
+        client = shared_chrome_sweep_client()
+        self.addCleanup(reset_shared_chrome_sweep_client)
+
+        async def boom(url, data, headers, timeout):
+            raise TimeoutError("read timed out")
+
+        client._apost = boom
+        jobs = [SweepPost("https://example.invalid/a", "x", {}) for _ in range(3)]
+        responses = client.post_many(jobs, timeout=1)
+        self.assertEqual({r.status for r in responses}, {SWEEP_TRANSPORT_STATUS})
+        self.assertIn("TimeoutError", responses[0].text)
 
     def test_fetch_many_5xx_still_replays_on_the_same_session(self) -> None:
         shop = _compact_body(_itinerary(price=91, airline="Iberia"))
