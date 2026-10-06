@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 import viajante
 from viajante.cli import _format_clock, _join_cancellation_rows, _print_report, main
 from viajante.models import (
@@ -37,6 +38,7 @@ from viajante.models import (
     TripTotal,
     VsTypical,
 )
+from viajante.recommend import Requirements, recommend_offers
 from viajante.storage import write_json_atomic
 
 FUTURE_DATE = date.today() + timedelta(days=30)
@@ -123,6 +125,30 @@ def _rendered(report: SearchReport, *, sort: str = "ranked") -> str:
     with redirect_stdout(buffer):
         _print_report(report, sort=sort)
     return buffer.getvalue()
+
+
+class RecommendationPrintTests(unittest.TestCase):
+    def test_prints_labels_relaxation_and_unknowns(self) -> None:
+        offer = _offer(stops_count=1)
+        recommendation = recommend_offers([offer], Requirements(max_stops=0), currency="USD")
+        report = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="USD",
+            queries=(
+                QuerySuccess(
+                    query=QUERY,
+                    raw_count=1,
+                    eligible_count=0,
+                    offers=(),
+                    recommendation=recommendation,
+                ),
+            ),
+        )
+        text = _rendered(report)
+        self.assertIn("[recommended, cheapest, fastest]", text)
+        self.assertIn("Relaxed requirements: max_stops", text)
+        self.assertIn("Fare rules (refund, change) not shown", text)
+        self.assertIn("Note: No offer met every stated requirement", text)
 
 
 class CliTests(unittest.TestCase):
@@ -1106,6 +1132,7 @@ class PublicApiTests(unittest.TestCase):
                 "TripSearchReport",
                 "compare_award",
                 "get_flights",
+                "get_hotel_details",
                 "load_award_offer",
                 "lookup_airports",
                 "search_dates",

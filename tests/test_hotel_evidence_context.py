@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import _isolate  # noqa: F401
 from test_google_hotels import _hotel_record, _search_payload, _wrap_wrb
 from test_hotels import FakeSource, _located, _two_stays, card, offer, query
 from viajante.cli import _print_hotel_offer_details, main

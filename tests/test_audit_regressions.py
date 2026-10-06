@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers, skiplagged
 from viajante.explore import search_explore
 from viajante.flights import (
@@ -566,6 +567,10 @@ class LifecycleAndInputRegressions(unittest.TestCase):
     def test_cancelled_mcp_search_keeps_busy_until_worker_finishes(self):
         from viajante.mcp_server import _SEARCH_BUSY, run_mcp_tool
 
+        # This worker never checks its cancel event; a short grace keeps the test fast.
+        grace = patch("viajante.mcp_server._CANCEL_GRACE_SECONDS", 0.05)
+        grace.start()
+        self.addCleanup(grace.stop)
         for fail in (False, True):
             with self.subTest(worker_raises=fail):
                 started = threading.Event()

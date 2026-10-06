@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
 
+from viajante.control import SearchDeadline, checkpoint, controlled
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
@@ -499,6 +501,7 @@ def _date_calendar_for_seed(
     started = time.perf_counter()
     backend = "calendar"
     try:
+        checkpoint()
         compact = client.fetch_calendar(seed, start, end)
         days = _rows_from_calendar(start, end, compact, nights=stay)
     except CompactParseMiss:
@@ -532,6 +535,7 @@ def _date_calendar_for_seed(
     )
 
 
+@controlled
 def search_dates(
     origin: str,
     destination: str,
@@ -573,6 +577,8 @@ def search_dates(
     sort: Optional[FlightSort] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
     validate_date_window(start, end)
     currency = resolve_quote_currency(currency, origin)
@@ -724,6 +730,7 @@ def _flex_report_for_seed(
     typical: Optional[float] = None
     shop: FlightQuery | RoundTrip | None = None
     try:
+        checkpoint()
         compact = client.fetch_calendar(seed, start, end)
         days = _rows_from_calendar(start, end, compact, nights=stay)
     except CompactParseMiss as exc:
@@ -748,6 +755,7 @@ def _flex_report_for_seed(
             report_progress(f"chosen {chosen.isoformat()}; pricing that day")
             backend = "calendar_then_sweep"
             try:
+                checkpoint()
                 cards = client.fetch(shop)
             except Exception as exc:
                 error = classify_failure(exc)
@@ -798,6 +806,7 @@ def _flex_report_for_seed(
     )
 
 
+@controlled
 def search_flex(
     origin: str,
     destination: str,
@@ -840,6 +849,8 @@ def search_flex(
     proxy: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     source: Optional[CalendarSource] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> FlexSearchReport | tuple[FlexSearchReport, ...]:
     """Calendar window, then at most one shopping POST on the cheapest legal day.
 
@@ -1046,7 +1057,11 @@ def _sweep_per_day(
 
     fetch_many = getattr(source, "fetch_many", None)
     if callable(fetch_many):
-        results = fetch_many([day_query for _cursor, day_query in day_queries])
+        try:
+            checkpoint()
+            results = fetch_many([day_query for _cursor, day_query in day_queries])
+        except SearchDeadline as exc:
+            results = [exc] * len(day_queries)
     else:
         results = [_fetch_or_exception(source, day_query) for _cursor, day_query in day_queries]
     rows: list[DatePriceRow] = []
@@ -1065,6 +1080,7 @@ def _fetch_or_exception(
     source: CalendarSource, trip: FlightQuery | RoundTrip
 ) -> Sequence[RawFlightCard] | Exception:
     try:
+        checkpoint()
         return source.fetch(trip)
     except Exception as exc:
         return exc

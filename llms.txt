@@ -46,29 +46,72 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 
 ## Tools
 
+Twenty-two tools.
+
 Every result (except lookup_airports) opens with an envelope: status, completeness, empty_reason (provider_empty | filtered_out | not_loaded), retry_after, observed_at. Only provider_empty means "none found".
 
-- search_flights: named routes and dates
+- search_flights: named routes and dates. A metro code (LON, NYC, PAR, TYO)
+  expands to its member airports on one-way and round-trip routes. One metro
+  call sends at most 18 provider queries; a larger plan is rejected before
+  anything is fetched. A route whose ends are the same metro is rejected. A successful query may carry `recommendation` (none when
+  the provider returned nothing): a pick that respects named requirements
+  (`relaxed_requirements` lists any it relaxed), a varied shortlist, and
+  highlights/tradeoffs from returned fields only. Additive; `offers` unchanged.
 - search_dates: cheapest-per-day calendar (cheapest week). Max 31 days.
 - search_flex: ±N around one date, then one shop. Not a date matrix.
 - search_explore: dest triage from a named origin
 - search_hotels: total-stay prices. Currency required. Default source google.
+- search_hotel_rooms: Skiplagged room rates for one named hotel, in USD.
+- get_hotel_details: read a hotel offer this process returned. room_rates must
+  be a boolean. true fetches a separate USD room quote and does not replace
+  the original stay. A quote whose provider does not echo adults, rooms, and
+  dates comes back partial. A read does not evict stored searches.
 - search_trip: flights then hotels. Same currency. Default hotel source google.
-- lookup_airports: offline city or IATA lookup. Does not pick a hub.
+- search_split_tickets: opt-in separately ticketed itineraries from real one-way quotes (hub self-transfer for a one-way route; mixed one-ways for trip=rt). Capped extra searches. Not protected: a missed connection between tickets is not rebooked, bags may need re-checking. Total is null across currencies; no FX.
+- lookup_airports: offline city, IATA, or metro lookup. Does not pick a hub.
+- recheck_offer: one fresh Google Flights search (never cached) that matches an earlier
+  offer by flight numbers and departure times. Outcomes: same_price, price_changed,
+  not_found, multiple_matches (no pick, no verdict), incomplete_identity (no search
+  sent), check_failed, and substituted only with allow_substitute. check_failed
+  (blocked, rate limited, incomplete offers, any provider error; check_completed false)
+  means the check did not run to an answer, not that the offer is gone. allow_loose_match
+  opts in to carrier plus times. A price_cap in the query is reported as
+  filter_violations. currency must be the offer's own. Re-check finalists
+  before presenting them as current. Not a booking guarantee; confirm the price on
+  the provider's own page.
 - search_hidden_city: Skiplagged, opt-in. Cards are USD; omit currency or pass USD. Do not copy a Google/origin quote keep (GBP, JPY, …).
 - compare_awards: local award vs cash math. No live award seats.
 - lookup_transfers: local transfer-partner table for a named program.
+- validate_itinerary: local pass/fail/unknown check of selected offers.
+  Pass legs in travel order. arrival_deadline compares the final arrival with a
+  named instant (an explicit offset is UTC; a naive time is local at the arrival
+  airport). chronological checks owned segment instants in that order.
+  min_stay_days and max_stay_days use owned dates between journeys; one journey
+  is unknown. Unknown never becomes pass.
+- plan_stay_blocks: local grouping of consecutive nights with the same people.
+- split_stay_costs: local per-person split of named stay totals. No FX.
 - verify_answer: flags amounts, codes, dates, and links in a draft reply that no
   search in this process returned.
-- validate_itinerary: local pass/fail/unknown check of selected offers against
-  named constraints (layovers, stay length, bags). Unknown never becomes pass.
+- price_history: local read of this machine's recorded observations (opt-in via
+  VIAJANTE_PRICE_HISTORY=1). One series per exact query and currency: first/last/
+  lowest/highest and change since previous. One observation means no trend. No
+  forecast, no currency comparison.
+- watch_price: re-run one saved search_flights/search_hotels query on demand and
+  report the change vs its last observation. No notifications, no scheduler; do
+  not loop it (Google rate-limits). A cached or failed run records nothing.
+- get_runtime_info: executing package, Python, and hotel schema versions. Offline.
 
 - get_guide: the long operational guide (markdown); same text as the `viajante://guide` resource.
 
-One search at a time in the MCP process. Every tool has a title and read-only
-annotations; only the search tools are open-world. Bad input fails the call with
+One search at a time in the MCP process. Every tool has a title and annotations;
+open-world for the search tools, `recheck_offer`, `watch_price`, and `get_hotel_details`
+(`room_rates` false still runs during a search). `watch_price` writes. Bad input fails the call with
 JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
 after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=1.14.1`.
+
+A cancelled call frees the lock. `deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
+partial result: `coverage.complete=false`, `coverage.stopping_reason="deadline"`,
+unfinished queries `error.code="deadline"`. Not proof of no availability.
 
 Local HTTP (opt-in, no auth): `viajante-mcp --transport streamable-http` serves
 `http://127.0.0.1:8000/mcp`; client entry `{"mcpServers": {"viajante": {"url": "http://127.0.0.1:8000/mcp"}}}`.
@@ -78,7 +121,8 @@ shares its provider cooldown.
 Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
 cooldown (error `rate_limited: true`; its message names the UTC time to wait
 until, and `retry_after` / `retry_after_seconds` repeat it when a cooldown was recorded). Tell the user to wait; do not retry. Identical successful
-searches within 5 minutes return `cached: true` without a new request.
+searches within 5 minutes return `cached: true` without a new request. The replay
+cache holds at most 20 entries.
 
 ## Currency
 

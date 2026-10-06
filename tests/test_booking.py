@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Sequence
 from urllib.parse import parse_qs, urlparse
 
+import _isolate  # noqa: F401
 import viajante.booking as booking_module
 from viajante.booking import (
     BOOKING_BLOCKED_RESOURCE_TYPES,

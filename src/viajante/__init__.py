@@ -2,6 +2,7 @@
 
 from viajante.airports import lookup_airports
 from viajante.dates import search_dates, search_flex
+from viajante.details import get_hotel_details
 from viajante.explore import search_explore
 from viajante.flights import get_flights, search_flights
 from viajante.hotels import search_hotels
@@ -69,6 +70,7 @@ __all__ = [
     "TripSearchReport",
     "compare_award",
     "get_flights",
+    "get_hotel_details",
     "load_award_offer",
     "lookup_airports",
     "search_dates",

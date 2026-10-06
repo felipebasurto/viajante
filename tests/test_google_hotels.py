@@ -7,6 +7,7 @@ from pathlib import Path
 from random import Random
 from urllib.parse import parse_qs, unquote, urlparse
 
+import _isolate  # noqa: F401
 from viajante.google_flights import SWEEP_TRANSPORT_STATUS, SweepHttpResponse
 from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
 from viajante.google_hotels_rpc import (

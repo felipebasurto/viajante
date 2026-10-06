@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+import _isolate  # noqa: F401
 from viajante import evidence
 
 URL = "https://www.google.com/travel/flights?hl=en&curr=USD&booking_token=abc"

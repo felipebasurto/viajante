@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.models import SearchReport
 from viajante.storage import (
     default_state_dir,

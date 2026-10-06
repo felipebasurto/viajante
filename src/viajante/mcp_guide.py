@@ -5,8 +5,8 @@ from __future__ import annotations
 # Sent on every connection, so it carries only the rules a model must not miss.
 INSTRUCTIONS = """\
 viajante returns raw provider evidence, not recommendations. Read the payload, weigh
-price against duration, stops, clocks and rating, and say why. The full guide is the
-resource viajante://guide (or the get_guide tool): read it before a multi-step plan.
+price, duration, stops, clocks and rating. Read viajante://guide (or get_guide)
+before a multi-step plan.
 
 Read the envelope first: every tool except lookup_airports puts status, completeness,
 empty_reason, error_code and retry_after beside its payload. Only empty_reason provider_empty
@@ -25,10 +25,14 @@ that nothing exists. Say what was searched; do not claim availability either way
 Rate limits: if an error has rate_limited true, wait until retry_after (UTC) and tell the
 user. Do not retry, switch fetch mode or fan out other searches; they send nothing.
 One search at a time per process: a busy error is not an MCP timeout; do not retry it blindly.
+deadline_seconds stops a search early: rows with error code deadline were not loaded, not empty.
 search_hidden_city is Skiplagged (USD), not Google: run it at most once, after a named-route
 search_flights, never when bags were named, and never mix its rows with Google evidence.
 search_dates is the cheapest week, search_flex is +/-N around a named date, search_explore
 is destination triage. max_stops is 0, 1 or 2.
+recheck_offer re-checks a finalist with one fresh search; check_failed means the check did not run,
+never that the offer is gone.
+Also search_split_tickets: separate tickets, so a missed connection is not protected. See the guide.
 """
 
 GUIDE = r"""# viajante MCP guide
@@ -62,13 +66,35 @@ Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
+Also search_split_tickets (see Split tickets), a search that takes the one-search lock.
+Also recheck_offer, a search that takes the one-search lock (see Re-checking an offer).
 Also get_guide, which returns this guide (the same text as the viajante://guide resource).
+Also get_hotel_details, which reads a hotel offer this process returned.
+room_rates false is a local read and may run during a search; room_rates true
+asks the provider and takes the one-search lock.
+Also price_history (local read of recorded observations; may run during a search) and
+watch_price (a search that takes the one-search lock; see Price history and watches).
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
 validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
-during a search. get_guide may also run during a search.
+during a search. get_guide may also run during a search. get_hotel_details with
+room_rates false may also run during a search.
+
+Progress, cancel, deadline: a search tool sends notifications/progress only when the
+client sends a progressToken; they are informational and the result is still the reply.
+Cancelling the request stops the search at its next checkpoint and frees the lock; a
+cancelled search is not cached, recorded as evidence, or counted toward a cooldown.
+An optional deadline_seconds (or VIAJANTE_MCP_DEADLINE_SECONDS when the argument is
+unset) stops starting new queries after that many seconds and returns what finished:
+coverage.complete is false, coverage.stopping_reason is deadline, status is ok while
+any row has evidence (otherwise timeout), completeness is partial, and each unfinished
+query carries error code deadline with empty_reason not_loaded. That is availability
+unknown, never "no results". The error carries no retry_after. A partial result is not
+cached; ask again with a larger deadline_seconds or none.
+In search_explore, `not_loaded` under a deadline means the prices weren't loaded,
+even if destinations are listed.
 
 ## The result envelope
 
@@ -101,11 +127,30 @@ If an error has rate_limited true, tell the user to wait until the UTC time
 named in its message.
 Do not retry, switch fetch mode, or fan out other searches; they are paused
 locally and send nothing. An identical successful search within 5 minutes
-comes back cached (cached: true) without a new request.
+comes back cached (cached: true) without a new request. The replay cache holds
+at most 20 entries; a new successful search drops the oldest.
 
 A rate-limited result or error that has a recorded cooldown also carries `retry_after` (ISO 8601
 UTC) and `retry_after_seconds`. When they are absent no cooldown was recorded (for example a
 proxied 429); do not invent a wait.
+
+## Flight recommendation
+
+A successful search_flights (and the flights half of search_trip) query may carry a
+recommendation block beside its offers: one recommended pick, a shortlist of up to
+three offers that differ in stops or departure slot, per-offer highlights and
+tradeoffs from returned fields only, and published score weights. It is evidence,
+not a verdict; offers and their order are unchanged. Read relaxed_requirements
+first. A relaxed pick failed a requirement you named (listed there, and unmet in the
+entry), so it is not an exact match. When the query row has empty_reason
+filtered_out (envelope status no_results when every query is filtered_out) and a
+recommendation, offers is empty because the named filters removed every row, and
+the recommendation is a relaxed pick, not an exact match: say which requirements it
+relaxed. Offers whose currency
+differs or is unproven are never price-compared. Provider-empty queries carry no
+recommendation. Fare rules (refund, change) are never in the rows. requirements
+lists max_stops even when it is only the default, so its presence does not mean the
+caller named a stop limit.
 
 ## Choosing a search tool
 
@@ -116,12 +161,43 @@ blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
 product cannot require 3+ stops.
+A metro code (LON, NYC, PAR, TYO, and the rest of the owned table) named on a
+search_flights or search_trip route expands to its member airports. One call
+sends at most 18 provider queries (LON has six members, NYC three). A plan
+that would send more is rejected before anything is fetched. A route
+whose origin and destination resolve to the same metro, including an
+airport that belongs to the other side's metro, is rejected. lookup_airports
+with the code lists its members. A metro code is never inferred from an airport
+or a city.
 search_hidden_city is Skiplagged, not Google. After a named-route
 search_flights on a hub or leisure trunk, the caller may run it once
 sequentially. Do not mix evidence. Skip when bags were named.
 Skiplagged cards are USD; omit currency or pass USD. Do not copy a
 Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
+
+## Split tickets
+
+search_split_tickets is opt-in and costs extra searches (capped, sequential, stopped at the
+first recorded cooldown). It builds separately ticketed itineraries only from real one-way
+quotes it fetched: a one-way via a connection airport (`via`, up to 5 IATA codes, or layover
+airports seen in the packaged results) or a round trip as two one-ways. Every itinerary says
+split_ticket true, self_transfer true and connection_protected false. Tell the traveller: if
+the first ticket is late, the second ticket does not protect the connection; bags may need to be
+collected and checked in again; each ticket is confirmed on its own link.
+Totals are summed only when every ticket is in one currency, else total is null and the
+parts stay separate. vs_packaged compares only within a currency and carries savings (split
+cheaper) or extra_cost (split dearer), both non-negative. Itineraries rank within one
+currency; other currencies are capped at a few rows. Connection time is measured in UTC with
+each airport's timezone; a missing timezone or a clock time that is ambiguous or does not
+exist (a DST change) leaves timing unproven (timing_proven false, timing_note): say so.
+Arriving at one airport and leaving from another is rejected as airport_mismatch.
+Envelope: any itinerary is ok (partial if a fetch failed). With none, a failed fetch or
+cooldown wins (rate_limited, blocked, timeout, failed; not_loaded; honour retry_after);
+rows that were all rejected are no_results with filtered_out; only provider-empty legs are
+provider_empty (every leg empty, whatever the packaged fare was). coverage is heuristic:
+it never proves other hubs or dates have no fare.
+observed_at is the search time, null when every fetch was a recorded cooldown.
 
 ## Local tools
 
@@ -131,7 +207,76 @@ plan_stay_blocks and split_stay_costs are local arithmetic over a per-night rost
 the caller supplies; they never search, never convert money, never pick a stay.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
-missing segment, baggage, or fare facts.
+missing segment, baggage, or fare facts. Pass legs in travel order.
+arrival_deadline and chronological read that order: arrival_deadline compares
+the final arrival with a named instant (an explicit offset is UTC, a naive time
+is local at the arrival airport) and chronological checks owned segment instants.
+min_stay_days and max_stay_days use owned dates between journeys; fewer than two
+journeys is unknown. Missing, ambiguous, and nonexistent civil times stay unknown.
+
+## Re-checking an offer
+
+recheck_offer is a search: it runs one fresh Google Flights query (never the 5-minute replay
+cache), under the one-search lock and the machine-wide cooldown, and matches an earlier offer by
+flight numbers and scheduled departure times. Re-check finalists before presenting them as
+current. Outcomes: same_price, price_changed, not_found, multiple_matches, incomplete_identity,
+check_failed, and substituted only with allow_substitute. multiple_matches picks no offer and
+gives no price verdict. incomplete_identity sent nothing: the offer lacks flight numbers,
+airports or clocks (`missing` names them); allow_loose_match opts in to carrier plus times and
+labels the result loose_match. check_failed (check_completed false: blocked, rate limited,
+incomplete offers, any provider error) means the check did not run to an answer, not that the
+offer is gone; do not retry a rate limit. A closest_candidate on a not_found is a different
+itinerary, for information only. Pass the offer's own currency; a different one is refused.
+The envelope reads: a found itinerary is ok; not_found is no_results only for provider_empty or
+filtered_out (an answered not_among_offers stays ok); check_failed carries the failure status and
+not_loaded; incomplete_identity is failed and blocked. Caller-typed values are not recorded as
+owned evidence. It is not a booking guarantee; the price is confirmed only on the provider's own
+page.
+
+## Hotel finalist details
+
+get_hotel_details reads a hotel offer this process returned. selection_id is
+attached only to those hotel offers. The read does not enter the evidence ledger
+and does not evict a stored search. room_rates must be a boolean. False returns
+the stored quote (status ok, completeness complete) and does not search. True
+fetches a separate Skiplagged USD room quote. The envelope on that quote is
+stamp_search of the room quote: ok when rates came back, no_results with
+provider_empty when the provider returned none, or rate_limited, blocked,
+timeout, or failed with the same retry_after fields as the error. A city that
+matches more than one place sends nothing: status ok, completeness partial,
+error_code ambiguous_city. Occupancy, dates, or coordinates that do not match
+are no_results, empty_reason filtered_out, and error_code occupancy_mismatch,
+dates_mismatch, or property_mismatch; room_quotes stays empty. When both
+occupancy and dates differ, error_code is occupancy_mismatch and both flags
+stay. An echo of nothing is echo unknown and is not a confident match.
+When room_rates is true and the provider does not echo adults, rooms, and dates,
+a returned quote is partial (never ok and complete together). An inconclusive
+read never shows ok/complete.
+
+## Price history and watches
+
+price_history reads this machine's own recorded observations and reports, for one exact query in
+one currency, first_seen, last_seen, lowest, highest and the change since the previous
+observation. One observation means no trend. It never predicts and never compares or converts
+currencies: each currency is its own series. Recording is opt-in: the server environment needs
+VIAJANTE_PRICE_HISTORY=1 (unset it to stop; `viajante history --clear` deletes the log). Only a
+real search that returned a priced offer is recorded; a cached replay, an empty result and a
+rate-limited or blocked search record nothing. recheck_offer goes through the same search, so with
+history on it also records one observation: a real observed price, nothing more.
+
+If the log exists but cannot be read, price_history returns read_error and series null (unknown,
+not empty), with status failed, completeness blocked and error_code history_unreadable. Do not
+report that as "no history".
+
+watch_price re-runs a saved search_flights or search_hotels argument set on demand and reports the
+change since the last observation of the same query and currency. It saves the watch and records
+its observation (even when the global opt-in is off), so it is not read-only. It takes the
+one-search lock, the cooldown and the 5-minute cache like any search; its envelope is the inner
+search's, with completeness partial when history could not be read (change is then null). It
+sends no notification and schedules nothing: do not call it in a loop, because Google rate-limits.
+Saving under an existing name replaces that watch, and kind is flight or hotel as in price_history.
+If the saved watches file cannot be read, the list is watches null with status failed, completeness
+blocked and error_code watches_unreadable (never an empty list), and saving or removing refuses.
 
 ## Hotels and stays
 

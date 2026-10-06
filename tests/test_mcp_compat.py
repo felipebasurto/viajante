@@ -26,6 +26,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import mcp_server
 from viajante.envelope import EnvelopeShapeError
 from viajante.flights import classify_failure
@@ -90,8 +91,14 @@ NETWORK_TOOLS = {
     "search_hotels",
     "search_hotel_rooms",
     "search_trip",
+    "search_split_tickets",
     "search_hidden_city",
+    "recheck_offer",
+    "get_hotel_details",
+    "watch_price",
 }
+# Tools that write to the local state directory: neither read-only nor idempotent.
+WRITING_TOOLS = {"watch_price"}
 LOCAL_TOOLS = {
     "get_runtime_info",
     "lookup_airports",
@@ -102,6 +109,7 @@ LOCAL_TOOLS = {
     "split_stay_costs",
     "verify_answer",
     "get_guide",
+    "price_history",
 }
 
 
@@ -143,16 +151,17 @@ class ToolMetadataTests(_StateDir):
     def test_tool_set_is_the_documented_one(self) -> None:
         self.assertEqual(set(self.tools), NETWORK_TOOLS | LOCAL_TOOLS)
 
-    def test_every_tool_has_a_title_and_read_only_annotations(self) -> None:
+    def test_every_tool_has_a_title_and_annotations(self) -> None:
         for name, tool in self.tools.items():
             with self.subTest(tool=name):
                 self.assertTrue(tool.title and tool.title.strip())
                 self.assertNotEqual(tool.title, name)
                 hints = tool.annotations
                 self.assertIsNotNone(hints)
-                self.assertIs(hints.readOnlyHint, True)
+                writes = name in WRITING_TOOLS
+                self.assertIs(hints.readOnlyHint, not writes)
                 self.assertIs(hints.destructiveHint, False)
-                self.assertIs(hints.idempotentHint, True)
+                self.assertIs(hints.idempotentHint, not writes)
                 self.assertIsInstance(hints.openWorldHint, bool)
 
     def test_open_world_hint_matches_the_tools_that_reach_a_provider(self) -> None:
@@ -186,7 +195,24 @@ class ToolMetadataTests(_StateDir):
                     self.assertEqual(search.await_count + look.await_count, 1, name)
 
         _session_call(self.server, calls)
-        self.assertEqual({n for n, kind in used if kind == "search"}, NETWORK_TOOLS)
+        # room_rates defaults false, so that call stays off the search worker.
+        self.assertEqual(
+            {n for n, kind in used if kind == "search"},
+            NETWORK_TOOLS - {"get_hotel_details"},
+        )
+
+        async def rates(session):
+            with (
+                patch.object(mcp_server, "run_mcp_tool", AsyncMock(return_value={})) as search,
+                patch.object(mcp_server, "run_lookup_tool", AsyncMock(return_value={})) as look,
+            ):
+                await session.call_tool(
+                    "get_hotel_details", {"selection_id": "x", "room_rates": True}
+                )
+                self.assertEqual(search.await_count, 1)
+                self.assertEqual(look.await_count, 0)
+
+        _session_call(self.server, rates)
 
     def test_local_tools_run_with_the_network_blocked(self) -> None:
         def refuse(*_a: object, **_k: object) -> None:
@@ -195,6 +221,7 @@ class ToolMetadataTests(_StateDir):
         samples = {
             "get_runtime_info": {},
             "get_guide": {},
+            "price_history": {"route": "JFK-LHR"},
             "lookup_airports": {"query": "NRT", "limit": 1},
             "lookup_transfers": {"program": "aeroplan", "points": 50000},
             "plan_stay_blocks": {"roster": {"2026-12-01": ["Ana"], "2026-12-02": ["Ana"]}},
@@ -552,6 +579,19 @@ class GuideTests(_StateDir):
         missing = [s for s in sentences if s not in covered]
         self.assertEqual(missing, [])
 
+    def test_guide_mentions_metro_codes_hotel_details_and_arrival_deadline(self) -> None:
+        guide = self._flat(GUIDE)
+        for phrase in (
+            "metro code",
+            "get_hotel_details",
+            "arrival_deadline",
+            "18 provider queries",
+            "at most 20 entries",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guide)
+        self.assertIn("Also search_split_tickets", INSTRUCTIONS)
+
     def test_guide_lists_get_guide_among_tools_that_may_run_during_a_search(self) -> None:
         text = self._flat(GUIDE)
         self.assertIn("Also get_guide, which returns this guide", text)
@@ -777,6 +817,11 @@ class HttpHostProtectionTests(_StateDir):
         )
 
     def test_another_loopback_address_is_allowed_by_name(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.2", 0))
+            except OSError as exc:
+                self.skipTest(f"127.0.0.2 is not configured on this host: {exc}")
         port = _start_http_server(self, "127.0.0.2")
         self.assertEqual(_raw_initialize_at("127.0.0.2", port, {"Host": f"127.0.0.2:{port}"}), 200)
         self.assertEqual(_raw_initialize_at("127.0.0.2", port, {"Host": "evil.example"}), 421)
@@ -826,6 +871,114 @@ class StreamableHttpSessionTests(_StateDir):
         self.assertTrue(bad.isError)
         self.assertEqual(_error_body(bad)["field"], "query")
         self.assertIsInstance(bad.content[0], _sdk().TextContent)
+
+
+# The stdio child imports these fixtures by path, so load them the same way here: the file is
+# not a package member under `python -m unittest tests.test_mcp_compat`.
+_SPLIT_FIXTURES = importlib.util.spec_from_file_location(
+    "split_fixtures", Path(__file__).with_name("test_split.py")
+)
+assert _SPLIT_FIXTURES is not None and _SPLIT_FIXTURES.loader is not None
+_split_fixtures = importlib.util.module_from_spec(_SPLIT_FIXTURES)
+_SPLIT_FIXTURES.loader.exec_module(_split_fixtures)
+SPLIT_ROUTE = _split_fixtures.ROUTE
+
+SPLIT_SERVER = """
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, {tests!r})
+import test_split as t
+from viajante.mcp_server import main
+from viajante.split import search_split_tickets as real
+
+fake = t.FakeSearch(t._hub_table())
+with patch(
+    "viajante.mcp_handlers.search_split_tickets",
+    side_effect=lambda query, **kw: real(
+        query, packaged=t._packaged_via("LAX"), search=fake, **kw
+    ),
+):
+    main([])
+"""
+
+
+@NEEDS_SDK
+class SplitTicketStdioTests(_StateDir):
+    def test_search_split_tickets_round_trips_over_stdio_and_matches_its_output_schema(
+        self,
+    ) -> None:
+        """A real stdio server with only the fetch faked: the SDK checks the structured result."""
+        from jsonschema import validate
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-c", SPLIT_SERVER.format(tests=str(Path(__file__).parent))],
+            env={**os.environ},
+        )
+
+        async def calls():
+            sdk = _sdk()
+            async with stdio_client(params) as (read, write):
+                async with sdk.ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools = {t.name: t for t in (await session.list_tools()).tools}
+                    result = await session.call_tool(
+                        "search_split_tickets", {"route": SPLIT_ROUTE, "via": "LAX"}
+                    )
+                    return tools["search_split_tickets"], result
+
+        tool, result = asyncio.run(asyncio.wait_for(calls(), 60))
+        self.assertFalse(result.isError, _text(result))
+        structured = result.structuredContent
+        validate(structured, tool.outputSchema)
+        self.assertEqual((structured["status"], structured["completeness"]), ("ok", "complete"))
+        self.assertEqual(structured["observed_at"], structured["searched_at"])
+        self.assertEqual(structured["observed_at_basis"], "fetch")
+        row = structured["itineraries"][0]
+        self.assertEqual((row["split_ticket"], row["connection_protected"]), (True, False))
+        self.assertEqual(json.loads(_text(result)), structured)
+        self.assertTrue(tool.annotations.openWorldHint)
+        self.assertEqual(tool.title, "Split-ticket itineraries")
+
+    def test_a_recorded_cooldown_returns_a_null_observation_over_stdio(self) -> None:
+        """No fake at all: the real search stops on the recorded cooldown before any request."""
+        from jsonschema import validate
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        until = time.time() + 300
+        note_rate_limited(300.0, until - 300, file=GOOGLE_RATE_LIMIT_FILE)
+        params = StdioServerParameters(
+            command=sys.executable, args=["-m", "viajante.mcp_server"], env={**os.environ}
+        )
+
+        async def calls():
+            sdk = _sdk()
+            async with stdio_client(params) as (read, write):
+                async with sdk.ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools = {t.name: t for t in (await session.list_tools()).tools}
+                    result = await session.call_tool(
+                        "search_split_tickets", {"route": SPLIT_ROUTE, "via": "LAX"}
+                    )
+                    return tools["search_split_tickets"], result
+
+        tool, result = asyncio.run(asyncio.wait_for(calls(), 60))
+        self.assertFalse(result.isError, _text(result))
+        structured = result.structuredContent
+        validate(structured, tool.outputSchema)
+        self.assertEqual(
+            (structured["status"], structured["completeness"], structured["empty_reason"]),
+            ("rate_limited", "blocked", "not_loaded"),
+        )
+        self.assertIsNone(structured["observed_at"])
+        self.assertIsNone(structured["observed_at_basis"])
+        self.assertEqual(structured["extra_searches"], 0)
+        self.assertEqual(structured["retry_after"], structured["error"]["retry_after"])
+        self.assertTrue(structured["retry_after_seconds"] >= 1)
 
 
 if __name__ == "__main__":
