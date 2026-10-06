@@ -51,14 +51,16 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Offline evidence-bound itinerary validation: `src/viajante/validate.py`
 - Offline stay blocks and per-person cost split: `src/viajante/stays.py`
 - MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
+- Opt-in local observation log, per-query trend, recording hooks: `src/viajante/history.py`
+- Saved on-demand `watch` and the `price_history` / `watch_price` tool bodies: `src/viajante/watch.py`; their CLI: `src/viajante/history_cli.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
 
 `google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
+CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `history`, `watch`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `price_history`, `watch_price`, `get_runtime_info`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -264,6 +266,24 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - `viajante trip` / MCP `search_trip` run flights then hotels sequentially (one
   lock). Child or infant occupancy is rejected (hotel occupancy is adults-only).
   Hotel `price_basis` stays `total_stay`. Never invent a fare or a stay.
+
+## Price history
+
+Recording is opt-in: `VIAJANTE_PRICE_HISTORY=1` (CLI and MCP), or a `watch` run
+(an explicit request). It hooks `search_flights` / `search_hotels` themselves, so
+an MCP cache replay never reaches it and is never logged. Only a real
+`QuerySuccess` / `HotelQuerySuccess` with an offer becomes an entry (cheapest
+owned amount in the report's own currency); failures, empty results and
+cooldown-blocked searches record nothing. `price-history.jsonl` is append-only
+(oldest entries drop past `MAX_ENTRIES`; `viajante history --clear` deletes it).
+A series is one `query_key` in one currency: any differing query parameter or
+filter is a different series, and currencies are never merged or converted. One
+observation reports no trend. Never forecast, estimate a missing day, or compare
+across series. `watch_price` / `viajante watch` re-run a saved
+`search_flights` / `search_hotels` argument set only when called: no scheduler,
+no notification, no loop; a cached or rate-limited run records nothing. A
+`proxy` is never stored in a watch. A recording failure must not lose the
+search result. `price_history` may run during a search; `watch_price` is a search.
 
 ## Local stay arithmetic and known limits
 

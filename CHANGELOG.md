@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in local price history. With `VIAJANTE_PRICE_HISTORY=1`, every real flight or hotel search result that returned a priced offer appends one immutable entry to `price-history.jsonl` in the state directory (query identity and price-affecting filters, cheapest owned amount and currency, offer count, provider, `observed_at`). Off by default; failures, empty results, cooldown-blocked searches and replayed MCP cache hits are never recorded. The file keeps the newest 2000 entries; `viajante history --clear` deletes it.
+- `viajante history` and MCP `price_history`: observations and per-series facts (first seen, last seen, lowest, highest, change since previous) for one exact query in one currency. Different queries and currencies are separate series; a single observation is reported as such. No forecast, no conversion.
+- `viajante watch` and MCP `watch_price`: save a `search_flights` / `search_hotels` argument set and re-run it on demand, reporting the change versus the last observation. User-triggered only: no scheduler or notifications. The docs show how to schedule it externally at a low frequency while respecting Google rate limits.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added

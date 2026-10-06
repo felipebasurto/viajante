@@ -41,7 +41,7 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 16 tools. |
+| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 18 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
@@ -63,12 +63,14 @@ One library, three ways in:
 | `plan_stay_blocks` | — | Local roster-to-stay blocks for consecutive nights with the same people. |
 | `split_stay_costs` | — | Local cost split per stay and person-night, with exact allocated cents. |
 | `verify_answer` | — | Local check of a draft reply against the search ledger. |
+| `price_history` | `history` | Local read of the opt-in observation log: per-query, per-currency facts. |
+| `watch_price` | `watch` | Re-run one saved flight/hotel search on demand; change vs the last observation. |
 
 The room-rate helper is in `viajante.skiplagged_hotels`; local stay arithmetic
 is in `viajante.stays`. These helpers are not re-exported from `viajante`.
 
 The MCP process holds one search lock: a second concurrent search fails
-immediately instead of queueing. Lookups, local stay arithmetic, and the two
+immediately instead of queueing. Lookups, local stay arithmetic, `price_history`, and the two
 verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
 
