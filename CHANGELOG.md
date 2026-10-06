@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Every MCP tool except `lookup_airports` returns one typed envelope: `status`, `completeness`, `empty_reason` (`provider_empty`, `filtered_out`, `not_loaded`), `error_code`, `retry_after`, `observed_at` and `observed_at_basis`. It is derived from the existing counters and error codes, and is published as the tool's `outputSchema` / `structuredContent`.
+- `empty_reason` on query, date, and explore rows; `timeout` on typed errors when the cause was a timeout. Both appear only when set.
+- Contract: only `provider_empty` may be called "no flights/hotels found".
+- `scripts/mcp-smoke.py` and a CI job that runs the stdio MCP smoke on the minimum supported SDK.
+
+### Changed
+
+- The MCP extra now requires `mcp>=1.14.1,<2`. Earlier SDKs crash at startup on the server module's postponed annotations (or, on 1.6, serve no output schemas).
+- A calendar day that is missing or unpriced is `not_loaded`, never `provider_empty`; a priced calendar with such gaps is `partial`.
+- A sweep request that raises before any HTTP response (reset, timeout) is a transport failure: a multiplexed batch replays once on a fresh session, there is no per-query retry on top, and the result is `fetch_failed` (`timeout` when it timed out). It no longer reads as an HTTP 429 rate limit. Google Hotels multi-post searches replay once too. A calendar/explore POST that raises is `fetch_failed`, not `markup_drift`.
+- An explore destination without a price (its shop failed or came back empty) is `not_loaded`, not a usable row.
+- `verify_answer` reports `status: failed` when its verdict is `ok: false`.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added

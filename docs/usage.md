@@ -303,6 +303,12 @@ for the Python interface.
 
 ## MCP tool calls
 
+Each tool result starts with a shared envelope: `status`, `completeness`,
+`empty_reason`, `retry_after`, `observed_at` (`lookup_airports` returns a plain
+list). Only `empty_reason: provider_empty` means the provider found nothing;
+`filtered_out` means filters removed results the provider returned, and
+`not_loaded` means the search did not complete.
+
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request
 to compare seven-night trips across November maps to:

@@ -127,13 +127,32 @@ scope whose `coverage.complete` is true. Otherwise say “not found in the teste
 Relaxed dates or constraints are a separate scenario and never make the original
 scenario compliant.
 
+## Read the envelope first
+
+Every MCP result (except `lookup_airports`) opens with `status`, `completeness`,
+`empty_reason`, `retry_after`, `observed_at`. Check them before reading rows.
+
+| `empty_reason` | Say to the traveller |
+|----------------|----------------------|
+| `provider_empty` | The only case that may be called "no flights/hotels found" (for this search). |
+| `filtered_out` | The provider returned results; the filters removed them all. Not "none available". |
+| `not_loaded` | The search did not complete. Availability is unknown. |
+
+`completeness` `partial` or `blocked` means do not summarise as a full answer.
+In `search_dates` / `search_flex`, a day with no calendar price is `not_loaded`:
+never say "no flights that day". An explore destination with `price: null` is `not_loaded` too. An `ok` or `partial`
+result may carry the worst failure's `error_code`; read `empty_reason` for emptiness.
+`verify_answer` `status: failed` means the draft
+has claims no search owns (see `error_code`), not that a search failed.
+`retry_after` is a known cooldown; wait for it instead of retrying.
+
 ## Recovery
 
 | Situation | Action |
 |-----------|--------|
 | Browser access denied | Report the client access limitation, not a provider failure or broken URL. Use permitted read-only alternatives; do not bypass denial or re-request already authorized access. |
 | Missing local screenshot | Say the image could not be read; do not claim visual inspection. Continue from available text/evidence. |
-| `no_results` | Stop. Do not retry. |
+| `no_results` | Stop. Do not retry. Read `empty_reason` before wording it: only `provider_empty` is "none found". |
 | `rate_limited: true` | Stop provider searches. Wait 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
 | `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |

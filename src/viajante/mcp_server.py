@@ -7,9 +7,9 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Callable, Optional, Sequence, TypeVar
+from typing import Callable, Literal, Optional, Sequence, TypeVar
 
-from viajante.evidence import verify_answer as verify_answer_tool
+from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
 from viajante.mcp_handlers import (
@@ -27,7 +27,9 @@ from viajante.mcp_handlers import (
     search_trip_tool,
     split_stay_costs_tool,
     validate_itinerary_tool,
+    verify_answer_tool,
 )
+from viajante.models import EmptyReason
 from viajante.runtime import get_runtime_info as runtime_info
 
 _T = TypeVar("_T")
@@ -54,6 +56,19 @@ That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
 validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
 during a search.
+
+Read the envelope first. Every tool except lookup_airports (a bare list) puts
+these top-level fields beside its payload: status (ok, no_results, rate_limited,
+blocked, timeout, failed), completeness (complete, partial, blocked), empty_reason
+(provider_empty, filtered_out, not_loaded; null when rows came back), empty_note,
+error_code, retry_after / retry_after_seconds (a known cooldown), and observed_at
+with observed_at_basis (fetch: when viajante asked; provider is reserved). Only
+provider_empty may be told to a traveller as "no flights/hotels found". filtered_out
+means viajante's own filters removed the provider's rows; not_loaded means the
+search did not complete and availability is unknown. partial means some queries
+failed or part of the window is missing: read the per-query rows. Offline tools
+report status ok and are complete unless they say otherwise (unknown checks,
+unallocated nights).
 
 Results are raw owned evidence, not a recommendation. You choose: read the
 payload, weigh price against duration, stops, clocks, and rating, and say why.
@@ -160,19 +175,44 @@ async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: obj
 
 def build_server():
     from mcp.server.fastmcp import FastMCP
+    from pydantic import BaseModel, ConfigDict
+
+    class ToolEnvelope(BaseModel):
+        """Top-level fields on every tool result except lookup_airports (a bare list).
+
+        Read these first. Every other key of the tool's payload rides alongside them.
+        """
+
+        model_config = ConfigDict(extra="allow")
+
+        status: Literal[STATUSES]
+        completeness: Literal[COMPLETENESS]
+        empty_reason: Optional[EmptyReason]
+        empty_note: Optional[str]
+        error_code: Optional[str]
+        retry_after: Optional[str]
+        retry_after_seconds: Optional[int]
+        observed_at: Optional[str]
+        observed_at_basis: Optional[Literal[OBSERVED_BASES]]
 
     server = FastMCP("viajante", instructions=_HELP)
 
-    @server.tool()
+    def tool(fn):
+        # `from __future__ import annotations` makes the return a string that cannot see the
+        # class above; FastMCP only builds an outputSchema from a real annotation.
+        fn.__annotations__["return"] = ToolEnvelope
+        return server.tool()(fn)
+
+    @tool
     def get_runtime_info() -> dict:
         """Offline executing package, Python and hotel schema versions.
 
         Check before searches; an npm MCP does not upgrade a separate uv tool
         installation. May run during a search. No network or personal paths.
         """
-        return runtime_info()
+        return stamp_local(dict(runtime_info()))
 
-    @server.tool()
+    @tool
     async def search_flights(
         routes: list[str],
         trip: str = "one-way",
@@ -229,7 +269,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def search_dates(
         route: str,
         start: str,
@@ -282,7 +322,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_dates_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def search_flex(
         route: str,
         around: str,
@@ -334,7 +374,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_flex_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def search_explore(
         origin: str,
         start: str | None = None,
@@ -383,7 +423,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_explore_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def search_hotels(
         location: str | None = None,
         check_in: str | None = None,
@@ -445,7 +485,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_hotels_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def search_hotel_rooms(
         check_in: str,
         check_out: str,
@@ -472,7 +512,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_hotel_rooms_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def search_trip(
         routes: list[str],
         location: str,
@@ -526,7 +566,7 @@ def build_server():
     async def lookup_airports(query: str, limit: int = 20) -> list:
         return await run_lookup_tool(lookup_airports_tool, **locals())
 
-    @server.tool()
+    @tool
     async def search_hidden_city(
         route: str,
         departure: str,
@@ -551,7 +591,7 @@ def build_server():
         """
         return dict(await run_mcp_tool(search_hidden_city_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def compare_awards(
         offer: dict,
         cash_price: float | None = None,
@@ -566,7 +606,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(compare_awards_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def lookup_transfers(
         program: str,
         points: int,
@@ -575,7 +615,7 @@ def build_server():
         """Local card-to-program transfer table. Not live award availability."""
         return dict(await run_lookup_tool(lookup_transfers_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def validate_itinerary(
         legs: list[dict],
         constraints: dict,
@@ -588,7 +628,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def plan_stay_blocks(roster: dict[str, list[str]]) -> dict:
         """Local: group consecutive nights with the same people into blocks.
 
@@ -599,7 +639,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(plan_stay_blocks_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def split_stay_costs(
         stays: list[dict],
         roster: dict[str, list[str]],
@@ -618,7 +658,7 @@ def build_server():
         """
         return dict(await run_lookup_tool(split_stay_costs_tool, **locals()))
 
-    @server.tool()
+    @tool
     async def verify_answer(answer: str) -> dict:
         """Check a draft reply against this process's recent search payloads.
 

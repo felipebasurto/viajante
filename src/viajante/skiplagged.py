@@ -565,6 +565,7 @@ def _classify(exc: BaseException) -> SearchError:
         return SearchError(
             code=SearchErrorCode.FETCH_FAILED,
             message="Skiplagged MCP could not be reached.",
+            timeout=isinstance(exc, TimeoutError),
         )
     return SearchError(
         code=SearchErrorCode.FETCH_FAILED,

@@ -31,6 +31,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
+- MCP result envelope (status, completeness, empty_reason, retry_after, observed_at): `src/viajante/envelope.py`
 - Stdio MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
 - Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
@@ -61,6 +62,35 @@ CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hote
 MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
+
+### MCP result envelope
+
+Every MCP tool except `lookup_airports` (a bare list) returns the same top-level
+envelope, stamped by `envelope.py` from the owned payload. Read it first; the
+rest of the payload is unchanged and additive. `status`: `ok`, `no_results`,
+`rate_limited`, `blocked`, `timeout`, `failed`. `completeness`: `complete`,
+`partial` (something answered, something did not, or the search is scope-bound),
+`blocked` (nothing usable). `empty_reason` is set only when `status` is not `ok`:
+`provider_empty`, `filtered_out`, `not_loaded`. Also `error_code`, `retry_after` /
+`retry_after_seconds` (only when a cooldown file names one), and `observed_at`
+with `observed_at_basis` (`fetch` = our fetch clock; `provider` is reserved).
+Offline tools report `ok` / `complete` with the rest null; `verify_answer`'s
+`status` follows its verdict (`failed` with `error_code` `unowned_claims` or
+`no_search_recorded` when `ok` is false). `observed_at` / basis are null when a
+recorded cooldown answered and nothing was sent. A calendar day with no price is
+`not_loaded` (an unpriced cell does not prove there are no flights), and a
+`partial` completeness. `error_code` only rides with the `empty_reason` it
+supports (never `no_results` beside `filtered_out`); an `ok` / `partial` result
+may still carry the worst failure's `error_code` with `empty_reason` null. An
+explore destination without a price (its shop failed or came back empty) is
+`not_loaded`, not a usable row. A new search tool must
+stamp through `stamp_search`, which raises on a payload shape it does not
+recognise, and must advertise the envelope schema (a test enforces it).
+
+Wording rule: only `provider_empty` may be told to a traveller as "no flights/hotels
+found". `filtered_out` means viajante's filters removed rows the provider returned
+(availability is not disproved). `not_loaded` means the search did not complete
+(availability is unknown). Never merge the three.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
 (or other) prompt is caller *input*, not product voice. No implied home hub.
@@ -151,7 +181,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
-  jobs. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
+  jobs. A multiplexed request that raised before any response (reset, timeout)
+  is a transport failure, not a 429: it replays once on a fresh session, then
+  fails `fetch_failed` (`timeout` when it timed out), never `rate_limited`. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
   writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat limit up to 30 min, or
   a named `Retry-After`). While it runs, new flight/hotel Google searches in any
   process send nothing and fail `blocked` with `rate_limited: true`; a search
@@ -300,7 +332,7 @@ They must not launch Chromium or use the network. CI runs the suite on Python
 
 Pin owned seams, not upstream HTML rewriting. A renamed or dropped JSON key is a
 breaking change. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is
-installed (`mcp>=1.6,<2`).
+installed (`mcp>=1.14.1,<2`).
 
 Stdio MCP: `npx -y @viajante/mcp`, or
 `uvx --from 'viajante[mcp]' viajante-mcp`, or checkout `uv sync --extra mcp`
