@@ -1132,6 +1132,7 @@ class PublicApiTests(unittest.TestCase):
                 "TripSearchReport",
                 "compare_award",
                 "get_flights",
+                "get_hotel_details",
                 "load_award_offer",
                 "lookup_airports",
                 "search_dates",

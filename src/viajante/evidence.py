@@ -10,7 +10,9 @@ from __future__ import annotations
 import re
 import threading
 from collections import deque
+from copy import deepcopy
 from typing import Iterable, Mapping, Optional
+from uuid import uuid4
 
 from viajante.airports import is_known_iata
 from viajante.quote import _COUNTRY_CASH_CURRENCY
@@ -46,12 +48,69 @@ _MONEY = re.compile(
 
 _lock = threading.Lock()
 _ledger: deque[Mapping[str, object]] = deque(maxlen=LEDGER_SIZE)
+_selection_groups: deque[dict[str, object]] = deque(maxlen=LEDGER_SIZE)
+_selections: dict[str, object] = {}
 
 
-def record(payload: Mapping[str, object]) -> Mapping[str, object]:
+def selection_records(payload: Mapping[str, object], report=None) -> dict[str, object]:
+    """Attach opaque references to hotel offers this process can open again.
+
+    Flight, calendar, explore, and hidden-city rows are not stored: nothing
+    looks them up. Hidden-city ``evidence`` is a string and must not be treated
+    as a mapping.
+    """
+    records = {}
+
+    def add_hotels(result, query_index, typed):
+        offers = result.get("offers")
+        if not isinstance(offers, list):
+            return
+        for offer_index, offer in enumerate(offers):
+            if not isinstance(offer, dict) or "total_price" not in offer:
+                continue
+            selection_id = offer.setdefault("selection_id", "sel_" + uuid4().hex)
+            records[selection_id] = ("hotel", typed, query_index, offer_index)
+
+    def walk(node, typed=None):
+        if not isinstance(node, dict):
+            return
+        queries = node.get("queries")
+        if isinstance(queries, list):
+            # A typed hotel report is what a later read opens. A bare hotel
+            # payload is itself the snapshot. Flight reports have queries too;
+            # their offers have no total_price and are skipped below.
+            owner = typed if hasattr(typed, "queries") else None
+            if owner is None and typed is None:
+                owner = node
+            if owner is not None:
+                for query_index, result in enumerate(queries):
+                    if isinstance(result, dict):
+                        add_hotels(result, query_index, owner)
+        for key in ("flights", "hotels"):
+            child = node.get(key)
+            if isinstance(child, dict):
+                walk(child, getattr(typed, key, None) if typed is not None else None)
+
+    walk(payload, typed=report)
+    return records
+
+
+def record(payload: Mapping[str, object], *, selections=None) -> Mapping[str, object]:
     with _lock:
-        _ledger.append(payload)
+        _ledger.append(deepcopy(payload))
+        _selection_groups.append(selections or {})
+        _selections.clear()
+        for group in _selection_groups:
+            _selections.update(group)
     return payload
+
+
+def selected_reference(selection_id: str, kind: str):
+    with _lock:
+        selected = _selections.get(selection_id)
+    if selected is None or selected[0] != kind:
+        raise ValueError("unknown or evicted selection_id for this process and tool")
+    return selected[1:]
 
 
 def find_offer(evidence_id: str, price: float, currency: str) -> Optional[Mapping[str, object]]:
@@ -81,6 +140,8 @@ def find_offer(evidence_id: str, price: float, currency: str) -> Optional[Mappin
 def clear() -> None:
     with _lock:
         _ledger.clear()
+        _selection_groups.clear()
+        _selections.clear()
 
 
 class _Owned:

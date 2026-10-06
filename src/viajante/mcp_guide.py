@@ -68,6 +68,9 @@ split_stay_costs, verify_answer, get_runtime_info.
 Also search_split_tickets (see Split tickets), a search that takes the one-search lock.
 Also recheck_offer, a search that takes the one-search lock (see Re-checking an offer).
 Also get_guide, which returns this guide (the same text as the viajante://guide resource).
+Also get_hotel_details, which reads a hotel offer this process returned.
+room_rates false is a local read and may run during a search; room_rates true
+asks the provider and takes the one-search lock.
 Also price_history (local read of recorded observations; may run during a search) and
 watch_price (a search that takes the one-search lock; see Price history and watches).
 No auth. One search at a time in this process. A second search while one is
@@ -75,7 +78,8 @@ running raises "a viajante search is already running in this process" immediatel
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
 or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
 validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
-during a search. get_guide may also run during a search.
+during a search. get_guide may also run during a search. get_hotel_details with
+room_rates false may also run during a search.
 
 ## The result envelope
 
@@ -108,7 +112,8 @@ If an error has rate_limited true, tell the user to wait until the UTC time
 named in its message.
 Do not retry, switch fetch mode, or fan out other searches; they are paused
 locally and send nothing. An identical successful search within 5 minutes
-comes back cached (cached: true) without a new request.
+comes back cached (cached: true) without a new request. The replay cache holds
+at most 20 entries; a new successful search drops the oldest.
 
 A rate-limited result or error that has a recorded cooldown also carries `retry_after` (ISO 8601
 UTC) and `retry_after_seconds`. When they are absent no cooldown was recorded (for example a
@@ -141,6 +146,14 @@ blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
 product cannot require 3+ stops.
+A metro code (LON, NYC, PAR, TYO, and the rest of the owned table) named on a
+search_flights or search_trip route expands to its member airports. One call
+sends at most 18 provider queries (LON has six members, NYC three). A plan
+that would send more is rejected before anything is fetched. A route
+whose origin and destination resolve to the same metro, including an
+airport that belongs to the other side's metro, is rejected. lookup_airports
+with the code lists its members. A metro code is never inferred from an airport
+or a city.
 search_hidden_city is Skiplagged, not Google. After a named-route
 search_flights on a hub or leisure trunk, the caller may run it once
 sequentially. Do not mix evidence. Skip when bags were named.
@@ -179,7 +192,12 @@ plan_stay_blocks and split_stay_costs are local arithmetic over a per-night rost
 the caller supplies; they never search, never convert money, never pick a stay.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
 owned v2 offer evidence; unknown evidence never becomes pass. It never fills
-missing segment, baggage, or fare facts.
+missing segment, baggage, or fare facts. Pass legs in travel order.
+arrival_deadline and chronological read that order: arrival_deadline compares
+the final arrival with a named instant (an explicit offset is UTC, a naive time
+is local at the arrival airport) and chronological checks owned segment instants.
+min_stay_days and max_stay_days use owned dates between journeys; fewer than two
+journeys is unknown. Missing, ambiguous, and nonexistent civil times stay unknown.
 
 ## Re-checking an offer
 
@@ -199,6 +217,26 @@ filtered_out (an answered not_among_offers stays ok); check_failed carries the f
 not_loaded; incomplete_identity is failed and blocked. Caller-typed values are not recorded as
 owned evidence. It is not a booking guarantee; the price is confirmed only on the provider's own
 page.
+
+## Hotel finalist details
+
+get_hotel_details reads a hotel offer this process returned. selection_id is
+attached only to those hotel offers. The read does not enter the evidence ledger
+and does not evict a stored search. room_rates must be a boolean. False returns
+the stored quote (status ok, completeness complete) and does not search. True
+fetches a separate Skiplagged USD room quote. The envelope on that quote is
+stamp_search of the room quote: ok when rates came back, no_results with
+provider_empty when the provider returned none, or rate_limited, blocked,
+timeout, or failed with the same retry_after fields as the error. A city that
+matches more than one place sends nothing: status ok, completeness partial,
+error_code ambiguous_city. Occupancy, dates, or coordinates that do not match
+are no_results, empty_reason filtered_out, and error_code occupancy_mismatch,
+dates_mismatch, or property_mismatch; room_quotes stays empty. When both
+occupancy and dates differ, error_code is occupancy_mismatch and both flags
+stay. An echo of nothing is echo unknown and is not a confident match.
+When room_rates is true and the provider does not echo adults, rooms, and dates,
+a returned quote is partial (never ok and complete together). An inconclusive
+read never shows ok/complete.
 
 ## Price history and watches
 

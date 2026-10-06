@@ -108,7 +108,7 @@ Once connected, you can ask:
 
 Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
 
-The main tools are:
+The server exposes twenty-two tools:
 
 | Tool | Use it to |
 | --- | --- |
@@ -117,17 +117,23 @@ The main tools are:
 | `search_flex` | Check dates around a target departure, then fetch flights for the cheapest day. |
 | `search_explore` | Discover destinations from an origin airport and price a shortlist. |
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
+| `search_hotel_rooms` | Read Skiplagged room rates for one named hotel. |
+| `get_hotel_details` | Read a hotel offer this process returned, with an optional separate room quote. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
 | `search_split_tickets` | Opt-in separately ticketed itineraries (a self-transfer via a hub, or mixed one-ways for a round trip) built from real one-way quotes. Connections between tickets are not protected. |
 | `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, not found, multiple matches, incomplete identity, or check failed (the check could not complete, which never means the offer is gone). |
-| `lookup_airports` | Look up airport codes offline. |
+| `lookup_airports` | Look up airport or metro codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
 | `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
 | `lookup_transfers` | Local points transfer-partner table. |
 | `validate_itinerary` | Check a proposed itinerary against the searches' own evidence. |
+| `plan_stay_blocks` | Group consecutive nights that have the same people. |
+| `split_stay_costs` | Split named stay totals among the people who sleep there. |
 | `verify_answer` | Flag amounts, codes, dates, or links in a draft reply that no search returned. |
 | `price_history` | Read the prices this machine recorded for a query (opt-in, local, one currency). |
 | `watch_price` | Re-run a saved flight or hotel search once and report the change since its last observation. |
+| `get_runtime_info` | Read the executing package version offline. |
+| `get_guide` | Read the long operational guide (also the `viajante://guide` resource). |
 
 ## Use the command line
 

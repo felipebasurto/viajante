@@ -89,6 +89,7 @@ NETWORK_TOOLS = {
     "search_split_tickets",
     "search_hidden_city",
     "recheck_offer",
+    "get_hotel_details",
     "watch_price",
 }
 # Tools that write to the local state directory: neither read-only nor idempotent.
@@ -189,7 +190,24 @@ class ToolMetadataTests(_StateDir):
                     self.assertEqual(search.await_count + look.await_count, 1, name)
 
         _session_call(self.server, calls)
-        self.assertEqual({n for n, kind in used if kind == "search"}, NETWORK_TOOLS)
+        # room_rates defaults false, so that call stays off the search worker.
+        self.assertEqual(
+            {n for n, kind in used if kind == "search"},
+            NETWORK_TOOLS - {"get_hotel_details"},
+        )
+
+        async def rates(session):
+            with (
+                patch.object(mcp_server, "run_mcp_tool", AsyncMock(return_value={})) as search,
+                patch.object(mcp_server, "run_lookup_tool", AsyncMock(return_value={})) as look,
+            ):
+                await session.call_tool(
+                    "get_hotel_details", {"selection_id": "x", "room_rates": True}
+                )
+                self.assertEqual(search.await_count, 1)
+                self.assertEqual(look.await_count, 0)
+
+        _session_call(self.server, rates)
 
     def test_local_tools_run_with_the_network_blocked(self) -> None:
         def refuse(*_a: object, **_k: object) -> None:
@@ -555,6 +573,19 @@ class GuideTests(_StateDir):
         self.assertGreater(len(sentences), 60)
         missing = [s for s in sentences if s not in covered]
         self.assertEqual(missing, [])
+
+    def test_guide_mentions_metro_codes_hotel_details_and_arrival_deadline(self) -> None:
+        guide = self._flat(GUIDE)
+        for phrase in (
+            "metro code",
+            "get_hotel_details",
+            "arrival_deadline",
+            "18 provider queries",
+            "at most 20 entries",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guide)
+        self.assertIn("Also search_split_tickets", INSTRUCTIONS)
 
     def test_guide_lists_get_guide_among_tools_that_may_run_during_a_search(self) -> None:
         text = self._flat(GUIDE)

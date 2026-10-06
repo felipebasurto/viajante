@@ -646,5 +646,57 @@ class HiddenCityCliTests(unittest.TestCase):
         self.assertIn("OUT:BACK", err.getvalue())
 
 
+class HiddenCitySelectionTests(unittest.TestCase):
+    def test_priced_offer_with_string_evidence_does_not_crash_or_gain_an_id(self) -> None:
+        from viajante.evidence import selection_records
+
+        payload = {"offers": [{"price": 622.0, "evidence": "confirmed"}]}
+        self.assertEqual(selection_records(payload), {})
+        self.assertNotIn("selection_id", payload["offers"][0])
+
+    def test_mcp_tool_returns_a_priced_fixture_offer(self) -> None:
+        from viajante import evidence, mcp_handlers
+
+        evidence.clear()
+        self.addCleanup(evidence.clear)
+
+        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+            if payload.get("method") == "initialize":
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+                return 200, {"mcp-session-id": "s1"}, body
+            return (
+                200,
+                {},
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {
+                            "structuredContent": {
+                                "flights": [
+                                    {
+                                        "price": 622,
+                                        "currency": "USD",
+                                        "airline": "Delta",
+                                        "hidden_city": True,
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                ),
+            )
+
+        def search(origin, destination, departure_date, **kwargs):
+            return search_hidden_city(origin, destination, departure_date, rpc=rpc, **kwargs)
+
+        with patch("viajante.mcp_handlers.search_hidden_city", side_effect=search):
+            payload = mcp_handlers.search_hidden_city_tool("JFK-LHR", FUTURE.isoformat())
+        offer = payload["offers"][0]
+        self.assertEqual(offer["price"], 622)
+        self.assertEqual(offer["evidence"], "confirmed")
+        self.assertNotIn("selection_id", offer)
+
+
 if __name__ == "__main__":
     unittest.main()

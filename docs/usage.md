@@ -72,6 +72,28 @@ list and accepted values.
 | `--sort duration` | Order by `ranked`, `fare`/`price`, `duration`, `departure`, or `arrival`. |
 | `--baggage-buffer 30` | Add a ranking allowance for recognized low-cost carriers, in the quote currency. |
 
+### Metro city codes
+
+Name a metro code instead of an airport to search every airport in that city
+group:
+
+```bash
+viajante flights NYC-LON:2026-11-15 --currency USD
+```
+
+`NYC` searches `JFK`, `EWR` and `LGA`; `LON` searches `LHR`, `LGW`, `STN`,
+`LTN`, `LCY` and `SEN`. Run `viajante airports NYC` to list a metro's
+airports. Each expanded query carries `nearby_label` `metro NYC`, and
+`--exclude-airports` still removes members. Only a code you name expands: `JFK`
+searches `JFK` alone. Metro codes work on one-way and `--trip rt` routes in
+`flights` and `trip`, not on open-jaw or multi-city routes, and not in
+`dates`, `flex`, or `explore`. Combining `--nearby` with a metro code
+is an error, because expanding only the other side would drop part of the
+request. Name metros or airports on both sides instead (`NYC-LON`).
+A route whose two ends are the same metro is rejected: `LON-LON`, `JFK-NYC`,
+and `LHR-LGW` do not expand. The error names the origin, the destination, and
+the metro.
+
 Time, layover, duration, and price-cap filters operate on returned flight
 details. Unknown details can remain in results for some filters, so inspect
 the returned fields when a constraint is essential. These filters do not turn
@@ -362,7 +384,8 @@ the flight fare and hotel stay, not a reservation or a quote for every trip
 expense. Trip searches support adult occupancy only.
 
 Each requested dated flight journey contributes its cheapest owned fare.
-Only nearby airport alternatives for the same dated journey share a minimum;
+Only nearby or metro airport alternatives for the same dated journey share a
+minimum;
 separate dates and different multi-city legs are not collapsed.
 
 ## Re-checking an offer
@@ -627,15 +650,16 @@ over a real stdio session as the client sees them:
 absolute bytes (a raw compact-JSON measure read 30615 before and 33303 after) but
 the same roughly 2.7 KB difference.
 
-- **Annotations and titles.** All 21 tools carry a title and annotations
+- **Annotations and titles.** All 22 tools carry a title and annotations
   (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`),
   except `watch_price`, which writes (it saves the watch and records the
   observation): `readOnlyHint: false`, `idempotentHint: false`,
   `destructiveHint: false`. `openWorldHint` is `true` for the tools that ask a
   provider (`search_flights`, `search_dates`, `search_flex`, `search_explore`,
   `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_split_tickets`,
-  `search_hidden_city`, `recheck_offer`, `watch_price`) and `false` for the local
-  ones. This needs `mcp>=1.14.1`.
+  `search_hidden_city`, `recheck_offer`, `watch_price`, `get_hotel_details`)
+  and `false` for the local ones. `get_hotel_details` with `room_rates` false
+  does not take the search worker. This needs `mcp>=1.14.1`.
 - **Guide.** The server instructions hold only the load-bearing rules. The full
   operational guide is the `viajante://guide` resource (markdown) and the
   `get_guide` tool for clients without resource support.
@@ -672,3 +696,73 @@ Unpinned `uvx` may reuse an old installed tool. Use `uv tool upgrade viajante`
 for that installation, or refresh an explicitly published version:
 `uvx --refresh --from 'viajante==VERSION' viajante --version`. Reload MCP after
 upgrading; confirm the executing version before using new parameters.
+
+## Owned segment times
+
+Flight segments may include `arrival_date`, `departure_timezone` and
+`arrival_timezone`. Missing facts remain absent; completeness reports
+`segment_dates` and `segment_timezones` as known or unknown. To validate
+selected rows locally:
+
+```python
+from viajante import get_flights, validate_itinerary
+
+report = get_flights("JFK-LHR:2026-11-15", fetch="sweep")
+result = report.to_dict()["queries"][0]
+selected = [{"status": "ok", "query": result["query"], "offer": result["offers"][0]}]
+validation = validate_itinerary(selected, {
+    "arrival_deadline": "2026-11-16T12:00Z",
+    "chronological": True,
+})
+```
+
+Pass the selected legs in travel order. `arrival_deadline` and `chronological`
+read that order. An `arrival_deadline` with an explicit offset is compared in UTC, even when
+that offset differs from the arrival airport's zone. A deadline without an
+offset is local civil time at the arrival airport. Missing dates or zones,
+and ambiguous or nonexistent DST times, stay unknown. `chronological` checks
+segment and selected-journey UTC order, including overlap. Optional
+`min_stay_days` and `max_stay_days` count local date differences between a
+journey arrival and the next journey departure from that same airport, including
+packaged journeys. Fewer than two journeys is unknown. They do not infer a stay after the final flight.
+`travel_start`/`travel_end` still bound query departure dates; `arrive_before`
+and `depart_after` still test the existing local-clock bounds. Chronology
+alone does not prove connection protection, immigration requirements or
+sufficient time to change airports. Unknown never means compliant.
+
+## Hotel finalist details
+
+A hotel search stamps `selection_id` on each returned stay. Flight, calendar,
+explore, and hidden-city rows do not. The id belongs to this process. A read
+does not search and does not push the search out of `verify_answer`. Unknown
+ids fail before any provider call.
+
+`get_hotel_details(selection_id)` returns the stored quote. `room_rates` must
+be a boolean. `room_rates` false is `ok` / `complete` and may run during a
+search. `room_rates=true` asks Skiplagged for a separate USD room quote
+in `room_quotes`; `original_quote` keeps the price that was searched. The
+envelope on that quote follows the room quote: `ok`, `no_results` /
+`provider_empty`, or the provider failure status with that error's
+`retry_after` fields. The city must be one place (`Prague`, or `London, GB`).
+Springfield, Portland, and Columbus match more than one place: nothing is
+sent, `error_code` is `ambiguous_city`, completeness is `partial`, and
+`room_rates_status` is `inconclusive`, unless the original offer's coordinates
+identify one place and the returned quote is that property. A coordinate miss
+is `property_mismatch` (`no_results` / `filtered_out`). Skiplagged finalists
+use their own provider ids. If the provider echoes different adults, rooms, or
+dates, the result is `occupancy_mismatch` or `dates_mismatch`
+(`no_results` / `filtered_out`) and `room_quotes` stays empty. A missing echo
+is `echo: unknown`. When `room_rates` is true and the provider does not echo
+adults, rooms, and dates, a returned quote is `partial` and is not `ok` / `complete`.
+Rates remain in provider order and USD. Their cancellation and occupancy
+evidence does not attach to the original fare or prove combined capacity.
+
+```python
+from viajante import get_hotel_details
+
+hotel_snapshot = get_hotel_details(hotels, 0, 0)
+room_quotes = get_hotel_details(hotels, 0, 0, room_rates=True)
+```
+
+There is no details CLI command. Verify the final total and the room terms on
+the provider before booking.

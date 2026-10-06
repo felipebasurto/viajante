@@ -35,6 +35,7 @@ from viajante.explore import (
 from viajante.flights import (
     DEFAULT_TOP,
     FLIGHT_SORTS,
+    FlightPlan,
     FlightSort,
     _clock_minutes,
     _effective_cost,
@@ -258,10 +259,8 @@ def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dic
     return trips, shop
 
 
-def _plan_departure_dates(plan: object) -> Tuple[date, ...]:
-    if isinstance(plan, (RoundTrip, MultiCity)):
-        return tuple(leg.departure_date for leg in plan.legs)
-    return tuple(query.departure_date for query in plan)  # type: ignore[union-attr]
+def _plan_departure_dates(plan: FlightPlan) -> Tuple[date, ...]:
+    return tuple(leg.departure_date for trip in as_trips(plan) for leg in trip.legs)
 
 
 def _format_stops(stops_count: Optional[int]) -> str:
@@ -1002,9 +1001,8 @@ def _run_flights(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    if getattr(args, "nearby", False):
-        for note in nearby_notes(queries, exclude_airports=shop["exclude_airports"]):
-            print(note, file=sys.stderr)
+    for note in nearby_notes(queries, exclude_airports=shop["exclude_airports"]):
+        print(note, file=sys.stderr)
 
     report = search_flights(
         queries,
@@ -1238,7 +1236,10 @@ def _print_airports(query: str) -> int:
     for row in rows:
         city = row.city or "?"
         country = row.country or "?"
-        print(f"  {row.iata}  {row.name}  {city}  {country}")
+        metro = row.to_dict().get("metro")
+        print(
+            f"  {row.iata}  {row.name}  {city}  {country}" + (f"  metro {metro}" if metro else "")
+        )
     return 0
 
 
@@ -2026,7 +2027,10 @@ def _hidden_city_route(
     else:
         trips = as_trips(plan)
         if len(trips) != 1:
-            raise ValueError("hidden-city takes one DATE or ORIGIN-DESTINATION:OUT:BACK")
+            raise ValueError(
+                "hidden-city takes one airport pair (no metro codes) and one DATE or "
+                "ORIGIN-DESTINATION:OUT:BACK"
+            )
         query = trips[0]
         origin, destination, departure, back = (
             query.origin,

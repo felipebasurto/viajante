@@ -46,13 +46,14 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 21 tools. |
+| MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 22 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
 | MCP tool | CLI | What it is |
 | --- | --- | --- |
 | `search_flights` | `flights` | Shop one or more routes (one-way, packaged RT, multi-city). |
+| `get_hotel_details` | — | Stored hotel quote, plus an optional separate Skiplagged room quote. |
 | `search_dates` | `dates` | Cheapest fare per day across a window (≤31 days). |
 | `search_flex` | `flex` | Cheapest day in ±N around a date, then one shop. |
 | `search_explore` | `explore` | Destinations from an origin, shortlist priced. |
@@ -349,3 +350,50 @@ improvement loops.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.
+
+## Temporal evidence and hotel finalists
+
+`RawSegment` retains the provider departure and arrival dates. The compact
+parser reads arrival slot 21, already used for layover arithmetic; airport
+zones come from the offline catalogue. Detail DOM cards can lack these
+facts. `completeness.segment_dates` and `segment_timezones` expose those gaps.
+`temporal.py` round-trips both folds of an IANA civil time through UTC. A
+missing zone, nonexistent spring-forward time or ambiguous fall-back time
+has no provable instant. `validate.py` compares UTC instants for chronology.
+Pass selected legs in travel order. `arrival_deadline` and `chronological` read
+that order. An `arrival_deadline` with an explicit offset is that UTC instant, including
+when the arrival airport's civil offset is different. A naive deadline is
+local civil time at the arrival airport. Stay bounds use local date differences
+between journey arrival and the following departure at the same airport.
+Fewer than two journeys is unknown. No stay is inferred after the final flight. Existing travel-window and clock
+constraints retain their previous meanings. Ordering does not prove connection
+protection, immigration eligibility or sufficient transfer margins.
+
+`details.py` reads a stored hotel quote without a provider request.
+`room_rates=true` calls the existing Skiplagged room helper. `room_rates`
+must be a boolean. `evidence.py` attaches `selection_id` only to hotel offers
+this process can open again. Flight, calendar, explore, and hidden-city rows
+are left alone; hidden-city `evidence` is the string `confirmed`. A detail
+read does not call `record`, so it does not consume a ledger slot or evict a
+search. Unknown ids fail before provider contact. Hotel searches still share
+the 20-group retention of the ledger. The MCP cache retains at most 20
+successful calls for five minutes and replays their original hotel references.
+
+Google and Booking provider ids are never passed as Skiplagged hotel ids.
+External room lookup requires the exact normalized title and one catalogue
+place: airports within 100 km, or the same metro, are one place. A city that
+matches several places is inconclusive and sends nothing, unless the offer's
+coordinates fall within 100 km of exactly one place. The returned quote must
+then lie within 2 km of that hotel; otherwise the rates are not presented.
+A single place whose provider-resolved name disagrees with the named city is
+an input error. Skiplagged finalists use their own ids. Dates, adults, and
+rooms are sent as requested. When the provider echoes different adults, rooms,
+or dates, the result is `occupancy_mismatch` or `dates_mismatch` and the rates
+are omitted. A missing echo stays unknown. When `room_rates` is true and the
+provider does not echo adults, rooms, and dates, a returned quote is partial. A contradictory Skiplagged city
+echo stops exact-name lookup before requesting room details. Original quotes
+and ordered room rates carry their own provider, currency, timestamp, and
+occupancy. A missing provider label stays unknown. USD room conditions cannot
+prove terms of the original fare. Missing cancellation deadlines, contradictory
+units, and unknown occupancy remain unverified. Room rates do not establish
+combined capacity across rooms.

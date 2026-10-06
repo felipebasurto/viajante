@@ -1102,6 +1102,7 @@ class McpServerImportTests(unittest.TestCase):
             [
                 "get_runtime_info",
                 "search_flights",
+                "get_hotel_details",
                 "search_dates",
                 "search_flex",
                 "search_explore",
@@ -1154,6 +1155,30 @@ class McpServerImportTests(unittest.TestCase):
                     continue
                 signature = inspect.signature(function)
                 named = {param: object() for param in signature.parameters}
+                if name == "get_hotel_details":
+                    response = {"owned": True}
+                    with patch(
+                        "viajante.mcp_server.run_mcp_tool",
+                        new_callable=AsyncMock,
+                        return_value=response,
+                    ) as search:
+                        self.assertEqual(await function(**named), response)
+                        self.assertEqual(search.await_args.kwargs, named)
+                    required = {
+                        key: named[key]
+                        for key, param in signature.parameters.items()
+                        if param.default is inspect.Parameter.empty
+                    }
+                    bound = signature.bind(**required)
+                    bound.apply_defaults()
+                    with patch(
+                        "viajante.mcp_server.run_lookup_tool",
+                        new_callable=AsyncMock,
+                        return_value=response,
+                    ) as look:
+                        self.assertEqual(await function(**required), response)
+                        self.assertEqual(look.await_args.kwargs, bound.arguments)
+                    continue
                 runner = "run_mcp_tool" if name in searches else "run_lookup_tool"
                 response = [{"iata": "JFK"}] if name == "lookup_airports" else {"owned": True}
                 with (
@@ -1182,6 +1207,38 @@ class McpServerImportTests(unittest.TestCase):
                     self.assertEqual(dispatch.await_args.kwargs, bound.arguments)
 
         asyncio.run(check_forwarding())
+
+        from viajante import evidence, mcp_handlers
+
+        payload = {
+            "currency": "EUR",
+            "queries": [
+                {
+                    "query": {
+                        "location": "Prague",
+                        "check_in": "2099-07-01",
+                        "check_out": "2099-07-04",
+                        "adults": 2,
+                        "rooms": 1,
+                    },
+                    "offers": [{"title": "Czech Inn", "total_price": 150}],
+                }
+            ],
+        }
+        evidence.clear()
+        owned = mcp_handlers._owned(payload)
+        selection_id = owned["queries"][0]["offers"][0]["selection_id"]
+
+        async def read_while_a_search_holds_the_worker() -> None:
+            self.assertTrue(mcp_server._SEARCH_BUSY.acquire(blocking=False))
+            try:
+                result = await tools["get_hotel_details"](selection_id=selection_id)
+            finally:
+                mcp_server._SEARCH_BUSY.release()
+                evidence.clear()
+            self.assertEqual((result["status"], result["completeness"]), ("ok", "complete"))
+
+        asyncio.run(read_while_a_search_holds_the_worker())
 
 
 class McpWorkerTests(unittest.TestCase):

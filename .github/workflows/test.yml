@@ -75,6 +75,7 @@ jobs:
                           "search_explore",
                           "search_hotels",
                           "search_hotel_rooms",
+                          "get_hotel_details",
                           "search_trip",
                           "search_split_tickets",
                           "lookup_airports",
@@ -101,6 +102,7 @@ jobs:
                           network = tool.name.startswith("search_") or tool.name in {
                               "recheck_offer",
                               "watch_price",
+                              "get_hotel_details",
                           }
                           assert tool.annotations.openWorldHint == network, tool.name
                       guide = await session.read_resource("viajante://guide")

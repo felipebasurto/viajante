@@ -20,7 +20,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from viajante.airports import airport_geo
 from viajante.flights import (
@@ -43,6 +42,7 @@ from viajante.models import (
 from viajante.parsers import normalize_clock
 from viajante.quote import first_origin_iata, resolve_quote_currency
 from viajante.ratelimit import rate_limit_advice, rate_limit_status
+from viajante.temporal import local_instant
 
 # A planning default for a self-transfer, not provider evidence. Border control, bag
 # re-check, or a terminal change can need longer: it is a parameter on purpose.
@@ -270,35 +270,27 @@ def _offer_currency(offer: FlightOffer, report: SearchReport) -> str:
     return offer.evidence.currency if offer.evidence is not None else report.currency
 
 
-def _zone(code: Optional[str]) -> Optional[ZoneInfo]:
-    """The airport catalogue's IANA zone, or None when the code or zone is unknown."""
-    geo = airport_geo(code) if code else None
-    if geo is None:
-        return None
-    try:
-        return ZoneInfo(geo[0])
-    except (ValueError, ZoneInfoNotFoundError):
-        return None
+def _instant(
+    day: Optional[date],
+    clock: Optional[str],
+    code: Optional[str],
+    zone: Optional[str] = None,
+) -> Optional[datetime]:
+    """UTC instant of a local civil time.
 
-
-def _instant(day: Optional[date], clock: Optional[str], code: Optional[str]) -> Optional[datetime]:
-    """UTC instant of a local civil time at an airport.
-
-    None when the day, clock, or zone is missing, or the civil time is nonexistent or
-    ambiguous (a DST change): a gap that depends on a guess is never a number.
+    The segment's IANA zone wins. The airport catalogue is only the fallback when
+    that zone is absent. None when the day, clock, or zone is missing, or the civil
+    time is nonexistent or ambiguous (a DST change).
     """
     owned = normalize_clock(clock)
-    zone = _zone(code)
-    if day is None or owned is None or zone is None:
+    if day is None or owned is None:
         return None
+    if not zone:
+        geo = airport_geo(code) if code else None
+        zone = geo[0] if geo else None
     hour, minute = owned.split(":", 1)
     civil = datetime(day.year, day.month, day.day, int(hour), int(minute))
-    instants = set()
-    for fold in (0, 1):
-        utc = civil.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc)
-        if utc.astimezone(zone).replace(tzinfo=None) == civil:
-            instants.add(utc)
-    return next(iter(instants)) if len(instants) == 1 else None
+    return local_instant(civil, zone)
 
 
 def _departure_point(
@@ -310,7 +302,8 @@ def _departure_point(
     day = (first.departure_date if first else None) or query.departure_date
     clock = first.departure if first and first.departure else journey.departure
     code = (first.origin if first else None) or query.origin
-    return day, _instant(day, clock, code)
+    zone = first.departure_timezone if first else None
+    return day, _instant(day, clock, code, zone)
 
 
 def _arrival_point(
@@ -321,7 +314,10 @@ def _arrival_point(
     if last is None:
         return None, None
     return last.arrival_date, _instant(
-        last.arrival_date, last.arrival, last.destination or query.destination
+        last.arrival_date,
+        last.arrival,
+        last.destination or query.destination,
+        last.arrival_timezone,
     )
 
 
@@ -381,8 +377,9 @@ def pair_hub_quotes(
     """Pair origin->hub quotes (first query) with hub->destination quotes (the rest).
 
     Ticket 1 must land at the hub airport and ticket 2 must leave from it (owned segment
-    airports), then the gap between the two instants, each converted to UTC with the hub's
-    catalogue timezone, must be at least the minimum connection. A missing timezone or a
+    airports), then the gap between the two instants, each converted to UTC with the
+    segment timezone (the airport catalogue only when the segment has none), must be at
+    least the minimum connection. A missing timezone or a
     nonexistent or ambiguous local time (a DST change) leaves the gap unproven: the pair
     is rejected, never guessed.
     """
@@ -443,8 +440,9 @@ def pair_mixed_one_ways(
     """Cheapest feasible outbound one-way plus return one-way (two queries in the report).
 
     A pair is feasible when the return departs after the outbound lands, compared in UTC
-    through each airport's catalogue timezone (a missing zone or a DST-ambiguous or
-    nonexistent local time leaves the timing unproven). A pair
+    through each segment timezone, or the airport catalogue when the segment has none.
+    A missing zone or a DST-ambiguous or nonexistent local time leaves the timing
+    unproven. A pair
     that provably overlaps is rejected. A pair without an owned arrival date stays eligible
     only when nothing proven exists in its currency, and is flagged ``timing_proven: false``
     with a ``timing_note``. One pair per currency (the cheapest total within it); prices in

@@ -9,6 +9,7 @@ from datetime import date, datetime
 from typing import Any, Callable, Optional, TypeVar
 from urllib.parse import quote, urlencode
 
+from viajante.airports import airport_geo
 from viajante.carriers import carrier_filter_payload, shopping_carrier_codes
 from viajante.models import (
     FETCH_LANGUAGE,
@@ -881,6 +882,11 @@ def _leg_date(value: object) -> Optional[date]:
         return None
 
 
+def _airport_timezone(value: object) -> Optional[str]:
+    geo = airport_geo(value) if isinstance(value, str) else None
+    return geo[0] if geo else None
+
+
 def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
     legs = flight[2] if len(flight) > 2 else None
     if not isinstance(legs, list):
@@ -907,6 +913,8 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
                 departure_date=_leg_date(leg[20] if len(leg) > 20 else None),
                 carrier=None if ident is None else ident[0],
                 arrival_date=_leg_date(leg[21] if len(leg) > 21 else None),
+                departure_timezone=_airport_timezone(leg[3] if len(leg) > 3 else None),
+                arrival_timezone=_airport_timezone(leg[6] if len(leg) > 6 else None),
             )
         )
     return tuple(segments)

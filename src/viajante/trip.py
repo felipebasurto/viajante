@@ -9,10 +9,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Callable, Optional, Sequence, Tuple
 
-from viajante.airports import get_airport
+from viajante.airports import get_airport, metro_of
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
+    metro_codes_in_label,
     overlay_trip_fields,
     search_flights,
 )
@@ -67,8 +68,16 @@ def _city_or_code(code: str) -> str:
 
 
 def _fare_group_key(query: Trip) -> tuple[str, tuple[tuple[str, str, date], ...]]:
-    """Only nearby alternatives for the same dated journey share a minimum."""
-    airport = _city_or_code if getattr(query, "nearby_label", None) else lambda code: code
+    """Only nearby or metro alternatives for the same dated journey share a minimum."""
+    label = getattr(query, "nearby_label", None)
+    metros = metro_codes_in_label(label)
+
+    def airport(code: str) -> str:
+        if not label:
+            return code
+        metro = metro_of(code)
+        return metro if metro in metros else _city_or_code(code)
+
     kind = (
         "multi" if isinstance(query, MultiCity) else "rt" if isinstance(query, RoundTrip) else "ow"
     )

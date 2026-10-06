@@ -6,6 +6,7 @@ import contextvars
 import functools
 import threading
 import time
+from copy import deepcopy
 from datetime import date
 from typing import Mapping, Optional, Sequence
 
@@ -19,8 +20,15 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
+from viajante.details import get_hotel_details
 from viajante.envelope import stamp_local, stamp_recheck, stamp_search, stamp_split
-from viajante.evidence import failure_codes, find_offer, record
+from viajante.evidence import (
+    failure_codes,
+    find_offer,
+    record,
+    selected_reference,
+    selection_records,
+)
 from viajante.evidence import verify_answer as verify_answer_evidence
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
@@ -76,7 +84,8 @@ from viajante.validate import validate_itinerary
 
 _SEARCH_LOCK = threading.Lock()
 CACHE_SECONDS = 300.0
-_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+_CACHE: dict[tuple[str, str], tuple[float, dict, dict]] = {}
+_SELECTION_CONTEXT = threading.local()
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -115,13 +124,15 @@ def _with_search_lock(fn):
         _SEARCH_LOCK.release()
 
 
-def _owned(payload: dict) -> dict:
-    record(payload)
+def _owned(payload: dict, report=None) -> dict:
+    selections = selection_records(payload, report)
+    record(payload, selections=selections)
+    _SELECTION_CONTEXT.records = selections
     return payload
 
 
-def _searched(payload: dict) -> dict:
-    return _owned(stamp_search(payload))
+def _searched(payload: dict, report=None) -> dict:
+    return _owned(stamp_search(payload), report)
 
 
 def _cached(fn):
@@ -133,12 +144,19 @@ def _cached(fn):
         now = time.monotonic()
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
-            return _owned({**hit[1], "cached": True})
+            result = {**deepcopy(hit[1]), "cached": True}
+            record(result, selections=hit[2])
+            return result
+        _SELECTION_CONTEXT.records = {}
         result = fn(*args, **kwargs)
+        selections = getattr(_SELECTION_CONTEXT, "records", {})
+        _SELECTION_CONTEXT.records = {}
         if not failure_codes(result):
-            for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
+            for stale in [k for k, (at, _, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
                 del _CACHE[stale]
-            _CACHE[key] = (now, result)
+            if len(_CACHE) >= 20:
+                del _CACHE[next(iter(_CACHE))]
+            _CACHE[key] = (now, deepcopy(result), selections)
         return result
 
     return wrapper
@@ -240,7 +258,7 @@ def search_flights_tool(
             **search,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -410,7 +428,7 @@ def search_dates_tool(
             proxy=proxy,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -501,7 +519,7 @@ def search_flex_tool(
             proxy=proxy,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -595,7 +613,7 @@ def search_explore_tool(
             proxy=proxy,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 MAX_HOTEL_STAYS = 8
@@ -709,7 +727,7 @@ def search_hotels_tool(
             max_distance_km=max_distance_km,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -855,7 +873,7 @@ def search_trip_tool(
             hotel_source=source,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 @_cached
@@ -887,7 +905,7 @@ def search_hidden_city_tool(
             currency=currency,
         )
     )
-    return _searched(reports_payload(report))
+    return _searched(reports_payload(report), report)
 
 
 def compare_awards_tool(
@@ -1015,3 +1033,18 @@ def verify_answer_tool(answer: str) -> Mapping[str, object]:
         completeness="blocked" if nothing else "complete",
         error_code="no_search_recorded" if nothing else "unowned_claims",
     )
+
+
+def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Mapping[str, object]:
+    if not isinstance(room_rates, bool):
+        raise ValueError("room_rates must be a boolean")
+    report, query_index, offer_index = selected_reference(selection_id, "hotel")
+
+    def action():
+        return get_hotel_details(report, query_index, offer_index, room_rates=room_rates)
+
+    # A read does not enter the evidence ledger or the selection store.
+    # room_rates false stays off the search lock; the server runs it on the lookup worker.
+    detail = _with_search_lock(action) if room_rates else action()
+    detail["original_quote"]["offer"]["selection_id"] = selection_id
+    return detail

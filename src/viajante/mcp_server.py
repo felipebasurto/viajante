@@ -9,7 +9,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Callable, Literal, NoReturn, Optional, Sequence, TypeVar
+from typing import Annotated, Callable, Literal, NoReturn, Optional, Sequence, TypeVar
 
 from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
 from viajante.explore import DEFAULT_EXPLORE_TOP
@@ -18,6 +18,7 @@ from viajante.mcp_errors import structured_error, unknown_arguments_body, valida
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
     compare_awards_tool,
+    get_hotel_details_tool,
     lookup_airports_tool,
     lookup_transfers_tool,
     plan_stay_blocks_tool,
@@ -61,10 +62,11 @@ usage: viajante-mcp [--transport {{stdio,streamable-http}}] [--host HOST] [--por
 Install:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp
 Checkout: uv sync --extra mcp && viajante-mcp
 
-Tools: search_flights, search_dates, search_flex, search_explore, search_hotels,
-search_hotel_rooms, search_trip, search_split_tickets, lookup_airports, search_hidden_city,
-compare_awards, lookup_transfers, validate_itinerary, recheck_offer, plan_stay_blocks,
-split_stay_costs, verify_answer, price_history, watch_price, get_runtime_info, get_guide.
+Tools: search_flights, get_hotel_details, search_dates, search_flex, search_explore,
+search_hotels, search_hotel_rooms, search_trip, search_split_tickets, lookup_airports,
+search_hidden_city, compare_awards, lookup_transfers, validate_itinerary, recheck_offer,
+plan_stay_blocks, split_stay_costs, verify_answer, price_history, watch_price,
+get_runtime_info, get_guide.
 
 Server instructions (the full guide is the viajante://guide resource):
 
@@ -122,6 +124,13 @@ async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: obj
         _reraise(exc, kwargs)
 
 
+def _room_rates_flag(value: object) -> bool:
+    # Reject before bool coercion, which would treat "yes" as true.
+    if not isinstance(value, bool):
+        raise ValueError("room_rates must be a boolean")
+    return value
+
+
 def _loopback_security(host: str):
     """Reject a foreign Host or Origin. The SDK only does this by itself from 1.23."""
     from mcp.server.transport_security import TransportSecuritySettings
@@ -138,9 +147,13 @@ def _loopback_security(host: str):
 
 
 def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
+    # pydantic and the SDK arrive with the mcp extra. Help imports this module without them.
+    global _ROOM_RATES
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
-    from pydantic import BaseModel, ConfigDict
+    from pydantic import BaseModel, BeforeValidator, ConfigDict
+
+    _ROOM_RATES = Annotated[bool, BeforeValidator(_room_rates_flag)]
 
     class ToolEnvelope(BaseModel):
         """Top-level fields on every tool result except lookup_airports (a bare list).
@@ -283,6 +296,10 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         Use search_dates for the cheapest week and search_flex for ±N days.
         Each routes entry is ORIGIN-DEST:YYYY-MM-DD. fetch=detail requires the
         browser extra and Chromium in the MCP environment.
+        A named metro code (LON, NYC, PAR, TYO; lookup_airports lists members)
+        on a one-way or rt route searches each member airport. Only a named
+        metro code expands; JFK stays JFK. A call that would send more than 18
+        provider queries is rejected before anything is fetched.
         Currency is currency or inferred from a named origin's owned country.
         If unknown, ask. Viajante does not convert. The calling agent may
         convert for the user. Unproven country, dest, or currency (city with
@@ -306,6 +323,26 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         offer.
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
+
+    @tool("Hotel finalist details", network=True)
+    async def get_hotel_details(selection_id: str, room_rates: _ROOM_RATES = False) -> dict:
+        """Read a hotel offer this process returned. room_rates must be a boolean.
+
+        False returns the stored quote, does not search, and may run during another
+        search. True asks Skiplagged for a separate USD room quote and takes the
+        one-search lock. That quote is not the original stay when the city matches
+        more than one place, the returned coordinates do not match the hotel, or
+        the provider echoes different adults, rooms, or dates (occupancy_mismatch,
+        dates_mismatch, property_mismatch). A missing echo is echo unknown.
+        When the provider does not echo adults, rooms, and dates, a returned
+        quote is partial. A read does not evict stored searches. Unknown or
+        evicted ids send nothing.
+        """
+        return dict(
+            await (run_mcp_tool if room_rates else run_lookup_tool)(
+                get_hotel_details_tool, selection_id=selection_id, room_rates=room_rates
+            )
+        )
 
     @tool("Cheapest-dates calendar", network=True)
     async def search_dates(
@@ -656,8 +693,9 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         keep at most 3 rows each (omitted_other_currency counts the rest). Hub
         tickets must meet at the hub airport; mixed one-ways need the return to
         leave after the outbound lands, else timing_proven is false and
-        timing_note says so. Gaps are measured in UTC through each airport's
-        catalogue timezone; a missing timezone or a nonexistent or ambiguous
+        timing_note says so. Gaps are measured in UTC through the segment
+        timezone, or the airport catalogue when the segment has none; a missing
+        timezone or a nonexistent or ambiguous
         local time (a DST change) leaves the timing unproven, never a number.
         Nothing is split out of a round-trip price, estimated, or converted. Not for multi-city.
         """
@@ -724,8 +762,13 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     ) -> dict:
         """Validate selected v2 flight offers locally without fetching.
 
-        Each leg must preserve its exact query and one selected offer. The
-        result is tri-state: unknown evidence never becomes pass.
+        Each leg must preserve its exact query and one selected offer. Pass legs
+        in travel order: arrival_deadline and chronological read that order.
+        The result is tri-state: unknown evidence never becomes pass.
+        arrival_deadline is an ISO date and time; an explicit offset is compared
+        in UTC, and a naive time is local at the arrival airport. Ambiguous or
+        missing timezones stay unknown. chronological checks owned segment
+        instants. min_stay_days and max_stay_days use owned journey dates.
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 

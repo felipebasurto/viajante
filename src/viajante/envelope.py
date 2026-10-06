@@ -407,16 +407,18 @@ def stamp_local(
     status: str = "ok",
     completeness: Optional[str] = None,
     error_code: Optional[str] = None,
+    empty_reason: Optional[str] = None,
 ) -> dict:
     """Stamp the envelope on an offline tool payload: ran locally, nothing fetched.
 
-    ``status`` stays ``ok`` unless the tool's own verdict failed (``verify_answer``).
+    ``status`` stays ``ok`` unless the tool's own verdict failed (``verify_answer``)
+    or a local filter removed the only candidate (``get_hotel_details``).
     """
     payload.update(
         status=status,
         completeness=completeness or ("partial" if partial else "complete"),
-        empty_reason=None,
-        empty_note=None,
+        empty_reason=empty_reason,
+        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
         error_code=error_code,
         retry_after=None,
         retry_after_seconds=None,

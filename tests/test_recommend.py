@@ -15,7 +15,15 @@ from viajante.envelope import stamp_search
 from viajante.flights import _recommend, _run_search, parse_offer_filters
 from viajante.mcp_guide import GUIDE
 from viajante.mcp_handlers import search_flights_tool
-from viajante.models import FlightOffer, FlightQuery, OfferEvidence, QuerySuccess, RoundTrip
+from viajante.models import (
+    FlightOffer,
+    FlightQuery,
+    OfferEvidence,
+    QuerySuccess,
+    RawJourneyLeg,
+    RawSegment,
+    RoundTrip,
+)
 from viajante.recommend import (
     RELAX_ORDER,
     SCORE_WEIGHTS,
@@ -593,6 +601,70 @@ class SurfaceTests(unittest.TestCase):
             flat,
         )
         self.assertIn("a relaxed pick, not an exact match", flat)
+
+    def test_segment_fields_hash_and_ride_on_the_recommendation(self) -> None:
+        segment = RawSegment(
+            "JFK",
+            "LHR",
+            "22:00",
+            "10:00",
+            "British Airways",
+            "BA100",
+            date(2099, 7, 1),
+            "BA",
+            date(2099, 7, 2),
+            "America/New_York",
+            "Europe/London",
+        )
+        leg = RawJourneyLeg("22:00", "10:00", "7 hr", "Nonstop", (segment,))
+        self.assertEqual(len({segment, leg}), 2)
+        offer = FlightOffer(
+            airline="British Airways",
+            departure="22:00",
+            arrival="10:00",
+            price_text="$100",
+            price=100,
+            duration="7 hr",
+            duration_hours=7,
+            stops="Nonstop",
+            stops_count=0,
+            baggage_buffer=0,
+            needs_bag_verify=False,
+            legs=(leg,),
+        )
+        # flights.py looks the stamped copy up by the offer, so the offer must hash.
+        self.assertIs({offer: offer}[offer], offer)
+        query = FlightQuery("JFK", "LHR", date(2099, 7, 1))
+        report = _run_search(
+            (query,),
+            top=1,
+            source=FakeSource(
+                {
+                    ("JFK", "LHR", "2099-07-01", 1): (
+                        card(
+                            airline="British Airways",
+                            departure="22:00",
+                            arrival="10:00",
+                            price="$100",
+                            duration="7 hr",
+                            legs=(leg,),
+                        ),
+                    )
+                }
+            ),
+            sleep=lambda _: None,
+            random_gen=random.Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            currency="USD",
+        )
+        row = report.queries[0]
+        shown = row.offers[0].to_dict("USD")["legs"][0]["segments"][0]
+        picked = row.recommendation.to_dict("USD")["shortlist"][0]["offer"]["legs"][0]["segments"][
+            0
+        ]
+        for key in ("arrival_date", "departure_timezone", "arrival_timezone"):
+            self.assertEqual(picked[key], shown[key])
+            self.assertEqual(shown[key], segment.to_dict()[key])
 
     def test_search_trip_flights_report_carries_recommendation(self) -> None:
         report, _ = _search_trip_cards(trip_card())
