@@ -7,8 +7,21 @@ from datetime import date, datetime, timezone
 from typing import Mapping, Optional
 
 from viajante.airports import airport_geo, lookup_airports, metro_of
+from viajante.envelope import stamp_local, stamp_search
 from viajante.hotels import _raw_distance_km
 from viajante.skiplagged_hotels import search_hotel_rooms
+
+_ENVELOPE = (
+    "status",
+    "completeness",
+    "empty_reason",
+    "empty_note",
+    "error_code",
+    "retry_after",
+    "retry_after_seconds",
+    "observed_at",
+    "observed_at_basis",
+)
 
 # ponytail: airports within 100 km (the metro table's radius) are one place.
 # Homonyms farther apart stay separate. Upgrade: subdivision codes.
@@ -169,6 +182,38 @@ def _require_bool(room_rates) -> None:
         raise ValueError("room_rates must be a boolean")
 
 
+def _lift(detail: dict, stamped: dict) -> dict:
+    for key in _ENVELOPE:
+        detail[key] = stamped[key]
+    return detail
+
+
+def _echo(rooms) -> str:
+    """A confident match needs every party and date field the provider echoed."""
+    missing = (
+        rooms.answered_adults is None
+        or rooms.answered_rooms is None
+        or rooms.answered_check_in is None
+        or rooms.answered_check_out is None
+    )
+    return "unknown" if missing else "matched"
+
+
+def _accept_quotes(detail: dict, quotes: dict, rooms) -> dict:
+    echo = _echo(rooms)
+    detail["room_quotes"] = quotes
+    detail["echo"] = echo
+    _lift(detail, stamp_search(dict(quotes)))
+    # Absence of an echo is not a confident match: never ok/complete.
+    if echo == "unknown" and detail["status"] == "ok" and detail["completeness"] == "complete":
+        detail["completeness"] = "partial"
+    return detail
+
+
+def _filtered(detail: dict, code: str) -> dict:
+    return stamp_local(detail, status="no_results", error_code=code, empty_reason="filtered_out")
+
+
 def _party_flags(query, rooms) -> dict[str, object]:
     flags: dict[str, object] = {}
     answered = {
@@ -222,7 +267,7 @@ def get_hotel_details(
         ],
     }
     if not room_rates:
-        return detail
+        return stamp_local(detail)
     query = result["query"]
     if date.fromisoformat(query["check_in"]) < date.today():
         raise ValueError("check-in date is in the past")
@@ -240,7 +285,7 @@ def get_hotel_details(
         if location is None:
             detail["room_rates_status"] = "inconclusive"
             detail["reason"] = anchor
-            return detail
+            return stamp_local(detail, partial=True, error_code="ambiguous_city")
         named = {"hotel_name": offer["title"], "city": location}
     rooms = search_hotel_rooms(
         hotel_id,
@@ -250,20 +295,21 @@ def get_hotel_details(
         rooms=query["rooms"],
         **named,
     )
+    quotes = dict(rooms.to_dict())
     if rooms.error is not None:
-        detail["room_quotes"] = dict(rooms.to_dict())
-        return detail
+        detail["room_quotes"] = quotes
+        return _lift(detail, stamp_search(dict(quotes)))
     flags = _party_flags(query, rooms)
     if flags:
         detail.update(flags)
-        return detail
+        code = "occupancy_mismatch" if flags.get("occupancy_mismatch") else "dates_mismatch"
+        return _filtered(detail, code)
     if anchor is not None:
-        quoted = _point(rooms.to_dict())
+        quoted = _point(quotes)
         if quoted is None or _raw_distance_km(anchor, quoted[0], quoted[1]) > _PROPERTY_KM:
             detail["room_rates_status"] = "inconclusive"
             detail["reason"] = (
                 "room quote coordinates do not match the original hotel; not a quote for that stay"
             )
-            return detail
-    detail["room_quotes"] = dict(rooms.to_dict())
-    return detail
+            return _filtered(detail, "property_mismatch")
+    return _accept_quotes(detail, quotes, rooms)

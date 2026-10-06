@@ -33,3 +33,4 @@ test-results/
 .opencode/
 dist/
 .freshctx/
+build/

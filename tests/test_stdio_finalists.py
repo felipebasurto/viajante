@@ -17,7 +17,7 @@ import viajante.details as details
 import viajante.mcp_handlers as handlers
 from viajante.models import (
     HiddenCityOffer, HiddenCityReport, RawSegment, RawJourneyLeg, RawHotelCard, HotelPage,
-    HotelRoomsReport,
+    HotelRoomRate, HotelRoomsReport, SearchError, SearchErrorCode,
 )
 from viajante.google_flights import RawFlightCard
 
@@ -37,15 +37,49 @@ class HotelSource:
     def __init__(self, **kwargs):
         self.config = SimpleNamespace(html_lang="en", currency=kwargs["currency"])
     def fetch(self, query, applied, limit):
+        lat = lng = None
+        if query.location == "Springfield":
+            lat, lng = 37.20, -93.30
         return HotelPage((RawHotelCard("Czech Inn", None, "EUR 150", "4.5", "Free cancellation",
-            None, priced_adults=2, unit_details="Private room; Free cancellation"),),
-            resolved_place="Prague")
+            None, priced_adults=2, unit_details="Private room; Free cancellation",
+            latitude=lat, longitude=lng),), resolved_place=query.location)
     def close(self):
         pass
 
 def rooms(hotel_id, check_in, check_out, **kwargs):
-    return HotelRoomsReport(datetime.now(timezone.utc), "25584", check_in, check_out,
-        kwargs["adults"], kwargs["rooms"], currency="USD", name="Czech Inn")
+    import time
+    city = kwargs.get("city") or ""
+    now = datetime.now(timezone.utc)
+    rate = HotelRoomRate("Triple", 545.0, 81.0, 58.0, 6, True, True, (), None)
+    echoed = dict(answered_adults=kwargs["adults"], answered_rooms=kwargs["rooms"],
+        answered_check_in=check_in, answered_check_out=check_out, rates=(rate,))
+    common = dict(hotel_id="25584", check_in=check_in, check_out=check_out,
+        adults=kwargs["adults"], rooms=kwargs["rooms"], currency="USD", name="Czech Inn")
+    if city.startswith("Lisbon"):
+        return HotelRoomsReport(now, **common, **{**echoed, "answered_adults": 1})
+    if city.startswith("Paris"):
+        shifted = {**echoed, "answered_check_in": date(2099, 8, 1),
+            "answered_check_out": date(2099, 8, 4)}
+        return HotelRoomsReport(now, **common, **shifted)
+    if city.startswith("Oslo"):
+        return HotelRoomsReport(now, **common, rates=(rate,))
+    if city.startswith("Rome"):
+        return HotelRoomsReport(now, **common, **{k: v for k, v in echoed.items() if k != "rates"})
+    if city.startswith("Tokyo"):
+        return HotelRoomsReport(now, **common, error=SearchError(
+            SearchErrorCode.FETCH_FAILED, "limited", rate_limited=True,
+            retry_until=time.time() + 90))
+    if city.startswith("Dublin"):
+        return HotelRoomsReport(now, **common, error=SearchError(SearchErrorCode.BLOCKED, "wall"))
+    if city.startswith("Vienna"):
+        return HotelRoomsReport(now, **common, error=SearchError(
+            SearchErrorCode.FETCH_FAILED, "slow", timeout=True))
+    if city.startswith("Athens"):
+        return HotelRoomsReport(
+            now, **common, error=SearchError(SearchErrorCode.FETCH_FAILED, "nope"))
+    if city.startswith("Springfield"):
+        return HotelRoomsReport(now, **common, **echoed, latitude=50.07, longitude=14.44)
+    return HotelRoomsReport(now, **common, **echoed)
 
 def hidden(origin, destination, departure_date, **kwargs):
     offer = HiddenCityOffer(
@@ -113,9 +147,11 @@ EXPECTED_TOOLS = [
     "compare_awards",
     "lookup_transfers",
     "validate_itinerary",
+    "recheck_offer",
     "plan_stay_blocks",
     "split_stay_costs",
     "verify_answer",
+    "get_guide",
 ]
 
 
@@ -181,6 +217,7 @@ class StdioFinalistTests(unittest.TestCase):
                         )
                     self.assertIsNone(last["room_quotes"])
                     self.assertEqual(last["original_quote"]["offer"]["title"], "Czech Inn")
+                    self.assertEqual((last["status"], last["completeness"]), ("ok", "complete"))
                     checked = payload(
                         await session.call_tool("verify_answer", {"answer": "The stay is EUR 150."})
                     )
@@ -193,6 +230,75 @@ class StdioFinalistTests(unittest.TestCase):
                     )
                     self.assertEqual(rate["original_quote"]["currency"], "EUR")
                     self.assertEqual(rate["room_quotes"]["currency"], "USD")
+                    self.assertEqual(rate["echo"], "matched")
+                    self.assertEqual((rate["status"], rate["completeness"]), ("ok", "complete"))
+
+                    async def detail(location):
+                        found = payload(
+                            await session.call_tool(
+                                "search_hotels",
+                                {
+                                    "location": location,
+                                    "check_in": "2099-07-01",
+                                    "check_out": "2099-07-04",
+                                    "currency": "EUR",
+                                    "adults": 2,
+                                    "rooms": 1,
+                                },
+                            )
+                        )
+                        ref = found["queries"][0]["offers"][0]["selection_id"]
+                        return payload(
+                            await session.call_tool(
+                                "get_hotel_details",
+                                {"selection_id": ref, "room_rates": True},
+                            )
+                        )
+
+                    unknown = await detail("Oslo, NO")
+                    self.assertEqual(unknown["echo"], "unknown")
+                    self.assertNotEqual(
+                        (unknown["status"], unknown["completeness"]), ("ok", "complete")
+                    )
+                    empty = await detail("Rome, IT")
+                    self.assertEqual(
+                        (empty["status"], empty["empty_reason"]), ("no_results", "provider_empty")
+                    )
+                    limited = await detail("Tokyo, JP")
+                    self.assertEqual(limited["status"], "rate_limited")
+                    self.assertEqual(
+                        limited["retry_after"], limited["room_quotes"]["error"]["retry_after"]
+                    )
+                    self.assertEqual(
+                        limited["retry_after_seconds"],
+                        limited["room_quotes"]["error"]["retry_after_seconds"],
+                    )
+                    self.assertEqual((await detail("Dublin, IE"))["status"], "blocked")
+                    self.assertEqual((await detail("Vienna, AT"))["status"], "timeout")
+                    self.assertEqual((await detail("Athens, GR"))["status"], "failed")
+                    party = await detail("Lisbon, PT")
+                    self.assertEqual(
+                        (party["status"], party["empty_reason"], party["error_code"]),
+                        ("no_results", "filtered_out", "occupancy_mismatch"),
+                    )
+                    self.assertIsNone(party["room_quotes"])
+                    dates = await detail("Paris, FR")
+                    self.assertEqual(dates["error_code"], "dates_mismatch")
+                    self.assertIsNone(dates["room_quotes"])
+                    ambiguous = await detail("Columbus")
+                    self.assertEqual(
+                        (ambiguous["status"], ambiguous["completeness"], ambiguous["error_code"]),
+                        ("ok", "partial", "ambiguous_city"),
+                    )
+                    self.assertIsNone(ambiguous["room_quotes"])
+                    missed = await detail("Springfield")
+                    self.assertEqual(
+                        (missed["status"], missed["empty_reason"], missed["error_code"]),
+                        ("no_results", "filtered_out", "property_mismatch"),
+                    )
+                    self.assertNotEqual(
+                        (missed["status"], missed["completeness"]), ("ok", "complete")
+                    )
                     rejected = await session.call_tool(
                         "get_hotel_details",
                         {"selection_id": hotel_ref, "room_rates": "yes"},

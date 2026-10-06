@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import time
 import unittest
 from copy import deepcopy
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 from test_skiplagged_hotels import _details_result, _routing_rpc, _search_result
 from viajante import evidence, mcp_handlers
 from viajante.details import _city_decision, get_hotel_details
+from viajante.models import HotelRoomRate, HotelRoomsReport, SearchError, SearchErrorCode
 from viajante.skiplagged_hotels import search_hotel_rooms
 
 
@@ -111,6 +114,8 @@ class HotelDetailsTests(unittest.TestCase):
         self.assertNotIn("combined_capacity", result)
         self.assertNotIn("occupancy_mismatch", result)
         self.assertNotIn("dates_mismatch", result)
+        self.assertEqual(result["echo"], "unknown")
+        self.assertNotEqual((result["status"], result["completeness"]), ("ok", "complete"))
 
     def test_provider_echo_of_a_different_party_or_dates_is_not_the_quote(self):
         echoed = _details_result()
@@ -159,6 +164,10 @@ class HotelDetailsTests(unittest.TestCase):
             self.assertEqual(result["room_rates_status"], "inconclusive")
             self.assertIsNone(result["room_quotes"])
             self.assertIn(city, result["reason"])
+            self.assertEqual(
+                (result["status"], result["completeness"], result["error_code"]),
+                ("ok", "partial", "ambiguous_city"),
+            )
 
     def test_coordinates_pick_one_place_and_must_match_the_property(self):
         # Springfield, Missouri, not Springfield, Illinois.
@@ -178,6 +187,10 @@ class HotelDetailsTests(unittest.TestCase):
         missed, _calls = self._rates(original, search_result=page, details_result=far)
         self.assertEqual(missed["room_rates_status"], "inconclusive")
         self.assertIsNone(missed["room_quotes"])
+        self.assertEqual(
+            (missed["status"], missed["empty_reason"], missed["error_code"]),
+            ("no_results", "filtered_out", "property_mismatch"),
+        )
 
     def test_skiplagged_city_mismatch_keeps_original_and_sends_no_room_request(self):
         wrong_city = _search_result(
@@ -248,3 +261,120 @@ class SelectionReferenceTests(unittest.TestCase):
         self.assertNotIn("selection_id", flights["queries"][0]["offers"][0])
         self.assertIn("selection_id", stay["queries"][0]["offers"][0])
         self.assertEqual(len(records), 1)
+
+
+def _rooms(**overrides):
+    rate = HotelRoomRate("Triple", 545.0, 81.0, 58.0, 6, True, True, (), None)
+    fields = dict(
+        searched_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        hotel_id="25584",
+        check_in=date(2099, 7, 1),
+        check_out=date(2099, 7, 4),
+        adults=5,
+        rooms=2,
+        currency="USD",
+        name="Czech Inn",
+        rates=(rate,),
+        answered_adults=5,
+        answered_rooms=2,
+        answered_check_in=date(2099, 7, 1),
+        answered_check_out=date(2099, 7, 4),
+    )
+    fields.update(overrides)
+    return HotelRoomsReport(**fields)
+
+
+class HotelDetailsEnvelopeTests(unittest.TestCase):
+    def _quote(self, report, **hotel_kwargs):
+        with patch("viajante.details.search_hotel_rooms", return_value=report) as rooms:
+            result = get_hotel_details(hotel(**hotel_kwargs), 0, 0, room_rates=True)
+        return result, rooms
+
+    def test_stored_read_is_ok_and_complete(self):
+        result = get_hotel_details(hotel(), 0, 0)
+        self.assertEqual((result["status"], result["completeness"]), ("ok", "complete"))
+        self.assertIsNone(result["room_quotes"])
+        self.assertNotIn("echo", result)
+
+    def test_matched_echo_with_rates_is_ok_and_complete(self):
+        result, _rooms_fn = self._quote(_rooms())
+        self.assertEqual(result["echo"], "matched")
+        self.assertEqual(
+            (result["status"], result["completeness"], result["empty_reason"]),
+            ("ok", "complete", None),
+        )
+        self.assertEqual(result["room_quotes"]["currency"], "USD")
+
+    def test_missing_echo_is_unknown_and_not_a_confident_match(self):
+        result, _rooms_fn = self._quote(
+            _rooms(
+                answered_adults=None,
+                answered_rooms=None,
+                answered_check_in=None,
+                answered_check_out=None,
+            )
+        )
+        self.assertEqual(result["echo"], "unknown")
+        self.assertIsNotNone(result["room_quotes"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["completeness"], "partial")
+        self.assertNotEqual((result["status"], result["completeness"]), ("ok", "complete"))
+
+    def test_provider_empty_room_quote(self):
+        result, _rooms_fn = self._quote(_rooms(rates=()))
+        self.assertEqual(
+            (result["status"], result["empty_reason"], result["error_code"]),
+            ("no_results", "provider_empty", None),
+        )
+
+    def test_provider_failures_keep_the_error_retry_fields(self):
+        until = time.time() + 120
+        cases = {
+            "rate_limited": SearchError(
+                SearchErrorCode.FETCH_FAILED, "limited", rate_limited=True, retry_until=until
+            ),
+            "blocked": SearchError(SearchErrorCode.BLOCKED, "wall"),
+            "timeout": SearchError(SearchErrorCode.FETCH_FAILED, "slow", timeout=True),
+            "failed": SearchError(SearchErrorCode.FETCH_FAILED, "nope"),
+        }
+        for status, error in cases.items():
+            with self.subTest(status=status):
+                result, _rooms_fn = self._quote(_rooms(rates=(), error=error))
+                self.assertEqual(result["status"], status)
+                self.assertEqual(result["empty_reason"], "not_loaded")
+                self.assertEqual(
+                    result["retry_after"], result["room_quotes"]["error"].get("retry_after")
+                )
+                self.assertEqual(
+                    result["retry_after_seconds"],
+                    result["room_quotes"]["error"].get("retry_after_seconds"),
+                )
+                self.assertNotEqual((result["status"], result["completeness"]), ("ok", "complete"))
+
+    def test_occupancy_or_dates_mismatch_is_filtered_out(self):
+        party, _rooms_fn = self._quote(_rooms(answered_adults=1))
+        self.assertEqual(
+            (party["status"], party["empty_reason"], party["error_code"]),
+            ("no_results", "filtered_out", "occupancy_mismatch"),
+        )
+        self.assertIsNone(party["room_quotes"])
+        dates, _rooms_fn = self._quote(
+            _rooms(answered_check_in=date(2099, 8, 1), answered_check_out=date(2099, 8, 4))
+        )
+        self.assertEqual(dates["error_code"], "dates_mismatch")
+        self.assertIsNone(dates["room_quotes"])
+        both, _rooms_fn = self._quote(
+            _rooms(
+                answered_adults=1,
+                answered_check_in=date(2099, 8, 1),
+                answered_check_out=date(2099, 8, 4),
+            )
+        )
+        self.assertTrue(both["occupancy_mismatch"])
+        self.assertTrue(both["dates_mismatch"])
+        self.assertEqual(both["error_code"], "occupancy_mismatch")
+
+    def test_inconclusive_reads_are_never_ok_and_complete(self):
+        ambiguous = get_hotel_details(hotel(location="Springfield"), 0, 0, room_rates=True)
+        self.assertNotEqual((ambiguous["status"], ambiguous["completeness"]), ("ok", "complete"))
+        self.assertEqual(ambiguous["error_code"], "ambiguous_city")

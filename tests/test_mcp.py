@@ -432,6 +432,7 @@ class McpHandlerTests(unittest.TestCase):
     def test_search_flex_calendar_then_one_shop(self) -> None:
         fake = _report(
             chosen_date=FUTURE,
+            days=[],
             offers=[],
             typical=None,
             vs_typical=None,
@@ -470,7 +471,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertIsNone(kwargs["country"])
 
     def test_search_flex_forwards_named_occupancy(self) -> None:
-        fake = _report(chosen_date=FUTURE, offers=[])
+        fake = _report(chosen_date=FUTURE, days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool(
                 "BOS-LHR",
@@ -488,7 +489,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["infants_on_lap"], 1)
 
     def test_search_flex_forwards_named_currency_country(self) -> None:
-        fake = _report(chosen_date=FUTURE, offers=[])
+        fake = _report(chosen_date=FUTURE, days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool("JFK-LHR", FUTURE, 3, currency="usd", country="us")
         kwargs = search.call_args.kwargs
@@ -496,7 +497,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["country"], "us")
 
     def test_search_flex_forwards_owned_shop_filters(self) -> None:
-        fake = _report(chosen_date=FUTURE, offers=[])
+        fake = _report(chosen_date=FUTURE, days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool(
                 "BOS-LHR",
@@ -538,7 +539,7 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual(kwargs["max_duration_hours"], 8)
 
     def test_search_flex_nearby_forwards(self) -> None:
-        fake = _report(offers=[])
+        fake = _report(days=[], offers=[])
         with patch("viajante.mcp_handlers.search_flex", return_value=fake) as search:
             search_flex_tool("BOS-LHR", FUTURE, 3, nearby=True)
         self.assertTrue(search.call_args.kwargs["nearby"])
@@ -1008,18 +1009,28 @@ class _FakeFastMCP:
         self.instructions = kwargs.get("instructions")
         self.tools: list[str] = []
         self.tool_functions: list[Any] = []
+        self.tool_kwargs: dict[str, dict[str, object]] = {}
+        self.resources: dict[str, Any] = {}
 
-    def tool(self, *_args: object, **_kwargs: object):
+    def tool(self, *_args: object, **kwargs: object):
         def deco(fn: Any) -> Any:
             self.tools.append(fn.__name__)
             self.tool_functions.append(fn)
+            self.tool_kwargs[fn.__name__] = kwargs
+            return fn
+
+        return deco
+
+    def resource(self, uri: str, **_kwargs: object):
+        def deco(fn: Any) -> Any:
+            self.resources[uri] = fn
             return fn
 
         return deco
 
 
 def _sdk_module_names() -> tuple[str, ...]:
-    return ("mcp", "mcp.server", "mcp.server.fastmcp")
+    return ("mcp", "mcp.server", "mcp.server.fastmcp", "mcp.types")
 
 
 class McpServerImportTests(unittest.TestCase):
@@ -1047,6 +1058,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIn("search_trip", help_text)
         self.assertIn("search_hidden_city", help_text)
         self.assertIn("validate_itinerary", help_text)
+        self.assertIn("recheck_offer", help_text)
         self.assertIn("stdio", help_text)
 
     def test_build_server_registers_tools_without_sdk(self) -> None:
@@ -1056,11 +1068,15 @@ class McpServerImportTests(unittest.TestCase):
         fake_server = types.ModuleType("mcp.server")
         fake_fastmcp = types.ModuleType("mcp.server.fastmcp")
         fake_fastmcp.FastMCP = _FakeFastMCP
+        fake_types = types.ModuleType("mcp.types")
+        fake_types.ToolAnnotations = lambda **kw: kw
         fake_mcp.server = fake_server
+        fake_mcp.types = fake_types
         fake_server.fastmcp = fake_fastmcp
         sys.modules["mcp"] = fake_mcp
         sys.modules["mcp.server"] = fake_server
         sys.modules["mcp.server.fastmcp"] = fake_fastmcp
+        sys.modules["mcp.types"] = fake_types
 
         def _drop_fakes() -> None:
             for name in _sdk_module_names():
@@ -1077,8 +1093,9 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIsInstance(server.instructions, str)
         assert isinstance(server.instructions, str)
         self.assertIn("search_dates is the cheapest week", server.instructions)
-        self.assertIn("search_dates is HTTP-calendar only", server.instructions)
-        self.assertIn("uvx", server.instructions)
+        self.assertIn("viajante://guide", server.instructions)
+        self.assertIn("viajante://guide", server.resources)
+        self.assertIn("search_dates is HTTP-calendar only", server.resources["viajante://guide"]())
         self.assertEqual(
             server.tools,
             [
@@ -1096,9 +1113,11 @@ class McpServerImportTests(unittest.TestCase):
                 "compare_awards",
                 "lookup_transfers",
                 "validate_itinerary",
+                "recheck_offer",
                 "plan_stay_blocks",
                 "split_stay_costs",
                 "verify_answer",
+                "get_guide",
             ],
         )
         tools = dict(zip(server.tools, server.tool_functions, strict=True))
@@ -1106,6 +1125,7 @@ class McpServerImportTests(unittest.TestCase):
         self.assertNotIn("fetch", inspect.signature(tools["search_dates"]).parameters)
         self.assertIn("max_distance_km", inspect.signature(tools["search_hotels"]).parameters)
         self.assertEqual(tools["get_runtime_info"]()["hotel_schema_version"], 2)
+        self.assertIn("viajante://guide", tools["get_guide"]()["guide"])
 
         # Exercise the registered adapters: every argument must reach the correct
         # worker unchanged, with no incidental local variables or shape changes.
@@ -1113,7 +1133,6 @@ class McpServerImportTests(unittest.TestCase):
 
         searches = {
             "search_flights",
-            "get_hotel_details",
             "search_dates",
             "search_flex",
             "search_explore",
@@ -1121,14 +1140,39 @@ class McpServerImportTests(unittest.TestCase):
             "search_hotel_rooms",
             "search_trip",
             "search_hidden_city",
+            "recheck_offer",
         }
 
         async def check_forwarding() -> None:
             for name, function in tools.items():
-                if name == "get_runtime_info":
+                if name in {"get_runtime_info", "get_guide"}:
                     continue
                 signature = inspect.signature(function)
                 named = {param: object() for param in signature.parameters}
+                if name == "get_hotel_details":
+                    response = {"owned": True}
+                    with patch(
+                        "viajante.mcp_server.run_mcp_tool",
+                        new_callable=AsyncMock,
+                        return_value=response,
+                    ) as search:
+                        self.assertEqual(await function(**named), response)
+                        self.assertEqual(search.await_args.kwargs, named)
+                    required = {
+                        key: named[key]
+                        for key, param in signature.parameters.items()
+                        if param.default is inspect.Parameter.empty
+                    }
+                    bound = signature.bind(**required)
+                    bound.apply_defaults()
+                    with patch(
+                        "viajante.mcp_server.run_lookup_tool",
+                        new_callable=AsyncMock,
+                        return_value=response,
+                    ) as look:
+                        self.assertEqual(await function(**required), response)
+                        self.assertEqual(look.await_args.kwargs, bound.arguments)
+                    continue
                 runner = "run_mcp_tool" if name in searches else "run_lookup_tool"
                 response = [{"iata": "JFK"}] if name == "lookup_airports" else {"owned": True}
                 with (
@@ -1157,6 +1201,38 @@ class McpServerImportTests(unittest.TestCase):
                     self.assertEqual(dispatch.await_args.kwargs, bound.arguments)
 
         asyncio.run(check_forwarding())
+
+        from viajante import evidence, mcp_handlers
+
+        payload = {
+            "currency": "EUR",
+            "queries": [
+                {
+                    "query": {
+                        "location": "Prague",
+                        "check_in": "2099-07-01",
+                        "check_out": "2099-07-04",
+                        "adults": 2,
+                        "rooms": 1,
+                    },
+                    "offers": [{"title": "Czech Inn", "total_price": 150}],
+                }
+            ],
+        }
+        evidence.clear()
+        owned = mcp_handlers._owned(payload)
+        selection_id = owned["queries"][0]["offers"][0]["selection_id"]
+
+        async def read_while_a_search_holds_the_worker() -> None:
+            self.assertTrue(mcp_server._SEARCH_BUSY.acquire(blocking=False))
+            try:
+                result = await tools["get_hotel_details"](selection_id=selection_id)
+            finally:
+                mcp_server._SEARCH_BUSY.release()
+                evidence.clear()
+            self.assertEqual((result["status"], result["completeness"]), ("ok", "complete"))
+
+        asyncio.run(read_while_a_search_holds_the_worker())
 
 
 class McpWorkerTests(unittest.TestCase):
