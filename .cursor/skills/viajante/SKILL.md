@@ -97,7 +97,7 @@ No implied home hub. Use the origin the user named. If unnamed, ask.
 
 ## Report
 
-Copy owned numbers. Print `typical_deal` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
+Copy owned numbers. Print `typical_deal` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. When a flights query carries `recommendation`, read `relaxed_requirements` first and say which named requirements the pick relaxed; quote `highlights` / `tradeoffs` as returned, keep "unknown" wording, and do not compare prices across currencies. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
 
 Only values returned by a Viajante payload are search evidence. Do not use a manually operated Google Flights tab to continue an MCP failure or present its price as a Viajante result.
 

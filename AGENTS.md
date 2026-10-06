@@ -21,6 +21,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
 - Routes, LCC buffer, nearby expand, flight ranking, or `get_flights`: `src/viajante/flights.py`
+- Per-query `recommendation` (requirements, relaxation, score, shortlist, highlights/tradeoffs): `src/viajante/recommend.py`
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
 - Google Hotels HTTP shortlist: `src/viajante/google_hotels.py`, `src/viajante/google_hotels_rpc.py`
@@ -294,6 +295,22 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   overnight constraints.
 - The low-cost carrier list is partial. Absence from it is not evidence that a
   fare includes a bag.
+- `recommendation` on a successful flights query is additive evidence, not a
+  verdict: the `offers` list and `ranked` sort do not change. The pick respects
+  named `max_stops`, `depart_window`, `depart_after`, `arrive_before`,
+  `max_duration`, `bags`, `carry_on`. Other filters (price cap, airlines, via,
+  overnight, layover bounds) are never relaxed. If nothing meets them all, the
+  fewest are relaxed (ties: earlier in `RELAX_ORDER`) and named in
+  `relaxed_requirements`; never drop one silently. An unknown clock, or an
+  unknown stop count under direct-only, cannot prove a requirement; unknown bags
+  or duration are `unknown`, not `met`. Round-trip and multi-city packages
+  cannot be relaxed. Score weights are `SCORE_WEIGHTS` in `recommend.py`;
+  unknown duration or stops take the worst penalty. Offers whose currency differs
+  or is unproven are never price-compared or price-scored. `highlights` /
+  `tradeoffs` come only from returned fields (price text, duration, stops,
+  layover, clocks, carrier, bag counts) and say unknown when absent. No savings
+  claims, no reference prices, no refundable or fare-rule claims (provider rows
+  carry none).
 
 ### Hotels
 
