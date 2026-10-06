@@ -678,12 +678,13 @@ class SkiplaggedAndTripTests(_StateDirCase):
         )
 
     def test_hidden_city_rate_limit_reads_the_skiplagged_cooldown_only(self) -> None:
-        start = float(math.floor(time.time()))
-        note_rate_limited(60.0, start, file=SKIPLAGGED_RATE_LIMIT_FILE)
-        error = SearchError(
-            SearchErrorCode.BLOCKED, "429", rate_limited=True, retry_until=start + 60
-        )
-        payload = self._hidden(error=error, now=start)
+        start = NOW
+        with patch("viajante.models.time.time", return_value=start):
+            note_rate_limited(60.0, start, file=SKIPLAGGED_RATE_LIMIT_FILE)
+            error = SearchError(
+                SearchErrorCode.BLOCKED, "429", rate_limited=True, retry_until=start + 60
+            )
+            payload = self._hidden(error=error, now=start)
         self.assertEqual((payload["status"], payload["retry_after_seconds"]), ("rate_limited", 60))
 
     def test_hidden_city_rows_are_ok(self) -> None:
