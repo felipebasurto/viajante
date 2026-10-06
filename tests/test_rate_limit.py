@@ -8,6 +8,7 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import mcp_handlers, skiplagged
 from viajante.flights import _needs_detail_fallback, classify_failure
 from viajante.google_flights import (

@@ -23,6 +23,8 @@ _MONEY_KEYS = frozenset(
         "price",
         "typical",
         "cheapest",
+        "price_change",
+        "price_change_abs",
         "total_price",
         "total",
         "savings",

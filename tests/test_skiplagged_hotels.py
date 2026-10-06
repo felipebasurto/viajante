@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from random import Random
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.hotels import _run_search, search_hotels
 from viajante.models import (
     HotelQuery,

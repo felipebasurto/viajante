@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from inspect import getsource
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.cli import main
 from viajante.models import (
     HIDDEN_CITY_WARNINGS,

@@ -25,6 +25,7 @@ from viajante.google_flights import (
     SweepTransportError,
     google_flights_url,
 )
+from viajante.history import recorded_flights
 from viajante.models import (
     DateCalendarSummary,
     FetchBackend,
@@ -2208,6 +2209,51 @@ def get_flights(
     return _search(trips)
 
 
+def validate_flight_search_args(
+    *,
+    top: int,
+    sort: str,
+    fetch: str,
+    max_layover_hours: Optional[float] = None,
+    min_layover_hours: Optional[float] = None,
+    max_duration_hours: Optional[float] = None,
+    depart_window: Optional[Tuple[int, int]] = None,
+    arrive_before: Optional[int] = None,
+    depart_after: Optional[int] = None,
+    via: Optional[Sequence[str]] = None,
+    exclude_via: Optional[Sequence[str]] = None,
+    no_overnight: Optional[Sequence[str]] = None,
+    require_overnight: Optional[Sequence[str]] = None,
+    exclude_airports: Optional[Sequence[str]] = None,
+    include_airports: Optional[Sequence[str]] = None,
+) -> Tuple[OfferFilters, Optional[Tuple[str, ...]], Optional[Tuple[str, ...]]]:
+    """Every check on search arguments alone, before any lock, fetch or state write.
+
+    Shared by `search_flights`, the MCP tool and saved watches so they reject the same input.
+    """
+    if top <= 0:
+        raise ValueError("top must be positive")
+    filters = parse_offer_filters(
+        max_layover_hours=max_layover_hours,
+        min_layover_hours=min_layover_hours,
+        max_duration_hours=max_duration_hours,
+        depart_window=depart_window,
+        arrive_before=arrive_before,
+        depart_after=depart_after,
+        via=via,
+        exclude_via=exclude_via,
+        no_overnight=no_overnight,
+        require_overnight=require_overnight,
+    )
+    parsed_exclude = parse_code_list(exclude_airports, role="exclude-airports")
+    parsed_include = parse_code_list(include_airports, role="include-airports")
+    validate_sort(sort)
+    if fetch not in ("auto", "sweep", "detail"):
+        raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
+    return filters, parsed_exclude, parsed_include
+
+
+@recorded_flights
 def search_flights(
     queries: Sequence[Trip],
     *,
@@ -2238,11 +2284,10 @@ def search_flights(
 ) -> SearchReport:
     if not queries:
         raise ValueError("at least one query is required")
-    if top <= 0:
-        raise ValueError("top must be positive")
-    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
-    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
-    filters = parse_offer_filters(
+    filters, parsed_exclude_airports, parsed_include_airports = validate_flight_search_args(
+        top=top,
+        sort=sort,
+        fetch=fetch,
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
         max_duration_hours=max_duration_hours,
@@ -2253,12 +2298,11 @@ def search_flights(
         exclude_via=exclude_via,
         no_overnight=no_overnight,
         require_overnight=require_overnight,
+        exclude_airports=exclude_airports,
+        include_airports=include_airports,
     )
-    parsed_exclude_airports = parse_code_list(exclude_airports, role="exclude-airports")
-    parsed_include_airports = parse_code_list(include_airports, role="include-airports")
-    validate_sort(sort)
-    if fetch not in ("auto", "sweep", "detail"):
-        raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
+    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
     original = tuple(queries)
     kept = keep_included_dest_trips(original, parsed_include_airports)

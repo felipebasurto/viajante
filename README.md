@@ -108,7 +108,7 @@ Once connected, you can ask:
 
 Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
 
-The server exposes nineteen tools:
+The server exposes twenty-two tools:
 
 | Tool | Use it to |
 | --- | --- |
@@ -130,6 +130,8 @@ The server exposes nineteen tools:
 | `plan_stay_blocks` | Group consecutive nights that have the same people. |
 | `split_stay_costs` | Split named stay totals among the people who sleep there. |
 | `verify_answer` | Flag amounts, codes, dates, or links in a draft reply that no search returned. |
+| `price_history` | Read the prices this machine recorded for a query (opt-in, local, one currency). |
+| `watch_price` | Re-run a saved flight or hotel search once and report the change since its last observation. |
 | `get_runtime_info` | Read the executing package version offline. |
 | `get_guide` | Read the long operational guide (also the `viajante://guide` resource). |
 
@@ -151,6 +153,8 @@ Each search command accepts `--save FILE` to write a JSON report. Run
 | `viajante hidden-city` | Opt-in Skiplagged hidden-city search. |
 | `viajante awards` | Cents-per-point value of a named award offer. |
 | `viajante points` | Points transfer-partner lookup. |
+| `viajante history` | Prices this machine recorded for a query (opt-in recording; `--clear` deletes it). |
+| `viajante watch` | Re-run a saved flight or hotel query now and report the change. |
 
 For example, compare dates for a seven-night round trip:
 

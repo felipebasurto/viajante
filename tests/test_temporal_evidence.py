@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date, datetime, timedelta
 
+import _isolate  # noqa: F401
 from test_audit_regressions import FUTURE, _card, _search, _Source
 from viajante.google_flights_rpc import _segments_from_flight
 from viajante.models import FlightOffer, RawJourneyLeg, RawSegment, RoundTrip

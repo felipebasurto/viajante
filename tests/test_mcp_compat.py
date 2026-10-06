@@ -26,6 +26,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import mcp_server
 from viajante.envelope import EnvelopeShapeError
 from viajante.flights import classify_failure
@@ -89,7 +90,10 @@ NETWORK_TOOLS = {
     "search_hidden_city",
     "recheck_offer",
     "get_hotel_details",
+    "watch_price",
 }
+# Tools that write to the local state directory: neither read-only nor idempotent.
+WRITING_TOOLS = {"watch_price"}
 LOCAL_TOOLS = {
     "get_runtime_info",
     "lookup_airports",
@@ -100,6 +104,7 @@ LOCAL_TOOLS = {
     "split_stay_costs",
     "verify_answer",
     "get_guide",
+    "price_history",
 }
 
 
@@ -141,16 +146,17 @@ class ToolMetadataTests(_StateDir):
     def test_tool_set_is_the_documented_one(self) -> None:
         self.assertEqual(set(self.tools), NETWORK_TOOLS | LOCAL_TOOLS)
 
-    def test_every_tool_has_a_title_and_read_only_annotations(self) -> None:
+    def test_every_tool_has_a_title_and_annotations(self) -> None:
         for name, tool in self.tools.items():
             with self.subTest(tool=name):
                 self.assertTrue(tool.title and tool.title.strip())
                 self.assertNotEqual(tool.title, name)
                 hints = tool.annotations
                 self.assertIsNotNone(hints)
-                self.assertIs(hints.readOnlyHint, True)
+                writes = name in WRITING_TOOLS
+                self.assertIs(hints.readOnlyHint, not writes)
                 self.assertIs(hints.destructiveHint, False)
-                self.assertIs(hints.idempotentHint, True)
+                self.assertIs(hints.idempotentHint, not writes)
                 self.assertIsInstance(hints.openWorldHint, bool)
 
     def test_open_world_hint_matches_the_tools_that_reach_a_provider(self) -> None:
@@ -210,6 +216,7 @@ class ToolMetadataTests(_StateDir):
         samples = {
             "get_runtime_info": {},
             "get_guide": {},
+            "price_history": {"route": "JFK-LHR"},
             "lookup_airports": {"query": "NRT", "limit": 1},
             "lookup_transfers": {"program": "aeroplan", "points": 50000},
             "plan_stay_blocks": {"roster": {"2026-12-01": ["Ana"], "2026-12-02": ["Ana"]}},

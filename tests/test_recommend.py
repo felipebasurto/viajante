@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from test_flights import FakeSource, card
 from test_trip import _card as trip_card
 from test_trip import _search_trip_cards

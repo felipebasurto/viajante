@@ -46,7 +46,7 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 
 ## Tools
 
-Twenty tools.
+Twenty-two tools.
 
 Every result (except lookup_airports) opens with an envelope: status, completeness, empty_reason (provider_empty | filtered_out | not_loaded), retry_after, observed_at. Only provider_empty means "none found".
 
@@ -92,13 +92,20 @@ Every result (except lookup_airports) opens with an envelope: status, completene
 - split_stay_costs: local per-person split of named stay totals. No FX.
 - verify_answer: flags amounts, codes, dates, and links in a draft reply that no
   search in this process returned.
+- price_history: local read of this machine's recorded observations (opt-in via
+  VIAJANTE_PRICE_HISTORY=1). One series per exact query and currency: first/last/
+  lowest/highest and change since previous. One observation means no trend. No
+  forecast, no currency comparison.
+- watch_price: re-run one saved search_flights/search_hotels query on demand and
+  report the change vs its last observation. No notifications, no scheduler; do
+  not loop it (Google rate-limits). A cached or failed run records nothing.
 - get_runtime_info: executing package, Python, and hotel schema versions. Offline.
 
 - get_guide: the long operational guide (markdown); same text as the `viajante://guide` resource.
 
-One search at a time in the MCP process. Every tool has a title and read-only
-annotations; open-world for the search tools, `recheck_offer`, and `get_hotel_details`
-(`room_rates` false still runs during a search). Bad input fails the call with
+One search at a time in the MCP process. Every tool has a title and annotations;
+open-world for the search tools, `recheck_offer`, `watch_price`, and `get_hotel_details`
+(`room_rates` false still runs during a search). `watch_price` writes. Bad input fails the call with
 JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
 after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=1.14.1`.
 

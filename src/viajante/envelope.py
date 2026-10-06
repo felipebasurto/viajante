@@ -31,6 +31,17 @@ class EnvelopeShapeError(ValueError):
 
 STATUSES = ("ok", "no_results", "rate_limited", "blocked", "timeout", "failed")
 COMPLETENESS = ("complete", "partial", "blocked")
+ENVELOPE_KEYS = (
+    "status",
+    "completeness",
+    "empty_reason",
+    "empty_note",
+    "error_code",
+    "retry_after",
+    "retry_after_seconds",
+    "observed_at",
+    "observed_at_basis",
+)
 EMPTY_REASONS = ("provider_empty", "filtered_out", "not_loaded")
 # "provider" is reserved for a timestamp a provider itself returns; none does today.
 OBSERVED_BASES = ("provider", "fetch")

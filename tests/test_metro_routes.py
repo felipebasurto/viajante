@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import mcp_handlers
 from viajante.cli import main
 from viajante.flights import (
@@ -223,7 +224,10 @@ class MetroSurfaceTests(unittest.TestCase):
         routes = [f"LON-NYC:{day}", f"LON-SAO:{day}"]
         message = "metro expansion would send 36 provider queries; the limit is 18 per call"
         mcp_handlers._CACHE.clear()
-        with patch("viajante.flights.GoogleFlightsHttpSource") as flights:
+        with (
+            patch("viajante.flights.GoogleFlightsHttpSource") as flights,
+            patch("viajante.mcp_handlers._with_search_lock") as locked,
+        ):
             with self.assertRaisesRegex(ValueError, message):
                 mcp_handlers.search_flights_tool(routes, currency="GBP", fetch="sweep")
             with self.assertRaisesRegex(ValueError, message):
@@ -231,6 +235,7 @@ class MetroSurfaceTests(unittest.TestCase):
                     routes, "Paris", check_in=day, check_out=later, currency="GBP"
                 )
             flights.assert_not_called()
+            locked.assert_not_called()
 
     def test_lon_nyc_alone_sends_18_provider_queries(self) -> None:
         day = self.FUTURE.isoformat()

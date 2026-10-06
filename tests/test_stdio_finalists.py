@@ -8,6 +8,8 @@ import json
 import sys
 import unittest
 
+import _isolate  # noqa: F401
+
 BOOTSTRAP = """
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
@@ -152,6 +154,8 @@ EXPECTED_TOOLS = [
     "plan_stay_blocks",
     "split_stay_costs",
     "verify_answer",
+    "price_history",
+    "watch_price",
     "get_guide",
 ]
 
