@@ -712,29 +712,31 @@ class RoundTwoBugTests(unittest.TestCase):
         self.assertEqual(self._violations(exclude_airlines=["AA"]), ["exclude_airlines"])
         self.assertEqual(self._violations(exclude_airlines=["VS"]), [])
 
-    def _leg_without_segments(self, stops: str) -> dict:
+    def _leg_without_segments(self, stops: str | None, stops_count: object = None) -> dict:
         old = _previous(OUTBOUND)
         leg = {**old["legs"][0], "segments": [], "stops": stops}
-        return {**old, "legs": [leg]}
+        return {**old, "legs": [leg], "stops_count": stops_count}
 
     def test_loose_match_refuses_a_connecting_leg_without_segments(self) -> None:
         stub = _Stub(_report(_offer(650.0, (OUTBOUND,))))
-        for stops in ("1 stop", None):
-            with self.subTest(stops):
+        for stops, count in (("1 stop", None), (None, None), (None, 1), ("1 stop", 0)):
+            with self.subTest(stops=stops, count=count):
                 result = recheck_offer(
-                    self._leg_without_segments(stops), allow_loose_match=True, search=stub
+                    self._leg_without_segments(stops, count), allow_loose_match=True, search=stub
                 )
                 self.assertEqual(result["outcome"], "incomplete_identity")
                 self.assertTrue(any("segments" in m for m in result["missing"]))
         self.assertEqual(stub.calls, [])
 
-    def test_loose_match_still_accepts_a_leg_known_to_be_nonstop(self) -> None:
-        stub = _Stub(_report(_offer(500.0, (OUTBOUND,))))
-        result = recheck_offer(
-            self._leg_without_segments("Nonstop"), allow_loose_match=True, search=stub
-        )
-        self.assertEqual(result["outcome"], "same_price")
-        self.assertEqual(len(stub.calls), 1)
+    def test_loose_match_accepts_a_leg_known_to_be_nonstop(self) -> None:
+        for stops, count in (("Nonstop", None), (None, 0)):
+            with self.subTest(stops=stops, count=count):
+                stub = _Stub(_report(_offer(500.0, (OUTBOUND,))))
+                result = recheck_offer(
+                    self._leg_without_segments(stops, count), allow_loose_match=True, search=stub
+                )
+                self.assertEqual(result["outcome"], "same_price")
+                self.assertEqual(len(stub.calls), 1)
 
     def test_a_close_alternative_with_nothing_visibly_different_is_not_reported(self) -> None:
         first = _segment("JFK", "BOS", "19:30", "20:45", "BA212")
@@ -957,6 +959,156 @@ class MalformedInputTests(unittest.TestCase):
         self.assertTrue(any("country (gl)" in note for note in bare["notes"]))
         self.assertFalse(any("country (gl)" in note for note in named["notes"]))
         self.assertEqual(stub.calls[1][1]["country"], "US")
+
+
+class EnvelopeTests(unittest.TestCase):
+    """Every outcome leaves the MCP handler with a valid envelope, and the ledger rule holds."""
+
+    def setUp(self) -> None:
+        evidence.clear()
+        self.addCleanup(evidence.clear)
+
+    def _run(self, report: SearchReport, previous: dict | None = None, **options: bool) -> dict:
+        with patch("viajante.recheck.search_flights", _Stub(report)):
+            return mcp_handlers.recheck_offer_tool(previous or _previous(OUTBOUND), **options)
+
+    def _assert_envelope(
+        self, result: dict, status: str, completeness: str, empty: str | None, code: str | None
+    ) -> None:
+        self.assertEqual(
+            (
+                result["status"],
+                result["completeness"],
+                result["empty_reason"],
+                result["error_code"],
+            ),
+            (status, completeness, empty, code),
+        )
+        self.assertEqual(
+            result["empty_note"] is None, empty is None, "empty_note follows empty_reason"
+        )
+        self.assertEqual(result["observed_at_basis"] == "fetch", result["observed_at"] is not None)
+
+    def _assert_observed(self, result: dict) -> None:
+        self.assertEqual(result["observed_at"], result["checked_at"])
+        self.assertEqual(result["observed_at_basis"], "fetch")
+
+    def test_a_found_itinerary_is_ok_and_complete(self) -> None:
+        same = self._run(_report(_offer(500.0, (OUTBOUND,))))
+        changed = self._run(_report(_offer(540.0, (OUTBOUND,))))
+        sibling = _segment("JFK", "LHR", "19:30", "07:30", "BA999")
+        substituted = self._run(_report(_offer(600.0, (sibling,))), allow_substitute=True)
+        many = self._run(_report(_offer(510.0, (OUTBOUND,)), _offer(530.0, (OUTBOUND,))))
+        for result, outcome in (
+            (same, "same_price"),
+            (changed, "price_changed"),
+            (substituted, "substituted"),
+            (many, "multiple_matches"),
+        ):
+            with self.subTest(outcome):
+                self.assertEqual(result["outcome"], outcome)
+                self._assert_envelope(result, "ok", "complete", None, None)
+                self._assert_observed(result)
+
+    def test_not_found_maps_by_what_the_provider_answered(self) -> None:
+        empty = self._run(_failed(SearchErrorCode.NO_RESULTS))
+        self.assertEqual(empty["reason"], "provider_empty")
+        self._assert_envelope(empty, "no_results", "complete", "provider_empty", None)
+        self._assert_observed(empty)
+        filtered = self._run(_report(raw=4, eligible=0))
+        self.assertEqual(filtered["reason"], "filtered")
+        self._assert_envelope(filtered, "no_results", "complete", "filtered_out", None)
+        elsewhere = _segment("JFK", "LHR", "09:00", "21:00", "BA112")
+        among = self._run(_report(_offer(700.0, (elsewhere,))))
+        self.assertEqual(among["reason"], "not_among_offers")
+        self._assert_envelope(among, "ok", "complete", None, None)
+        truncated = self._run(_report(_offer(700.0, (elsewhere,)), raw=250, eligible=250))
+        self.assertEqual(truncated["reason"], "not_among_offers")
+        self._assert_envelope(truncated, "ok", "partial", None, None)
+
+    def test_a_failed_check_is_not_loaded_with_its_failure_status(self) -> None:
+        blocked = self._run(_failed(SearchErrorCode.BLOCKED))
+        self._assert_envelope(blocked, "blocked", "blocked", "not_loaded", "blocked")
+        self._assert_observed(blocked)
+        for code in (SearchErrorCode.MARKUP_DRIFT, SearchErrorCode.FETCH_FAILED):
+            with self.subTest(code):
+                failed = self._run(_failed(code))
+                self._assert_envelope(failed, "failed", "blocked", "not_loaded", code.value)
+
+    def test_a_rate_limit_carries_the_cooldown_and_observed_only_when_sent(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as state,
+            patch.dict(os.environ, {"VIAJANTE_STATE_DIR": state}),
+        ):
+            note_rate_limited()
+            limited = self._run(_failed(SearchErrorCode.BLOCKED, rate_limited=True))
+            self._assert_envelope(limited, "rate_limited", "blocked", "not_loaded", "blocked")
+            self.assertIsNotNone(limited["retry_after"])
+            self.assertGreater(limited["retry_after_seconds"], 0)
+            self._assert_observed(limited)
+            unsent = SearchReport(
+                searched_at=CHECKED,
+                queries=(
+                    QueryFailure(
+                        query=_query(),
+                        error=SearchError(
+                            code=SearchErrorCode.BLOCKED,
+                            message="Not sent. Google is rate-limiting this machine",
+                            rate_limited=True,
+                        ),
+                    ),
+                ),
+                currency="USD",
+                fetch_backend="sweep",
+            )
+            never = self._run(unsent)
+            self.assertIsNone(never["observed_at"])
+            self.assertIsNone(never["observed_at_basis"])
+            self.assertEqual(never["status"], "rate_limited")
+
+    def test_incomplete_offers_is_failed_and_partial(self) -> None:
+        offer = _offer(900.0, (OUTBOUND,))
+        attached = _attach_missing_legs(RT_QUERY, (offer,), _ReturnShop(RuntimeError("down")))
+        report = _report(*attached, query=RT_QUERY)
+        result = self._run(report, _round_trip_previous())
+        self.assertEqual(result["outcome"], "check_failed")
+        self.assertEqual(result["reason"], "incomplete_offers")
+        self._assert_envelope(result, "failed", "partial", "not_loaded", "incomplete_offers")
+
+    def test_incomplete_identity_is_failed_blocked_with_nothing_observed(self) -> None:
+        bare = _previous(OUTBOUND)
+        bare["legs"][0]["segments"][0]["flight_number"] = None
+        result = self._run(_report(), bare)
+        self.assertEqual(result["outcome"], "incomplete_identity")
+        self._assert_envelope(result, "failed", "blocked", None, "incomplete_identity")
+        self.assertIsNone(result["observed_at"])
+        self.assertTrue(result["missing"])
+        self.assertTrue(any("allow_loose_match" in n for n in result["notes"]))
+
+    def test_an_answered_not_found_is_recorded_without_caller_values(self) -> None:
+        elsewhere = _segment("JFK", "LHR", "09:00", "21:00", "BA112")
+        cases = {
+            "provider_empty": _failed(SearchErrorCode.NO_RESULTS),
+            "filtered": _report(raw=4, eligible=0),
+            "not_among_offers": _report(_offer(700.0, (elsewhere,))),
+        }
+        for reason, report in cases.items():
+            with self.subTest(reason):
+                evidence.clear()
+                evidence.record({"offers": [_previous(OUTBOUND, evidence_id="gf_other")]})
+                before = evidence.verify_answer("x")["searches"]
+                typed = _previous(OUTBOUND, price=480.0, evidence_id=None)
+                result = self._run(report, typed)
+                self.assertEqual(result["reason"], reason)
+                after = evidence.verify_answer("It was USD 480 at BA178")
+                self.assertEqual(after["searches"], before + 1)
+                self.assertIn("USD 480", [row["text"] for row in after["unowned"]])
+
+    def test_a_check_that_did_not_complete_is_not_recorded(self) -> None:
+        evidence.record({"offers": [_previous(OUTBOUND, evidence_id="gf_other")]})
+        before = evidence.verify_answer("x")["searches"]
+        self._run(_failed(SearchErrorCode.BLOCKED))
+        self.assertEqual(evidence.verify_answer("x")["searches"], before)
 
 
 class McpToolTests(unittest.TestCase):

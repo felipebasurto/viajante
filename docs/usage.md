@@ -265,6 +265,18 @@ are returned but not recorded as owned evidence):
 | `substituted` | Only with `--allow-substitute` (MCP `allow_substitute`): no identical itinerary, but a close alternative between the same end airports (a shared flight number, or on every journey a first departure within 90 minutes of the original on the same marketing carrier). `differences` lists what provably differs; `null` is unknown. |
 | `check_failed` | The check did not run to an answer; this says nothing about whether the offer still exists. `check_completed` is false, with `reason` and `error`. `reason` is `blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`, `browser_unavailable`, `currency_mismatch`, or `incomplete_offers` (fresh round-trip or multi-city offers came back without every journey, because the follow-up search for the next journey failed or was ambiguous, and nothing matched). Do not retry a rate limit. |
 
+Over MCP the result also carries the shared envelope (read it first). Found outcomes
+(`same_price`, `price_changed`, `substituted`, `multiple_matches`) are `ok` / `complete`.
+`not_found` is `no_results` / `complete` with `empty_reason` `provider_empty` or
+`filtered_out`; `not_among_offers` stays `ok` because the provider did return flights
+(`partial` when the result notes that only the N cheapest of M offers were compared).
+`check_failed` is the failure's status (`rate_limited`, `blocked`, `timeout`, `failed`),
+`blocked` completeness (`partial` for `incomplete_offers`), `empty_reason` `not_loaded`
+and the error's code, with `retry_after` when a cooldown is recorded. `incomplete_identity`
+is `failed` / `blocked` with `error_code` `incomplete_identity`. `observed_at` is
+`checked_at`, null when nothing was sent. A completed check is recorded in the evidence
+ledger (caller-typed values stripped); `check_failed` and `incomplete_identity` are not.
+
 The query (the offer's evidence query, or `--query FILE`) is replayed: cabin,
 stops, bags, carry-on and airline or alliance filters ride the search request.
 A `price_cap` in it is not sent; instead a matched fresh offer that breaks it is
@@ -364,6 +376,12 @@ See the exported types in [`viajante.__init__`](../src/viajante/__init__.py)
 for the Python interface.
 
 ## MCP tool calls
+
+Each tool result starts with a shared envelope: `status`, `completeness`,
+`empty_reason`, `retry_after`, `observed_at` (`lookup_airports` returns a plain
+list). Only `empty_reason: provider_empty` means the provider found nothing;
+`filtered_out` means filters removed results the provider returned, and
+`not_loaded` means the search did not complete.
 
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request
