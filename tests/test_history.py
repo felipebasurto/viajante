@@ -328,6 +328,12 @@ class UnreadableFileTests(_State):
             result = _watch_once(450.0)
         self.assertEqual(result["recorded"], 0)
         self.assertEqual(result["recording_error"], "permission denied accessing price history")
+        self.assertEqual(result["read_error"], "permission denied accessing price history")
+        (item,) = result["results"]
+        self.assertIsNone(item["change"])
+        self.assertFalse(item["recorded"])
+        self.assertEqual(item["note"], "history could not be read; no comparison")
+        self.assertNotIn("First observation", json.dumps(result))
         self.assertIn("recording failed: permission denied accessing price history", result["note"])
         self.assertNotIn(str(self.state), json.dumps(result))
         self.path.chmod(0o600)
@@ -337,6 +343,7 @@ class UnreadableFileTests(_State):
         payload = history.price_history()
         self.assertEqual(payload["read_error"], "permission denied accessing price history")
         self.assertIn("not an empty history", payload["note"])
+        self.assertIsNone(payload["stored_entries"])
         with self.assertRaises(history.HistoryReadError):
             history.read_observations(strict=True)
 
@@ -490,6 +497,22 @@ class WatchTests(_State):
         (item,) = result["results"]
         self.assertEqual(item["change"]["price_change"], -50.0)
         self.assertEqual(item["change"]["previous"]["cheapest"], 500.0)
+        self.assertEqual(len(history.read_observations()), 2)
+
+    def test_history_becoming_unreadable_after_a_good_append(self) -> None:
+        self.run_watch(500.0, kind="flights", params=self.params())
+        mcp_handlers._CACHE.clear()
+        denied = history.HistoryReadError(13, "Permission denied", "/secret/path/history")
+        with patch("viajante.watch.read_observations", side_effect=denied):
+            result = self.run_watch(450.0, at=T0 + timedelta(days=1))
+        self.assertEqual(result["recorded"], 1)
+        (item,) = result["results"]
+        self.assertTrue(item["recorded"])
+        self.assertIsNone(item["change"])
+        self.assertEqual(item["note"], "history could not be read; no comparison")
+        self.assertEqual(result["read_error"], "permission denied accessing price history")
+        self.assertNotIn("recording_error", result)
+        self.assertNotIn("secret", json.dumps(result))
         self.assertEqual(len(history.read_observations()), 2)
 
     def test_other_currency_is_never_compared(self) -> None:

@@ -17,10 +17,12 @@ from typing import Any, Callable, Mapping, Optional
 from viajante.evidence import record
 from viajante.history import (
     SCHEMA_VERSION,
+    HistoryReadError,
     change_between,
     forced_recording,
     price_history,
     read_observations,
+    short_reason,
 )
 from viajante.mcp_handlers import search_flights_tool, search_hotels_tool
 from viajante.storage import default_state_dir, write_json_atomic
@@ -113,9 +115,14 @@ def watch_price_tool(
         raise ValueError(f"no watch named {name!r}; save one with kind and params")
     with forced_recording() as written:
         payload = _TOOLS[spec["kind"]](**spec["params"])
-    stored = read_observations()
+    read_error: Optional[str] = None
+    try:
+        stored = read_observations(strict=True)
+    except HistoryReadError as exc:
+        stored, read_error = [], short_reason(exc)
     results = []
     ids = [row["id"] for row in stored]
+    stored_ids = {row["id"] for row in written.entries}
     for entry in [*written.entries, *written.unsaved]:
         before = stored[: ids.index(entry["id"])] if entry["id"] in ids else stored
         earlier = [
@@ -134,9 +141,11 @@ def watch_price_tool(
             "currency": entry["currency"],
             "current": {"observed_at": entry["observed_at"], "cheapest": entry["cheapest"]},
             "change": change_between(earlier[-1], entry) if earlier else None,
-            "recorded": entry["id"] in ids,
+            "recorded": entry["id"] in stored_ids,
         }
-        if not earlier:
+        if read_error is not None:
+            result["note"] = "history could not be read; no comparison"
+        elif not earlier:
             result["note"] = "First observation of this query in this currency; nothing to compare."
             if other:
                 result["note"] += " Observations in other currencies are never compared."
@@ -150,6 +159,8 @@ def watch_price_tool(
         "results": results,
         "errors": _errors(payload),
     }
+    if read_error is not None:
+        out["read_error"] = read_error
     if cached:
         out["note"] = (
             "Replayed from the 5-minute cache; no new request was sent and no observation "

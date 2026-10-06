@@ -469,7 +469,7 @@ def price_history(
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "recording_enabled": recording_enabled(),
-        "stored_entries": len(stored),
+        "stored_entries": None if read_error is not None else len(stored),
         "series": series(matched, limit=limit),
     }
     if read_error is not None:
