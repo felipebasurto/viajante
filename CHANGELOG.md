@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-10-06
+
+See the [release record](docs/release-1.4.5.md) for the complete integrated PR
+inventory, compatibility changes, candidate validation and publication handoff.
+
 ### Added
 
 - MCP `notifications/progress`: when the client sends a `progressToken`, the library's progress lines are forwarded (`[i/n]` becomes `progress=i`, `total=n`; other lines are message-only with a still-increasing value), throttled to about one per 250 ms. Without a token nothing is sent.
@@ -25,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `via` / `--split-via` names up to 5 connection airports; an unknown code or a sixth airport is an error that names the field. Named airports are all searched (`max_hubs` defaults to the number named); unnamed, hubs still come from the packaged layovers.
 - Flight results carry an additive `recommendation` block per successful query (`search_flights`, `search_trip`, and the CLI). It holds one recommended offer plus a shortlist of up to three genuinely different offers (different stop count or departure slot), labelled `recommended`, `cheapest`, `fastest`, `*_distinct`, or `alternative`. Each entry has `highlights` and `tradeoffs` written only from fields the provider returned; a missing field is worded as unknown ("Checked bag fee unknown", "Fare rules (refund, change) not shown").
 - The recommendation respects the named hard requirements (`max_stops`, `depart_window`, `depart_after`, `arrive_before`, `max_duration`, `bags`, `carry_on`). When no offer meets all of them it relaxes the fewest, breaking ties in a fixed documented order, and reports them in `relaxed_requirements`; each entry carries per-requirement `met` / `unmet` / `unknown`. Round-trip and multi-city packages are not relaxed.
-- Scoring is deterministic and documented: price 0.5, duration 0.35, stops 0.15, penalties relative to the best offer in the compared pool (capped at 1), unknown values take the worst penalty. Offers with different or unproven currencies are never price-compared or price-scored (`price_comparison`). Near-identical offers (same carrier, clocks, and stop count) are deduplicated to the cheaper fare. Existing `offers`, their order, and the `ranked` sort are unchanged.
+- Scoring is deterministic and documented: price 0.5, duration 0.35, stops 0.15, penalties relative to the best offer in the compared pool (capped at 1), unknown values take the worst penalty. Offers with different or unproven currencies are never price-compared or price-scored (`price_comparison`). Near-identical offers (same carrier, clocks, and stop count) are deduplicated to the cheaper fare. The recommendation is separate from `offers`; explicit filters still define that shortlist. Ranked selection now omits connections more than three times as slow as the fastest nonstop (or shortest known offer), while fare sorting keeps them.
 - A query whose `empty_reason` is `filtered_out` can still carry a `recommendation`; the pick is then a relaxed one (see `relaxed_requirements`), not an exact match. The MCP guide and the `search_flights` description say so.
 - `viajante recheck-offer` / MCP `recheck_offer` re-check an earlier Google Flights offer with one fresh search (never the 5-minute MCP replay cache). The offer is matched by itinerary identity: flight numbers plus scheduled departure times per segment, with strict rules. Exactly one outcome: `same_price`, `price_changed` (old and new amounts in the offer's own currency; a different `currency` is refused, never converted), `multiple_matches` (more than one identical fresh offer: `candidates` listed, none picked, no price verdict), `incomplete_identity` (the offer lacks flight numbers, airports or clocks: `missing` names them and no search is sent; `allow_loose_match` opts in to carrier plus times, labelled `loose_match`), `not_found` (a completed check; `reason` `provider_empty`, `filtered` or `not_among_offers`; a close alternative is listed as `closest_candidate` for information only), `substituted` (only with `allow_substitute`: closest alternative on the same end airports with a shared flight number, or the same marketing carrier within 90 minutes of the first departure, plus the provable non-empty `differences` including stops and route), or `check_failed` (`check_completed: false` with `reason` and `error`: blocked, rate limited, any other provider error, or `incomplete_offers` when fresh round-trip/multi-city offers lack a journey and nothing matched). The query is replayed (cabin, stops, bags, airline and alliance filters); a `price_cap` is not sent but reported in `filter_violations` when the matched offer breaks it (`filters_replayed` lists what rode the request, `filters_checked` what was only checked locally; `max_stops` and `exclude_airlines` violations are defensive, the search already applies them; an `airlines` allow list is satisfied by any carrier on the offer, like the search). Loose matching refuses a connecting leg without segments (`incomplete_identity`), and airports are compared during matching. A check that ran to a provider answer (a match, a substitution, or any completed `not_found`) is recorded as evidence with caller-typed values stripped; `incomplete_identity`, `check_failed` and input errors record nothing. Over MCP the result carries the shared envelope (`found` is `ok`, `not_found` is `no_results` for `provider_empty` / `filtered_out` and `ok` for `not_among_offers`, `check_failed` is its failure status with `not_loaded`, `incomplete_identity` is `failed` / `blocked`; `observed_at` is `checked_at`, which is null when nothing was sent: `incomplete_identity` or a check the Google cooldown refused). Loose matching reads the offer's `stops_count` when a single-journey leg has no `stops`. A failed check never reads as a gone offer, and the CLI exits 2 for `check_failed` and `incomplete_identity`. The check respects the machine-wide Google cooldown and the one-search process lock; the previous price, itinerary and leg times are recorded as owned evidence only when this process's ledger holds an offer with that `evidence_id`, price, currency and the same segments (`previous.source`); caller-supplied values, including `differences[].previous`, are returned but never registered; input errors name the offending field. It is not a booking guarantee; the price is confirmed only on the provider's own page.
 - MCP tools carry human titles and annotations (`readOnlyHint`, `destructiveHint: false`, `idempotentHint`; every tool is read-only and idempotent except `watch_price`, which saves watches and appends history); `openWorldHint` is true only for the tools that ask a provider.
@@ -64,6 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An explore destination without a price (its shop failed or came back empty) is `not_loaded`, not a usable row.
 - `verify_answer` reports `status: failed` when its verdict is `ok: false`.
 
+### Fixed
+
+- Fresh re-checks validate complete segment identity across all journeys before confirming or ruling out an earlier itinerary. Missing fresh flight numbers, airports, clocks or journeys yield `incomplete_offers` unless a complete exact match exists.
+- Split-ticket CLI searches pass `--top` into the search and reject unsupported named clock, layover, via, overnight, airport and baggage-buffer filters before provider contact.
+- Hotel finalist quotes preserve original coordinates for unambiguous cities and reject a different property. Only accepted fresh room quotes enter the evidence ledger; original snapshots, local reads, rejected quotes and provider failures do not become new evidence.
+- Google Hotels preserves successful primary cards when an additional page fails. Additive `page_errors`, incomplete coverage and a partial MCP envelope expose the missing page and prevent cache replay. The CLI prints the partial-search notice.
+- MCP validates `deadline_seconds` before cache replay, retains hotel selection references across deadline changes, preserves cached timestamps and isolates cancellation from opt-in history recording.
+- Offline clock assertions are deterministic. The loopback security integration test skips an unavailable secondary loopback address on macOS, while primary-loopback checks still run. Product benchmark scoring and the baseline are unchanged.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added
@@ -71,17 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hotel schema 2 adds `lodging_evidence_conflict`, exposing explicit room/entire-unit contradictions while retaining the provider title and raw text. The CLI prints the conflicting labels as evidence.
 
 ### Fixed
-
-- Fresh re-checks validate segment identity before confirming or ruling out the original itinerary. Missing segment identity yields `incomplete_offers` unless a complete exact match exists.
-- Split-ticket CLI searches pass `--top` and reject unsupported named filters before provider contact.
-- Hotel finalist quotes check original property coordinates in unambiguous cities. Accepted new room quotes enter the evidence ledger; original snapshots, local reads, and rejected quotes are not registered as new evidence.
-- Google Hotels preserves successful primary cards after a secondary transport failure. Additive `page_errors`, incomplete coverage, and a partial MCP envelope expose the missing evidence and prevent cache replay.
-
-- The offline bench default-mode test uses a fixed mocked clock so scheduling jitter cannot change its expected score. The product bench and baseline are unchanged.
-
-- MCP validates `deadline_seconds` before a cache replay, retains hotel selection references across deadline changes, and keeps cancellation compatible with opt-in history recording.
-
-- Exact-name Skiplagged room lookup preserves requested rooms during name resolution and refuses an owned city echo that contradicts the requested city.
 
 - A room title that conflicts with an entire-home unit chip no longer proves an entire home. Both lodging kind and property type stay unknown; Google property descriptions still cannot prove the priced unit. Entire-house chips are recognized alongside cottage and villa chips.
 - Itinerary validation includes return and multi-city dates and leaves missing packaged journeys, segment counts, and layover evidence unknown.

@@ -7,6 +7,9 @@ This guide assumes Viajante is installed. See the
 [browser support](../README.md#optional-browser-support) for Booking.com.
 Examples use November 2026; replace the dates with future travel dates.
 
+The [1.4.5 release record](release-1.4.5.md) lists changes from 1.4.1, including
+MCP envelope/error handling, the new SDK minimum and ranked-flight filtering.
+
 - [Flights](#flights)
 - [Dates and flexible travel](#dates-and-flexible-travel)
 - [Explore destinations](#explore-destinations)
@@ -159,8 +162,9 @@ count and slot with another pick, the entry is the best by that measure among
 different ones, labelled `cheapest_distinct` / `fastest_distinct`, and a note
 says what was not listed. A free third slot is an `alternative`. Offers with the
 same carrier, clocks, and stop count are one flight; the cheaper fare is kept.
-Connections many times slower than the fastest nonstop are left out of the
-comparison, as in the `ranked` sort.
+Connections longer than three times the fastest nonstop (or the shortest known
+offer when no nonstop exists) are left out of the comparison and the `ranked`
+shortlist. `--sort price` retains those connections in the fare-ordered offers.
 
 **Score.** `100 * (1 - weighted penalty)`, higher is better. The price and
 duration penalties are how much worse an offer is than the best in the compared
