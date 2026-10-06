@@ -6,6 +6,7 @@ import hashlib
 import json
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
@@ -14,6 +15,14 @@ from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, 
 from viajante.airports import get_airport, is_known_iata, metro_members, metro_of, same_city_iata
 from viajante.browser import chromium_installed, playwright_available
 from viajante.carriers import AIRLINE_CODE_ALIASES
+from viajante.control import (
+    SearchDeadline,
+    checkpoint,
+    controlled,
+    current_control,
+    interruptible_sleep,
+    note_cut,
+)
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
@@ -1556,6 +1565,10 @@ def _calendar_summary_from_source(
     start, end = _typical_window(trip.departure_date)
     try:
         days = fetch_calendar(trip, start, end)
+    except SearchDeadline:
+        # Unknown, not "no typical": nothing is cached, and the search is marked cut.
+        note_cut()
+        return None
     except Exception:
         cache[key] = None
         return None
@@ -1776,12 +1789,16 @@ def _attach_missing_legs(
         return offers
     try:
         results = fetch(trip, [selected for _, selected in pending])
+    except SearchDeadline:
+        raise
     except Exception:
         return offers
     if not isinstance(results, Sequence) or len(results) != len(pending):
         return offers
     updated = list(offers)
     for (index, _), result in zip(pending, results, strict=True):
+        if isinstance(result, SearchDeadline):
+            raise result
         if isinstance(result, BaseException):
             continue
         offer = updated[index]
@@ -1944,6 +1961,7 @@ def _run_search(
         failure: Optional[SearchError] = None
         for attempt in range(start_attempt, MAX_ATTEMPTS):
             try:
+                checkpoint()
                 fetch_pair = getattr(source, "fetch_with_calendar", None)
                 seed = _typical_trip(trip)
                 if callable(fetch_pair) and seed is not None:
@@ -1993,6 +2011,7 @@ def _run_search(
             start, end = _typical_window(seed.departure_date)
             jobs.append((seed, start, end))
         try:
+            checkpoint()
             batch_rows = fetch_batch(jobs)
         except Exception:
             batch_rows = None
@@ -2005,7 +2024,12 @@ def _run_search(
                         typical_cache[_typical_cache_key(seed)] = _summary_from_calendar_days(
                             days, start, end
                         )
-                    results.append(_stamp(_success_from_cards(trip, cards_or_exc)))
+                    try:
+                        results.append(_stamp(_success_from_cards(trip, cards_or_exc)))
+                    except SearchDeadline as exc:
+                        results.append(
+                            _stamp(QueryFailure(query=trip, error=classify_failure(exc)))
+                        )
                     continue
                 failure = classify_failure(cards_or_exc)
                 if failure.code in NON_RETRIABLE_CODES or isinstance(
@@ -2125,6 +2149,8 @@ def get_flights(
     currency: Optional[str] = None,
     country: Optional[str] = None,
     proxy: Optional[str] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> SearchReport:
     """One-shot flight search from a route spec or trips.
 
@@ -2156,6 +2182,8 @@ def get_flights(
         "currency": currency,
         "country": country,
         "proxy": proxy,
+        "cancel": cancel,
+        "deadline_seconds": deadline_seconds,
     }
 
     def _search(trips: Sequence[Trip]) -> SearchReport:
@@ -2253,6 +2281,7 @@ def validate_flight_search_args(
     return filters, parsed_exclude, parsed_include
 
 
+@controlled
 @recorded_flights
 def search_flights(
     queries: Sequence[Trip],
@@ -2281,6 +2310,8 @@ def search_flights(
     currency: Optional[str] = None,
     country: Optional[str] = None,
     proxy: Optional[str] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> SearchReport:
     if not queries:
         raise ValueError("at least one query is required")
@@ -2362,7 +2393,7 @@ def search_flights(
                 trips_to_search,
                 top=top,
                 source=source,
-                sleep=time.sleep,
+                sleep=interruptible_sleep,
                 random_gen=random.Random(),
                 now=lambda: datetime.now(timezone.utc),
                 baggage_buffer=baggage_buffer,
@@ -2392,6 +2423,11 @@ def search_flights(
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
         ]
+        control = current_control()
+        if control is not None and control.expired():
+            if retry_indexes:
+                control.mark_cut()
+            retry_indexes = []
         if retry_indexes and not chromium_installed():
             report_progress(BROWSER_INSTALL_HINT)
             retry_indexes = []

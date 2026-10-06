@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import threading
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from viajante.booking import (
     build_applied_filters as build_booking_filters,
 )
 from viajante.browser import playwright_available
+from viajante.control import checkpoint, controlled, interruptible_sleep
 from viajante.flights import DEFAULT_TOP
 from viajante.google_flights import SweepTransportError
 from viajante.google_hotels import (
@@ -344,6 +346,7 @@ def _run_search(
         failure: Optional[SearchError] = None
         for attempt in range(MAX_ATTEMPTS):
             try:
+                checkpoint()
                 page = source.fetch(query, applied, fetch_limit)
                 normalized = tuple(
                     _with_distance(offer, near)
@@ -472,6 +475,7 @@ def validate_hotel_search_args(queries: Sequence[HotelQuery], *, top: int, sourc
                 raise ValueError("entire_home is not supported with source skiplagged")
 
 
+@controlled
 @recorded_hotels
 def search_hotels(
     queries: Sequence[HotelQuery],
@@ -482,6 +486,8 @@ def search_hotels(
     currency: Optional[str] = None,
     near: Optional[Tuple[float, float]] = None,
     max_distance_km: Optional[float] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> HotelSearchReport:
     near = validate_near(near)
     max_distance_km = validate_max_distance(max_distance_km, near)
@@ -540,7 +546,7 @@ def search_hotels(
             queries,
             top=top,
             source=hotel_source,
-            sleep=time.sleep,
+            sleep=interruptible_sleep,
             random_gen=random.Random(),
             now=lambda: datetime.now(timezone.utc),
             html_lang=hotel_source.config.html_lang,  # type: ignore[attr-defined]

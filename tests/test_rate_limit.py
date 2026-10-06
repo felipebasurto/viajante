@@ -190,11 +190,16 @@ class SkiplaggedCooldownTests(_StateDir):
         clock = MagicMock()
         clock.monotonic.side_effect = [100.0, 100.0, 100.2, 101.0]
         skiplagged._LAST_CALL[0] = 0.0
-        with patch("viajante.skiplagged._rpc_post", rpc), patch("viajante.skiplagged.time", clock):
+        sleep = MagicMock()
+        with (
+            patch("viajante.skiplagged._rpc_post", rpc),
+            patch("viajante.skiplagged.time", clock),
+            patch("viajante.skiplagged.interruptible_sleep", sleep),
+        ):
             skiplagged._pace(rpc)
             skiplagged._pace(rpc)
-        clock.sleep.assert_called_once()
-        self.assertAlmostEqual(clock.sleep.call_args.args[0], 0.8)
+        sleep.assert_called_once()
+        self.assertAlmostEqual(sleep.call_args.args[0], 0.8)
 
 
 class SearchCacheTests(unittest.TestCase):

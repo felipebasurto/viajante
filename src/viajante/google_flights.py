@@ -16,6 +16,7 @@ from urllib.parse import urlencode, urljoin
 from selectolax.lexbor import LexborHTMLParser
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
+from viajante.control import SearchDeadline, checkpoint, wait_for_future
 from viajante.google_flights_rpc import (
     SHOPPING_POST_HEADERS,
     CompactCalendarDay,
@@ -379,6 +380,7 @@ class SweepHttpResponse:
     text: str
     url: str = ""
     rate_limit: Optional[str] = None
+    deadline: bool = False
 
 
 # Not an HTTP status: marks a multiplexed job whose request raised before any response.
@@ -524,8 +526,13 @@ class ChromeSweepClient:
             raise self._error
 
     def _submit(self, coro: Any, *, timeout: float) -> Any:
+        try:
+            checkpoint()
+        except BaseException:
+            coro.close()
+            raise
         future = self._asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=max(timeout + 5.0, 10.0))
+        return wait_for_future(future, max(timeout + 5.0, 10.0))
 
     async def _dismiss_consent(self, response: Any, timeout: float) -> bool:
         async with self._consent_lock:
@@ -610,19 +617,27 @@ class ChromeSweepClient:
         if len(jobs) == 1:
             job = jobs[0]
             return [self.post(job.url, data=job.data, headers=job.headers, timeout=timeout)]
-        return list(self._submit(self._apost_many(jobs, timeout), timeout=timeout))
+        out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        try:
+            return list(self._submit(self._apost_many(jobs, timeout, out), timeout=timeout))
+        except SearchDeadline:
+            # Responses that already arrived are real; only the rest were not loaded.
+            return [
+                item if item is not None else SweepHttpResponse(0, "", job.url, deadline=True)
+                for item, job in zip(out, jobs, strict=True)
+            ]
 
     async def _apost_many(
         self,
         jobs: Sequence[SweepPost],
         timeout: float,
+        out: list[SweepHttpResponse | None],
     ) -> list[SweepHttpResponse]:
         # Keep HTTP/2 multiplex on the happy path. After HTTP 429 or a transport
         # failure, stop feeding this TLS session; unsent jobs carry the same status
         # so the caller can continue them on a fresh session.
         semaphore = self._asyncio.Semaphore(_SWEEP_STREAMS)
         stop = self._asyncio.Event()
-        out: list[SweepHttpResponse | None] = [None] * len(jobs)
         stop_status = 429
 
         async def _one(index: int, job: SweepPost) -> None:
@@ -858,7 +873,13 @@ class GoogleFlightsHttpSource:
                 results.append(exc)
         client, replay = self._plan_replay(client, results)
         if replay:
-            retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
+            try:
+                retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
+            except SearchDeadline as exc:
+                # Days that already arrived stay; only the replayed ones were cut.
+                for index in replay:
+                    results[index] = exc
+                return results
             for index, response in zip(replay, retried, strict=True):
                 try:
                     results[index] = self._cards_from_shopping_response(
@@ -911,7 +932,12 @@ class GoogleFlightsHttpSource:
                 query, start, end = jobs[index]
                 retry_posts.append(self._shopping_post(query))
                 retry_posts.append(self._calendar_post(query, start, end))
-            retried = dispatch_posts(client, retry_posts, timeout=self._timeout)
+            try:
+                retried = dispatch_posts(client, retry_posts, timeout=self._timeout)
+            except SearchDeadline as exc:
+                for index in replay:
+                    results[index] = (exc, ())
+                return results
             for offset, index in enumerate(replay):
                 query, _start, _end = jobs[index]
                 shop_resp = retried[2 * offset]
@@ -1038,7 +1064,7 @@ class GoogleFlightsHttpSource:
             response = client.post(
                 post.url, data=post.data, headers=post.headers, timeout=self._timeout
             )
-        except CompactParseMiss:
+        except (CompactParseMiss, SearchDeadline):
             raise
         except Exception as exc:
             raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
@@ -1089,6 +1115,8 @@ class GoogleFlightsHttpSource:
         *,
         allow_html_fallback: bool = True,
     ) -> tuple[RawFlightCard, ...]:
+        if response.deadline:
+            raise SearchDeadline()
         if (
             response.status in {403, 429}
             or response.status >= 500
@@ -1121,7 +1149,11 @@ class GoogleFlightsHttpSource:
         self, response: SweepHttpResponse
     ) -> tuple[CompactCalendarDay, ...]:
         """Typical side of a paired POST: a block, HTTP error, or miss is no typical, not a fail."""
-        if response.status >= 400 or looks_blocked(response.text, response.url):
+        if (
+            response.deadline
+            or response.status >= 400
+            or looks_blocked(response.text, response.url)
+        ):
             return ()
         try:
             return parse_calendar_body(response.text)
@@ -1184,7 +1216,7 @@ class GoogleFlightsHttpSource:
             response = client.post(
                 url, data=body, headers=SHOPPING_POST_HEADERS, timeout=self._timeout
             )
-        except CompactParseMiss:
+        except (CompactParseMiss, SearchDeadline):
             raise
         except Exception as exc:
             # No response at all (DNS, reset, timeout) is a transport failure, not drift.

@@ -280,7 +280,9 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
             only_provider = tally.provider_empty and not tally.filtered_out
             empty_reason = "provider_empty" if only_provider else "filtered_out"
     if failures:
-        completeness = "partial" if answered else "blocked"
+        # A deadline cut is a stop we chose, not a provider refusal: what ran stays partial.
+        cut = all(code == "deadline" for _, code, _ in failures)
+        completeness = "partial" if answered or cut else "blocked"
     else:
         completeness = "partial" if tally.scope_partial or tally.not_loaded else "complete"
     error_code = next((code for s, code, _ in failures if s == worst), None)

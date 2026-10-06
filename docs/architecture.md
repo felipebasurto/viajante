@@ -92,6 +92,17 @@ server instructions and the guide. `SearchError.retry_until` carries the end of 
 recorded cooldown from the classifier that saw the 429 to `to_dict`, which emits
 `retry_after` / `retry_after_seconds`.
 
+`control.py` holds the cooperative stop: a thread-local `SearchControl` carries a
+`threading.Event` (cancel), an optional deadline, and the progress callback.
+Search loops call `checkpoint()` between queries and attempts, sleeps use
+`interruptible_sleep`, and sweep futures are polled, so a cancel or deadline
+takes effect within about 50 ms of the next boundary. Cancel raises
+`SearchCancelled` (a `BaseException`, so no retry or `except Exception` swallows
+it); a deadline raises `SearchDeadline`, classified as error code `deadline`,
+which is terminal and never retried or cached. `mcp_server.run_mcp_tool` wires
+the MCP request to that control and forwards progress as
+`notifications/progress` when the request has a `progressToken`.
+
 ## How a flight search travels
 
 ```

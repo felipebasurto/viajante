@@ -5,12 +5,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ipaddress
+import json
+import math
+import os
+import re
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Annotated, Callable, Literal, NoReturn, Optional, Sequence, TypeVar
+from typing import Annotated, Any, Callable, Literal, NoReturn, Optional, Sequence, TypeVar, Union
 
+from viajante.control import SearchControl, active
 from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
@@ -45,6 +51,16 @@ _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viajante-mcp")
 _SEARCH_BUSY_MESSAGE = "a viajante search is already running in this process"
+_CANCEL_GRACE_SECONDS = 1.0
+_PROGRESS_INTERVAL_SECONDS = 0.25
+_INDEXED_PROGRESS = re.compile(r"^\s*\[(\d+)/(\d+)\]")
+DEADLINE_ENV = "VIAJANTE_MCP_DEADLINE_SECONDS"
+_DEADLINE_DOC = """
+        deadline_seconds (positive, optional) stops starting new queries after that
+        many seconds and returns what finished: coverage.complete is false,
+        coverage.stopping_reason is "deadline", and each unfinished query has error
+        code "deadline" (not loaded; never read it as empty or no results). Partial
+        results are not cached. Unset uses VIAJANTE_MCP_DEADLINE_SECONDS, else none."""
 
 _HELP = INSTRUCTIONS
 _DEFAULT_HOST = "127.0.0.1"
@@ -82,6 +98,138 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+_CONTEXT_FACTORY: Optional[Callable[[], Any]] = None
+_CURRENT: list = []
+_ENV_DEADLINE: Optional[float] = None
+_PROGRESS_WARNED = False
+# Replaced in build_server by a strict number type (pydantic ships with the mcp extra).
+_DeadlineSeconds: Any = Optional[float]
+
+
+def env_deadline_seconds() -> Optional[float]:
+    text = os.environ.get(DEADLINE_ENV, "").strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{DEADLINE_ENV} must be a positive number of seconds, got {text!r}")
+    return value
+
+
+class ProgressRelay:
+    """Worker-thread progress strings to MCP notifications/progress on the server loop.
+
+    ``[i/n]`` becomes progress i of total n; any other line is message-only and moves the
+    value by a small step, so the value only ever increases and never passes the total
+    (a line that cannot advance within the total is dropped). ``[i/n]`` marks the i-th query
+    starting, not finishing. At most one notification per interval; the newest held line is
+    flushed when the interval ends and when the search finishes. A notification that cannot
+    be sent never breaks the search.
+    """
+
+    def __init__(self, ctx: Any, loop: asyncio.AbstractEventLoop, interval: float) -> None:
+        self._ctx = ctx
+        self._loop = loop
+        self._interval = interval
+        self._lock = threading.Lock()
+        self._futures: list = []
+        self._value: Optional[float] = None
+        self._total: Optional[float] = None
+        self._sent_at = -math.inf
+        self._pending: Optional[tuple[float, Optional[float], str]] = None
+        self._timer: Optional[threading.Timer] = None
+        self._closed = False
+
+    def __call__(self, text: str) -> None:
+        message = " ".join(str(text).split())
+        if not message:
+            return
+        with self._lock:
+            if self._closed:
+                return
+            indexed = _INDEXED_PROGRESS.match(message)
+            floor = 0.0 if self._value is None else self._value
+            if indexed:
+                self._total = float(indexed.group(2))
+                value = max(float(indexed.group(1)), floor + 0.001)
+            elif self._value is None:
+                value = 0.0
+            else:
+                value = floor + 0.001
+            if self._total is not None and value > self._total:
+                return
+            self._value = value
+            self._pending = (value, self._total, message)
+            wait = self._sent_at + self._interval - time.monotonic()
+            if wait <= 0:
+                self._send_locked()
+            elif self._timer is None:
+                self._timer = threading.Timer(wait, self._flush)
+                self._timer.daemon = True
+                self._timer.start()
+
+    def _flush(self) -> None:
+        with self._lock:
+            self._timer = None
+            if not self._closed:
+                self._send_locked()
+
+    def _send_locked(self) -> None:
+        if self._pending is None:
+            return
+        value, total, message = self._pending
+        self._pending = None
+        self._sent_at = time.monotonic()
+        try:
+            self._futures.append(
+                asyncio.run_coroutine_threadsafe(self._report(value, total, message), self._loop)
+            )
+        except RuntimeError:
+            self._closed = True
+
+    async def _report(self, value: float, total: Optional[float], message: str) -> None:
+        try:
+            await self._ctx.report_progress(value, total, message)
+        except Exception as exc:
+            global _PROGRESS_WARNED
+            if not _PROGRESS_WARNED:
+                _PROGRESS_WARNED = True
+                print(f"viajante: progress notification failed: {exc}", file=sys.stderr)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._pending = None
+            if self._timer is not None:
+                self._timer.cancel()
+
+    async def drain(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self._send_locked()
+        self.close()
+        await asyncio.gather(
+            *(asyncio.wrap_future(f) for f in self._futures), return_exceptions=True
+        )
+
+
+def _progress_relay(loop: asyncio.AbstractEventLoop) -> Optional[ProgressRelay]:
+    """A relay only when this request carries a progressToken; otherwise nothing is sent."""
+    if _CONTEXT_FACTORY is None:
+        return None
+    try:
+        ctx = _CONTEXT_FACTORY()
+        meta = ctx.request_context.meta
+    except (LookupError, ValueError, AttributeError):
+        return None
+    if meta is None or getattr(meta, "progressToken", None) is None:
+        return None
+    return ProgressRelay(ctx, loop, _PROGRESS_INTERVAL_SECONDS)
+
+
 def _reraise(exc: ValueError, params: dict[str, object]) -> NoReturn:
     converted = structured_error(exc, params)
     if converted is exc:
@@ -90,29 +238,61 @@ def _reraise(exc: ValueError, params: dict[str, object]) -> NoReturn:
 
 
 async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
-    """Run a search on the one-worker pool. Fail immediately if a search is in flight."""
-    if not _SEARCH_BUSY.acquire(blocking=False):
-        _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+    """Run a search on the one-worker pool. Fail immediately if a search is in flight.
+
+    Cancelling the request sets the search's cancel event, so the worker stops at its next
+    checkpoint and releases the lock; a cancelled search returns, caches, and records nothing.
+    """
+    if "deadline_seconds" in kwargs and kwargs["deadline_seconds"] is None:
+        kwargs["deadline_seconds"] = _ENV_DEADLINE
     loop = asyncio.get_running_loop()
+    relay = _progress_relay(loop)
+    control = SearchControl(progress=relay)
+    finished = threading.Event()
+    if not _SEARCH_BUSY.acquire(blocking=False):
+        holder = _CURRENT[0] if _CURRENT else None
+        if holder is None or not holder[0].cancel.is_set():
+            _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+        # A cancelled search is unwinding: give it a moment instead of a spurious busy error.
+        await loop.run_in_executor(None, holder[1].wait, _CANCEL_GRACE_SECONDS)
+        if not _SEARCH_BUSY.acquire(blocking=False):
+            _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+    _CURRENT[:] = [(control, finished)]
 
     def run() -> _T:
         try:
-            return fn(*args, **kwargs)
+            with active(control):
+                return fn(*args, **kwargs)
         finally:
+            _CURRENT.clear()
             _SEARCH_BUSY.release()
+            finished.set()
 
     try:
         future = loop.run_in_executor(_SEARCH_EXECUTOR, run)
     except BaseException:
+        _CURRENT.clear()
         _SEARCH_BUSY.release()
         raise
     try:
-        return await asyncio.shield(future)
+        result = await asyncio.shield(future)
     except asyncio.CancelledError:
+        control.cancel.set()
+        if relay is not None:
+            relay.close()
         future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         raise
     except ValueError as exc:
+        if relay is not None:
+            relay.close()
         _reraise(exc, kwargs)
+    except BaseException:
+        if relay is not None:
+            relay.close()
+        raise
+    if relay is not None:
+        await relay.drain()
+    return result
 
 
 async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object) -> _T:
@@ -122,6 +302,32 @@ async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: obj
         return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
     except ValueError as exc:
         _reraise(exc, kwargs)
+
+
+def _compact_json(text: str) -> str:
+    try:
+        return json.dumps(json.loads(text), separators=(",", ":"), ensure_ascii=False)
+    except ValueError:
+        return text
+
+
+def _compact_blocks(result: Any) -> Any:
+    """Re-serialize JSON text blocks without indentation. Keys and values are untouched."""
+    if isinstance(result, tuple):
+        return (_compact_blocks(result[0]), *result[1:])
+    if isinstance(result, list):
+        return [
+            block.model_copy(update={"text": _compact_json(block.text)})
+            if getattr(block, "type", None) == "text"
+            else block
+            for block in result
+        ]
+    return result
+
+
+def _with_deadline_doc(fn: Callable[..., Any]) -> Callable[..., Any]:
+    fn.__doc__ = (fn.__doc__ or "").rstrip() + "\n" + _DEADLINE_DOC + "\n        "
+    return fn
 
 
 def _room_rates_flag(value: object) -> bool:
@@ -147,12 +353,13 @@ def _loopback_security(host: str):
 
 
 def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
-    # pydantic and the SDK arrive with the mcp extra. Help imports this module without them.
-    global _ROOM_RATES
+    global _ROOM_RATES, _CONTEXT_FACTORY, _ENV_DEADLINE, _DeadlineSeconds
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
-    from pydantic import BaseModel, BeforeValidator, ConfigDict
+    from pydantic import BaseModel, BeforeValidator, ConfigDict, StrictFloat, StrictInt
 
+    _ENV_DEADLINE = env_deadline_seconds()
+    _DeadlineSeconds = Optional[Union[StrictInt, StrictFloat]]
     _ROOM_RATES = Annotated[bool, BeforeValidator(_room_rates_flag)]
 
     class ToolEnvelope(BaseModel):
@@ -198,7 +405,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
                     _TOOL_ERROR_PREFIX.format(name=name) + unknown_arguments_body(unknown)
                 )
             try:
-                return await super().call_tool(name, arguments)
+                return _compact_blocks(await super().call_tool(name, arguments))
             except Exception as exc:
                 cause = exc.__cause__
                 if not (isinstance(cause, ValueError) and callable(getattr(cause, "errors", None))):
@@ -209,6 +416,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
                 raise type(exc)(_TOOL_ERROR_PREFIX.format(name=name) + body) from cause
 
     server = ViajanteServer("viajante", instructions=_HELP, **options)
+    _CONTEXT_FACTORY = getattr(server, "get_context", None)
 
     def tool(title: str, *, network: bool, envelope: bool = True, writes: bool = False):
         # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
@@ -254,6 +462,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         return stamp_local(dict(runtime_info()))
 
     @tool("Search flights", network=True)
+    @_with_deadline_doc
     async def search_flights(
         routes: list[str],
         trip: str = "one-way",
@@ -290,6 +499,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         country: str | None = None,
         nearby: bool = False,
         proxy: str | None = None,
+        deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
         """Search Google Flights for named routes and dates.
 
@@ -345,6 +555,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         )
 
     @tool("Cheapest-dates calendar", network=True)
+    @_with_deadline_doc
     async def search_dates(
         route: str,
         start: str,
@@ -382,6 +593,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         baggage_buffer: int | None = None,
         sort: str | None = None,
         proxy: str | None = None,
+        deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
         """Cheapest-per-day calendar for a named route (up to 31 days).
 
@@ -398,6 +610,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         return dict(await run_mcp_tool(search_dates_tool, **locals()))
 
     @tool("Flexible-date flight search", network=True)
+    @_with_deadline_doc
     async def search_flex(
         route: str,
         around: str,
@@ -436,6 +649,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         currency: str | None = None,
         country: str | None = None,
         proxy: str | None = None,
+        deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
         """Flex window (±N), then one shopping search on the cheapest day.
 
@@ -450,6 +664,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         return dict(await run_mcp_tool(search_flex_tool, **locals()))
 
     @tool("Explore destinations", network=True)
+    @_with_deadline_doc
     async def search_explore(
         origin: str,
         start: str | None = None,
@@ -488,6 +703,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         sort: str = "price",
         baggage_buffer: int | None = None,
         proxy: str | None = None,
+        deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
         """Destinations from one origin, then a priced shortlist.
 
@@ -499,6 +715,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         return dict(await run_mcp_tool(search_explore_tool, **locals()))
 
     @tool("Search hotels", network=True)
+    @_with_deadline_doc
     async def search_hotels(
         location: str | None = None,
         check_in: str | None = None,
@@ -514,6 +731,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         stays: list[dict] | None = None,
         near: dict[str, float] | None = None,
         max_distance_km: float | None = None,
+        deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
         """Hotel search. Currency is required (no origin airport) except source
         skiplagged, whose quotes are USD (omit currency or pass USD).
@@ -588,6 +806,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         return dict(await run_mcp_tool(search_hotel_rooms_tool, **locals()))
 
     @tool("Search flights and hotel", network=True)
+    @_with_deadline_doc
     async def search_trip(
         routes: list[str],
         location: str,
@@ -627,6 +846,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         free_cancellation: bool = True,
         source: str = "google",
         nearby: bool = False,
+        deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
         """Flights then hotel. Currency follows the flight origin or an explicit code.
 
@@ -946,6 +1166,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         )
     try:
         server = build_server(host=host, port=port) if http else build_server()
+    except ValueError as exc:
+        raise SystemExit(f"viajante-mcp: {exc}") from exc
     except ImportError as exc:
         raise SystemExit(
             "viajante-mcp requires the mcp extra. Install with: uv sync --extra mcp"

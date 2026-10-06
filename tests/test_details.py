@@ -211,6 +211,20 @@ class HotelDetailsTests(unittest.TestCase):
 
 
 class SelectionReferenceTests(unittest.TestCase):
+    def test_deadline_cache_replay_keeps_hotel_reference_and_original_timestamp(self):
+        @mcp_handlers._cached
+        def search(*, deadline_seconds=None):
+            return mcp_handlers._searched(hotel())
+
+        first = search(deadline_seconds=30)
+        selection_id = first["queries"][0]["offers"][0]["selection_id"]
+        evidence.clear()
+        replay = search(deadline_seconds=1)
+        self.assertTrue(replay["cached"])
+        self.assertEqual(replay["queries"][0]["offers"][0]["selection_id"], selection_id)
+        detail = mcp_handlers.get_hotel_details_tool(selection_id)
+        self.assertEqual(detail["original_quote"]["searched_at"], first["searched_at"])
+
     def setUp(self):
         evidence.clear()
         mcp_handlers._CACHE.clear()

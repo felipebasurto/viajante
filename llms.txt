@@ -109,6 +109,10 @@ open-world for the search tools, `recheck_offer`, `watch_price`, and `get_hotel_
 JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
 after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=1.14.1`.
 
+A cancelled call frees the lock. `deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
+partial result: `coverage.complete=false`, `coverage.stopping_reason="deadline"`,
+unfinished queries `error.code="deadline"`. Not proof of no availability.
+
 Local HTTP (opt-in, no auth): `viajante-mcp --transport streamable-http` serves
 `http://127.0.0.1:8000/mcp`; client entry `{"mcpServers": {"viajante": {"url": "http://127.0.0.1:8000/mcp"}}}`.
 A non-loopback `--host` warns: every client searches from this machine's IP and

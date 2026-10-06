@@ -65,6 +65,7 @@ class ClassifyFailureTests(unittest.TestCase):
                     SearchErrorCode.BLOCKED,
                     SearchErrorCode.MARKUP_DRIFT,
                     SearchErrorCode.BROWSER_UNAVAILABLE,
+                    SearchErrorCode.DEADLINE,
                 }
             ),
         )

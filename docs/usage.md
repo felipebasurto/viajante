@@ -640,6 +640,48 @@ stdio by default (local Streamable HTTP is opt-in, see below) and runs one
 search at a time. See the signatures in
 [`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
 
+### Progress, cancellation, and deadlines
+
+- **Progress.** If the client sends a `progressToken`, the server emits
+  `notifications/progress` while a search runs: `[i/n]` lines become
+  `progress=i`, `total=n`; other lines carry a message and a still-increasing
+  value. `[i/n]` marks the i-th query starting, not finishing. At most about one
+  notification per 250 ms; the newest held line is flushed when the search
+  finishes, and progress never passes the total. A notification that cannot be
+  sent never breaks the search (logged once to stderr).
+  No token, no notifications.
+- **Cancellation.** A client `notifications/cancelled` stops the search between
+  queries, retries, and sleeps and frees the search lock, so the next call does
+  not hit `a viajante search is already running`. A query already in flight at
+  the provider is not interrupted; the search stops as soon as it returns. A
+  cancelled search is not cached, not recorded for `verify_answer`, and writes
+  no rate-limit cooldown.
+- **Deadline.** `deadline_seconds` (positive, finite) on `search_flights`,
+  `search_dates`, `search_flex`, `search_explore`, `search_hotels`, and
+  `search_trip` bounds a call and must be a number (a string or boolean is
+  rejected). `VIAJANTE_MCP_DEADLINE_SECONDS` sets a default for the MCP process,
+  is validated at startup (the server exits with a clear error if it is not a
+  positive number), and an explicit argument wins. On expiry the payload is
+  partial: queries that finished keep their rows, the rest are errors with
+  `error.code` `deadline`, `coverage.complete` is `false`, and
+  `coverage.stopping_reason` is `"deadline"`. An unfinished query is not proof of
+  no availability. Deadline results are not cached, and neither is any search a
+  deadline cut in any way (the search control records the cut). A cut that leaves
+  no failed row, such as the typical-price lookup, keeps the fare that already
+  arrived with `typical` null (unknown, not cached as "no typical") and marks the
+  coverage `complete: false`, `stopping_reason: "deadline"`. A deadline inside a follow-up call (for example the
+  return leg of a round trip) makes that query a `deadline` row; it is never
+  reported as a complete result with fewer legs. Hotel payloads carry a
+  `coverage` object only when a deadline cut them. When several routes share one
+  multiplexed request, responses that had already arrived are kept and only the
+  rest are `deadline`; a response still in flight is not interrupted until it
+  returns or the deadline cuts the wait. In the result envelope a deadline is a
+  timeout: when every query was cut, `status` is `timeout`, `completeness`
+  `partial`, `empty_reason` `not_loaded`, and `error_code` `deadline`; with at
+  least one row of evidence the result stays `ok` / `partial`. A deadline error
+  carries no `retry_after`.
+- **Output.** MCP text is compact JSON (no indentation); keys are unchanged.
+
 
 ### MCP client compatibility
 

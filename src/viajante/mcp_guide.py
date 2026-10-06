@@ -5,8 +5,8 @@ from __future__ import annotations
 # Sent on every connection, so it carries only the rules a model must not miss.
 INSTRUCTIONS = """\
 viajante returns raw provider evidence, not recommendations. Read the payload, weigh
-price against duration, stops, clocks and rating, and say why. The full guide is the
-resource viajante://guide (or the get_guide tool): read it before a multi-step plan.
+price, duration, stops, clocks and rating. Read viajante://guide (or get_guide)
+before a multi-step plan.
 
 Read the envelope first: every tool except lookup_airports puts status, completeness,
 empty_reason, error_code and retry_after beside its payload. Only empty_reason provider_empty
@@ -25,6 +25,7 @@ that nothing exists. Say what was searched; do not claim availability either way
 Rate limits: if an error has rate_limited true, wait until retry_after (UTC) and tell the
 user. Do not retry, switch fetch mode or fan out other searches; they send nothing.
 One search at a time per process: a busy error is not an MCP timeout; do not retry it blindly.
+deadline_seconds stops a search early: rows with error code deadline were not loaded, not empty.
 search_hidden_city is Skiplagged (USD), not Google: run it at most once, after a named-route
 search_flights, never when bags were named, and never mix its rows with Google evidence.
 search_dates is the cheapest week, search_flex is +/-N around a named date, search_explore
@@ -80,6 +81,20 @@ or retry them 8×60s. lookup_airports, compare_awards, lookup_transfers,
 validate_itinerary, plan_stay_blocks, split_stay_costs, verify_answer, and get_runtime_info may run
 during a search. get_guide may also run during a search. get_hotel_details with
 room_rates false may also run during a search.
+
+Progress, cancel, deadline: a search tool sends notifications/progress only when the
+client sends a progressToken; they are informational and the result is still the reply.
+Cancelling the request stops the search at its next checkpoint and frees the lock; a
+cancelled search is not cached, recorded as evidence, or counted toward a cooldown.
+An optional deadline_seconds (or VIAJANTE_MCP_DEADLINE_SECONDS when the argument is
+unset) stops starting new queries after that many seconds and returns what finished:
+coverage.complete is false, coverage.stopping_reason is deadline, status is ok while
+any row has evidence (otherwise timeout), completeness is partial, and each unfinished
+query carries error code deadline with empty_reason not_loaded. That is availability
+unknown, never "no results". The error carries no retry_after. A partial result is not
+cached; ask again with a larger deadline_seconds or none.
+In search_explore, `not_loaded` under a deadline means the prices weren't loaded,
+even if destinations are listed.
 
 ## The result envelope
 

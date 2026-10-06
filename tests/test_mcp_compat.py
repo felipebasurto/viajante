@@ -792,6 +792,11 @@ class HttpHostProtectionTests(_StateDir):
         )
 
     def test_another_loopback_address_is_allowed_by_name(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.2", 0))
+            except OSError as exc:
+                self.skipTest(f"127.0.0.2 is not configured on this host: {exc}")
         port = _start_http_server(self, "127.0.0.2")
         self.assertEqual(_raw_initialize_at("127.0.0.2", port, {"Host": f"127.0.0.2:{port}"}), 200)
         self.assertEqual(_raw_initialize_at("127.0.0.2", port, {"Host": "evil.example"}), 421)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -2684,6 +2686,13 @@ class SweepClientShapeTests(unittest.TestCase):
 
 
 class DetailSorryPageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = patch.dict(os.environ, {"VIAJANTE_STATE_DIR": tmp.name})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_sorry_redirect_fails_fast_without_waiting_for_cards(self) -> None:
         class SorryPage:
             url = (
