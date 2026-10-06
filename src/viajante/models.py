@@ -1684,6 +1684,7 @@ class HotelPage:
     resolved_place: Optional[str] = None
     place_bounds: Optional[Tuple[float, float, float, float]] = None
     search_url: Optional[str] = None
+    page_errors: Tuple[SearchError, ...] = ()
 
 
 HotelProvider = Literal["booking.com", "google-hotels", "skiplagged"]
@@ -1780,6 +1781,7 @@ class HotelQuerySuccess:
     raw_count: int
     eligible_count: int
     offers: Tuple[HotelOffer, ...]
+    page_errors: Tuple[SearchError, ...] = field(default=(), kw_only=True)
     resolved_place: Optional[str] = None
     place_bounds: Optional[Tuple[float, float, float, float]] = None
     status: Literal["ok"] = field(init=False, default="ok")
@@ -1791,7 +1793,7 @@ class HotelQuerySuccess:
             raise ValueError("eligible_count must be >= number of offers")
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload = {
             "status": self.status,
             "query": self.query.to_dict(),
             "applied": self.applied.to_dict(),
@@ -1801,6 +1803,9 @@ class HotelQuerySuccess:
             "place_bounds": list(self.place_bounds) if self.place_bounds else None,
             "offers": [offer.to_dict() for offer in self.offers],
         }
+        if self.page_errors:
+            payload["page_errors"] = [error.to_dict() for error in self.page_errors]
+        return payload
 
 
 @dataclass(frozen=True)
@@ -1868,7 +1873,8 @@ class HotelSearchReport:
         )
         if cut is None and self.deadline_cut:
             cut = "deadline_seconds cut part of this search: that evidence was not loaded"
-        if cut is not None:
+        page_failed = any(isinstance(r, HotelQuerySuccess) and r.page_errors for r in self.queries)
+        if cut is not None or page_failed:
             payload["coverage"] = SearchCoverage(
                 scope={"kind": "submitted_queries", "size": len(self.queries)},
                 attempted=len(self.queries),
@@ -1882,8 +1888,12 @@ class HotelSearchReport:
                     for r in self.queries
                 ),
                 complete=False,
-                stopping_reason="deadline",
-                unsearched=f"{cut}; stays outside the submitted finite scope",
+                stopping_reason="deadline" if cut else "additional_page_failed",
+                unsearched=(
+                    f"{cut}; stays outside the submitted finite scope"
+                    if cut
+                    else "Additional results page(s) failed; their hotel evidence was not loaded"
+                ),
             ).to_dict()
         return payload
 

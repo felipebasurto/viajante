@@ -821,6 +821,8 @@ def _print_hotel_report(report) -> None:
         _print_hotel_filters(query, result.applied, provider=report.provider)
         if isinstance(result, HotelQuerySuccess):
             any_success = True
+            for error in result.page_errors:
+                print(f"  Partial results: additional page failed: {error.message}")
             if result.resolved_place:
                 print(f"  Resolved place: {result.resolved_place}")
             if report.near:
@@ -904,6 +906,28 @@ def _split_query_from_args(
             "--split-tickets takes exactly one one-way route or one --trip rt route "
             "(not --nearby, multi-city, or several routes)"
         )
+    unsupported = (
+        "via",
+        "exclude_via",
+        "no_overnight",
+        "require_overnight",
+        "exclude_airports",
+        "include_airports",
+        "depart_window",
+        "arrive_before",
+        "depart_after",
+        "max_layover",
+        "min_layover",
+        "max_duration",
+        "baggage_buffer",
+    )
+    for field in unsupported:
+        value = getattr(args, field, None)
+        if value is not None and (field != "baggage_buffer" or value != 0):
+            flag = "--" + field.replace("_", "-")
+            raise ValueError(
+                f"--split-tickets does not support {flag}; search without --split-tickets"
+            )
     query = with_carrier_filters(
         queries[0],
         airlines=shop["airlines"],  # type: ignore[arg-type]
@@ -1024,6 +1048,7 @@ def _run_flights(args: argparse.Namespace) -> int:
             split = search_split_tickets(
                 split_query,
                 packaged=report,
+                top=args.top,
                 via=_split_via(args),
                 max_hubs=args.split_max_hubs,
                 min_connection_hours=_split_min_connection(args),

@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -513,6 +514,49 @@ class IdentityTests(unittest.TestCase):
 
 
 class StrictMatchingTests(unittest.TestCase):
+    def test_fresh_missing_segment_identity_cannot_confirm_or_rule_out_original(self):
+        for field in ("origin", "destination", "flight_number", "departure"):
+            with self.subTest(field=field):
+                fresh = replace(OUTBOUND, **{field: None})
+                result = recheck_offer(
+                    _previous(OUTBOUND), search=_Stub(_report(_offer(500, (fresh,))))
+                )
+                self.assertEqual(result["outcome"], "check_failed")
+                self.assertFalse(result["check_completed"])
+                self.assertEqual(result["reason"], "incomplete_offers")
+
+    def test_fresh_missing_segments_cannot_rule_out_original(self):
+        fresh = replace(_offer(500, (OUTBOUND,)), legs=())
+        result = recheck_offer(_previous(OUTBOUND), search=_Stub(_report(fresh)))
+        self.assertEqual(result["outcome"], "check_failed")
+        self.assertFalse(result["check_completed"])
+
+    def test_complete_exact_match_survives_other_incomplete_candidates(self):
+        incomplete = _offer(450, (replace(OUTBOUND, origin=None),))
+        exact = _offer(500, (OUTBOUND,))
+        result = recheck_offer(_previous(OUTBOUND), search=_Stub(_report(incomplete, exact)))
+        self.assertEqual(result["outcome"], "same_price")
+        self.assertEqual(result["offers_compared"], 1)
+
+    def test_loose_mode_still_requires_fresh_numbers_when_original_has_them(self):
+        old = _previous(OUTBOUND)
+        old["legs"][0]["segments"][0]["origin"] = None
+        fresh = replace(OUTBOUND, flight_number=None)
+        result = recheck_offer(
+            old, allow_loose_match=True, search=_Stub(_report(_offer(500, (fresh,))))
+        )
+        self.assertEqual(result["outcome"], "check_failed")
+        self.assertFalse(result["check_completed"])
+
+    def test_loose_match_keeps_original_airport_identity(self):
+        old = replace(OUTBOUND, flight_number=None)
+        fresh = replace(old, destination=None)
+        result = recheck_offer(
+            _previous(old), allow_loose_match=True, search=_Stub(_report(_offer(500, (fresh,))))
+        )
+        self.assertEqual(result["outcome"], "check_failed")
+        self.assertFalse(result["check_completed"])
+
     def test_two_identical_itineraries_are_multiple_matches_not_a_verdict(self) -> None:
         stub = _Stub(_report(_offer(510.0, (OUTBOUND,)), _offer(530.0, (OUTBOUND,))))
         result = recheck_offer(_previous(OUTBOUND), search=stub)

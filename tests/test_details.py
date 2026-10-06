@@ -62,6 +62,24 @@ def hotel(
 
 
 class HotelDetailsTests(unittest.TestCase):
+    def test_unambiguous_city_keeps_property_coordinates(self):
+        original = hotel(latitude=50.07, longitude=14.44)
+        for latitude, longitude, accepted in ((48.85, 2.35, False), (50.0701, 14.4401, True)):
+            with (
+                self.subTest(accepted=accepted),
+                patch(
+                    "viajante.details.search_hotel_rooms",
+                    return_value=_rooms(latitude=latitude, longitude=longitude),
+                ),
+            ):
+                detail = get_hotel_details(original, 0, 0, room_rates=True)
+            if accepted:
+                self.assertEqual((detail["status"], detail["completeness"]), ("ok", "complete"))
+                self.assertIsNotNone(detail["room_quotes"])
+            else:
+                self.assertEqual(detail["error_code"], "property_mismatch")
+                self.assertIsNone(detail["room_quotes"])
+
     def test_snapshot_keeps_conflict_unknown_occupancy_and_original_terms(self):
         with patch("viajante.details.search_hotel_rooms") as rooms:
             result = get_hotel_details(hotel(), 0, 0)
@@ -211,6 +229,41 @@ class HotelDetailsTests(unittest.TestCase):
 
 
 class SelectionReferenceTests(unittest.TestCase):
+    def test_new_room_quotes_are_verifiable_without_renewing_original(self):
+        payload = mcp_handlers._owned(hotel())
+        selection_id = payload["queries"][0]["offers"][0]["selection_id"]
+        with patch("viajante.details.search_hotel_rooms", return_value=_rooms()):
+            detail = mcp_handlers.get_hotel_details_tool(selection_id, room_rates=True)
+        self.assertEqual(detail["room_quotes"]["rates"][0]["total_price"], 545)
+        self.assertTrue(mcp_handlers.verify_answer_tool("The room is USD 545.")["ok"])
+        self.assertEqual(len(evidence._ledger), 2)
+        self.assertNotIn("original_quote", evidence._ledger[-1])
+        self.assertEqual(evidence._ledger[-1]["currency"], "USD")
+        self.assertEqual(
+            mcp_handlers.get_hotel_details_tool(selection_id)["original_quote"]["currency"], "EUR"
+        )
+        self.assertEqual(len(evidence._ledger), 2)
+
+    def test_failed_or_rejected_room_quotes_do_not_enter_the_ledger(self):
+        payload = mcp_handlers._owned(hotel(latitude=50.07, longitude=14.44))
+        selection_id = payload["queries"][0]["offers"][0]["selection_id"]
+        quotes = (
+            _rooms(error=SearchError(SearchErrorCode.NO_RESULTS, "No rooms"), rates=()),
+            _rooms(latitude=48.85, longitude=2.35),
+            _rooms(answered_adults=1),
+        )
+        for quote in quotes:
+            with patch("viajante.details.search_hotel_rooms", return_value=quote):
+                mcp_handlers.get_hotel_details_tool(selection_id, room_rates=True)
+            self.assertEqual(len(evidence._ledger), 1)
+            self.assertFalse(evidence.verify_answer("The room is USD 545.")["ok"])
+
+    def setUp(self):
+        evidence.clear()
+        mcp_handlers._CACHE.clear()
+        self.addCleanup(evidence.clear)
+        self.addCleanup(mcp_handlers._CACHE.clear)
+
     def test_deadline_cache_replay_keeps_hotel_reference_and_original_timestamp(self):
         @mcp_handlers._cached
         def search(*, deadline_seconds=None):
@@ -224,12 +277,6 @@ class SelectionReferenceTests(unittest.TestCase):
         self.assertEqual(replay["queries"][0]["offers"][0]["selection_id"], selection_id)
         detail = mcp_handlers.get_hotel_details_tool(selection_id)
         self.assertEqual(detail["original_quote"]["searched_at"], first["searched_at"])
-
-    def setUp(self):
-        evidence.clear()
-        mcp_handlers._CACHE.clear()
-        self.addCleanup(evidence.clear)
-        self.addCleanup(mcp_handlers._CACHE.clear)
 
     def test_reads_do_not_evict_the_search_or_the_ledger(self):
         payload = mcp_handlers._owned(hotel())

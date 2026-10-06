@@ -261,4 +261,9 @@ def failure_codes(node: object) -> list[str]:
     error = node.get("error")
     if isinstance(error, Mapping) and isinstance(error.get("code"), str):
         found.append(error["code"])
+    found.extend(
+        error["code"]
+        for error in node.get("page_errors", ())
+        if isinstance(error, Mapping) and isinstance(error.get("code"), str)
+    )
     return found + [code for value in node.values() for code in failure_codes(value)]
