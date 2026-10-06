@@ -119,11 +119,14 @@ tradeoffs from returned fields only, and published score weights. It is evidence
 not a verdict; offers and their order are unchanged. Read relaxed_requirements
 first. A relaxed pick failed a requirement you named (listed there, and unmet in the
 entry), so it is not an exact match. When the query row has empty_reason
-filtered_out (envelope status no_results) and a recommendation, offers is empty
-because the named filters removed every row, and the recommendation is a relaxed
-pick, not an exact match: say which requirements it relaxed. Offers whose currency
+filtered_out (envelope status no_results when every query is filtered_out) and a
+recommendation, offers is empty because the named filters removed every row, and
+the recommendation is a relaxed pick, not an exact match: say which requirements it
+relaxed. Offers whose currency
 differs or is unproven are never price-compared. Provider-empty queries carry no
-recommendation. Fare rules (refund, change) are never in the rows.
+recommendation. Fare rules (refund, change) are never in the rows. requirements
+lists max_stops even when it is only the default, so its presence does not mean the
+caller named a stop limit.
 
 ## Choosing a search tool
 

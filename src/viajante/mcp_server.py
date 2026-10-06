@@ -289,14 +289,16 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         search_hidden_city once with the same route and date. Sequential; do
         not mix payloads. Skip if bags were named. Omit hidden-city currency
         (Skiplagged cards are USD); do not copy this Google quote currency.
-        Each successful query also carries recommendation: a pick that meets
-        the named requirements (relaxed_requirements names any it relaxed), a
-        varied shortlist, and highlights/tradeoffs from returned fields only.
+        A successful query may carry recommendation (none when the provider
+        returned nothing): a pick that meets the named requirements
+        (relaxed_requirements names any it relaxed), a varied shortlist, and
+        highlights/tradeoffs from returned fields only.
         It is evidence for your judgment; offers are unchanged. Check
         relaxed_requirements before presenting a pick as a match. A query
-        with empty_reason filtered_out (envelope status no_results) that
-        still has a recommendation means the pick is a relaxed one, not an
-        exact match: the named filters removed every offer.
+        with empty_reason filtered_out (envelope status no_results when every
+        query is filtered_out) that still has a recommendation means the pick
+        is a relaxed one, not an exact match: the named filters removed every
+        offer.
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
