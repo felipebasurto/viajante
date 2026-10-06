@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from viajante.control import SearchDeadline
+from viajante.control import SearchDeadline, note_cut
 from viajante.models import SearchError, SearchErrorCode
 
 REQUEST_DELAY_SECONDS = 4.5
@@ -48,6 +48,7 @@ def _clip_error_message(text: str) -> str:
 
 def classify_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SearchDeadline):
+        note_cut()
         return SearchError(code=SearchErrorCode.DEADLINE, message=str(exc))
     text = f"{type(exc).__name__}: {exc}".strip()
     lowered = text.casefold()

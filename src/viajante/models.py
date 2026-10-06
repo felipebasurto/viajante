@@ -1779,6 +1779,8 @@ class HotelSearchReport:
     # A point the caller named; offers carry their straight-line distance to it.
     near: Optional[Tuple[float, float]] = None
     max_distance_km: Optional[float] = None
+    # A deadline cut a step that left no failed row (for example a second results page).
+    deadline_cut: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         _store_naive_utc(self)
@@ -1804,6 +1806,8 @@ class HotelSearchReport:
         cut = _deadline_stop(
             [r.error.code if isinstance(r, HotelQueryFailure) else None for r in self.queries]
         )
+        if cut is None and self.deadline_cut:
+            cut = "deadline_seconds cut part of this search: that evidence was not loaded"
         if cut is not None:
             payload["coverage"] = SearchCoverage(
                 scope={"kind": "submitted_queries", "size": len(self.queries)},

@@ -21,6 +21,7 @@ from viajante.control import (
     controlled,
     current_control,
     interruptible_sleep,
+    note_cut,
 )
 from viajante.google_flights import (
     GoogleFlightsBlocked,
@@ -1499,7 +1500,9 @@ def _calendar_summary_from_source(
     try:
         days = fetch_calendar(trip, start, end)
     except SearchDeadline:
-        raise
+        # Unknown, not "no typical": nothing is cached, and the search is marked cut.
+        note_cut()
+        return None
     except Exception:
         cache[key] = None
         return None
@@ -2254,6 +2257,8 @@ def search_flights(
         ]
         control = current_control()
         if control is not None and control.expired():
+            if retry_indexes:
+                control.mark_cut()
             retry_indexes = []
         if retry_indexes and not chromium_installed():
             report_progress(BROWSER_INSTALL_HINT)

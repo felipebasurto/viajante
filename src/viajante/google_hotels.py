@@ -6,7 +6,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Optional
 
-from viajante.control import SearchDeadline
+from viajante.control import SearchDeadline, note_cut
 from viajante.google_flights import (
     COOLDOWN_UNCHECKED,
     NOT_SENT,
@@ -100,6 +100,10 @@ class GoogleHotelsSource:
         for post, response in zip(posts[1:], responses[1:], strict=True):
             try:
                 cards.extend(self._page(response, post.url).cards[:limit])
+            except SearchDeadline:
+                # The price page already arrived; only the widening page was cut.
+                note_cut()
+                continue
             except (HotelsBlocked, HotelsParseMiss, EmptyHotelResults, HotelsRejected):
                 continue
         params = hotel_navigation_params(query, currency=self._currency, html_lang=self._html_lang)

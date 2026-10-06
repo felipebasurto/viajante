@@ -352,8 +352,11 @@ stdio and runs one search at a time. See the signatures in
   partial: queries that finished keep their rows, the rest are errors with
   `error.code` `deadline`, `coverage.complete` is `false`, and
   `coverage.stopping_reason` is `"deadline"`. An unfinished query is not proof of
-  no availability. Deadline results are not cached, and neither is any result that
-  used up its whole deadline. A deadline inside a follow-up call (for example the
+  no availability. Deadline results are not cached, and neither is any search a
+  deadline cut in any way (the search control records the cut). A cut that leaves
+  no failed row, such as the typical-price lookup, keeps the fare that already
+  arrived with `typical` null (unknown, not cached as "no typical") and marks the
+  coverage `complete: false`, `stopping_reason: "deadline"`. A deadline inside a follow-up call (for example the
   return leg of a round trip) makes that query a `deadline` row; it is never
   reported as a complete result with fewer legs. Hotel payloads carry a
   `coverage` object only when a deadline cut them. When several routes share one

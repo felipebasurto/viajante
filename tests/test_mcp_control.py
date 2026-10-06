@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -19,6 +19,7 @@ from unittest.mock import patch
 from test_audit_regressions import _card as _rt_card
 from test_audit_regressions import _direct
 from test_google_flights import _compact_body, _itinerary, _MuxFakeSweepClient
+from test_google_hotels import _hotel_record, _ScriptedHotelClient, _search_payload, _wrap_wrb
 from viajante import evidence, mcp_handlers, mcp_server
 from viajante.control import (
     SearchCancelled,
@@ -27,12 +28,14 @@ from viajante.control import (
     active,
     checkpoint,
     controlled,
+    cut_by_deadline,
     interruptible_sleep,
+    note_cut,
     validate_deadline_seconds,
 )
 from viajante.dates import search_dates, search_flex
 from viajante.explore import search_explore
-from viajante.flights import search_flights
+from viajante.flights import _calendar_summary_from_source, search_flights
 from viajante.google_flights import (
     ChromeSweepClient,
     GoogleFlightsHttpSource,
@@ -41,8 +44,10 @@ from viajante.google_flights import (
     SweepPost,
 )
 from viajante.google_flights_rpc import CompactCalendarDay, CompactExplorePlace
+from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
 from viajante.hotels import search_hotels
-from viajante.models import FlightQuery, HotelQuery, QueryFailure
+from viajante.models import FlightQuery, HotelQuery, HotelSearchReport, QueryFailure
+from viajante.orchestration import classify_failure
 from viajante.trip import search_trip
 
 FUTURE = date.today() + timedelta(days=30)
@@ -663,34 +668,146 @@ class ReturnLegDeadlineTests(McpControlCase):
         self.assertEqual(len(second["queries"][0]["offers"][0]["legs"]), 2)
         self.assertTrue(second["coverage"]["complete"])
 
-    def test_deadline_in_the_typical_calendar_is_not_swallowed(self) -> None:
+    def test_sequential_flights_keep_a_fare_that_arrived_before_the_typical_was_cut(self) -> None:
+        source = FakeCalendar(0.6)
+
+        def fetch_calendar(_seed, _start, _end):
+            interruptible_sleep(5)
+            checkpoint()
+            return []
+
+        source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
+        self.use_source(source)
+
+        async def main():
+            async with _session(mcp_server.build_server()) as session:
+                return await session.call_tool(
+                    "search_flights", _args(routes=ROUTES[:1], deadline_seconds=0.8)
+                )
+
+        result = asyncio.run(main())
+        self.assertFalse(result.isError, result)
+        payload = json.loads(result.content[0].text)
+        row = payload["queries"][0]
+        self.assertEqual(row["status"], "ok")
+        self.assertEqual(row["offers"][0]["price"], 480.0)
+        self.assertIsNone(row["offers"][0]["typical"])
+        self.assertFalse(payload["coverage"]["complete"])
+        self.assertEqual(payload["coverage"]["stopping_reason"], "deadline")
+        self.assertEqual(mcp_handlers._CACHE, {})
+
+    def test_a_cut_typical_lookup_keeps_the_fare_and_marks_the_search_cut(self) -> None:
         source = FakeCalendar()
 
         def fetch_calendar(_seed, _start, _end):
             raise SearchDeadline()
 
         source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
+        trips = tuple(FlightQuery("JFK", dest, FUTURE) for dest in ("LHR", "CDG", "FRA"))
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
-            report = search_flights(
-                (FlightQuery("JFK", "LHR", FUTURE),), fetch="sweep", currency="USD"
-            )
-        self.assertEqual(report.queries[0].error.code.value, "deadline")
+            report = search_flights(trips, fetch="sweep", currency="USD", deadline_seconds=30)
+        self.assertEqual([q.status for q in report.queries], ["ok", "ok", "ok"])
+        offer = report.queries[0].offers[0]
+        self.assertEqual(offer.price, 480.0)
+        self.assertIsNone(offer.typical)
+        self.assertFalse(report.coverage.complete)
+        self.assertEqual(report.coverage.stopping_reason, "deadline")
+        self.assertEqual(report.coverage.succeeded, 3)
 
-    def test_a_result_that_used_up_its_deadline_is_never_cached(self) -> None:
+    def test_a_cut_typical_lookup_is_unknown_not_cached_as_none(self) -> None:
+        source = FakeCalendar()
+        source.fetch_calendar = lambda *_a: (_ for _ in ()).throw(SearchDeadline())  # type: ignore[method-assign]
+        cache: dict = {}
+        seed = FlightQuery("JFK", "LHR", FUTURE)
+        with active(SearchControl()) as control:
+            self.assertIsNone(_calendar_summary_from_source(source, seed, cache))
+        self.assertEqual(cache, {})
+        self.assertTrue(control.cut)
+
+    def test_explore_keeps_the_places_and_fare_when_the_typical_is_cut(self) -> None:
+        source = FakeCalendar()
+
+        def fetch_calendar(_seed, _start, _end):
+            raise SearchDeadline()
+
+        source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
+        report = search_explore(
+            "JFK", FUTURE, currency="USD", source=source, top=1, deadline_seconds=30
+        )
+        self.assertIsNone(report.error)
+        self.assertEqual(
+            [(d.iata, d.price, d.typical) for d in report.destinations], [("LHR", 480.0, None)]
+        )
+        self.assertFalse(report.coverage.complete)
+        self.assertEqual(report.coverage.stopping_reason, "deadline")
+
+    def test_explore_through_the_tool_returns_the_arrived_fare_and_is_not_cached(self) -> None:
+        source = FakeCalendar(0.2)
+
+        def fetch_calendar(_seed, _start, _end):
+            interruptible_sleep(5)
+            checkpoint()
+            return []
+
+        source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
+        payload = self._explore_via_client(source, deadline_seconds=0.8)
+        self.assertEqual([d["iata"] for d in payload["destinations"]], ["LHR"])
+        self.assertEqual(payload["destinations"][0]["price"], 480.0)
+        self.assertNotIn("typical", payload["destinations"][0])
+        self.assertFalse(payload["coverage"]["complete"])
+        self.assertEqual(mcp_handlers._CACHE, {})
+
+    def _explore_via_client(self, source, **extra: object) -> dict:
+        async def main():
+            async with _session(mcp_server.build_server()) as session:
+                args = {"origin": "JFK", "start": str(FUTURE), "currency": "USD", "top": 1, **extra}
+                return await session.call_tool("search_explore", args)
+
+        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
+            result = asyncio.run(main())
+        self.assertFalse(result.isError, result)
+        return json.loads(result.content[0].text)
+
+    def test_the_cut_flag_decides_the_cache_not_the_clock(self) -> None:
         runs: list[int] = []
 
         @mcp_handlers._cached
-        def tool(*, deadline_seconds=None):
+        def tool(*, cut=False, deadline_seconds=None):
             runs.append(1)
             time.sleep(0.05)
+            if cut:
+                note_cut()
             return {"queries": []}
 
-        tool(deadline_seconds=0.01)
-        tool(deadline_seconds=0.01)
-        self.assertEqual(len(runs), 2)
-        tool(deadline_seconds=30)
-        tool(deadline_seconds=None)
-        self.assertEqual(len(runs), 3, "a complete result under its deadline is replayed")
+        tool(cut=True, deadline_seconds=30)
+        tool(cut=True, deadline_seconds=30)
+        self.assertEqual(len(runs), 2, "a cut search is never replayed")
+        tool(deadline_seconds=0.001)
+        tool(deadline_seconds=0.001)
+        self.assertEqual(len(runs), 3, "running past an unchecked deadline cuts nothing")
+
+    def test_cut_is_set_by_a_raised_deadline_or_a_shortened_sleep_only(self) -> None:
+        clock = [0.0]
+        control = SearchControl(deadline_seconds=10, clock=lambda: clock[0])
+        control.wait(0)
+        self.assertFalse(control.cut, "a sleep the deadline did not shorten cuts nothing")
+        clock[0] = 8.0
+        control.wait(5)
+        self.assertTrue(control.cut, "a sleep the deadline shortened is a cut")
+
+        parent = SearchControl()
+        inner = SearchControl(deadline_seconds=1, clock=lambda: clock[0], parent=parent)
+        inner.checkpoint()
+        self.assertFalse(inner.cut or parent.cut)
+        clock[0] = 9.5
+        with self.assertRaises(SearchDeadline):
+            inner.checkpoint()
+        self.assertTrue(inner.cut and parent.cut, "the enclosing search sees the cut")
+
+    def test_classifying_a_deadline_marks_the_search_cut(self) -> None:
+        with active(SearchControl()) as control:
+            classify_failure(SearchDeadline())
+        self.assertTrue(control.cut)
 
 
 class ProgressRobustnessTests(unittest.TestCase):
@@ -724,9 +841,15 @@ class ProgressRobustnessTests(unittest.TestCase):
             await relay.drain()
 
         err = io.StringIO()
-        with contextlib.redirect_stderr(err):
+        with (
+            patch.object(mcp_server, "_PROGRESS_WARNED", False),
+            contextlib.redirect_stderr(err),
+        ):
             asyncio.run(main())
-        self.assertEqual(err.getvalue().count("progress notification failed"), 1)
+            asyncio.run(main())
+        self.assertEqual(
+            err.getvalue().count("progress notification failed"), 1, "once per process"
+        )
         self.assertIn("transport closed", err.getvalue())
 
     def test_the_last_held_line_is_flushed_when_the_search_finishes(self) -> None:
@@ -764,6 +887,58 @@ class ProgressRobustnessTests(unittest.TestCase):
 
         asyncio.run(main())
         self.assertEqual(sent, [(2.0, 3.0), (3.0, 3.0)])
+
+
+class HotelAndDatesCutTests(unittest.TestCase):
+    def test_a_cut_relevance_page_keeps_the_price_page_that_arrived(self) -> None:
+        url = "https://www.google.com/travel/search"
+        cheap = _wrap_wrb(_search_payload(_hotel_record(title="Cheap", rating=2.0)))
+
+        class Client(_ScriptedHotelClient):
+            def post_many(self, jobs, *, timeout):
+                return [
+                    SweepHttpResponse(200, cheap, url),
+                    SweepHttpResponse(0, "", url, deadline=True),
+                ]
+
+        rated = HotelQuery("Prague", FUTURE, FUTURE + timedelta(days=3), min_rating=4.5)
+        source = GoogleHotelsSource(client=Client([]), currency="CZK")
+        with active(SearchControl()) as control:
+            page = source.fetch(rated, build_applied_filters(rated, currency="CZK"), 24)
+        self.assertEqual([card.title for card in page.cards], ["Cheap"])
+        self.assertTrue(control.cut)
+
+    def test_a_cut_hotel_step_without_a_failed_row_still_reads_incomplete(self) -> None:
+        report = HotelSearchReport(datetime.now(), (), currency="CZK")
+        self.assertNotIn("coverage", report.to_dict())
+        cut = cut_by_deadline(report)
+        self.assertTrue(cut.deadline_cut)
+        coverage = cut.to_dict()["coverage"]
+        self.assertFalse(coverage["complete"])
+        self.assertEqual(coverage["stopping_reason"], "deadline")
+
+    def test_a_single_post_replay_cut_keeps_days_that_arrived(self) -> None:
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+        blocked = SweepHttpResponse(503, "", "https://x")
+
+        class Client(_MuxFakeSweepClient):
+            def post_many(self, jobs, *, timeout):
+                return [
+                    self._response(jobs[0].url),
+                    self._response(jobs[1].url),
+                    blocked,
+                ]
+
+            def post(self, url, *, data, headers, timeout):
+                raise SearchDeadline()
+
+        source = GoogleFlightsHttpSource(client=Client(shop_text=shop), currency="USD")
+        trips = tuple(FlightQuery("JFK", "LHR", FUTURE + timedelta(days=i)) for i in range(3))
+        with patch("viajante.google_flights.SWEEP_RETRY_BACKOFF_SECONDS", 0):
+            results = source.fetch_many(trips)
+        self.assertEqual(results[0][0].airline, "Vueling")
+        self.assertEqual(results[1][0].airline, "Vueling")
+        self.assertIsInstance(results[2], SearchDeadline)
 
 
 class PartialBatchTests(unittest.TestCase):

@@ -10,6 +10,7 @@ from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
+from viajante.control import SearchControl, active, current_control
 from viajante.dates import (
     flex_window,
     parse_route_pair,
@@ -100,12 +101,11 @@ def _cached(fn):
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
             return _owned({**hit[1], "cached": True})
-        result = fn(*args, **kwargs)
-        deadline = kwargs.get("deadline_seconds")
-        # ponytail: a result that took the whole deadline may have degraded a step quietly,
-        # so it is never replayed; a complete result just under the deadline is cached.
-        ran_out = deadline is not None and time.monotonic() - now >= deadline
-        if not ran_out and not failure_codes(result):
+        control = current_control() or SearchControl()
+        with active(control):
+            result = fn(*args, **kwargs)
+        # A deadline that cut any step, even one that left no failed row, is never replayed.
+        if not control.cut and not failure_codes(result):
             for stale in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
                 del _CACHE[stale]
             _CACHE[key] = (now, result)

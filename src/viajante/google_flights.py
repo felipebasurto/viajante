@@ -842,7 +842,13 @@ class GoogleFlightsHttpSource:
                 results.append(exc)
         client, replay = self._plan_replay(client, results)
         if replay:
-            retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
+            try:
+                retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
+            except SearchDeadline as exc:
+                # Days that already arrived stay; only the replayed ones were cut.
+                for index in replay:
+                    results[index] = exc
+                return results
             for index, response in zip(replay, retried, strict=True):
                 try:
                     results[index] = self._cards_from_shopping_response(
@@ -895,7 +901,12 @@ class GoogleFlightsHttpSource:
                 query, start, end = jobs[index]
                 retry_posts.append(self._shopping_post(query))
                 retry_posts.append(self._calendar_post(query, start, end))
-            retried = dispatch_posts(client, retry_posts, timeout=self._timeout)
+            try:
+                retried = dispatch_posts(client, retry_posts, timeout=self._timeout)
+            except SearchDeadline as exc:
+                for index in replay:
+                    results[index] = (exc, ())
+                return results
             for offset, index in enumerate(replay):
                 query, _start, _end = jobs[index]
                 shop_resp = retried[2 * offset]

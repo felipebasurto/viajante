@@ -151,6 +151,7 @@ Compute ISO dates from today; do not send a past start.
 _CONTEXT_FACTORY: Optional[Callable[[], Any]] = None
 _CURRENT: list = []
 _ENV_DEADLINE: Optional[float] = None
+_PROGRESS_WARNED = False
 # Replaced in build_server by a strict number type (pydantic ships with the mcp extra).
 _DeadlineSeconds: Any = Optional[float]
 
@@ -191,7 +192,6 @@ class ProgressRelay:
         self._pending: Optional[tuple[float, Optional[float], str]] = None
         self._timer: Optional[threading.Timer] = None
         self._closed = False
-        self._warned = False
         try:
             self._with_message = "message" in inspect.signature(ctx.report_progress).parameters
         except (TypeError, ValueError, AttributeError):
@@ -252,8 +252,9 @@ class ProgressRelay:
             else:
                 await self._ctx.report_progress(value, total)
         except Exception as exc:
-            if not self._warned:
-                self._warned = True
+            global _PROGRESS_WARNED
+            if not _PROGRESS_WARNED:
+                _PROGRESS_WARNED = True
                 print(f"viajante: progress notification failed: {exc}", file=sys.stderr)
 
     def close(self) -> None:
