@@ -68,6 +68,8 @@ split_stay_costs, verify_answer, get_runtime_info.
 Also search_split_tickets (see Split tickets), a search that takes the one-search lock.
 Also recheck_offer, a search that takes the one-search lock (see Re-checking an offer).
 Also get_guide, which returns this guide (the same text as the viajante://guide resource).
+Also price_history (local read of recorded observations; may run during a search) and
+watch_price (a search that takes the one-search lock; see Price history and watches).
 No auth. One search at a time in this process. A second search while one is
 running raises "a viajante search is already running in this process" immediately.
 That busy error is not MCP timeout -32001; do not treat timeouts as lock-busy
@@ -197,6 +199,31 @@ filtered_out (an answered not_among_offers stays ok); check_failed carries the f
 not_loaded; incomplete_identity is failed and blocked. Caller-typed values are not recorded as
 owned evidence. It is not a booking guarantee; the price is confirmed only on the provider's own
 page.
+
+## Price history and watches
+
+price_history reads this machine's own recorded observations and reports, for one exact query in
+one currency, first_seen, last_seen, lowest, highest and the change since the previous
+observation. One observation means no trend. It never predicts and never compares or converts
+currencies: each currency is its own series. Recording is opt-in: the server environment needs
+VIAJANTE_PRICE_HISTORY=1 (unset it to stop; `viajante history --clear` deletes the log). Only a
+real search that returned a priced offer is recorded; a cached replay, an empty result and a
+rate-limited or blocked search record nothing. recheck_offer goes through the same search, so with
+history on it also records one observation: a real observed price, nothing more.
+
+If the log exists but cannot be read, price_history returns read_error and series null (unknown,
+not empty), with status failed, completeness blocked and error_code history_unreadable. Do not
+report that as "no history".
+
+watch_price re-runs a saved search_flights or search_hotels argument set on demand and reports the
+change since the last observation of the same query and currency. It saves the watch and records
+its observation (even when the global opt-in is off), so it is not read-only. It takes the
+one-search lock, the cooldown and the 5-minute cache like any search; its envelope is the inner
+search's, with completeness partial when history could not be read (change is then null). It
+sends no notification and schedules nothing: do not call it in a loop, because Google rate-limits.
+Saving under an existing name replaces that watch, and kind is flight or hotel as in price_history.
+If the saved watches file cannot be read, the list is watches null with status failed, completeness
+blocked and error_code watches_unreadable (never an empty list), and saving or removing refuses.
 
 ## Hotels and stays
 

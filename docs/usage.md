@@ -439,6 +439,72 @@ confirmed only on the provider's own page. The fresh search compares up to the
 100 cheapest one-way offers (20 for packaged trips); the result notes any
 truncation.
 
+## Price history and watches
+
+Viajante can remember the prices it observed, locally, so you can see how a
+query moved between your own checks. It is off by default. Opt in for the CLI
+and the MCP server with an environment variable:
+
+```bash
+export VIAJANTE_PRICE_HISTORY=1     # record; unset it (or set 0) to stop
+```
+
+For an MCP client, put the variable in the server's `env` block. Each real
+search result with at least one priced offer appends one line to
+`price-history.jsonl` in the state directory: route or stay identity, the query
+and filters that change price (dates, passengers, cabin, stops, bags, airline
+and layover filters, `top`, `sort`, and so on), the cheapest returned amount and
+its currency, the number of offers, provider, backend, and `observed_at`.
+Failures, empty results, rate-limited searches, and replayed MCP cache hits are
+never recorded. A `recheck-offer` is a real search and is recorded too when the opt-in is on. Entries are never edited; the file keeps the newest 2000.
+Currencies are never converted.
+
+```bash
+viajante history --route JFK-LHR --date 2027-03-01
+viajante history --kind hotel --location Lisbon
+viajante history --clear            # delete the whole log
+```
+
+`viajante history` and the MCP `price_history` tool return one series per
+exact query and currency, with first seen, last seen, lowest, highest, and the
+change since the previous observation. Queries that differ in any recorded
+parameter, and observations in different currencies, are separate series and
+are never compared. One observation is reported as such. There is no
+prediction. If the log exists but cannot be read, `price_history` returns
+`read_error` with `series` null (unknown, not empty) and a failed, blocked
+result (`error_code` `history_unreadable`).
+
+A watch is a saved `search_flights` or `search_hotels` argument set that you
+re-run on demand:
+
+```bash
+viajante watch jfk-lhr --kind flight \
+  --params '{"routes": ["JFK-LHR:2027-03-01"], "currency": "USD"}'
+viajante watch jfk-lhr              # run again later: reports the change
+viajante watch --list
+viajante watch jfk-lhr --remove
+```
+
+A watch run records its own observation even when the global opt-in is off. It
+goes through the normal search path, so it respects the Google cooldown, the
+5-minute cache (a cached run says so and records nothing), and the single
+search lock. A proxy is never stored in a watch. Saving builds the watch's
+queries first, so a bad route, date or filter is rejected and not persisted.
+Saving under an existing name replaces that watch. `--kind` is `flight` or
+`hotel`, the same words `history --kind` and the MCP tools use.
+
+The log and the watches file are updated under an exclusive lock (a `.lock`
+file beside each in the state directory), so a scheduled `viajante watch`
+running next to the MCP server cannot drop each other's entries. If the watches
+file exists but cannot be read (corrupt or unreadable), listing reports it as
+unreadable (`watches: null`) rather than an empty list, and saving or removing
+refuses and leaves the file as it was.
+
+Viajante sends no notifications and runs no scheduler. To check periodically,
+call `viajante watch NAME` from your own cron job or agent, at a low frequency
+(a few times a day at most, never in a tight loop): Google rate-limits, and
+after a limit viajante pauses Google searches on the machine for minutes.
+
 ## Saving results and handling errors
 
 Search commands print tables. Add `--save FILE` to write JSON as well:
@@ -470,7 +536,9 @@ with the command, version, and error, after removing personal information.
 Browser state and failure diagnostics live outside the checkout, under
 `VIAJANTE_STATE_DIR`, `$XDG_STATE_HOME/viajante`, or
 `~/.local/state/viajante`, in that order of preference. JSON is saved only
-when requested, using a temporary file followed by a rename.
+when requested, using a temporary file followed by a rename. The opt-in price
+history (`price-history.jsonl`) and saved watches (`price-watches.json`) live
+there too.
 
 ## Python library
 
@@ -559,12 +627,15 @@ over a real stdio session as the client sees them:
 absolute bytes (a raw compact-JSON measure read 30615 before and 33303 after) but
 the same roughly 2.7 KB difference.
 
-- **Annotations and titles.** All 19 tools carry a title and read-only
-  annotations (`readOnlyHint: true`, `destructiveHint: false`,
-  `idempotentHint: true`). `openWorldHint` is `true` for the tools that ask a
+- **Annotations and titles.** All 21 tools carry a title and annotations
+  (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`),
+  except `watch_price`, which writes (it saves the watch and records the
+  observation): `readOnlyHint: false`, `idempotentHint: false`,
+  `destructiveHint: false`. `openWorldHint` is `true` for the tools that ask a
   provider (`search_flights`, `search_dates`, `search_flex`, `search_explore`,
-  `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_hidden_city`) and
-  `false` for the local ones. This needs `mcp>=1.14.1`.
+  `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_split_tickets`,
+  `search_hidden_city`, `recheck_offer`, `watch_price`) and `false` for the local
+  ones. This needs `mcp>=1.14.1`.
 - **Guide.** The server instructions hold only the load-bearing rules. The full
   operational guide is the `viajante://guide` resource (markdown) and the
   `get_guide` tool for clients without resource support.

@@ -4,6 +4,7 @@ import json
 import unittest
 from datetime import date, datetime, timezone
 
+import _isolate  # noqa: F401
 from viajante.models import (
     DateCalendarReport,
     DatePriceRow,

@@ -6,6 +6,7 @@ from contextlib import redirect_stdout
 from datetime import date
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.airports import (
     airport_geo,
     dest_blocked_by_exclude_regions,

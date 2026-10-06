@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlparse
 
+import _isolate  # noqa: F401
 from viajante.dates import search_flex
 from viajante.flights import _normalize_offer, classify_failure, search_flights
 from viajante.google_flights import (

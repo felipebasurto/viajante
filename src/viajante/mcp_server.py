@@ -38,6 +38,7 @@ from viajante.mcp_handlers import (
 from viajante.models import EmptyReason
 from viajante.runtime import get_runtime_info as runtime_info
 from viajante.split import DEFAULT_MIN_CONNECTION_HOURS
+from viajante.watch import price_history_tool, watch_price_tool
 
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
@@ -63,7 +64,7 @@ Checkout: uv sync --extra mcp && viajante-mcp
 Tools: search_flights, search_dates, search_flex, search_explore, search_hotels,
 search_hotel_rooms, search_trip, search_split_tickets, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, recheck_offer, plan_stay_blocks,
-split_stay_costs, verify_answer, get_runtime_info, get_guide.
+split_stay_costs, verify_answer, price_history, watch_price, get_runtime_info, get_guide.
 
 Server instructions (the full guide is the viajante://guide resource):
 
@@ -196,14 +197,16 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
 
     server = ViajanteServer("viajante", instructions=_HELP, **options)
 
-    def tool(title: str, *, network: bool, envelope: bool = True):
-        # Every tool only reads; openWorldHint is True only when the tool asks a provider.
+    def tool(title: str, *, network: bool, envelope: bool = True, writes: bool = False):
+        # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
+        # provider. A writing tool is neither read-only nor idempotent (it appends), but
+        # it never deletes: destructiveHint stays False.
         register = server.tool(
             title=title,
             annotations=ToolAnnotations(
-                readOnlyHint=True,
+                readOnlyHint=not writes,
                 destructiveHint=False,
-                idempotentHint=True,
+                idempotentHint=not writes,
                 openWorldHint=network,
             ),
         )
@@ -809,6 +812,52 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         during a search.
         """
         return dict(await run_lookup_tool(verify_answer_tool, **locals()))
+
+    @tool("Price history", network=False)
+    async def price_history(
+        kind: str | None = None,
+        route: str | None = None,
+        date: str | None = None,
+        location: str | None = None,
+        query_key: str | None = None,
+        currency: str | None = None,
+        limit: int = 20,
+    ) -> dict:
+        """Local: prices this machine observed for a route/date or hotel stay.
+
+        Reads the opt-in log (VIAJANTE_PRICE_HISTORY=1 in the server environment).
+        Each series is one exact query (same dates, passengers, cabin, stops, filters)
+        in one currency, with first_seen, last_seen, lowest, highest and the change
+        since the previous observation. One observation says so and reports no trend.
+        Observations in different currencies are separate series and never compared.
+        route is ORIGIN-DEST; date matches a departure, return, check-in or check-out
+        date; location names a hotel stay. No forecast, no estimate. A log that cannot
+        be read gives read_error and series null (unknown, not empty). May run during
+        a search.
+        """
+        return dict(await run_lookup_tool(price_history_tool, **locals()))
+
+    @tool("Watch a price", network=True, writes=True)
+    async def watch_price(
+        name: str | None = None,
+        kind: str | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        """Re-run a saved flight or hotel search once and report the change.
+
+        With no name: list saved watches (watches null and status failed when the
+        saved file cannot be read; never an empty list for an unreadable file). With
+        name, kind (flight or hotel, as in price_history) and params (the
+        search_flights / search_hotels arguments): validate, save, then run it.
+        Saving under an existing name replaces that watch. With only a name: run the
+        saved search. Saving a watch and recording the
+        observation write to this machine's state directory. The run records its
+        observation even when the global opt-in is off, and reports the change versus
+        the last observation of the same query in the same currency. A cached replay
+        or a failed or rate-limited search records nothing. No scheduler, no
+        notification.
+        """
+        return dict(await run_mcp_tool(watch_price_tool, **locals()))
 
     @tool("Operational guide", network=False)
     def get_guide() -> dict:

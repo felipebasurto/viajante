@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers, skiplagged
 from viajante.explore import search_explore
 from viajante.flights import (

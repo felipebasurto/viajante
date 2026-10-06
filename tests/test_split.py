@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante import mcp_handlers
 from viajante.cli import _print_split_report, main
 from viajante.evidence import clear, verify_answer

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import threading
 import time
@@ -38,11 +39,13 @@ from viajante.flights import (
     parse_overnight_airports,
     parse_via_airports,
     search_flights,
+    validate_flight_search_args,
 )
 from viajante.hotels import (
     HotelSourceName,
     resolve_hotel_currency,
     search_hotels,
+    validate_hotel_search_args,
     validate_max_distance,
     validate_near,
 )
@@ -83,7 +86,27 @@ def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
             raise ValueError(f"{label} date is in the past: {value.isoformat()}")
 
 
+_VALIDATE_ONLY = contextvars.ContextVar("viajante_validate_only", default=False)
+
+
+class _Validated(Exception):
+    """Raised at the search lock while only checking arguments: nothing was sent."""
+
+
+def check_search_params(tool, params: Mapping[str, object]) -> None:
+    """Run a search tool's own argument checks and stop before any search or lock."""
+    token = _VALIDATE_ONLY.set(True)
+    try:
+        tool(**params)
+    except _Validated:
+        pass
+    finally:
+        _VALIDATE_ONLY.reset(token)
+
+
 def _with_search_lock(fn):
+    if _VALIDATE_ONLY.get():
+        raise _Validated
     if not _SEARCH_LOCK.acquire(blocking=False):
         raise ValueError("a viajante search is already running in this process")
     try:
@@ -182,32 +205,39 @@ def search_flights_tool(
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, first_origin_iata(trips[0]), baggage_buffer
     )
+    carriers = dict(
+        airlines=parse_airline_codes(airlines),
+        exclude_airlines=parse_airline_codes(exclude_airlines),
+        alliances=parse_alliances(alliance),
+        exclude_alliances=parse_alliances(exclude_alliance),
+    )
+    search = dict(
+        depart_window=parse_depart_window(depart_window),
+        arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
+        depart_after=parse_named_clock(depart_after, role="depart-after"),
+        max_duration_hours=max_duration,
+        min_layover_hours=min_layover,
+        max_layover_hours=max_layover,
+        via=parse_via_airports(via),
+        exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+        no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
+        require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
+        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
+        include_airports=parse_via_airports(include_airports, role="include-airports"),
+    )
+    validate_flight_search_args(top=top, sort=sort, fetch=fetch, **search)
     report = _with_search_lock(
         lambda: search_flights(
             trips,
             top=top,
             fetch=fetch,  # type: ignore[arg-type]
-            airlines=parse_airline_codes(airlines),
-            exclude_airlines=parse_airline_codes(exclude_airlines),
-            alliances=parse_alliances(alliance),
-            exclude_alliances=parse_alliances(exclude_alliance),
-            depart_window=parse_depart_window(depart_window),
-            arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-            depart_after=parse_named_clock(depart_after, role="depart-after"),
-            max_duration_hours=max_duration,
-            min_layover_hours=min_layover,
-            max_layover_hours=max_layover,
-            via=parse_via_airports(via),
-            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-            no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-            require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-            exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-            include_airports=parse_via_airports(include_airports, role="include-airports"),
             baggage_buffer=baggage_buffer,
             sort=sort,
             currency=currency,
             country=country,
             proxy=proxy,
+            **carriers,
+            **search,
         )
     )
     return _searched(reports_payload(report))
@@ -668,6 +698,7 @@ def search_hotels_tool(
     )
     near_point = validate_near(_near_point(near))
     max_distance_km = validate_max_distance(max_distance_km, near_point)
+    validate_hotel_search_args(queries, top=top, source=source)
     report = _with_search_lock(
         lambda: search_hotels(
             queries,

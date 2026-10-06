@@ -57,14 +57,16 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Fresh re-check of an earlier flight offer (`recheck-offer` / `recheck_offer`): `src/viajante/recheck.py`
 - Offline stay blocks and per-person cost split: `src/viajante/stays.py`
 - MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
+- Opt-in local observation log, per-query trend, recording hooks: `src/viajante/history.py`
+- Saved on-demand `watch` and the `price_history` / `watch_price` tool bodies: `src/viajante/watch.py`; their CLI: `src/viajante/history_cli.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
 
 `google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
 
 ## Public contract
 
-CLI: `viajante flights` (`--split-tickets`), `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `recheck-offer`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_split_tickets`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`, `get_guide`.
+CLI: `viajante flights` (`--split-tickets`), `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `recheck-offer`, `history`, `watch`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_split_tickets`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `price_history`, `watch_price`, `get_runtime_info`, `get_guide`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -369,6 +371,27 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   lock). Child or infant occupancy is rejected (hotel occupancy is adults-only).
   Hotel `price_basis` stays `total_stay`. Never invent a fare or a stay.
 
+## Price history
+
+Recording is opt-in: `VIAJANTE_PRICE_HISTORY=1` (CLI and MCP), or a `watch` run
+(an explicit request). It hooks `search_flights` / `search_hotels` themselves, so
+an MCP cache replay never reaches it and is never logged. Only a real
+`QuerySuccess` / `HotelQuerySuccess` with an offer becomes an entry (cheapest
+owned amount in the report's own currency); failures, empty results and
+cooldown-blocked searches record nothing. `price-history.jsonl` is append-only
+(oldest entries drop past `MAX_ENTRIES`; `viajante history --clear` deletes it).
+A series is one `query_key` in one currency: any differing query parameter or
+filter is a different series, and currencies are never merged or converted. One
+observation reports no trend. Never forecast, estimate a missing day, or compare
+across series. `watch_price` / `viajante watch` re-run a saved
+`search_flights` / `search_hotels` argument set only when called: no scheduler,
+no notification, no loop; a cached or rate-limited run records nothing. A
+`proxy` is never stored in a watch. Only a missing log is an empty log: any other read error must stop an append
+or `--clear` (the file stays) and be reported, never read as empty history.
+A recording failure must not lose the
+search result; a watch run surfaces it (`recording_error`) instead of claiming no offer. `price_history` may run during a search; `watch_price` is a search.
+On the MCP side `price_history` is a local result (`stamp_local`); an unreadable log is `failed` / `blocked` / `history_unreadable` with `series` null (unknown, not empty). `watch_price` list mode is local; a run copies the inner search's envelope (`partial` when history could not be read). `watch_price` is the one tool that writes, so it is not read-only or idempotent (`tool(..., writes=True)`). `watch_price` list mode on a corrupt or unreadable `price-watches.json` is `failed` / `blocked` / `watches_unreadable` with `watches` null; `save_watch` / `remove_watch` then refuse and leave the file byte-identical (`_load` is strict, like the log). A watch's `kind` is `flight` or `hotel` everywhere, and saving builds the queries first (`check_search_params`) so a bad route or date is never persisted. Read-modify-write on the log and the watches file runs under `storage.exclusive_lock` (`flock`, `msvcrt` on Windows, else a documented no-op). `recheck_offer` goes through the recorded `search_flights`, so with history on it also records one real observation.
+
 ## Local stay arithmetic and known limits
 
 Known release limits: a data-less status 13 can have a cause other than throttling
@@ -414,6 +437,11 @@ uv run viajante bench
 then `gate` and `score_ms` (`tests_ms` + owned `tests/bench/` parse). No Chromium.
 No live Google unless `VIAJANTE_BENCH_LIVE=1`; that extra `sweep_ms` is never the
 score. **Do not optimize `score_ms`.**
+
+The suite is isolated from the caller's environment (`tests/_isolate.py`: no
+`VIAJANTE_PRICE_HISTORY`, temporary `VIAJANTE_STATE_DIR`); every new
+`tests/test_*.py` must start with `import _isolate  # noqa: F401` (a test enforces it); the bench gate strips
+the opt-in from its subprocesses. Keep new tests off the real state dir.
 
 `pip install -e .` still works; `uv` is the reproducible path. Tests are offline.
 They must not launch Chromium or use the network. CI runs the suite on Python

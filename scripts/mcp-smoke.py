@@ -43,7 +43,7 @@ async def main() -> None:
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = (await session.list_tools()).tools
-            check(len(tools) == 19, f"expected 19 tools, got {sorted(t.name for t in tools)}")
+            check(len(tools) == 21, f"expected 21 tools, got {sorted(t.name for t in tools)}")
             bare = {tool.name for tool in tools if tool.outputSchema is None}
             check(bare == {"lookup_airports"}, f"tools without an output schema: {sorted(bare)}")
             for tool in tools:

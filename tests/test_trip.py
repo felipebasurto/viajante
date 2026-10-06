@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.flights import (
     _normalize_offer,
     expand_nearby_trips,

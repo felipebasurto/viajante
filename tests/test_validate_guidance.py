@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import _isolate  # noqa: F401
 from viajante.mcp_guide import GUIDE
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import _isolate  # noqa: F401
 from viajante import mcp_handlers
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.mcp_handlers import (
@@ -1117,6 +1118,8 @@ class McpServerImportTests(unittest.TestCase):
                 "plan_stay_blocks",
                 "split_stay_costs",
                 "verify_answer",
+                "price_history",
+                "watch_price",
                 "get_guide",
             ],
         )
@@ -1142,6 +1145,7 @@ class McpServerImportTests(unittest.TestCase):
             "search_split_tickets",
             "search_hidden_city",
             "recheck_offer",
+            "watch_price",
         }
 
         async def check_forwarding() -> None:

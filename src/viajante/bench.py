@@ -26,6 +26,7 @@ from viajante.google_flights_rpc import (
     ShoppingRejected,
     parse_shopping_body,
 )
+from viajante.history import ENV_RECORD
 from viajante.models import FlightQuery
 from viajante.quote import resolve_baggage_buffer
 
@@ -279,6 +280,7 @@ def run_gate(root: Path) -> tuple[bool, str, Optional[int]]:
     env = os.environ.copy()
     env[BENCH_RUNNING_ENV] = "1"
     env.pop(LIVE_ENV, None)
+    env.pop(ENV_RECORD, None)
     python = sys.executable
     checks = (
         ([python, "-m", "ruff", "check", "src", "tests"], "ruff check"),

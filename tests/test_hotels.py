@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import List, Sequence, Tuple, Union
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 import viajante.hotels as hotels_module
 from viajante.booking import BookingResultsTimeout, HotelPage, RawHotelCard
 from viajante.google_hotels_rpc import EmptyHotelResults, HotelsParseMiss

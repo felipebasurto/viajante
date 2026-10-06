@@ -71,6 +71,13 @@ Every result (except lookup_airports) opens with an envelope: status, completene
 - lookup_transfers: local transfer-partner table for a named program.
 - verify_answer: flags amounts, codes, dates, and links in a draft reply that no
   search in this process returned.
+- price_history: local read of this machine's recorded observations (opt-in via
+  VIAJANTE_PRICE_HISTORY=1). One series per exact query and currency: first/last/
+  lowest/highest and change since previous. One observation means no trend. No
+  forecast, no currency comparison.
+- watch_price: re-run one saved search_flights/search_hotels query on demand and
+  report the change vs its last observation. No notifications, no scheduler; do
+  not loop it (Google rate-limits). A cached or failed run records nothing.
 - validate_itinerary: local pass/fail/unknown check of selected offers against
   named constraints (layovers, stay length, bags). Unknown never becomes pass.
 
