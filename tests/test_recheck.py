@@ -4,6 +4,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime, timedelta, timezone
@@ -1037,37 +1038,56 @@ class EnvelopeTests(unittest.TestCase):
                 failed = self._run(_failed(code))
                 self._assert_envelope(failed, "failed", "blocked", "not_loaded", code.value)
 
+    def _assert_retry_fields_match_the_error(self, result: dict) -> None:
+        self.assertIsNotNone(result["retry_after"])
+        self.assertGreater(result["retry_after_seconds"], 0)
+        self.assertEqual(result["retry_after"], result["error"]["retry_after"])
+        self.assertEqual(result["retry_after_seconds"], result["error"]["retry_after_seconds"])
+
+    def test_a_rate_limit_repeats_the_errors_own_retry_fields(self) -> None:
+        error = SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message="Google is rate-limiting this machine",
+            rate_limited=True,
+            retry_until=time.time() + 90.4,
+        )
+        report = SearchReport(
+            searched_at=CHECKED,
+            queries=(QueryFailure(query=_query(), error=error),),
+            currency="USD",
+            fetch_backend="sweep",
+        )
+        limited = self._run(report)
+        self._assert_envelope(limited, "rate_limited", "blocked", "not_loaded", "blocked")
+        self._assert_retry_fields_match_the_error(limited)
+        self._assert_observed(limited)
+
     def test_a_rate_limit_carries_the_cooldown_and_observed_only_when_sent(self) -> None:
+        day = date.today() + timedelta(days=30)
+        previous = _previous(
+            _segment("JFK", "LHR", "19:30", "07:30", "BA178", day=day),
+            query=dict(_query(day).to_dict()),
+        )
         with (
             tempfile.TemporaryDirectory() as state,
             patch.dict(os.environ, {"VIAJANTE_STATE_DIR": state}),
         ):
             note_rate_limited()
-            limited = self._run(_failed(SearchErrorCode.BLOCKED, rate_limited=True))
-            self._assert_envelope(limited, "rate_limited", "blocked", "not_loaded", "blocked")
-            self.assertIsNotNone(limited["retry_after"])
-            self.assertGreater(limited["retry_after_seconds"], 0)
-            self._assert_observed(limited)
-            unsent = SearchReport(
-                searched_at=CHECKED,
-                queries=(
-                    QueryFailure(
-                        query=_query(),
-                        error=SearchError(
-                            code=SearchErrorCode.BLOCKED,
-                            message="Not sent. Google is rate-limiting this machine",
-                            rate_limited=True,
-                        ),
-                    ),
-                ),
-                currency="USD",
-                fetch_backend="sweep",
-            )
-            never = self._run(unsent)
-            self.assertIsNone(never["checked_at"])
-            self.assertIsNone(never["observed_at"])
-            self.assertIsNone(never["observed_at_basis"])
-            self.assertEqual(never["status"], "rate_limited")
+            with patch("viajante.google_flights.shared_chrome_sweep_client") as client:
+                refused = mcp_handlers.recheck_offer_tool(previous)
+        client.assert_not_called()
+        self._assert_envelope(refused, "rate_limited", "blocked", "not_loaded", "blocked")
+        self._assert_retry_fields_match_the_error(refused)
+        self.assertIsNone(refused["checked_at"])
+        self.assertIsNone(refused["observed_at"])
+        self.assertIsNone(refused["observed_at_basis"])
+
+    def test_a_proxied_rate_limit_without_a_cooldown_has_no_retry_fields(self) -> None:
+        limited = self._run(_failed(SearchErrorCode.BLOCKED, rate_limited=True))
+        self.assertEqual(limited["status"], "rate_limited")
+        self.assertIsNone(limited["retry_after"])
+        self.assertIsNone(limited["retry_after_seconds"])
+        self.assertNotIn("retry_after", limited["error"])
 
     def test_incomplete_offers_is_failed_and_partial(self) -> None:
         offer = _offer(900.0, (OUTBOUND,))

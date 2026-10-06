@@ -22,12 +22,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Mapping, Optional
 
-from viajante.ratelimit import (
-    GOOGLE_RATE_LIMIT_FILE,
-    NOT_SENT,
-    SKIPLAGGED_RATE_LIMIT_FILE,
-    rate_limit_status,
-)
+from viajante.ratelimit import NOT_SENT
+
+
+class EnvelopeShapeError(ValueError):
+    """An internal bug: a search result whose shape the envelope cannot read."""
+
 
 STATUSES = ("ok", "no_results", "rate_limited", "blocked", "timeout", "failed")
 COMPLETENESS = ("complete", "partial", "blocked")
@@ -48,7 +48,6 @@ EMPTY_NOTES = {
 }
 
 _FAILURE_PRIORITY = ("rate_limited", "blocked", "timeout", "failed")
-_COOLDOWN_FILES = {"google": GOOGLE_RATE_LIMIT_FILE, "skiplagged": SKIPLAGGED_RATE_LIMIT_FILE}
 
 
 @dataclass
@@ -62,6 +61,8 @@ class _Tally:
     scope_partial: bool = False
     observed: list[str] = field(default_factory=list)
     unsent: int = 0  # failures that never reached the provider (a recorded cooldown)
+    # per-error (retry_after epoch seconds, retry_after_seconds as the error stated it)
+    retry_ends: list[tuple[float, Optional[int]]] = field(default_factory=list)
     shapes: int = 0  # recognised payload shapes; zero means stamp_search was misused
 
 
@@ -92,6 +93,19 @@ def _error(
         return empty_as
     tally.failures.append((_failure_status(error), code, provider))
     tally.unsent += str(error.get("message", "")).startswith(NOT_SENT)
+    if error.get("rate_limited") and isinstance(error.get("retry_after"), str):
+        try:
+            end = datetime.strptime(error["retry_after"], "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            pass
+        else:
+            seconds = error.get("retry_after_seconds")
+            tally.retry_ends.append(
+                (
+                    end.replace(tzinfo=timezone.utc).timestamp(),
+                    seconds if isinstance(seconds, int) else None,
+                )
+            )
     return "not_loaded"
 
 
@@ -216,18 +230,15 @@ def _iso_z(epoch: float) -> str:
 
 
 def _retry_after(tally: _Tally, now: Optional[float]) -> tuple[Optional[str], Optional[int]]:
+    """The latest cooldown end a rate-limited error itself named; none if it named none."""
     current = time.time() if now is None else now
-    until = [
-        state["until"]
-        for _status, _code, provider in tally.failures
-        if _status == "rate_limited"
-        for state in [rate_limit_status(current, file=_COOLDOWN_FILES[provider])]
-        if state is not None
-    ]
+    until = [pair for pair in tally.retry_ends if pair[0] > current]
     if not until:
         return None, None
-    end = max(until)
-    return _iso_z(end), max(1, math.ceil(end - current))
+    end, seconds = max(until, key=lambda pair: pair[0])
+    # The error already rounded its end up to a whole second and derived its seconds from
+    # it; repeat both instead of deriving a second, slightly different pair.
+    return _iso_z(end), seconds if seconds is not None else max(1, math.ceil(end - current))
 
 
 def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
@@ -237,7 +248,7 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     if not tally.shapes:
         # Developer hint: a new provider-backed payload needs its shape in `_walk`; an
         # offline one uses `stamp_local`. The client only learns the result is unusable.
-        raise ValueError(
+        raise EnvelopeShapeError(
             "viajante could not read the shape of this search result, so it was not "
             "returned. This is a viajante bug, not a provider answer; no search outcome is implied."
         )
@@ -332,7 +343,9 @@ def stamp_recheck(payload: dict, *, now: Optional[float] = None) -> dict:
         error_code = str(error.get("code", payload.get("reason")))
         empty_reason = "not_loaded"
         completeness = "partial" if payload.get("reason") == "incomplete_offers" else "blocked"
-        retry = _retry_after(_Tally(failures=[(status, error_code, "google")]), now)
+        tally = _Tally()
+        _error(error, tally, "google")
+        retry = _retry_after(tally, now)
     elif outcome == "not_found":
         reason = payload.get("reason")
         if reason in ("provider_empty", "filtered"):

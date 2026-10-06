@@ -6,6 +6,7 @@ failed check on stderr.
 """
 
 import asyncio
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -42,7 +43,7 @@ async def main() -> None:
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = (await session.list_tools()).tools
-            check(len(tools) == 17, f"expected 17 tools, got {sorted(t.name for t in tools)}")
+            check(len(tools) == 18, f"expected 18 tools, got {sorted(t.name for t in tools)}")
             bare = {tool.name for tool in tools if tool.outputSchema is None}
             check(bare == {"lookup_airports"}, f"tools without an output schema: {sorted(bare)}")
             for tool in tools:
@@ -57,6 +58,19 @@ async def main() -> None:
             check(not missing, f"structuredContent lacks {sorted(missing)}")
             check(structured["status"] == "ok", f"status {structured['status']!r}")
             check(structured["completeness"] == "complete", f"completeness {structured!r}")
+            guide = await session.call_tool("get_guide", {})
+            check(not guide.isError, f"get_guide errored: {guide}")
+            structured = guide.structuredContent or {}
+            check("guide" in structured, "get_guide returned no guide")
+            check(not ENVELOPE - set(structured), "get_guide lacks the envelope")
+            bad = await session.call_tool("get_runtime_info", {"verbos": True})
+            check(bad.isError, "an undeclared argument was accepted")
+            text = bad.content[0].text
+            prefix = "Error executing tool get_runtime_info: "
+            check(text.startswith(prefix + "{"), f"unexpected error text {text!r}")
+            body = json.loads(text[len(prefix) :])["error"]
+            check(body["code"] == "invalid_parameter", f"error body {body!r}")
+            check(body["field"] == "verbos", f"error field {body!r}")
     print("mcp smoke ok")
 
 

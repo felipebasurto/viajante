@@ -66,6 +66,7 @@ from viajante.parsers import (
     parse_stops_count,
 )
 from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
+from viajante.ratelimit import cooldown_until
 from viajante.storage import default_state_dir
 from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
@@ -198,6 +199,7 @@ def classify_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc) or "Google Flights blocked the request.",
             rate_limited=exc.status == 429,
+            retry_until=cooldown_until(str(exc)) if exc.status == 429 else None,
         )
     if isinstance(exc, GoogleFlightsMarkupError):
         return SearchError(

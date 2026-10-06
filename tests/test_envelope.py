@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import math
 import os
 import sys
 import tempfile
+import time
 import unittest
 import warnings
 from datetime import date, datetime, timedelta, timezone
@@ -56,6 +58,7 @@ from viajante.ratelimit import (
     NOT_SENT,
     SKIPLAGGED_RATE_LIMIT_FILE,
     note_rate_limited,
+    rate_limit_advice,
 )
 from viajante.storage import reports_payload
 
@@ -287,8 +290,9 @@ class FlightEmptyReasonTests(_StateDirCase):
         self.assertEqual(payload["error_code"], "fetch_failed")
 
     def test_a_429_is_rate_limited_and_names_the_known_cooldown(self) -> None:
-        note_rate_limited(300.0, NOW, file=GOOGLE_RATE_LIMIT_FILE)
-        responses = {"LHR": GoogleFlightsBlocked("HTTP 429", status=429)}
+        start = time.time()
+        advice = rate_limit_advice(note_rate_limited(300.0, start, file=GOOGLE_RATE_LIMIT_FILE))
+        responses = {"LHR": GoogleFlightsBlocked(advice, status=429)}
         queries = (FlightQuery("JFK", "LHR", DAY, max_stops=1),)
         with (
             patch(
@@ -297,16 +301,29 @@ class FlightEmptyReasonTests(_StateDirCase):
             patch("viajante.flights.chromium_installed", return_value=False),
         ):
             report = search_flights(queries, top=3, fetch="sweep", currency="USD")
-        payload = stamp_search(reports_payload(report), now=NOW + 60)
+        payload = stamp_search(reports_payload(report), now=start + 60)
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
             ("rate_limited", "blocked", "not_loaded"),
         )
-        self.assertEqual(payload["retry_after_seconds"], 240)
-        self.assertEqual(
-            payload["retry_after"],
-            datetime.fromtimestamp(NOW + 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        error = payload["queries"][0]["error"]
+        self.assertIn(payload["retry_after_seconds"], (300, 301))
+        self.assertEqual(payload["retry_after_seconds"], error["retry_after_seconds"])
+        retry_after = datetime.fromtimestamp(math.ceil(start + 300), timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
         )
+        self.assertEqual(payload["retry_after"], retry_after)
+        self.assertEqual(payload["queries"][0]["error"]["retry_after"], retry_after)
+
+    def test_a_proxied_429_during_a_direct_cooldown_gets_no_top_level_retry_after(self) -> None:
+        note_rate_limited(300.0, time.time(), file=GOOGLE_RATE_LIMIT_FILE)
+        payload = _flights({"LHR": GoogleFlightsBlocked("HTTP 429", status=429)})
+        error = payload["queries"][0]["error"]
+        self.assertTrue(error["rate_limited"])
+        self.assertNotIn("retry_after", error)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertIsNone(payload["retry_after"])
+        self.assertIsNone(payload["retry_after_seconds"])
 
     def test_a_429_without_a_recorded_cooldown_invents_no_retry_after(self) -> None:
         payload = _flights({"LHR": GoogleFlightsBlocked("HTTP 429", status=429)})
@@ -396,14 +413,18 @@ class HotelEmptyReasonTests(_StateDirCase):
         )
 
     def test_not_loaded_on_a_hotel_rate_limit(self) -> None:
-        note_rate_limited(120.0, NOW, file=GOOGLE_RATE_LIMIT_FILE)
-        report = _hotels(HotelsBlocked("Google is rate-limiting", rate_limited=True))
-        payload = stamp_search(reports_payload(report), now=NOW)
+        start = time.time()
+        advice = rate_limit_advice(note_rate_limited(120.0, start, file=GOOGLE_RATE_LIMIT_FILE))
+        report = _hotels(HotelsBlocked(advice, rate_limited=True))
+        payload = stamp_search(reports_payload(report), now=start)
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
             ("rate_limited", "blocked", "not_loaded"),
         )
-        self.assertEqual(payload["retry_after_seconds"], 120)
+        self.assertIn(payload["retry_after_seconds"], (120, 121))
+        self.assertEqual(
+            payload["retry_after_seconds"], payload["queries"][0]["error"]["retry_after_seconds"]
+        )
 
     def test_not_loaded_on_a_booking_timeout(self) -> None:
         from viajante.booking import BookingResultsTimeout
@@ -627,7 +648,7 @@ class DatesFlexExploreTests(_StateDirCase):
 
 
 class SkiplaggedAndTripTests(_StateDirCase):
-    def _hidden(self, **kwargs: object) -> dict:
+    def _hidden(self, now: float = NOW, **kwargs: object) -> dict:
         report = HiddenCityReport(
             searched_at=datetime(2026, 8, 10, tzinfo=timezone.utc),
             origin="JFK",
@@ -635,7 +656,7 @@ class SkiplaggedAndTripTests(_StateDirCase):
             departure_date=DAY,
             **kwargs,
         )
-        return stamp_search(reports_payload(report), now=NOW)
+        return stamp_search(reports_payload(report), now=now)
 
     def test_hidden_city_no_results_is_provider_empty(self) -> None:
         payload = self._hidden(error=SearchError(SearchErrorCode.NO_RESULTS, "none"))
@@ -654,8 +675,12 @@ class SkiplaggedAndTripTests(_StateDirCase):
         )
 
     def test_hidden_city_rate_limit_reads_the_skiplagged_cooldown_only(self) -> None:
-        note_rate_limited(60.0, NOW, file=SKIPLAGGED_RATE_LIMIT_FILE)
-        payload = self._hidden(error=SearchError(SearchErrorCode.BLOCKED, "429", rate_limited=True))
+        start = float(math.floor(time.time()))
+        note_rate_limited(60.0, start, file=SKIPLAGGED_RATE_LIMIT_FILE)
+        error = SearchError(
+            SearchErrorCode.BLOCKED, "429", rate_limited=True, retry_until=start + 60
+        )
+        payload = self._hidden(error=error, now=start)
         self.assertEqual((payload["status"], payload["retry_after_seconds"]), ("rate_limited", 60))
 
     def test_hidden_city_rows_are_ok(self) -> None:
@@ -930,7 +955,7 @@ class OutputSchemaTests(unittest.TestCase):
 
     def test_every_tool_but_the_bare_list_advertises_the_envelope_schema(self) -> None:
         tools = {tool.name: tool for tool in asyncio.run(self.server.list_tools())}
-        self.assertEqual(len(tools), 17)
+        self.assertEqual(len(tools), 18)
         for name, tool in tools.items():
             if name == "lookup_airports":
                 self.assertIsNone(tool.outputSchema)
