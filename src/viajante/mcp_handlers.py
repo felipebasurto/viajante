@@ -93,7 +93,9 @@ def _cached(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        key = (fn.__name__, repr((args, sorted(kwargs.items()))))
+        # A complete result does not depend on how long the caller was willing to wait.
+        keyed = sorted((k, v) for k, v in kwargs.items() if k != "deadline_seconds")
+        key = (fn.__name__, repr((args, keyed)))
         now = time.monotonic()
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
@@ -150,6 +152,7 @@ def search_flights_tool(
     country: Optional[str] = None,
     nearby: bool = False,
     proxy: Optional[str] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         routes,
@@ -195,6 +198,7 @@ def search_flights_tool(
             currency=currency,
             country=country,
             proxy=proxy,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(reports_payload(report))
@@ -239,6 +243,7 @@ def search_dates_tool(
     baggage_buffer: Optional[int] = None,
     sort: Optional[FlightSort] = None,
     proxy: Optional[str] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     start_date = date.fromisoformat(start)
@@ -285,6 +290,7 @@ def search_dates_tool(
             baggage_buffer=baggage_buffer,
             sort=sort,
             proxy=proxy,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(reports_payload(report))
@@ -330,6 +336,7 @@ def search_flex_tool(
     currency: Optional[str] = None,
     country: Optional[str] = None,
     proxy: Optional[str] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     origin, destination = parse_route_pair(route)
     around_date = date.fromisoformat(around)
@@ -376,6 +383,7 @@ def search_flex_tool(
             currency=currency,
             country=country,
             proxy=proxy,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(reports_payload(report))
@@ -421,6 +429,7 @@ def search_explore_tool(
     sort: FlightSort = "price",
     baggage_buffer: Optional[int] = None,
     proxy: Optional[str] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     if month and start:
         raise ValueError("use either month or start, not both")
@@ -470,6 +479,7 @@ def search_explore_tool(
             sort=sort,
             baggage_buffer=baggage_buffer,
             proxy=proxy,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(reports_payload(report))
@@ -558,6 +568,7 @@ def search_hotels_tool(
     stays: Optional[Sequence[Mapping[str, object]]] = None,
     near: Optional[Mapping[str, float]] = None,
     max_distance_km: Optional[float] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     if source == "google" and min_rating is not None and min_rating > 5:
         raise ValueError("min_rating must be at most 5 with source google")
@@ -583,6 +594,7 @@ def search_hotels_tool(
             currency=currency,
             near=near_point,
             max_distance_km=max_distance_km,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(reports_payload(report))
@@ -657,6 +669,7 @@ def search_trip_tool(
     free_cancellation: bool = True,
     source: HotelSourceName = "google",
     nearby: bool = False,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     """Flights then hotel, one lock. trip_total omitted if either side missed."""
     if source == "google" and min_rating is not None and min_rating > 5:
@@ -729,6 +742,7 @@ def search_trip_tool(
             currency=currency,
             country=country,
             hotel_source=source,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(reports_payload(report))
