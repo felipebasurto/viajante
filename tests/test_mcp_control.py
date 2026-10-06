@@ -39,6 +39,7 @@ from viajante.flights import _calendar_summary_from_source, search_flights
 from viajante.google_flights import (
     ChromeSweepClient,
     GoogleFlightsHttpSource,
+    NoFlightsFound,
     RawFlightCard,
     SweepHttpResponse,
     SweepPost,
@@ -788,11 +789,11 @@ class ReturnLegDeadlineTests(McpControlCase):
 
     def test_cut_is_set_by_a_raised_deadline_or_a_shortened_sleep_only(self) -> None:
         clock = [0.0]
-        control = SearchControl(deadline_seconds=10, clock=lambda: clock[0])
+        control = SearchControl(deadline_seconds=1, clock=lambda: clock[0])
         control.wait(0)
         self.assertFalse(control.cut, "a sleep the deadline did not shorten cuts nothing")
-        clock[0] = 8.0
-        control.wait(5)
+        clock[0] = 0.9
+        control.wait(0.3)
         self.assertTrue(control.cut, "a sleep the deadline shortened is a cut")
 
         parent = SearchControl()
@@ -964,6 +965,87 @@ class PartialBatchTests(unittest.TestCase):
         first, second = source.fetch_many(trips)
         self.assertEqual(first[0].airline, "Vueling")
         self.assertIsInstance(second, SearchDeadline)
+
+
+class MergedEnvelopeTests(McpControlCase):
+    def _call(self, **extra: object) -> dict:
+        async def main():
+            server = mcp_server.build_server()
+            async with _session(server) as session:
+                return await session.call_tool("search_flights", _args(**extra))
+
+        result = asyncio.run(main())
+        self.assertFalse(result.isError, result)
+        return json.loads(result.content[0].text)
+
+    def test_partial_deadline_result_stays_ok_and_partial(self) -> None:
+        self.use_source(FakeFlights(delay=0.2))
+        payload = self._call(deadline_seconds=0.1)
+        self.assertEqual((payload["status"], payload["completeness"]), ("ok", "partial"))
+        self.assertIsNone(payload["empty_reason"])
+        self.assertEqual(payload["error_code"], "deadline")
+        self.assertIsNone(payload["retry_after"])
+        self.assertIsNone(payload["retry_after_seconds"])
+
+    def test_all_deadline_result_is_a_timeout_not_failed_or_blocked(self) -> None:
+        source = self.use_source(FakeFlights(delay=0.2))
+        payload = self._call(deadline_seconds=1e-9)
+        self.assertEqual(source.calls, 0)
+        self.assertEqual(payload["status"], "timeout")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["empty_reason"], "not_loaded")
+        self.assertEqual(payload["error_code"], "deadline")
+        self.assertEqual(payload["coverage"]["stopping_reason"], "deadline")
+        for row in payload["queries"]:
+            self.assertTrue(row["error"]["timeout"])
+            self.assertNotIn("retry_after", row["error"])
+            self.assertNotIn("retry_after_seconds", row["error"])
+            self.assertNotIn("rate_limited", row["error"])
+        self.assertIsNone(payload["retry_after"])
+        self.assertIsNone(payload["retry_after_seconds"])
+        self.assert_untouched()
+
+    def test_a_deadline_cut_of_the_calendar_replay_keeps_the_arrived_route(self) -> None:
+        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
+
+        class Client(_MuxFakeSweepClient):
+            def post_many(self, jobs, *, timeout):
+                self.post_many_calls += 1
+                if self.post_many_calls > 1:
+                    raise SearchDeadline()
+                return [
+                    SweepHttpResponse(503, "", jobs[0].url),
+                    self._response(jobs[1].url),
+                    self._response(jobs[2].url),
+                    self._response(jobs[3].url),
+                ]
+
+        source = GoogleFlightsHttpSource(client=Client(shop_text=shop), currency="USD")
+        jobs = [
+            (FlightQuery("JFK", dest, FUTURE), FUTURE, FUTURE + timedelta(days=3))
+            for dest in ("LHR", "CDG")
+        ]
+        (first, _), (second, _) = source.fetch_many_with_calendar(jobs)
+        self.assertIsInstance(first, SearchDeadline)
+        self.assertEqual(second[0].airline, "Vueling")
+
+    def test_a_skipped_detail_fallback_marks_the_search_cut(self) -> None:
+        class Empty(FakeFlights):
+            def fetch(self, trip):
+                time.sleep(0.15)
+                raise NoFlightsFound("empty")
+
+        self.use_source(Empty())
+        with (
+            patch("viajante.flights.playwright_available", return_value=True),
+            patch("viajante.flights.chromium_installed", return_value=True),
+            patch("viajante.flights.GoogleFlightsSource", side_effect=AssertionError("detail ran")),
+        ):
+            payload = mcp_handlers.search_flights_tool(
+                ROUTES[:1], fetch="sweep", currency="USD", deadline_seconds=0.1
+            )
+        self.assertEqual(payload["coverage"]["stopping_reason"], "deadline")
+        self.assert_untouched()
 
 
 if __name__ == "__main__":
