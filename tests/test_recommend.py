@@ -587,7 +587,10 @@ class SurfaceTests(unittest.TestCase):
 
     def test_guide_explains_filtered_out_with_a_pick(self) -> None:
         flat = " ".join(GUIDE.split())
-        self.assertIn("filtered_out (envelope status no_results) and a recommendation", flat)
+        self.assertIn(
+            "(envelope status no_results when every query is filtered_out)",
+            flat,
+        )
         self.assertIn("a relaxed pick, not an exact match", flat)
 
     def test_search_trip_flights_report_carries_recommendation(self) -> None:

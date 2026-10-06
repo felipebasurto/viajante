@@ -149,7 +149,8 @@ stops 0.15. Ties break by ranking cost, duration, departure, carrier.
 **Currency.** Offers whose currencies differ, or whose currency is unproven, are
 not compared on price: `price_comparison` says `skipped_mixed_currency` or
 `skipped_unknown_currency`, the price weight is 0, and there is no `cheapest`.
-Viajante does not convert.
+The other weights are rescaled (duration 0.7, stops 0.3), as `scoring.weights`
+shows. Viajante does not convert.
 
 **Wording.** `highlights` and `tradeoffs` restate returned fields only: fare
 text, duration, stops, layover city and length, clocks, carrier, bag counts. A
