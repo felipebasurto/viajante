@@ -227,6 +227,31 @@ class ImmutabilityAndBoundsTests(_State):
         path.write_text("not json\n" + path.read_text(), encoding="utf-8")
         self.assertEqual(len(history.read_observations()), 1)
 
+    def test_undecodable_file_reads_as_empty(self) -> None:
+        (self.state / history.HISTORY_FILE).write_bytes(b"\xff\xfe\x00bad")
+        self.assertEqual(history.read_observations(), [])
+
+    def test_hand_edited_rows_cannot_crash_readers(self) -> None:
+        self.enable()
+        self.record_flights(_flight_report(500.0))
+        good = history.read_observations()[0]
+        bad = [
+            {**good, "cheapest": "cheap"},
+            {**good, "cheapest": 0},
+            {**good, "cheapest": -5},
+            {**good, "cheapest": True},
+            {**good, "cheapest": float("nan")},
+            {**good, "query": "JFK-LHR"},
+            {**good, "filters": []},
+            {**good, "currency": None},
+            [1, 2],
+        ]
+        path = self.state / history.HISTORY_FILE
+        lines = [json.dumps(row) for row in bad] + [path.read_text().strip()]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.assertEqual([row["id"] for row in history.read_observations()], [good["id"]])
+        self.assertEqual(len(history.price_history()["series"]), 1)
+
     def test_clear_removes_the_log_and_reports_the_count(self) -> None:
         self.enable()
         self.record_flights(_flight_report(500.0))
@@ -390,6 +415,25 @@ class WatchTests(_State):
         self.assertEqual(result["errors"][0]["code"], "no_results")
         self.assertEqual(history.read_observations(), [])
 
+    def test_recording_failure_is_reported_not_called_no_offer(self) -> None:
+        err = io.StringIO()
+        with (
+            patch(
+                "viajante.history.append_observations",
+                side_effect=PermissionError("[Errno 13] Permission denied"),
+            ),
+            contextlib.redirect_stderr(err),
+        ):
+            result = self.run_watch(500.0, kind="flights", params=self.params())
+        self.assertEqual(result["recorded"], 0)
+        (item,) = result["results"]
+        self.assertEqual(item["current"]["cheapest"], 500.0)
+        self.assertFalse(item["recorded"])
+        self.assertIn("recording failed: [Errno 13] Permission denied", result["note"])
+        self.assertIn("Permission denied", result["recording_error"])
+        self.assertNotIn("no priced offer", result["note"])
+        self.assertEqual(history.read_observations(), [])
+
     def test_save_validation(self) -> None:
         with self.assertRaises(ValueError):
             watch.save_watch("x", "flights", {**self.params(), "proxy": "http://u:p@h:1"})
@@ -456,6 +500,16 @@ class CliTests(_State):
         self.record_flights(_flight_report(500.0))
         _, text = self.run_cli("history")
         self.assertIn("Only one observation recorded", text)
+
+    def test_clear_failure_is_a_clean_error(self) -> None:
+        err = io.StringIO()
+        with (
+            patch("viajante.history_cli.clear_history", side_effect=PermissionError("denied")),
+            contextlib.redirect_stderr(err),
+        ):
+            code, _ = self.run_cli("history", "--clear")
+        self.assertEqual(code, 1)
+        self.assertIn("error: could not clear the price history: denied", err.getvalue())
 
     def test_history_rejects_bad_route(self) -> None:
         code, _ = self.run_cli("history", "--route", "NYC")

@@ -18,11 +18,13 @@ import functools
 import hashlib
 import inspect
 import json
+import math
 import os
 import re
 import sys
 import uuid
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
@@ -40,6 +42,7 @@ DEFAULT_OBSERVATION_LIMIT = 20
 SCHEMA_VERSION = 1
 FLIGHT_PROVIDER = "google-flights"
 
+_TEXT_FIELDS = ("id", "kind", "query_key", "currency", "observed_at")
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FLIGHT_FILTERS = (
     "top",
@@ -62,7 +65,17 @@ _HOTEL_FILTERS = ("top", "source", "near", "max_distance_km")
 _DATE_KEYS = ("departure_date", "return_date", "check_in", "check_out")
 _ROUTE = re.compile(r"^([A-Za-z]{3})-([A-Za-z]{3})$")
 
-_sink: ContextVar[Optional[list]] = ContextVar("viajante_history_sink", default=None)
+
+@dataclass
+class Recording:
+    """What a forced recording block observed: stored entries, and any recording failure."""
+
+    entries: list[dict] = field(default_factory=list)
+    unsaved: list[dict] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+_sink: ContextVar[Optional[Recording]] = ContextVar("viajante_history_sink", default=None)
 
 
 def recording_enabled() -> bool:
@@ -70,9 +83,9 @@ def recording_enabled() -> bool:
 
 
 @contextlib.contextmanager
-def forced_recording() -> Iterator[list[dict]]:
-    """Record every search in this block, and collect the entries it wrote."""
-    sink: list[dict] = []
+def forced_recording() -> Iterator[Recording]:
+    """Record every search in this block; report the entries it stored or failed to store."""
+    sink = Recording()
     token = _sink.set(sink)
     try:
         yield sink
@@ -89,15 +102,25 @@ def _valid(line: str) -> Optional[dict]:
         row = json.loads(line)
     except ValueError:
         return None
-    needed = ("id", "kind", "query_key", "currency", "cheapest", "observed_at")
-    return row if isinstance(row, dict) and all(key in row for key in needed) else None
+    if not isinstance(row, dict):
+        return None
+    if not all(isinstance(row.get(key), str) for key in _TEXT_FIELDS):
+        return None
+    cheapest = row.get("cheapest")
+    if isinstance(cheapest, bool) or not isinstance(cheapest, (int, float)):
+        return None
+    if not math.isfinite(cheapest) or cheapest <= 0:
+        return None
+    if not isinstance(row.get("query"), dict) or not isinstance(row.get("filters"), dict):
+        return None
+    return row
 
 
 def read_observations() -> list[dict]:
     """Every readable entry, oldest first. Unreadable lines are skipped."""
     try:
         text = _path().read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return []
     return [row for row in map(_valid, text.splitlines()) if row is not None]
 
@@ -229,16 +252,21 @@ def _recorded(build: Callable[[Any, Mapping[str, Any]], list[dict]]):
         def wrapper(*args, **kwargs):
             report = search(*args, **kwargs)
             if recording_enabled():
+                sink = _sink.get()
+                entries: list[dict] = []
                 try:
                     bound = signature.bind(*args, **kwargs)
                     bound.apply_defaults()
                     entries = build(report, bound.arguments)
                     append_observations(entries)
-                    sink = _sink.get()
-                    if sink is not None:
-                        sink.extend(entries)
                 except Exception as exc:  # recording must never lose a real search result
                     print(f"price history not recorded: {exc}", file=sys.stderr)
+                    if sink is not None:
+                        sink.errors.append(str(exc))
+                        sink.unsaved.extend(entries)
+                else:
+                    if sink is not None:
+                        sink.entries.extend(entries)
             return report
 
         return wrapper

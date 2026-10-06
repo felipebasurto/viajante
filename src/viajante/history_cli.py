@@ -116,7 +116,11 @@ def _print_change(change: Mapping[str, Any] | None, currency: str) -> None:
 
 def run_history(args: argparse.Namespace) -> int:
     if args.clear:
-        print(f"Cleared {clear_history()} recorded observations.")
+        try:
+            print(f"Cleared {clear_history()} recorded observations.")
+        except OSError as exc:
+            print(f"error: could not clear the price history: {exc}", file=sys.stderr)
+            return 1
         return 0
     try:
         payload = price_history(

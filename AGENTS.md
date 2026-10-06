@@ -283,7 +283,7 @@ across series. `watch_price` / `viajante watch` re-run a saved
 `search_flights` / `search_hotels` argument set only when called: no scheduler,
 no notification, no loop; a cached or rate-limited run records nothing. A
 `proxy` is never stored in a watch. A recording failure must not lose the
-search result. `price_history` may run during a search; `watch_price` is a search.
+search result; a watch run surfaces it (`recording_error`) instead of claiming no offer. `price_history` may run during a search; `watch_price` is a search.
 
 ## Local stay arithmetic and known limits
 
@@ -313,6 +313,10 @@ uv run viajante bench
 then `gate` and `score_ms` (`tests_ms` + owned `tests/bench/` parse). No Chromium.
 No live Google unless `VIAJANTE_BENCH_LIVE=1`; that extra `sweep_ms` is never the
 score. **Do not optimize `score_ms`.**
+
+The suite is isolated from the caller's environment (`tests/_isolate.py`: no
+`VIAJANTE_PRICE_HISTORY`, temporary `VIAJANTE_STATE_DIR`); the bench gate strips
+the opt-in from its subprocesses. Keep new tests off the real state dir.
 
 `pip install -e .` still works; `uv` is the reproducible path. Tests are offline.
 They must not launch Chromium or use the network. CI runs the suite on Python

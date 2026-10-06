@@ -116,7 +116,7 @@ def watch_price_tool(
     stored = read_observations()
     results = []
     ids = [row["id"] for row in stored]
-    for entry in written:
+    for entry in [*written.entries, *written.unsaved]:
         before = stored[: ids.index(entry["id"])] if entry["id"] in ids else stored
         earlier = [
             row
@@ -134,6 +134,7 @@ def watch_price_tool(
             "currency": entry["currency"],
             "current": {"observed_at": entry["observed_at"], "cheapest": entry["cheapest"]},
             "change": change_between(earlier[-1], entry) if earlier else None,
+            "recorded": entry["id"] in ids,
         }
         if not earlier:
             result["note"] = "First observation of this query in this currency; nothing to compare."
@@ -145,7 +146,7 @@ def watch_price_tool(
         "name": name,
         "kind": spec["kind"],
         "cached": cached,
-        "recorded": len(written),
+        "recorded": len(written.entries),
         "results": results,
         "errors": _errors(payload),
     }
@@ -154,8 +155,13 @@ def watch_price_tool(
             "Replayed from the 5-minute cache; no new request was sent and no observation "
             "was recorded. Read price_history for the stored series."
         )
-    elif not written and not out["errors"]:
+    elif not results and not out["errors"]:
         out["note"] = "The search returned no priced offer, so nothing was recorded."
+    if written.errors:
+        out["recording_error"] = written.errors[0]
+        out["note"] = (
+            f"recording failed: {written.errors[0]}. The observed price is shown but not stored."
+        )
     return record(out)  # type: ignore[return-value]
 
 
