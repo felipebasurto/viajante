@@ -110,7 +110,7 @@ The server exposes thirteen tools:
 | `search_explore` | Discover destinations from an origin airport and price a shortlist. |
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
-| `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, substituted, not found, or check failed (the check could not complete, which never means the offer is gone). |
+| `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, not found, multiple matches, incomplete identity, or check failed (the check could not complete, which never means the offer is gone). |
 | `lookup_airports` | Look up airport codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
 | `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |

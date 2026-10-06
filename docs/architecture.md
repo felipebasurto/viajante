@@ -58,7 +58,7 @@ One library, three ways in:
 | `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
 | `search_trip` | `trip` | Flights then one hotel, plus a sum when both succeed. |
 | `search_hidden_city` | `hidden-city` | Skiplagged, opt-in, never mixed with Google evidence. |
-| `recheck_offer` | `recheck-offer` | One fresh Google Flights search matching an earlier offer by flight numbers and departure times: same price, price changed, substituted, or not found. |
+| `recheck_offer` | `recheck-offer` | One fresh Google Flights search matching an earlier offer by flight numbers and departure times: same price, price changed, not found, multiple matches, incomplete identity, or check failed (substituted only on request). |
 | `lookup_airports` | `airports` | Offline IATA lookup. |
 | `compare_awards` | `awards` | Award offer vs cash: cents per point, transfer paths. |
 | `lookup_transfers` | `points` | Local card-to-program transfer table. |

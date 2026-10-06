@@ -96,25 +96,35 @@ dest typical from the explore catalog mix or from other dests.
 `recheck_offer` / `viajante recheck-offer` is a search, not a local helper: one fresh
 Google Flights query that skips the MCP replay cache, runs under the one-search lock,
 and respects the Google cooldown. It matches an earlier offer by flight numbers plus
-scheduled departure times per segment (carrier plus times only when flight numbers are
-absent, stamped `match_basis: carrier_times`) and returns exactly one outcome:
-`same_price`, `price_changed`, `substituted`, `not_found`, or `check_failed`, with
-`checked_at`. A positive outcome always rests on a fresh provider match. `currency` must be
-the offer's own: a different one is refused, never converted or compared. `not_found` is a
-completed check that found nothing (`reason`: `provider_empty`, `filtered`,
-`not_among_offers`). `check_failed` has `check_completed: false`, a `reason` and the
-provider `error` (`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`,
+scheduled departure times per segment and never picks between ambiguous matches. The
+offer needs a full segment identity (flight number, origin, destination, departure
+clock); otherwise the outcome is `incomplete_identity`, no search is sent, and `missing`
+names the fields. `allow_loose_match` opts in to carrier plus departure times and stamps
+`loose_match: true`, `match_basis: carrier_times`. Exactly one outcome: `same_price`,
+`price_changed`, `not_found`, `multiple_matches` (more than one identical fresh offer:
+`candidates` lists their prices and times, no verdict), `incomplete_identity`,
+`check_failed`, or `substituted` (only with `allow_substitute`; by default a close
+alternative is a `not_found` / `not_among_offers` with a `closest_candidate` listed for
+information only). A positive outcome always rests on a fresh provider match.
+`currency` must be the offer's own: a different one is refused, never converted. The
+query (evidence or supplied) is replayed: cabin, stops, bags and airline/alliance filters
+ride the request; a `price_cap` is not sent but reported in `filter_violations` (also
+`max_stops`, `airlines`, `exclude_airlines`) when the matched fresh offer breaks it. `not_found` is
+a completed check (`reason`: `provider_empty`, `filtered`, `not_among_offers`).
+`check_failed` has `check_completed: false`, a `reason` and the provider `error`
+(`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`,
 `browser_unavailable`, `currency_mismatch`, or `incomplete_offers` when fresh round-trip or
 multi-city offers came back without every journey and nothing matched): the check did not
 run to an answer, which is not evidence the offer is gone. Never branch a rate limit into
 "gone". `substituted` needs a shared flight number, or the same marketing carrier within
-90 minutes of the original departure. `previous.source` is `search_evidence` only when the offer's `evidence_id`, price,
-currency and itinerary (every segment) match an offer a search in this process returned;
-anything else (hand-typed, invented or borrowed id, edited amount or itinerary, CLI) is
-`caller_supplied`, and its `previous` block and `differences[].previous` values are
-returned but not recorded in the evidence ledger. Re-check
-finalists before presenting them as current. A re-check is still not a booking guarantee: confirm the price on the
-provider's own page.
+90 minutes of the original departure. `previous.source` is `search_evidence` only when
+the offer's `evidence_id`, price, currency and itinerary (every segment) match an offer a
+search in this process returned, and then previous leg times are read from that ledger
+offer; anything else (hand-typed, invented or borrowed id, edited amount or itinerary,
+CLI) is `caller_supplied`, and its `previous` block and `differences[].previous` values
+(also inside `closest_candidate`) are returned but not recorded in the evidence ledger.
+Re-check finalists before presenting them as current. A re-check is still not a booking
+guarantee: confirm the price on the provider's own page.
 
 Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.
 The URL evidence reproduces a query, not guaranteed current fare availability.

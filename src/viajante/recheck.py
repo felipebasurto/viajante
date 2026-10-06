@@ -332,13 +332,56 @@ def _departed(day: date, clock: Optional[str], origin: str, now: datetime) -> bo
     return day < now.astimezone().date()
 
 
+@dataclass(frozen=True)
+class _Prepared:
+    offer: Mapping[str, Any]
+    evidence: Mapping[str, Any]
+    trip: Trip
+    price: float
+    currency: str
+    old: tuple
+    basis: str
+    missing: list[str]
+    source: str
+    # The legs previous times are read from: the ledger's offer when it owns the caller's.
+    reference: Mapping[str, Any]
+    price_cap: Optional[int]
+    query: Mapping[str, Any]
+
+
+def _missing_identity(old: tuple, loose: bool) -> tuple[str, list[str]]:
+    """(basis, missing) where missing is empty when the identity is complete for that basis."""
+    strict: list[str] = []
+    for j, journey in enumerate(old):
+        for k, seg in enumerate(journey):
+            for field in ("flight_number", "clock", "origin", "destination"):
+                if getattr(seg, field) is None:
+                    strict.append(f"journey {j} segment {k}: {field}")
+    if not strict:
+        return "flight_numbers", []
+    if loose:
+        weak = [
+            f"journey {j} segment {k}: {field}"
+            for j, journey in enumerate(old)
+            for k, seg in enumerate(journey)
+            for field, absent in (
+                ("departure clock", seg.clock is None),
+                ("carrier or airline", not (seg.carrier or seg.airline)),
+            )
+            if absent
+        ]
+        return "carrier_times", weak
+    return "flight_numbers", strict
+
+
 def _prepare(
     offer: Mapping[str, Any],
     query: Optional[Mapping[str, Any]],
     currency: Optional[str],
     now: datetime,
     ledger_offer: Optional[Callable[[str, float, str], Optional[Mapping[str, Any]]]],
-) -> tuple[Mapping[str, Any], Mapping[str, Any], Trip, float, str, tuple, str, str]:
+    loose: bool,
+) -> _Prepared:
     row = _mapping(offer, role="offer")
     if query is None and isinstance(row.get("query"), Mapping):
         query = row["query"]
@@ -364,23 +407,21 @@ def _prepare(
         )
 
     trip = _trip_from_query(query)
+    cap = _whole(query, "price_cap") if query.get("price_cap") is not None else None
+    if cap is not None and cap <= 0:
+        raise ValueError("query.price_cap must be positive")
     old = _journeys(offer)
     if len(old) != len(trip.legs):
         raise ValueError(
             f"offer carries {len(old)} journey(s) but its query needs {len(trip.legs)}; "
             "an incomplete itinerary cannot be re-checked"
         )
-    segments = [s for journey in old for s in journey]
-    if any(s.clock is None for s in segments):
-        raise ValueError("every offer segment needs a departure clock (HH:MM)")
     for leg, journey in zip(trip.legs, old, strict=True):
         if _departed(leg.departure_date, journey[0].clock, leg.origin, now):
             raise ValueError(
                 f"departure is in the past: {leg.departure_date.isoformat()} {journey[0].clock}"
             )
-    basis = "flight_numbers" if all(s.flight_number for s in segments) else "carrier_times"
-    if basis == "carrier_times" and not all(s.carrier or s.airline for s in segments):
-        raise ValueError("offer segments carry neither flight numbers nor carriers")
+    basis, missing = _missing_identity(old, loose)
     evidence_id = evidence.get("evidence_id")
     recorded = (
         ledger_offer(evidence_id, float(price), own)
@@ -388,8 +429,63 @@ def _prepare(
         else None
     )
     owned = recorded is not None and _journeys(recorded) == old
-    source = "search_evidence" if owned else "caller_supplied"
-    return offer, evidence, trip, float(price), own, old, basis, source
+    return _Prepared(
+        offer=offer,
+        evidence=evidence,
+        trip=trip,
+        price=float(price),
+        currency=own,
+        old=old,
+        basis=basis,
+        missing=missing,
+        source="search_evidence" if owned else "caller_supplied",
+        reference=recorded if owned else offer,  # type: ignore[arg-type]
+        price_cap=cap,
+        query=query,
+    )
+
+
+def _violations(
+    fresh: Mapping[str, Any], journeys: tuple, trip: Trip, price_cap: Optional[int]
+) -> list[str]:
+    """Replayed filters the fresh offer provably no longer satisfies. Unknown is not a breach."""
+    found: list[str] = []
+    if price_cap is not None and fresh["price"] > price_cap:
+        found.append("price_cap")
+    for leg, journey, row in zip(trip.legs, journeys, fresh["legs"], strict=True):
+        if row.get("segments") and len(journey) - 1 > leg.max_stops:
+            found.append("max_stops")
+            break
+    carriers = {s.carrier for journey in journeys for s in journey if s.carrier}
+    allowed = {c.upper() for c in getattr(trip, "airlines", None) or ()}
+    barred = {c.upper() for c in getattr(trip, "exclude_airlines", None) or ()}
+    if allowed and carriers - allowed:
+        found.append("airlines")
+    if carriers & barred:
+        found.append("exclude_airlines")
+    return found
+
+
+def _replayed(query: Mapping[str, Any]) -> list[str]:
+    names = ("cabin", "max_stops", "bags", "carry_on", "price_cap")
+    names += ("airlines", "exclude_airlines", "alliances", "exclude_alliances")
+    return [key for key in names if query.get(key) not in (None, [], ())]
+
+
+def _candidate(fresh: Mapping[str, Any], currency: str, journeys: tuple, **extra: object) -> dict:
+    return {
+        "price": fresh["price"],
+        "currency": currency,
+        "journeys": [
+            {
+                "departure": row.get("departure"),
+                "arrival": row.get("arrival"),
+                "flight_numbers": _numbers(journey),
+            }
+            for row, journey in zip(fresh["legs"], journeys, strict=True)
+        ],
+        **extra,
+    }
 
 
 def recheck_offer(
@@ -400,6 +496,8 @@ def recheck_offer(
     country: Optional[str] = None,
     fetch: Optional[str] = None,
     proxy: Optional[str] = None,
+    allow_loose_match: bool = False,
+    allow_substitute: bool = False,
     search: Optional[Callable[..., SearchReport]] = None,
     now: Optional[datetime] = None,
     ledger_offer: Optional[Callable[[str, float, str], Optional[Mapping[str, Any]]]] = None,
@@ -407,69 +505,110 @@ def recheck_offer(
     """Run one fresh Google Flights search and match ``offer`` by itinerary identity.
 
     ``offer`` is an offer from an earlier result (or a ``{query, offer}`` row), or enough
-    of one: ``price`` and ``legs[].segments[]`` with flight numbers and departure clocks.
-    ``query`` defaults to the offer's own evidence query. ``currency`` is the offer's own
-    currency: an offer that carries none needs it named, and a name that differs from the
-    one the offer carries is refused (viajante does not convert). ``ledger_offer(evidence_id,
-    price, currency)`` returns the offer a search in this process returned under that id.
-    Only when its itinerary also matches the caller's is ``previous`` ``search_evidence``;
-    otherwise it is ``caller_supplied``.
+    of one: ``price`` and ``legs[].segments[]`` with flight numbers, airports and departure
+    clocks. Anything less is ``incomplete_identity`` and no search is sent, unless
+    ``allow_loose_match`` accepts the weaker carrier plus departure-time identity (labelled
+    ``loose_match``). More than one identical fresh offer is ``multiple_matches``. A close
+    alternative is only ``substituted`` when ``allow_substitute`` is set; otherwise it is
+    listed as ``closest_candidate`` on a ``not_found``. ``query`` defaults to the offer's own
+    evidence query and is replayed (cabin, stops, bags, airline and alliance filters); a
+    ``price_cap`` in it is not sent but reported as ``filter_violations`` when the fresh
+    offer breaks it. ``currency`` is the offer's own: an offer that carries none needs it
+    named, and a different one is refused (viajante does not convert).
+    ``ledger_offer(evidence_id, price, currency)`` returns the offer a search in this process
+    returned under that id; only when its itinerary also matches the caller's is ``previous``
+    ``search_evidence``, otherwise ``caller_supplied``.
     """
     try:
-        offer, evidence, trip, price, own, old, basis, source = _prepare(
-            offer, query, currency, now or datetime.now(timezone.utc), ledger_offer
+        prep = _prepare(
+            offer,
+            query,
+            currency,
+            now or datetime.now(timezone.utc),
+            ledger_offer,
+            allow_loose_match,
         )
     except (KeyError, TypeError, AttributeError):
         raise ValueError("offer or query has a malformed field; check its types") from None
+    trip, old, price, own, basis = prep.trip, prep.old, prep.price, prep.currency, prep.basis
     segments = [s for journey in old for s in journey]
-
-    packaged = len(trip.legs) > 1
-    if fetch is None:
-        backend = evidence.get("fetch_backend")
-        fetch = backend if backend == "sweep" or (backend == "detail" and not packaged) else "auto"
-    report = (search or search_flights)(
-        [trip],
-        top=PACKAGED_TOP if packaged else ONE_WAY_TOP,
-        fetch=fetch,
-        sort="fare",
-        currency=own,
-        country=country,
-        proxy=proxy,
-    )
-    result = report.queries[0]
+    loose = basis == "carrier_times"
     notes: list[str] = []
     out: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
-        "checked_at": _stamp(report.searched_at),
+        "checked_at": None,
         "check_completed": True,
         "match_basis": basis,
+        "loose_match": loose,
         "previous": {
             "price": price,
             "currency": own,
-            "source": source,
+            "source": prep.source,
             "itinerary": [[_segment_json(s) for s in journey] for journey in old],
         },
         "query": dict(trip.to_dict()),
-        "fetch_backend": report.fetch_backend,
+        "filters_replayed": _replayed(prep.query),
+        "fetch_backend": None,
         "caveat": CAVEAT,
         "notes": notes,
     }
-    if basis == "carrier_times":
+    if prep.missing:
+        out.update(
+            outcome="incomplete_identity",
+            check_completed=False,
+            current=None,
+            reason="incomplete_identity",
+            missing=prep.missing,
+            match_basis=None,
+            loose_match=False,
+        )
         notes.append(
-            "Flight numbers are absent from the offer; matched by carrier and scheduled "
-            "departure times, which is a weaker identity."
+            "The offer does not carry a complete segment identity, so no search was sent and "
+            "nothing was compared."
+            + (
+                ""
+                if allow_loose_match
+                else " Set allow_loose_match to match by carrier and departure times, "
+                "which is a weaker identity."
+            )
+        )
+        return out
+    if loose:
+        notes.append(
+            "Loose match: flight numbers or airports are absent from the offer, so it was "
+            "matched by carrier and scheduled departure times, which is a weaker identity."
         )
     if country is None:
         notes.append(
             "No Google country (gl) was applied: offer evidence does not record the original "
             "search's country. Name country if the original search used one."
         )
-    if packaged:
+    if len(trip.legs) > 1:
         notes.append(
             "Each fresh outbound carries the one return that is unique at its cheapest "
             "package price. An original return that is still buyable but not that one can "
-            "read as a substitution; confirm multi-journey trips on the provider's page."
+            "read as a different itinerary; confirm multi-journey trips on the provider's page."
         )
+
+    packaged = len(trip.legs) > 1
+    fetch_mode = fetch
+    if fetch_mode is None:
+        backend = prep.evidence.get("fetch_backend")
+        fetch_mode = (
+            backend if backend == "sweep" or (backend == "detail" and not packaged) else "auto"
+        )
+    report = (search or search_flights)(
+        [trip],
+        top=PACKAGED_TOP if packaged else ONE_WAY_TOP,
+        fetch=fetch_mode,
+        sort="fare",
+        currency=own,
+        country=country,
+        proxy=proxy,
+    )
+    out["checked_at"] = _stamp(report.searched_at)
+    out["fetch_backend"] = report.fetch_backend
+    result = report.queries[0]
 
     if isinstance(result, QueryFailure):
         error = result.error
@@ -488,16 +627,33 @@ def recheck_offer(
     out["offers_compared"] = len(complete)
 
     identical = [(d, j) for d, j in complete if _identical(old, j, basis)]
+    if len(identical) > 1:
+        identical.sort(key=lambda pair: pair[0]["price"])
+        out.update(
+            outcome="multiple_matches",
+            current=None,
+            reason="ambiguous_identity",
+            candidates=[
+                _candidate(
+                    d, report.currency, j, filter_violations=_violations(d, j, trip, prep.price_cap)
+                )
+                for d, j in identical
+            ],
+        )
+        notes.append(
+            f"{len(identical)} fresh offers matched the itinerary. No offer was picked, so "
+            "no price verdict is given; compare the candidates on the provider's page."
+        )
+        return out
     if identical:
-        identical.sort(key=lambda pair: (pair[0]["price"] != price, pair[0]["price"]))
-        if len(identical) > 1:
-            notes.append(f"{len(identical)} fresh offers matched the itinerary; reporting one.")
         if any(s.day is None for s in segments):
             notes.append(
                 "Segment departure dates were unavailable; the query date and departure "
                 "clocks were compared."
             )
-        return _found(out, identical[0][0], report.currency, price, "identical")
+        found, journeys = identical[0]
+        out["filter_violations"] = _violations(found, journeys, trip, prep.price_cap)
+        return _found(out, found, report.currency, price, "identical")
 
     missing = len(fresh) - len(complete)
     if missing:
@@ -518,8 +674,23 @@ def recheck_offer(
     if close:
         close.sort(key=lambda row: (-row[0][0], row[0][1], row[1]["price"]))
         _, found, journeys = close[0]
-        out["differences"] = _differences(old, journeys, offer["legs"], found["legs"])
-        return _found(out, found, report.currency, price, "substituted")
+        differences = _differences(old, journeys, prep.reference["legs"], found["legs"])
+        violations = _violations(found, journeys, trip, prep.price_cap)
+        if allow_substitute:
+            out["differences"] = differences
+            out["filter_violations"] = violations
+            return _found(out, found, report.currency, price, "substituted")
+        out["closest_candidate"] = _candidate(
+            found,
+            report.currency,
+            journeys,
+            differences=differences,
+            filter_violations=violations,
+        )
+        notes.append(
+            "The closest candidate is listed for information only; it is a different "
+            "itinerary. Set allow_substitute to have it reported as a substitution."
+        )
 
     if result.raw_count > 0 and result.eligible_count == 0:
         notes.append("Google returned offers, but none passed the query's own constraints.")
@@ -580,7 +751,8 @@ def _check_failed(
 def format_recheck(result: Mapping[str, Any]) -> str:
     """Human summary for the CLI. Amounts are only printed beside their own currency."""
     previous = result["previous"]
-    lines = [f"{result['outcome']}  (checked {result['checked_at']}, {result['match_basis']})"]
+    basis = "loose carrier_times" if result.get("loose_match") else result["match_basis"]
+    lines = [f"{result['outcome']}  (checked {result['checked_at']}, {basis})"]
     lines.append(f"  previous {previous['price']:g} {previous['currency']}")
     current = result.get("current")
     if current:
@@ -589,11 +761,21 @@ def format_recheck(result: Mapping[str, Any]) -> str:
         lines.append(f"  reason   {result['reason']}")
     if result.get("error"):
         lines.append(f"  error    {result['error']['message']}")
+    for text in result.get("missing", ()):
+        lines.append(f"  missing  {text}")
     for row in result.get("differences", ()):
         lines.append(
             f"  differs  journey {row['journey']} {row['field']}: "
             f"{row['previous']} -> {row['current']}"
         )
+    if result.get("filter_violations"):
+        lines.append(f"  breaks   {', '.join(result['filter_violations'])}")
+    shown = [("match", row) for row in result.get("candidates", ())]
+    if result.get("closest_candidate"):
+        shown.append(("closest", result["closest_candidate"]))
+    for label, row in shown:
+        times = "; ".join(f"{j['departure']}->{j['arrival']}" for j in row["journeys"])
+        lines.append(f"  {label:<8} {row['price']:g} {row['currency']}  {times}")
     lines.extend(f"  note     {note}" for note in result["notes"])
     lines.append(f"  {result['caveat']}")
     return "\n".join(lines)
@@ -624,6 +806,8 @@ def run_recheck_cli(args: argparse.Namespace) -> int:
             country=args.country,
             fetch=args.fetch,
             proxy=args.proxy,
+            allow_loose_match=args.allow_loose_match,
+            allow_substitute=args.allow_substitute,
         )
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -93,11 +93,12 @@ missing segment, baggage, or fare facts.
 recheck_offer is a search: it runs one fresh Google Flights query (never the
 5-minute replay cache) and matches an earlier offer by flight numbers and
 scheduled departure times. Re-check finalists before presenting them as current.
-Outcomes: same_price, price_changed, substituted, not_found, check_failed.
-check_failed (check_completed false: blocked, rate limited, incomplete offers, any
-provider error) means the check did not run to an answer, not that the offer is
-gone. It is not a booking guarantee; the price is confirmed only on the provider's
-own page.
+Outcomes: same_price, price_changed, not_found, multiple_matches, incomplete_identity,
+check_failed, and substituted only with allow_substitute. multiple_matches picks no
+offer and gives no price verdict. check_failed (check_completed false: blocked, rate
+limited, incomplete offers, any provider error) means the check did not run to an
+answer, not that the offer is gone. It is not a booking guarantee; the price is
+confirmed only on the provider's own page.
 
 Every MCP call is synchronous: never say you are still searching or will
 report back; call the tool now or name the next step. Hotel location is one
@@ -605,24 +606,34 @@ def build_server():
         country: str | None = None,
         fetch: str | None = None,
         proxy: str | None = None,
+        allow_loose_match: bool = False,
+        allow_substitute: bool = False,
     ) -> dict:
         """Re-check an earlier flight offer with one fresh Google Flights search.
 
         offer is an offer from a prior search_flights result (or a {query, offer}
-        row), or enough of one: price plus legs[].segments[] with flight_number
-        and departure clock. query defaults to the offer's evidence query; a
+        row), or enough of one: price plus legs[].segments[] with flight_number,
+        origin, destination and departure clock for every segment. query
+        defaults to the offer's evidence query and is replayed (cabin, stops,
+        bags, airline and alliance filters); a price_cap in it is not sent but
+        reported in filter_violations when the fresh offer breaks it. A
         hand-built offer also needs query adults, cabin and max_stops, and
-        currency. Matches by flight numbers plus departure times (carrier plus
-        times when flight numbers are absent, and it says so). Returns exactly
-        one outcome: same_price, price_changed, substituted, not_found, or
-        check_failed, with checked_at. Positive outcomes always rest on a fresh
-        provider match. check_failed (check_completed false, with reason and
-        error: blocked, rate_limited, incomplete_offers, ...) means the check
-        could not be completed, not that the offer is gone; do not retry a rate
-        limit. currency must be the offer's own: a different one is refused
-        (no conversion). A hand-typed offer's previous price is not recorded as
-        owned evidence. Not a booking guarantee: confirm the price on the
-        provider's own page.
+        currency. Matches by flight numbers plus departure times. Returns
+        exactly one outcome: same_price, price_changed, not_found,
+        multiple_matches (more than one identical fresh offer: candidates are
+        listed, no price verdict), incomplete_identity (the offer lacks a full
+        segment identity: no search was sent), check_failed, or substituted
+        (only with allow_substitute). allow_loose_match accepts carrier plus
+        departure times when flight numbers are absent (loose_match true).
+        allow_substitute reports a close same-carrier alternative as
+        substituted; by default it is only listed as closest_candidate on a
+        not_found. Positive outcomes always rest on a fresh provider match.
+        check_failed (check_completed false, with reason and error: blocked,
+        rate_limited, incomplete_offers, ...) means the check could not be
+        completed, not that the offer is gone; do not retry a rate limit.
+        currency must be the offer's own: a different one is refused (no
+        conversion). Caller-typed values are not recorded as owned evidence.
+        Not a booking guarantee: confirm the price on the provider's own page.
         """
         return dict(await run_mcp_tool(recheck_offer_tool, **locals()))
 

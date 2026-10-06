@@ -244,31 +244,46 @@ viajante recheck-offer --offer offer.json --save /tmp/recheck.json
 ```
 
 The offer is matched by itinerary identity: flight numbers plus scheduled
-departure time for every segment. If the offer carries no flight numbers, it
-falls back to carrier plus times and says so (`match_basis: carrier_times`).
-The result is exactly one outcome (`previous.source` is `search_evidence` only when the MCP
+departure time for every segment. It needs a full segment identity (flight
+number, origin, destination, departure clock); otherwise the result is
+`incomplete_identity`, no search is sent, and `missing` lists what to add.
+`--allow-loose-match` (MCP `allow_loose_match`) opts in to matching by carrier
+plus departure times; the result says `loose_match: true`. The result is
+exactly one outcome (`previous.source` is `search_evidence` only when the MCP
 ledger holds an offer with that `evidence_id`, price, currency and the same
-segments; otherwise `caller_supplied`, and the old amount, itinerary and
-`differences[].previous` are returned but not recorded as owned evidence):
+segments, and previous leg times then come from that offer; otherwise
+`caller_supplied`, and the old amount, itinerary and `differences[].previous`
+are returned but not recorded as owned evidence):
 
 | Outcome | Meaning |
 | --- | --- |
 | `same_price` | The identical itinerary was found at the same amount and currency. |
 | `price_changed` | The identical itinerary was found at another amount. `previous` and `current` carry each amount with its own currency. A `currency` that differs from the offer's own is refused (exit 1): viajante does not convert. |
-| `substituted` | No identical itinerary, but a close alternative on the same route and dates (a shared flight number, or on every journey a first departure within 90 minutes of the original on the same marketing carrier). `differences` lists what provably differs; `null` is unknown. |
-| `not_found` | A completed check found nothing. `reason` is `provider_empty`, `filtered` (Google returned offers but none passed the query's own constraints), or `not_among_offers`. |
+| `multiple_matches` | More than one fresh offer matches the identity. None is picked and no price verdict is given; `candidates` lists each price, currency and journey times. Exit 0. |
+| `incomplete_identity` | The offer lacks flight numbers, airports or clocks. `check_completed` is false, `missing` names the fields, and no search was sent (`checked_at` is null). Exit 2. |
+| `not_found` | A completed check found nothing. `reason` is `provider_empty`, `filtered` (Google returned offers but none passed the query's own constraints), or `not_among_offers`. A close alternative (a different flight number at similar times) is listed as `closest_candidate` with its `differences`, for information only. |
+| `substituted` | Only with `--allow-substitute` (MCP `allow_substitute`): no identical itinerary, but a close alternative on the same route and dates (a shared flight number, or on every journey a first departure within 90 minutes of the original on the same marketing carrier). `differences` lists what provably differs; `null` is unknown. |
 | `check_failed` | The check did not run to an answer; this says nothing about whether the offer still exists. `check_completed` is false, with `reason` and `error`. `reason` is `blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`, `browser_unavailable`, `currency_mismatch`, or `incomplete_offers` (fresh round-trip or multi-city offers came back without every journey, because the follow-up search for the next journey failed or was ambiguous, and nothing matched). Do not retry a rate limit. |
 
-Every result has `checked_at`. A hand-built identity needs `price`,
-`legs[].segments[]` (flight number and departure clock), a `query` with
-`adults`, `cabin`, and `max_stops`, and a currency; none of them is guessed.
-The CLI exits 0 when the check completed (any outcome but `check_failed`), 1 for bad
-input, and 2 for `check_failed`. Round trips carry a note: each fresh outbound carries the
-one return that is unique at its cheapest package price, so a still-buyable original
-return can read as a substitution. A re-check is not a booking guarantee: the
-price and terms are confirmed only on the provider's own page. The fresh search
-compares up to the 100 cheapest one-way offers (20 for packaged trips); the
-result notes any truncation.
+The query (the offer's evidence query, or `--query FILE`) is replayed: cabin,
+stops, bags, carry-on and airline or alliance filters ride the search request.
+A `price_cap` in it is not sent; instead a matched fresh offer that breaks it is
+reported in `filter_violations` (`price_cap`, and for locally provable cases
+`max_stops`, `airlines`, `exclude_airlines`). `filters_replayed` lists what the
+query carried; cabin, bags and alliance filters cannot be proven on the offer.
+
+Every result except `incomplete_identity` has `checked_at`. A hand-built
+identity needs `price`, `legs[].segments[]` (flight number, origin,
+destination and departure clock), a `query` with `adults`, `cabin`, and
+`max_stops`, and a currency; none of them is guessed. The CLI exits 0 when the
+check ran to an answer (any outcome but `check_failed` and
+`incomplete_identity`), 1 for bad input, and 2 otherwise. Round trips carry a
+note: each fresh outbound carries the one return that is unique at its cheapest
+package price, so a still-buyable original return can read as a different
+itinerary. A re-check is not a booking guarantee: the price and terms are
+confirmed only on the provider's own page. The fresh search compares up to the
+100 cheapest one-way offers (20 for packaged trips); the result notes any
+truncation.
 
 ## Saving results and handling errors
 

@@ -2469,9 +2469,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Re-check an earlier offer. Runs one fresh search (no cache) and matches by "
             "flight numbers plus departure times. Outcome: same_price, price_changed, "
-            "substituted, not_found, or check_failed. Not a booking guarantee: confirm "
-            "the price on the provider's own page. Exit 0 check completed, 1 bad input, "
-            "2 check_failed (blocked, rate limited, incomplete offers, other provider error)."
+            "not_found, multiple_matches, incomplete_identity, check_failed, or substituted "
+            "(only with --allow-substitute). Not a booking guarantee: confirm the price on "
+            "the provider's own page. Exit 0 check ran to an answer, 1 bad input, 2 check "
+            "not completed (check_failed, or incomplete_identity: no search was sent)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=RECHECK_EXAMPLES,
@@ -2502,6 +2503,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=["auto", "sweep", "detail"],
         help="Fetch mode; defaults to the offer's own backend",
+    )
+    recheck.add_argument(
+        "--allow-loose-match",
+        action="store_true",
+        help="When flight numbers are absent, match by carrier and departure times (weaker)",
+    )
+    recheck.add_argument(
+        "--allow-substitute",
+        action="store_true",
+        help="Report a close same-carrier alternative as substituted",
     )
     _add_proxy_flag(recheck)
     _add_save_flag(recheck)

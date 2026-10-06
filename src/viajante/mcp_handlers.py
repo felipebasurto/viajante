@@ -829,6 +829,10 @@ def validate_itinerary_tool(
     return dict(validate_itinerary(legs, constraints, currency=currency).to_dict())
 
 
+def _without_previous(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    return [{key: value for key, value in row.items() if key != "previous"} for row in rows]
+
+
 def recheck_offer_tool(
     offer: Mapping[str, object],
     *,
@@ -837,6 +841,8 @@ def recheck_offer_tool(
     country: Optional[str] = None,
     fetch: Optional[str] = None,
     proxy: Optional[str] = None,
+    allow_loose_match: bool = False,
+    allow_substitute: bool = False,
 ) -> Mapping[str, object]:
     """One fresh search, never the replay cache, under the one-search process lock."""
     result = _with_search_lock(
@@ -847,6 +853,8 @@ def recheck_offer_tool(
             country=country,
             fetch=fetch,
             proxy=proxy,
+            allow_loose_match=allow_loose_match,
+            allow_substitute=allow_substitute,
             ledger_offer=find_offer,
         )
     )
@@ -854,9 +862,10 @@ def recheck_offer_tool(
     owned = dict(result)
     if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
         del owned["previous"]
-        owned["differences"] = [
-            {key: value for key, value in row.items() if key != "previous"}
-            for row in result.get("differences", ())  # type: ignore[attr-defined]
-        ]
+        owned["differences"] = _without_previous(result.get("differences", ()))
+        if "closest_candidate" in owned:
+            closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
+            closest["differences"] = _without_previous(closest["differences"])
+            owned["closest_candidate"] = closest
     record(owned)
     return result
