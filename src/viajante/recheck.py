@@ -38,6 +38,7 @@ from viajante.models import (
     normalize_currency,
 )
 from viajante.parsers import normalize_clock, parse_stops_count
+from viajante.ratelimit import NOT_SENT
 from viajante.storage import write_json_atomic
 
 SCHEMA_VERSION = 1
@@ -668,6 +669,8 @@ def recheck_offer(
 
     if isinstance(result, QueryFailure):
         error = result.error
+        if error.message.startswith(NOT_SENT):
+            out["checked_at"] = None
         if error.code == SearchErrorCode.NO_RESULTS:
             return _not_found(out, "provider_empty")
         reason = "rate_limited" if error.rate_limited else error.code.value

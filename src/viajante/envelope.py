@@ -333,8 +333,6 @@ def stamp_recheck(payload: dict, *, now: Optional[float] = None) -> dict:
         empty_reason = "not_loaded"
         completeness = "partial" if payload.get("reason") == "incomplete_offers" else "blocked"
         retry = _retry_after(_Tally(failures=[(status, error_code, "google")]), now)
-        if str(error.get("message", "")).startswith(NOT_SENT):
-            observed = None
     elif outcome == "not_found":
         reason = payload.get("reason")
         if reason in ("provider_empty", "filtered"):

@@ -27,7 +27,7 @@ from viajante.models import (
     SearchErrorCode,
     SearchReport,
 )
-from viajante.recheck import CAVEAT, recheck_offer
+from viajante.recheck import CAVEAT, format_recheck, recheck_offer
 
 FAR = date(2099, 1, 15)
 CHECKED = datetime(2026, 10, 6, 15, 40, tzinfo=timezone.utc)
@@ -384,6 +384,8 @@ class BlockedTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "check_failed")
         self.assertFalse(result["check_completed"])
         self.assertEqual(result["reason"], "rate_limited")
+        self.assertIsNone(result["checked_at"])
+        self.assertTrue(format_recheck(result).startswith("check_failed  (no search sent)"))
 
 
 class CurrencyTests(unittest.TestCase):
@@ -1062,6 +1064,7 @@ class EnvelopeTests(unittest.TestCase):
                 fetch_backend="sweep",
             )
             never = self._run(unsent)
+            self.assertIsNone(never["checked_at"])
             self.assertIsNone(never["observed_at"])
             self.assertIsNone(never["observed_at_basis"])
             self.assertEqual(never["status"], "rate_limited")

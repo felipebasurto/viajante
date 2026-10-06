@@ -291,7 +291,7 @@ the offer. With `--allow-loose-match`, a connecting leg without segments is stil
 compared in every match. `incomplete_identity`, `check_failed` and input errors are
 never recorded in the MCP evidence ledger.
 
-Every result except `incomplete_identity` has `checked_at`. A hand-built
+Every result has `checked_at` except `incomplete_identity` and a check the machine-wide cooldown refused (nothing was sent), where it is null. A hand-built
 identity needs `price`, `legs[].segments[]` (flight number, origin,
 destination and departure clock), a `query` with `adults`, `cabin`, and
 `max_stops`, and a currency; none of them is guessed. The CLI exits 0 when the
