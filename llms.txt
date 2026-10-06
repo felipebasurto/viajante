@@ -48,7 +48,7 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 
 Every result (except lookup_airports) opens with an envelope: status, completeness, empty_reason (provider_empty | filtered_out | not_loaded), retry_after, observed_at. Only provider_empty means "none found".
 
-- search_flights: named routes and dates
+- search_flights: named routes and dates. Each successful query also carries `recommendation`: a pick that respects named requirements (`relaxed_requirements` lists any it relaxed), a varied shortlist, and highlights/tradeoffs from returned fields only. Additive; `offers` unchanged.
 - search_dates: cheapest-per-day calendar (cheapest week). Max 31 days.
 - search_flex: ±N around one date, then one shop. Not a date matrix.
 - search_explore: dest triage from a named origin

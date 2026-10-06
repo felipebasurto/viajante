@@ -110,6 +110,21 @@ A rate-limited result or error that has a recorded cooldown also carries `retry_
 UTC) and `retry_after_seconds`. When they are absent no cooldown was recorded (for example a
 proxied 429); do not invent a wait.
 
+## Flight recommendation
+
+A successful search_flights (and the flights half of search_trip) query may carry a
+recommendation block beside its offers: one recommended pick, a shortlist of up to
+three offers that differ in stops or departure slot, per-offer highlights and
+tradeoffs from returned fields only, and published score weights. It is evidence,
+not a verdict; offers and their order are unchanged. Read relaxed_requirements
+first. A relaxed pick failed a requirement you named (listed there, and unmet in the
+entry), so it is not an exact match. When the query row has empty_reason
+filtered_out (envelope status no_results) and a recommendation, offers is empty
+because the named filters removed every row, and the recommendation is a relaxed
+pick, not an exact match: say which requirements it relaxed. Offers whose currency
+differs or is unproven are never price-compared. Provider-empty queries carry no
+recommendation. Fare rules (refund, change) are never in the rows.
+
 ## Choosing a search tool
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
