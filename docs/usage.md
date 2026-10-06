@@ -90,9 +90,10 @@ Check baggage terms before booking.
 
 ### Recommendation and shortlist
 
-Every successful flights query (CLI, `search_flights`, and the flights half of
-`search_trip`) also carries a `recommendation` block. It adds to `offers`; it
-never replaces them, and `--sort` keeps its meaning.
+A successful flights query (CLI, `search_flights`, and the flights half of
+`search_trip`) may carry a `recommendation` block, and carries none when the
+provider returned nothing. It adds to `offers`; it never replaces them, and
+`--sort` keeps its meaning.
 
 ```json
 {
@@ -124,8 +125,8 @@ or duration stay `unknown` and are called out in `tradeoffs`. Other filters
 and round-trip and multi-city packages are not relaxed at all. A relaxed pick
 may fail a filter that emptied `offers`, so read `relaxed_requirements` before
 presenting it as a match. Over MCP, a query with `empty_reason` `filtered_out`
-(envelope status `no_results`) that still has a `recommendation` means the pick
-is a relaxed one, not an exact match.
+(envelope status `no_results` when every query is `filtered_out`) that still has
+a `recommendation` means the pick is a relaxed one, not an exact match.
 
 **Shortlist.** Up to three entries with different stop counts or departure
 slots (`night` 00:00-05:59, `morning` 06:00-11:59, `afternoon` 12:00-17:59,

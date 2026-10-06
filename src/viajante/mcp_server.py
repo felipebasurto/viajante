@@ -295,9 +295,10 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         highlights/tradeoffs from returned fields only.
         It is evidence for your judgment; offers are unchanged. Check
         relaxed_requirements before presenting a pick as a match. A query
-        with empty_reason filtered_out (envelope status no_results) that
-        still has a recommendation means the pick is a relaxed one, not an
-        exact match: the named filters removed every offer.
+        with empty_reason filtered_out (envelope status no_results when every
+        query is filtered_out) that still has a recommendation means the pick
+        is a relaxed one, not an exact match: the named filters removed every
+        offer.
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
