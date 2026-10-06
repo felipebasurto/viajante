@@ -108,7 +108,7 @@ Once connected, you can ask:
 
 Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
 
-The server exposes fifteen tools:
+The main tools are:
 
 | Tool | Use it to |
 | --- | --- |

@@ -31,13 +31,13 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 from viajante.models import HotelQuerySuccess, QuerySuccess
 from viajante.runtime import package_version
-from viajante.storage import default_state_dir, write_bytes_atomic
+from viajante.storage import default_state_dir, exclusive_lock, write_bytes_atomic
 
 ENV_RECORD = "VIAJANTE_PRICE_HISTORY"
 HISTORY_FILE = "price-history.jsonl"
-# ponytail: every record rewrites the whole file atomically (read, append, trim) and two
-# processes recording at the same instant can lose one entry. At this cap that is a
-# ~1 MB rewrite; upgrade: O_APPEND plus periodic compaction if the cap grows.
+# ponytail: every record rewrites the whole file atomically (read, append, trim) under an
+# exclusive lock. At this cap that is a ~1 MB rewrite; upgrade: O_APPEND plus periodic
+# compaction if the cap grows.
 MAX_ENTRIES = 2000
 DEFAULT_OBSERVATION_LIMIT = 20
 SCHEMA_VERSION = 1
@@ -153,17 +153,19 @@ def append_observations(entries: Sequence[Mapping[str, Any]]) -> None:
     """
     if not entries:
         return
-    lines = _raw_lines() + [
+    new_lines = [
         json.dumps(dict(row), ensure_ascii=False, sort_keys=True).encode("utf-8") for row in entries
     ]
-    excess = sum(_valid(line) is not None for line in lines) - MAX_ENTRIES
-    kept = []
-    for line in lines:
-        if excess > 0 and _valid(line) is not None:
-            excess -= 1
-            continue
-        kept.append(line)
-    write_bytes_atomic(b"\n".join(kept) + b"\n", _path())
+    with exclusive_lock(_path()):
+        lines = _raw_lines() + new_lines
+        excess = sum(_valid(line) is not None for line in lines) - MAX_ENTRIES
+        kept = []
+        for line in lines:
+            if excess > 0 and _valid(line) is not None:
+                excess -= 1
+                continue
+            kept.append(line)
+        write_bytes_atomic(b"\n".join(kept) + b"\n", _path())
 
 
 def clear_history() -> tuple[int, int]:
@@ -172,9 +174,10 @@ def clear_history() -> tuple[int, int]:
     Refuses (HistoryReadError) when the file exists but cannot be read, so it never
     reports an unseen history as empty.
     """
-    lines = _raw_lines()
-    valid = sum(_valid(line) is not None for line in lines)
-    _path().unlink(missing_ok=True)
+    with exclusive_lock(_path()):
+        lines = _raw_lines()
+        valid = sum(_valid(line) is not None for line in lines)
+        _path().unlink(missing_ok=True)
     return valid, len(lines) - valid
 
 

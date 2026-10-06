@@ -781,9 +781,12 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     ) -> dict:
         """Re-run a saved flight or hotel search once and report the change.
 
-        With no name: list saved watches. With name, kind (flights or hotels) and
-        params (the search_flights / search_hotels arguments): save it, then run it.
-        With only a name: run the saved search. Saving a watch and recording the
+        With no name: list saved watches (watches null and status failed when the
+        saved file cannot be read; never an empty list for an unreadable file). With
+        name, kind (flight or hotel, as in price_history) and params (the
+        search_flights / search_hotels arguments): validate, save, then run it.
+        Saving under an existing name replaces that watch. With only a name: run the
+        saved search. Saving a watch and recording the
         observation write to this machine's state directory. The run records its
         observation even when the global opt-in is off, and reports the change versus
         the last observation of the same query in the same currency. A cached replay

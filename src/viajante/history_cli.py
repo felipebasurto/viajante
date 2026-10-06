@@ -33,7 +33,7 @@ Examples:
 WATCH_EXAMPLES = """\
 Examples:
   viajante watch --list
-  viajante watch jfk-lhr --kind flights --params '{"routes": ["JFK-LHR:2027-03-01"]}'
+  viajante watch jfk-lhr --kind flight --params '{"routes": ["JFK-LHR:2027-03-01"]}'
   viajante watch jfk-lhr
   viajante watch jfk-lhr --remove
 
@@ -78,7 +78,7 @@ def add_parsers(sub: Any) -> None:
     watch.add_argument("name", nargs="?", default=None)
     watch.add_argument("--list", action="store_true", help="List saved watches")
     watch.add_argument("--remove", action="store_true", help="Delete the named watch")
-    watch.add_argument("--kind", choices=("flights", "hotels"), default=None)
+    watch.add_argument("--kind", choices=("flight", "hotel"), default=None)
     watch.add_argument("--params", default=None, metavar="JSON", help="search_* arguments to save")
     watch.add_argument("--params-file", default=None, metavar="FILE")
     watch.add_argument("--save", default=None, metavar="FILE", help="Write the JSON atomically")

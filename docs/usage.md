@@ -415,7 +415,7 @@ A watch is a saved `search_flights` or `search_hotels` argument set that you
 re-run on demand:
 
 ```bash
-viajante watch jfk-lhr --kind flights \
+viajante watch jfk-lhr --kind flight \
   --params '{"routes": ["JFK-LHR:2027-03-01"], "currency": "USD"}'
 viajante watch jfk-lhr              # run again later: reports the change
 viajante watch --list
@@ -425,7 +425,17 @@ viajante watch jfk-lhr --remove
 A watch run records its own observation even when the global opt-in is off. It
 goes through the normal search path, so it respects the Google cooldown, the
 5-minute cache (a cached run says so and records nothing), and the single
-search lock. A proxy is never stored in a watch.
+search lock. A proxy is never stored in a watch. Saving builds the watch's
+queries first, so a bad route, date or filter is rejected and not persisted.
+Saving under an existing name replaces that watch. `--kind` is `flight` or
+`hotel`, the same words `history --kind` and the MCP tools use.
+
+The log and the watches file are updated under an exclusive lock (a `.lock`
+file beside each in the state directory), so a scheduled `viajante watch`
+running next to the MCP server cannot drop each other's entries. If the watches
+file exists but cannot be read (corrupt or unreadable), listing reports it as
+unreadable (`watches: null`) rather than an empty list, and saving or removing
+refuses and leaves the file as it was.
 
 Viajante sends no notifications and runs no scheduler. To check periodically,
 call `viajante watch NAME` from your own cron job or agent, at a low frequency

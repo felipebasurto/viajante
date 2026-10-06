@@ -25,31 +25,63 @@ from viajante.history import (
     read_observations,
     short_reason,
 )
-from viajante.mcp_handlers import search_flights_tool, search_hotels_tool
-from viajante.storage import default_state_dir, write_json_atomic
+from viajante.mcp_handlers import check_search_params, search_flights_tool, search_hotels_tool
+from viajante.storage import default_state_dir, exclusive_lock, write_json_atomic
 
 WATCHES_FILE = "price-watches.json"
 MAX_WATCHES = 50
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Same kind words as price_history and the stored observations.
 _TOOLS: dict[str, Callable[..., Mapping[str, object]]] = {
-    "flights": search_flights_tool,
-    "hotels": search_hotels_tool,
+    "flight": search_flights_tool,
+    "hotel": search_hotels_tool,
 }
 
 
+class WatchesReadError(OSError):
+    """The saved-watches file exists but could not be read. Never the same as no watches."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"{reason}; saved watches were not changed")
+        self.reason = reason
+
+
+def _path():
+    return default_state_dir() / WATCHES_FILE
+
+
+def watches_read_reason(exc: BaseException) -> str:
+    """A reason safe to hand to an MCP client: no paths."""
+    if isinstance(exc, PermissionError):
+        return "permission denied accessing saved watches"
+    if isinstance(exc, OSError):
+        return f"could not access saved watches ({exc.strerror or type(exc).__name__})"
+    return "the saved watches file is corrupt"
+
+
 def _load() -> dict[str, dict]:
+    """Saved watches. A missing file is empty; any other read or parse failure raises."""
     try:
-        data = json.loads((default_state_dir() / WATCHES_FILE).read_text(encoding="utf-8"))
-        watches = data["watches"]
-        return watches if isinstance(watches, dict) else {}
-    except (OSError, ValueError, KeyError, TypeError):
+        data = json.loads(_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        raise WatchesReadError(watches_read_reason(exc)) from exc
+    watches = data.get("watches") if isinstance(data, dict) else None
+    if not isinstance(watches, dict) or not all(
+        isinstance(spec, dict)
+        and spec.get("kind") in _TOOLS
+        and isinstance(spec.get("params"), dict)
+        for spec in watches.values()
+    ):
+        raise WatchesReadError(watches_read_reason(ValueError()))
+    return watches
 
 
 def _store(watches: Mapping[str, dict]) -> None:
     write_json_atomic(
         {"schema_version": SCHEMA_VERSION, "watches": dict(watches)},
-        default_state_dir() / WATCHES_FILE,
+        _path(),
     )
 
 
@@ -58,34 +90,38 @@ def list_watches() -> list[dict]:
 
 
 def remove_watch(name: str) -> bool:
-    watches = _load()
-    if watches.pop(name, None) is None:
-        return False
-    _store(watches)
+    with exclusive_lock(_path()):
+        watches = _load()
+        if watches.pop(name, None) is None:
+            return False
+        _store(watches)
     return True
 
 
 def save_watch(name: str, kind: str, params: Mapping[str, Any]) -> dict:
+    """Validate and save a watch. Saving under an existing name replaces that watch."""
     if not _NAME.match(name):
         raise ValueError("watch name must be 1-64 letters, digits, '.', '_' or '-'")
     if kind not in _TOOLS:
-        raise ValueError("kind must be flights or hotels")
+        raise ValueError("kind must be flight or hotel")
     if "proxy" in params:
         raise ValueError("params.proxy is not stored in a watch; it may carry credentials")
     try:
         inspect.signature(_TOOLS[kind]).bind(**params)
     except TypeError as exc:
         raise ValueError(f"params do not match search_{kind}: {exc}") from exc
-    watches = _load()
-    if name not in watches and len(watches) >= MAX_WATCHES:
-        raise ValueError(f"at most {MAX_WATCHES} watches; remove one first")
+    check_search_params(_TOOLS[kind], params)
     spec = {
         "kind": kind,
         "params": dict(params),
         "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    watches[name] = spec
-    _store(watches)
+    with exclusive_lock(_path()):
+        watches = _load()
+        if name not in watches and len(watches) >= MAX_WATCHES:
+            raise ValueError(f"at most {MAX_WATCHES} watches; remove one first")
+        watches[name] = spec
+        _store(watches)
     return spec
 
 
@@ -104,9 +140,20 @@ def watch_price_tool(
     kind: Optional[str] = None,
     params: Optional[Mapping[str, Any]] = None,
 ) -> dict:
-    """List watches (no name), save one (kind + params), or re-run one and report change."""
+    """List watches (no name), save one (kind + params), or re-run one and report change.
+
+    ``kind`` is ``flight`` or ``hotel``, as in price_history.
+    """
     if name is None:
-        return stamp_local({"watches": list_watches()})
+        try:
+            return stamp_local({"watches": list_watches()})
+        except WatchesReadError as exc:
+            return stamp_local(
+                {"watches": None, "read_error": exc.reason},
+                status="failed",
+                completeness="blocked",
+                error_code="watches_unreadable",
+            )
     if (kind is None) != (params is None):
         raise ValueError("pass kind and params together to save a watch")
     if kind is not None and params is not None:

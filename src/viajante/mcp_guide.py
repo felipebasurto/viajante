@@ -196,6 +196,9 @@ its observation (even when the global opt-in is off), so it is not read-only. It
 one-search lock, the cooldown and the 5-minute cache like any search; its envelope is the inner
 search's, with completeness partial when history could not be read (change is then null). It
 sends no notification and schedules nothing: do not call it in a loop, because Google rate-limits.
+Saving under an existing name replaces that watch, and kind is flight or hotel as in price_history.
+If the saved watches file cannot be read, the list is watches null with status failed, completeness
+blocked and error_code watches_unreadable (never an empty list), and saving or removing refuses.
 
 ## Hotels and stays
 

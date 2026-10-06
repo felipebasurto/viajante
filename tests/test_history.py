@@ -6,7 +6,10 @@ import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -42,6 +45,7 @@ from viajante.models import (
     SearchErrorCode,
     SearchReport,
 )
+from viajante.storage import exclusive_lock
 
 DEPART = date.today() + timedelta(days=60)
 T0 = datetime(2026, 10, 6, 9, 0, 0, tzinfo=timezone.utc)
@@ -377,7 +381,7 @@ def _watch_once(price: float) -> dict:
     )
     params = {"routes": [f"JFK-LHR:{DEPART.isoformat()}"], "currency": "USD"}
     with patch("viajante.mcp_handlers.search_flights", stub):
-        return watch.watch_price_tool("nyc-lon", kind="flights", params=params)
+        return watch.watch_price_tool("nyc-lon", kind="flight", params=params)
 
 
 class TrendTests(_State):
@@ -488,7 +492,7 @@ class WatchTests(_State):
         return {"routes": [f"JFK-LHR:{DEPART.isoformat()}"], "currency": "USD"}
 
     def test_save_run_records_even_when_global_recording_is_off(self) -> None:
-        result = self.run_watch(500.0, kind="flights", params=self.params())
+        result = self.run_watch(500.0, kind="flight", params=self.params())
         self.assertFalse(history.recording_enabled())
         self.assertEqual(result["recorded"], 1)
         (item,) = result["results"]
@@ -497,7 +501,7 @@ class WatchTests(_State):
         self.assertEqual(len(history.read_observations()), 1)
 
     def test_rerun_reports_change_against_the_last_observation(self) -> None:
-        self.run_watch(500.0, kind="flights", params=self.params())
+        self.run_watch(500.0, kind="flight", params=self.params())
         mcp_handlers._CACHE.clear()
         result = self.run_watch(450.0, at=T0 + timedelta(days=1))
         (item,) = result["results"]
@@ -506,7 +510,7 @@ class WatchTests(_State):
         self.assertEqual(len(history.read_observations()), 2)
 
     def test_history_becoming_unreadable_after_a_good_append(self) -> None:
-        self.run_watch(500.0, kind="flights", params=self.params())
+        self.run_watch(500.0, kind="flight", params=self.params())
         mcp_handlers._CACHE.clear()
         denied = history.HistoryReadError(13, "Permission denied", "/secret/path/history")
         with patch("viajante.watch.read_observations", side_effect=denied):
@@ -522,7 +526,7 @@ class WatchTests(_State):
         self.assertEqual(len(history.read_observations()), 2)
 
     def test_other_currency_is_never_compared(self) -> None:
-        self.run_watch(500.0, kind="flights", params=self.params())
+        self.run_watch(500.0, kind="flight", params=self.params())
         mcp_handlers._CACHE.clear()
         spec = {**self.params(), "currency": "GBP"}
         report = _flight_report(400.0, currency="GBP", at=T0 + timedelta(days=1))
@@ -530,13 +534,13 @@ class WatchTests(_State):
             lambda queries, *, top=3, sort="ranked", baggage_buffer=None, **rest: report
         )
         with patch("viajante.mcp_handlers.search_flights", stub):
-            result = watch.watch_price_tool("nyc-lon-gbp", kind="flights", params=spec)
+            result = watch.watch_price_tool("nyc-lon-gbp", kind="flight", params=spec)
         (item,) = result["results"]
         self.assertIsNone(item["change"])
         self.assertEqual(item["currency"], "GBP")
 
     def test_cached_run_records_nothing_and_says_so(self) -> None:
-        self.run_watch(500.0, kind="flights", params=self.params())
+        self.run_watch(500.0, kind="flight", params=self.params())
         result = self.run_watch(450.0)
         self.assertTrue(result["cached"])
         self.assertEqual(result["recorded"], 0)
@@ -544,7 +548,7 @@ class WatchTests(_State):
         self.assertEqual(len(history.read_observations()), 1)
 
     def test_failed_search_records_nothing_and_reports_the_error(self) -> None:
-        result = self.run_watch(kind="flights", params=self.params())
+        result = self.run_watch(kind="flight", params=self.params())
         self.assertEqual(result["recorded"], 0)
         self.assertEqual(result["errors"][0]["code"], "no_results")
         self.assertEqual(history.read_observations(), [])
@@ -558,7 +562,7 @@ class WatchTests(_State):
             ),
             contextlib.redirect_stderr(err),
         ):
-            result = self.run_watch(500.0, kind="flights", params=self.params())
+            result = self.run_watch(500.0, kind="flight", params=self.params())
         self.assertEqual(result["recorded"], 0)
         (item,) = result["results"]
         self.assertEqual(item["current"]["cheapest"], 500.0)
@@ -572,25 +576,205 @@ class WatchTests(_State):
 
     def test_save_validation(self) -> None:
         with self.assertRaises(ValueError):
-            watch.save_watch("x", "flights", {**self.params(), "proxy": "http://u:p@h:1"})
+            watch.save_watch("x", "flight", {**self.params(), "proxy": "http://u:p@h:1"})
         with self.assertRaises(ValueError):
-            watch.save_watch("x", "flights", {"routes": [], "bogus": 1})
+            watch.save_watch("x", "flight", {"routes": [], "bogus": 1})
         with self.assertRaises(ValueError):
-            watch.save_watch("bad name!", "flights", self.params())
+            watch.save_watch("bad name!", "flight", self.params())
         with self.assertRaises(ValueError):
             watch.save_watch("x", "trains", self.params())
         with self.assertRaises(ValueError):
-            watch.watch_price_tool("x", kind="flights")
+            watch.watch_price_tool("x", kind="flight")
         with self.assertRaises(ValueError):
             watch.watch_price_tool("missing")
         self.assertEqual(watch.list_watches(), [])
         self.assertFalse((self.state / "price-watches.json").exists())
 
     def test_list_and_remove(self) -> None:
-        watch.save_watch("a", "flights", self.params())
+        watch.save_watch("a", "flight", self.params())
         self.assertEqual([w["name"] for w in watch.watch_price_tool()["watches"]], ["a"])
         self.assertTrue(watch.remove_watch("a"))
         self.assertFalse(watch.remove_watch("a"))
+
+
+class WatchValidationTests(_State):
+    def params(self, **extra: object) -> dict:
+        return {"routes": [f"JFK-LHR:{DEPART.isoformat()}"], "currency": "USD", **extra}
+
+    def test_params_are_built_into_queries_before_saving(self) -> None:
+        for bad in (
+            {"routes": ["JFK-LHR:not-a-date"], "currency": "USD"},
+            {"routes": ["JFK-LHR:2020-01-01"], "currency": "USD"},
+            {"routes": ["XXX-LHR:" + DEPART.isoformat()], "currency": "USD"},
+            self.params(via="not an airport list!"),
+        ):
+            with self.subTest(params=bad), self.assertRaises(ValueError):
+                watch.save_watch("bad", "flight", bad)
+        with self.assertRaises(ValueError):
+            watch.save_watch("hotel", "hotel", {"location": "Lisbon"})
+        self.assertFalse((self.state / watch.WATCHES_FILE).exists())
+
+    def test_a_valid_hotel_watch_saves_and_sends_nothing(self) -> None:
+        stay = {
+            "location": "Lisbon",
+            "check_in": (DEPART).isoformat(),
+            "check_out": (DEPART + timedelta(days=3)).isoformat(),
+            "currency": "GBP",
+        }
+        with patch("viajante.mcp_handlers.search_hotels", side_effect=AssertionError("searched")):
+            watch.save_watch("lis", "hotel", stay)
+        self.assertEqual([w["kind"] for w in watch.list_watches()], ["hotel"])
+
+    def test_saving_under_an_existing_name_replaces_that_watch(self) -> None:
+        watch.save_watch("w", "flight", self.params())
+        watch.save_watch("w", "flight", self.params(adults=2))
+        (row,) = watch.list_watches()
+        self.assertEqual(row["params"]["adults"], 2)
+
+    def test_both_tools_use_the_same_kind_words(self) -> None:
+        with self.assertRaises(ValueError):
+            watch.save_watch("w", "flights", self.params())
+        with self.assertRaises(ValueError):
+            history.price_history(kind="flights")
+
+
+class _Raw(_State):
+    """A watches file the reader cannot trust."""
+
+    def corrupt(self) -> None:
+        watch.save_watch("a", "flight", {"routes": [f"JFK-LHR:{DEPART.isoformat()}"]})
+        watch.save_watch("b", "flight", {"routes": [f"LHR-JFK:{DEPART.isoformat()}"]})
+        self.path = self.state / watch.WATCHES_FILE
+        self.path.write_bytes(self.path.read_bytes()[:-9] + b"\x00 broken")
+        self.before = self.path.read_bytes()
+
+    def assert_refuses_and_keeps_the_file(self) -> None:
+        listing = watch.watch_price_tool()
+        self.assertIsNone(listing["watches"])
+        self.assertEqual(
+            (listing["status"], listing["completeness"], listing["error_code"]),
+            ("failed", "blocked", "watches_unreadable"),
+        )
+        self.assertIn("read_error", listing)
+        self.assertNotIn(str(self.state), json.dumps(listing))
+        with self.assertRaises(watch.WatchesReadError):
+            watch.save_watch("c", "flight", {"routes": [f"JFK-LHR:{DEPART.isoformat()}"]})
+        with self.assertRaises(watch.WatchesReadError):
+            watch.remove_watch("a")
+        with self.assertRaises(watch.WatchesReadError):
+            watch.watch_price_tool("a")
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+
+class CorruptWatchesTests(_Raw):
+    def test_a_corrupt_file_is_unreadable_not_empty(self) -> None:
+        self.corrupt()
+        self.assert_refuses_and_keeps_the_file()
+
+    def test_a_valid_json_file_of_the_wrong_shape_is_unreadable_too(self) -> None:
+        self.corrupt()
+        self.path.write_text('{"watches": ["a"]}', encoding="utf-8")
+        self.before = self.path.read_bytes()
+        self.assert_refuses_and_keeps_the_file()
+
+    def test_a_missing_file_is_an_empty_list(self) -> None:
+        listing = watch.watch_price_tool()
+        self.assertEqual((listing["status"], listing["watches"]), ("ok", []))
+
+    def test_cli_lists_and_refuses_with_an_error(self) -> None:
+        self.corrupt()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["watch", "--list"]), 1)
+            self.assertEqual(main(["watch", "a", "--remove"]), 1)
+        self.assertIn("saved watches", err.getvalue())
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+
+@unittest.skipIf(_is_root(), "chmod 000 does not stop root")
+class UnreadableWatchesTests(_Raw):
+    def test_chmod_000_is_unreadable_not_empty(self) -> None:
+        self.corrupt()
+        self.path.write_bytes(self.before)
+        self.path.chmod(0)
+        self.addCleanup(self.path.chmod, 0o600)
+        self.assert_refuses_and_keeps_the_file_mode_000()
+
+    def assert_refuses_and_keeps_the_file_mode_000(self) -> None:
+        listing = watch.watch_price_tool()
+        self.assertIsNone(listing["watches"])
+        self.assertEqual(listing["read_error"], "permission denied accessing saved watches")
+        with self.assertRaises(watch.WatchesReadError):
+            watch.save_watch("c", "flight", {"routes": [f"JFK-LHR:{DEPART.isoformat()}"]})
+        with self.assertRaises(watch.WatchesReadError):
+            watch.remove_watch("a")
+        self.path.chmod(0o600)
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+
+_APPEND = """
+import os, sys, time
+from pathlib import Path
+from viajante import history
+start, index = Path(sys.argv[1]), sys.argv[2]
+while not start.exists():
+    time.sleep(0.001)
+row = {"id": "id" + index, "kind": "flight", "query_key": "k", "currency": "USD",
+       "observed_at": "2026-10-06T09:00:00Z", "cheapest": 100.0 + int(index),
+       "query": {}, "filters": {}}
+history.append_observations([row])
+"""
+
+_SAVE = """
+import sys, time
+from pathlib import Path
+from viajante import watch
+start, index, day = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+while not start.exists():
+    time.sleep(0.001)
+watch.save_watch("w" + index, "flight", {"routes": ["JFK-LHR:" + day], "currency": "USD"})
+"""
+
+
+class ConcurrencyTests(_State):
+    PROCESSES = 12
+
+    def run_together(self, script: str, *extra: str) -> None:
+        start = self.state / "go"
+        env = {**os.environ, "VIAJANTE_STATE_DIR": str(self.state)}
+        procs = [
+            subprocess.Popen(
+                [sys.executable, "-c", script, str(start), str(i), *extra],
+                env=env,
+                stderr=subprocess.PIPE,
+            )
+            for i in range(self.PROCESSES)
+        ]
+        start.touch()
+        for proc in procs:
+            _, err = proc.communicate(timeout=120)
+            self.assertEqual(proc.returncode, 0, err.decode())
+
+    def test_simultaneous_appends_all_land(self) -> None:
+        self.run_together(_APPEND)
+        ids = sorted(row["id"] for row in history.read_observations())
+        self.assertEqual(ids, sorted(f"id{i}" for i in range(self.PROCESSES)))
+
+    def test_simultaneous_watch_saves_all_land(self) -> None:
+        self.run_together(_SAVE, DEPART.isoformat())
+        names = sorted(row["name"] for row in watch.list_watches())
+        self.assertEqual(names, sorted(f"w{i}" for i in range(self.PROCESSES)))
+
+    def test_clear_waits_for_the_lock(self) -> None:
+        self.enable()
+        self.record_flights(_flight_report(500.0))
+        with exclusive_lock(self.state / history.HISTORY_FILE):
+            done = threading.Event()
+            worker = threading.Thread(target=lambda: (history.clear_history(), done.set()))
+            worker.start()
+            self.assertFalse(done.wait(0.3))
+        worker.join(timeout=10)
+        self.assertTrue(done.is_set())
 
 
 class EnvelopeTests(_State):
@@ -637,14 +821,14 @@ class EnvelopeTests(_State):
         self.assertTrue(set(ENVELOPE_KEYS) <= set(payload))
 
     def test_watch_run_carries_the_inner_searchs_envelope(self) -> None:
-        result = self.run_watch(500.0, kind="flights", params=self.params())
+        result = self.run_watch(500.0, kind="flight", params=self.params())
         self.assertTrue(set(ENVELOPE_KEYS) <= set(result))
         self.assertEqual((result["status"], result["completeness"]), ("ok", "complete"))
         self.assertEqual(result["observed_at"], "2026-10-06T09:00:00Z")
         self.assertEqual(result["observed_at_basis"], "fetch")
 
     def test_watch_run_is_partial_when_history_cannot_be_read(self) -> None:
-        self.run_watch(500.0, kind="flights", params=self.params())
+        self.run_watch(500.0, kind="flight", params=self.params())
         mcp_handlers._CACHE.clear()
         with patch("viajante.watch.read_observations", side_effect=self.DENIED):
             result = self.run_watch(450.0)
@@ -652,13 +836,13 @@ class EnvelopeTests(_State):
         self.assertEqual(result["read_error"], "permission denied accessing price history")
 
     def test_failed_inner_search_keeps_its_own_status(self) -> None:
-        result = self.run_watch(kind="flights", params=self.params())
+        result = self.run_watch(kind="flight", params=self.params())
         self.assertEqual(result["status"], "no_results")
         self.assertEqual(result["empty_reason"], "provider_empty")
 
     def test_a_proxy_in_a_watch_names_params_as_the_field(self) -> None:
         with self.assertRaises(ValueError) as caught:
-            watch.watch_price_tool("w", kind="flights", params={**self.params(), "proxy": "x"})
+            watch.watch_price_tool("w", kind="flight", params={**self.params(), "proxy": "x"})
         body = json.loads(str(structured_error(caught.exception, {"name": "w", "params": {}})))
         self.assertEqual(body["error"]["field"], "params")
         self.assertEqual(body["error"]["code"], "invalid_parameter")
@@ -759,9 +943,9 @@ class CliTests(_State):
     def test_watch_list_and_remove(self) -> None:
         _, text = self.run_cli("watch", "--list")
         self.assertIn("No saved watches", text)
-        watch.save_watch("a", "flights", {"routes": [f"JFK-LHR:{DEPART.isoformat()}"]})
+        watch.save_watch("a", "flight", {"routes": [f"JFK-LHR:{DEPART.isoformat()}"]})
         _, text = self.run_cli("watch", "--list")
-        self.assertIn("a  flights", text)
+        self.assertIn("a  flight", text)
         _, text = self.run_cli("watch", "a", "--remove")
         self.assertIn("Removed a", text)
 
