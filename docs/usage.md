@@ -230,6 +230,40 @@ Each requested dated flight journey contributes its cheapest owned fare.
 Only nearby airport alternatives for the same dated journey share a minimum;
 separate dates and different multi-city legs are not collapsed.
 
+## Re-checking an offer
+
+Fares move and flights are retimed. Before presenting a finalist as current,
+re-check it. `viajante recheck-offer` takes an offer from an earlier result (or
+a `{query, offer}` row) and runs one fresh Google Flights search; it never
+replays a cache.
+
+```bash
+viajante flights JFK-LHR:2026-11-15 --fetch sweep --save /tmp/flights.json
+# put one offer (or {"query": ..., "offer": ...}) from that file into offer.json
+viajante recheck-offer --offer offer.json --save /tmp/recheck.json
+```
+
+The offer is matched by itinerary identity: flight numbers plus scheduled
+departure time for every segment. If the offer carries no flight numbers, it
+falls back to carrier plus times and says so (`match_basis: carrier_times`).
+The result is exactly one outcome:
+
+| Outcome | Meaning |
+| --- | --- |
+| `same_price` | The identical itinerary was found at the same amount and currency. |
+| `price_changed` | The identical itinerary was found at another amount. `previous` and `current` carry each amount with its own currency. If the currencies differ, `price_comparable` is false and nothing is compared or converted. |
+| `substituted` | No identical itinerary, but a close alternative on the same route and dates (same flight number, or a first departure within 90 minutes of the original on every journey). `differences` lists what provably differs; `null` is unknown. |
+| `not_found` | Nothing matching. `reason` is `provider_empty`, `filtered`, or `not_among_offers`. If `check_completed` is false (`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`), the check did not run to an answer; that says nothing about whether the offer still exists. |
+
+Every result has `checked_at`. A hand-built identity needs `price`,
+`legs[].segments[]` (flight number and departure clock), a `query` with
+`adults`, `cabin`, and `max_stops`, and a currency; none of them is guessed.
+The CLI exits 0 when the check completed (any outcome), 1 for bad input, and 2
+when it could not be completed. A re-check is not a booking guarantee: the
+price and terms are confirmed only on the provider's own page. The fresh search
+compares up to the 100 cheapest one-way offers (20 for packaged trips); the
+result notes any truncation.
+
 ## Saving results and handling errors
 
 Search commands print tables. Add `--save FILE` to write JSON as well:
@@ -321,6 +355,12 @@ For flights and a hotel stay in one request:
 
 ```text
 search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="rt")
+```
+
+To re-check a finalist from an earlier `search_flights` result, pass its offer:
+
+```text
+recheck_offer(offer={...offer from search_flights...})
 ```
 
 These are tool-call examples, not Python library calls. The MCP server uses

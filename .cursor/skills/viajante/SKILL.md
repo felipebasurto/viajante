@@ -35,6 +35,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
+| Re-check a finalist offer is still available (fresh search, never cached) | `recheck_offer` (`offer`; hand-built also `query`, `currency`) | `viajante recheck-offer --offer FILE` |
 | Validate selected flight offers (local) | `validate_itinerary` (`legs`, `constraints`) | — |
 | Per-night roster into check-in/check-out blocks (local) | `plan_stay_blocks` (`roster`) | — |
 | Split stay totals by nights per person (local) | `split_stay_costs` (`stays`, `roster`, `currency`) | — |
@@ -113,6 +114,15 @@ verified itinerary. `needs_bag_verify` means baggage is **UNKNOWN**, not include
 empty `segments` array makes segment count, connection airports, per-segment clocks,
 operators, and overnight checks **UNKNOWN**. A comparative rule such as “unless it
 saves N” is **UNKNOWN** without two owned comparison candidates.
+
+Call `recheck_offer` on each finalist before presenting it as current. It runs one
+fresh search (never the 5-minute replay) and returns exactly one of `same_price`,
+`price_changed`, `substituted`, `not_found`, with `checked_at`. Quote the outcome as
+found: a `substituted` offer is a different itinerary, so name what differs and do not
+call it the original. `not_found` with `check_completed: false` (blocked, rate limited)
+means the check did not run; do not say the offer is gone, do not retry, and report the
+cooldown. Currencies that differ are reported, never compared. A re-check is still not
+a booking guarantee: the price is confirmed only on the provider's own page.
 
 Call `validate_itinerary` before saying an assembled itinerary is compliant:
 

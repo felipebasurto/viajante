@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `viajante recheck-offer` / MCP `recheck_offer` re-check an earlier Google Flights offer with one fresh search (never the 5-minute MCP replay cache). The offer is matched by itinerary identity: flight numbers plus scheduled departure times per segment, falling back to carrier plus times only when flight numbers are absent (the result names `match_basis`). Exactly one outcome: `same_price`, `price_changed` (old and new amounts, compared only within one currency), `substituted` (closest same-route alternative, with the provable `differences`), or `not_found` (with `reason`). Every result carries `checked_at`. A blocked, rate-limited, or otherwise failed check is `not_found` with `check_completed: false` and the provider `error`: it says the check did not run to an answer, not that the offer is gone. The check respects the machine-wide Google cooldown and the one-search process lock. It is not a booking guarantee; the price is confirmed only on the provider's own page.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added

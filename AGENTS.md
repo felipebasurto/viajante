@@ -49,6 +49,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
 - Offline evidence-bound itinerary validation: `src/viajante/validate.py`
+- Fresh re-check of an earlier flight offer (`recheck-offer` / `recheck_offer`): `src/viajante/recheck.py`
 - Offline stay blocks and per-person cost split: `src/viajante/stays.py`
 - MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
@@ -57,8 +58,8 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
+CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `recheck-offer`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -91,6 +92,20 @@ rows use the full triple. Stamp rules live with the search loops (`flights.py`,
 catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
+
+`recheck_offer` / `viajante recheck-offer` is a search, not a local helper: one fresh
+Google Flights query that skips the MCP replay cache, runs under the one-search lock,
+and respects the Google cooldown. It matches an earlier offer by flight numbers plus
+scheduled departure times per segment (carrier plus times only when flight numbers are
+absent, stamped `match_basis: carrier_times`) and returns exactly one outcome:
+`same_price`, `price_changed`, `substituted`, or `not_found`, with `checked_at`. A
+positive outcome always rests on a fresh provider match. Amounts are compared only
+within one currency; differing currencies are reported with `price_comparable: false`
+and never converted. A blocked or rate-limited check is `not_found` with
+`check_completed: false` and the provider `error`: the check did not run to an answer,
+which is not evidence the offer is gone. Re-check finalists before presenting them as
+current. A re-check is still not a booking guarantee: confirm the price on the
+provider's own page.
 
 Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.
 The URL evidence reproduces a query, not guaranteed current fare availability.

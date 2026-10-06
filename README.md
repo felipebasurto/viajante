@@ -100,7 +100,7 @@ Once connected, you can ask:
 > Search for hotels in Tokyo from November 12 to November 16, 2026, for two
 > adults. Use JPY and require free cancellation.
 
-The server exposes twelve tools:
+The server exposes thirteen tools:
 
 | Tool | Use it to |
 | --- | --- |
@@ -110,6 +110,7 @@ The server exposes twelve tools:
 | `search_explore` | Discover destinations from an origin airport and price a shortlist. |
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
+| `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, substituted, or not found. |
 | `lookup_airports` | Look up airport codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
 | `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
@@ -130,6 +131,7 @@ Each search command accepts `--save FILE` to write a JSON report. Run
 | `viajante explore` | Find destinations from an origin airport. |
 | `viajante hotels` | Search Google Hotels or Booking.com. |
 | `viajante trip` | Search flights and a hotel stay in one request. |
+| `viajante recheck-offer` | Re-check a saved flight offer against a fresh search (not a booking guarantee). |
 | `viajante airports` | Find airport codes by city or code. |
 | `viajante hidden-city` | Opt-in Skiplagged hidden-city search. |
 | `viajante awards` | Cents-per-point value of a named award offer. |

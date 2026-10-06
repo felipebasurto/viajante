@@ -53,6 +53,12 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 - search_hotels: total-stay prices. Currency required. Default source google.
 - search_trip: flights then hotels. Same currency. Default hotel source google.
 - lookup_airports: offline city or IATA lookup. Does not pick a hub.
+- recheck_offer: one fresh Google Flights search (never cached) that matches an earlier
+  offer by flight numbers and departure times. Outcomes: same_price, price_changed,
+  substituted, not_found. check_completed false (blocked, rate limited) means the
+  check did not run to an answer, not that the offer is gone. Re-check finalists
+  before presenting them as current. Not a booking guarantee; confirm the price on
+  the provider's own page.
 - search_hidden_city: Skiplagged, opt-in. Cards are USD; omit currency or pass USD. Do not copy a Google/origin quote keep (GBP, JPY, …).
 - compare_awards: local award vs cash math. No live award seats.
 - lookup_transfers: local transfer-partner table for a named program.
