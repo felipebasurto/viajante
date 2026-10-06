@@ -88,6 +88,78 @@ buffer is your own ranking allowance, not a provider fee. The list of low-cost
 carriers is partial, so absence from the list does not mean bags are included.
 Check baggage terms before booking.
 
+### Recommendation and shortlist
+
+A successful flights query (CLI, `search_flights`, and the flights half of
+`search_trip`) may carry a `recommendation` block, and carries none when the
+provider returned nothing. It adds to `offers`; it never replaces them, and
+`--sort` keeps its meaning.
+
+```json
+{
+  "relaxed_requirements": [],
+  "price_comparison": "compared",
+  "scoring": {"weights": {"price": 0.5, "duration": 0.35, "stops": 0.15}},
+  "shortlist": [
+    {"labels": ["recommended", "fastest"], "score": 66.0,
+     "requirements": {"max_stops": "met"},
+     "highlights": ["Nonstop", "Duration 7 hr 0 min", "Fare $620"],
+     "tradeoffs": ["Checked bag fee unknown", "Fare rules (refund, change) not shown"],
+     "offer": {"airline": "Delta", "price": 620.0}}
+  ]
+}
+```
+
+(abridged; each `offer` is the full offer object, with `evidence`.)
+
+**Requirements.** `--max-stops`, `--depart-window`, `--depart-after`,
+`--arrive-before`, `--max-duration`, `--bags`, and `--carry-on` are hard. The
+pick meets all that you named. If no offer does, the fewest are relaxed, and
+`relaxed_requirements` names exactly which. Ties relax the earlier name first
+in this order: `arrive_before`, `depart_after`, `depart_window`, `max_duration`,
+`carry_on`, `bags`, `max_stops`. Each shortlist entry shows `met`, `unmet`, or
+`unknown` per requirement. An unknown departure/arrival clock, or an unknown
+stop count under `--max-stops 0`, cannot prove a requirement; unknown bag counts
+or duration stay `unknown` and are called out in `tradeoffs`. Other filters
+(`--price-cap`, airlines, `--via`, overnight, layover bounds) are never relaxed,
+and round-trip and multi-city packages are not relaxed at all. A relaxed pick
+may fail a filter that emptied `offers`, so read `relaxed_requirements` before
+presenting it as a match. Over MCP, a query with `empty_reason` `filtered_out`
+(envelope status `no_results` when every query is `filtered_out`) that still has
+a `recommendation` means the pick is a relaxed one, not an exact match.
+
+**Shortlist.** Up to three entries with different stop counts or departure
+slots (`night` 00:00-05:59, `morning` 06:00-11:59, `afternoon` 12:00-17:59,
+`evening` 18:00-23:59). `recommended` is the best score; `cheapest` and
+`fastest` are the lowest ranking cost (fare plus any named baggage buffer) and
+the shortest known duration. When the cheapest or fastest offer shares its stop
+count and slot with another pick, the entry is the best by that measure among
+different ones, labelled `cheapest_distinct` / `fastest_distinct`, and a note
+says what was not listed. A free third slot is an `alternative`. Offers with the
+same carrier, clocks, and stop count are one flight; the cheaper fare is kept.
+Connections many times slower than the fastest nonstop are left out of the
+comparison, as in the `ranked` sort.
+
+**Score.** `100 * (1 - weighted penalty)`, higher is better. The price and
+duration penalties are how much worse an offer is than the best in the compared
+pool, as a fraction capped at 1 (a 5-minute gap or a few percent barely
+register). The stops penalty is stops divided by 2. An unknown duration or stop
+count takes the worst penalty, 1. The weights are price 0.5, duration 0.35,
+stops 0.15. Ties break by ranking cost, duration, departure, carrier.
+
+**Currency.** Offers whose currencies differ, or whose currency is unproven, are
+not compared on price: `price_comparison` says `skipped_mixed_currency` or
+`skipped_unknown_currency`, the price weight is 0, and there is no `cheapest`.
+The other weights are rescaled (duration 0.7, stops 0.3), as `scoring.weights`
+shows. Viajante does not convert.
+
+**Wording.** `highlights` and `tradeoffs` restate returned fields only: fare
+text, duration, stops, layover city and length, clocks, carrier, bag counts. A
+missing fact reads as unknown ("Checked bag fee unknown", "Carry-on not shown").
+Fare rules are never in the provider rows, so each entry says "Fare rules
+(refund, change) not shown"; refundable or flexible fares cannot be required.
+There are no savings claims and no reference prices.
+
 ### Choosing a fetch mode
 
 | Mode | Behavior |
