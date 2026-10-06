@@ -433,6 +433,7 @@ class RawSegment:
     flight_number: Optional[str] = None
     departure_date: Optional[date] = None
     carrier: Optional[str] = None
+    arrival_date: Optional[date] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -447,6 +448,8 @@ class RawSegment:
             payload["departure_date"] = self.departure_date.isoformat()
         if self.carrier is not None:
             payload["carrier"] = self.carrier
+        if self.arrival_date is not None:
+            payload["arrival_date"] = self.arrival_date.isoformat()
         return payload
 
 

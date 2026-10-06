@@ -31,6 +31,7 @@ search_dates is the cheapest week, search_flex is +/-N around a named date, sear
 is destination triage. max_stops is 0, 1 or 2.
 recheck_offer re-checks a finalist with one fresh search; check_failed means the check did not run,
 never that the offer is gone.
+Also search_split_tickets: separate tickets, so a missed connection is not protected. See the guide.
 """
 
 GUIDE = r"""# viajante MCP guide
@@ -64,6 +65,7 @@ Tools: search_flights, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
+Also search_split_tickets (see Split tickets), a search that takes the one-search lock.
 Also recheck_offer, a search that takes the one-search lock (see Re-checking an offer).
 Also get_guide, which returns this guide (the same text as the viajante://guide resource).
 No auth. One search at a time in this process. A second search while one is
@@ -143,6 +145,29 @@ sequentially. Do not mix evidence. Skip when bags were named.
 Skiplagged cards are USD; omit currency or pass USD. Do not copy a
 Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
+
+## Split tickets
+
+search_split_tickets is opt-in and costs extra searches (capped, sequential, stopped at the
+first recorded cooldown). It builds separately ticketed itineraries only from real one-way
+quotes it fetched: a one-way via a connection airport (`via`, up to 5 IATA codes, or layover
+airports seen in the packaged results) or a round trip as two one-ways. Every itinerary says
+split_ticket true, self_transfer true and connection_protected false. Tell the traveller: if
+the first ticket is late, the second ticket does not protect the connection; bags may need to be
+collected and checked in again; each ticket is confirmed on its own link.
+Totals are summed only when every ticket is in one currency, else total is null and the
+parts stay separate. vs_packaged compares only within a currency and carries savings (split
+cheaper) or extra_cost (split dearer), both non-negative. Itineraries rank within one
+currency; other currencies are capped at a few rows. Connection time is measured in UTC with
+each airport's timezone; a missing timezone or a clock time that is ambiguous or does not
+exist (a DST change) leaves timing unproven (timing_proven false, timing_note): say so.
+Arriving at one airport and leaving from another is rejected as airport_mismatch.
+Envelope: any itinerary is ok (partial if a fetch failed). With none, a failed fetch or
+cooldown wins (rate_limited, blocked, timeout, failed; not_loaded; honour retry_after);
+rows that were all rejected are no_results with filtered_out; only provider-empty legs are
+provider_empty (every leg empty, whatever the packaged fare was). coverage is heuristic:
+it never proves other hubs or dates have no fare.
+observed_at is the search time, null when every fetch was a recorded cooldown.
 
 ## Local tools
 

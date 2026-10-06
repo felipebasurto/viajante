@@ -65,6 +65,7 @@ from viajante.models import (
     FlexSearchReport,
     FlightCabin,
     FlightOffer,
+    FlightQuery,
     HiddenCityReport,
     HotelOffer,
     HotelQuery,
@@ -99,6 +100,17 @@ from viajante.recommend import Recommendation
 from viajante.runtime import package_version
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
+from viajante.split import (
+    DEFAULT_MIN_CONNECTION_HOURS,
+    DEFAULT_SPLIT_HUBS,
+    MAX_OTHER_CURRENCY_ROWS,
+    MAX_SPLIT_HUBS,
+    TIMING_UNPROVEN_NOTE,
+    SplitReport,
+    search_split_tickets,
+    validate_split_request,
+    with_carrier_filters,
+)
 from viajante.storage import reports_payload, write_json_atomic
 from viajante.trip import (
     format_trip_total,
@@ -124,6 +136,8 @@ Examples:
   viajante flights JFK-LHR:2026-09-15 --bags 1 --carry-on --fetch sweep
   viajante flights JFK-LHR:2026-09-15 --max-duration 16 --min-layover 1 --max-layover 8
   viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep
+  viajante flights JFK-NRT:2026-11-03 --split-tickets --split-via LAX,SFO
+  viajante flights --trip rt JFK-NRT:2026-11-03:2026-11-17 --split-tickets
 """
 
 DATES_EXAMPLES = """\
@@ -860,9 +874,128 @@ def _status_exit_code(rows: Sequence) -> int:
     return 2 if failures == len(rows) else 3
 
 
+def _split_via(args: argparse.Namespace) -> Optional[list[str]]:
+    return args.split_via.split(",") if args.split_via else None
+
+
+def _split_min_connection(args: argparse.Namespace) -> float:
+    named = args.split_min_connection
+    return DEFAULT_MIN_CONNECTION_HOURS if named is None else named
+
+
+def _split_query_from_args(
+    args: argparse.Namespace, queries: Tuple[Trip, ...], shop: dict[str, object]
+) -> Optional[FlightQuery | RoundTrip]:
+    """The one query a split search applies to, validated before any search runs."""
+    named = (
+        args.split_via,
+        args.split_max_hubs,
+        args.split_min_connection,
+        args.split_overnight,
+        args.split_leg_stops,
+    )
+    if not args.split_tickets:
+        if any(value not in (None, False) for value in named):
+            raise ValueError("--split-via and the other --split-* options need --split-tickets")
+        return None
+    if len(queries) != 1 or not isinstance(queries[0], (FlightQuery, RoundTrip)):
+        raise ValueError(
+            "--split-tickets takes exactly one one-way route or one --trip rt route "
+            "(not --nearby, multi-city, or several routes)"
+        )
+    query = with_carrier_filters(
+        queries[0],
+        airlines=shop["airlines"],  # type: ignore[arg-type]
+        exclude_airlines=shop["exclude_airlines"],  # type: ignore[arg-type]
+        alliances=shop["alliances"],  # type: ignore[arg-type]
+        exclude_alliances=shop["exclude_alliances"],  # type: ignore[arg-type]
+    )
+    validate_split_request(
+        query,
+        via=_split_via(args),
+        max_hubs=args.split_max_hubs,
+        min_connection_hours=_split_min_connection(args),
+        leg_max_stops=args.split_leg_stops or 0,
+        top=args.top,
+    )
+    return query
+
+
+def _format_connection(minutes: Optional[int]) -> str:
+    if minutes is None:
+        return "?"
+    hours, rest = divmod(minutes, 60)
+    return f"{hours}h {rest:02d}m"
+
+
+def _print_split_report(report: SplitReport) -> None:
+    query = report.query
+    label = "self-transfer via a hub" if report.kind == "hub" else "mixed one-ways"
+    print(f"\n=== SPLIT TICKETS ({label}): {query.origin} -> {query.destination} ===")
+    print(f"  {report.warning}")
+    if report.kind == "hub":
+        hubs = ", ".join(report.hubs) or "none"
+        source = f" ({report.hubs_source.replace('_', ' ')})" if report.hubs_source else ""
+        overnight = "; next-day connections allowed" if report.allow_overnight else ""
+        print(
+            f"  Hubs tried: {hubs}{source}; minimum connection "
+            f"{_format_connection(report.min_connection_minutes)}{overnight}"
+        )
+        for row in report.skipped_hubs:
+            print(f"  Hub {row['hub']} not searched: {row['reason'].replace('_', ' ')}")
+    print(f"  Extra searches: {report.extra_searches} of at most {report.max_extra_searches}")
+    if report.error is not None:
+        print(f"  ERROR: {report.error.message}")
+    if not report.itineraries:
+        print("  (no split itinerary from the quotes returned)")
+    for number, row in enumerate(report.itineraries, start=1):
+        total = (
+            f"{format_money(row.total, row.currency)} total"
+            if row.total is not None and row.currency
+            else "total unknown (parts are in different currencies; nothing converts)"
+        )
+        via = ""
+        if row.kind == "hub":
+            overnight = ", overnight" if row.overnight_at_hub else ""
+            via = f"  via {row.hub}, {_format_connection(row.connection_minutes)} connection"
+            via += overnight
+        print(f"\n  {number}. {total}{via}")
+        if row.kind == "mixed_one_ways" and not row.timing_proven:
+            print(f"     NOTE: {TIMING_UNPROVEN_NOTE}")
+        if row.savings is not None and row.packaged is not None:
+            amount = format_money(abs(row.savings), row.packaged.currency)
+            verb = "saves" if row.savings >= 0 else "costs"
+            tail = "" if row.savings >= 0 else " more"
+            print(
+                f"     {verb} {amount}{tail} vs best packaged "
+                f"{format_money(row.packaged.price, row.packaged.currency)}"
+            )
+        elif row.packaged is not None and row.total is not None:
+            print(f"     not compared: packaged quote is in {row.packaged.currency}")
+        for ticket, part in enumerate(row.parts, start=1):
+            leg = part.query
+            print(
+                f"     ticket {ticket} ({part.role.replace('_', ' ')})  "
+                f"{leg.origin} -> {leg.destination}  {leg.departure_date.isoformat()}"
+            )
+            print(f"  {_format_offer_row(part.offer, part.currency)}")
+            _print_google_flights_url(part.google_flights_url, indent="       ")
+    if report.omitted_other_currency:
+        print(
+            f"\n  {report.omitted_other_currency} more row(s) in other currencies or with an "
+            f"unknown total not shown (at most {MAX_OTHER_CURRENCY_ROWS} per group)"
+        )
+    if report.rejected:
+        rejected = ", ".join(f"{key.replace('_', ' ')} {n}" for key, n in report.rejected.items())
+        print(f"\n  Pairings rejected: {rejected}")
+    if report.itineraries:
+        print("\nConfirm each ticket on its own link and verify its baggage before booking.")
+
+
 def _run_flights(args: argparse.Namespace) -> int:
     try:
         queries, shop = _parse_and_validate(args)
+        split_query = _split_query_from_args(args, queries, shop)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -885,9 +1018,34 @@ def _run_flights(args: argparse.Namespace) -> int:
     )
     _print_report(report, sort=args.sort)
 
-    _save(args, report)
+    split = None
+    if split_query is not None:
+        try:
+            split = search_split_tickets(
+                split_query,
+                packaged=report,
+                via=_split_via(args),
+                max_hubs=args.split_max_hubs,
+                min_connection_hours=_split_min_connection(args),
+                allow_overnight=args.split_overnight,
+                leg_max_stops=args.split_leg_stops or 0,
+                fetch="sweep" if args.fetch == "auto" else args.fetch,
+                currency=args.currency,
+                country=args.country,
+                proxy=getattr(args, "proxy", None) or None,
+                progress=lambda line: print(line, file=sys.stderr),
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        _print_split_report(split)
 
-    return _exit_code(report)
+    _save(args, report, extra={"split_tickets": split.to_dict()} if split else None)
+
+    code = _exit_code(report)
+    if split is not None and split.error is not None and split.error.rate_limited:
+        return code or 3
+    return code
 
 
 def _run_hotels(args: argparse.Namespace) -> int:
@@ -1098,10 +1256,12 @@ def _add_nearby_flag(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _save(args: argparse.Namespace, result: object) -> None:
+def _save(
+    args: argparse.Namespace, result: object, *, extra: Optional[dict[str, object]] = None
+) -> None:
     if args.save:
         destination = Path(args.save)
-        write_json_atomic(reports_payload(result), destination)
+        write_json_atomic({**reports_payload(result), **(extra or {})}, destination)
         print(f"\nSaved {destination}")
 
 
@@ -1198,6 +1358,59 @@ def _add_hotel_filter_flags(parser: argparse.ArgumentParser) -> None:
             "google is the HTTP shortlist (MCP default). skiplagged is the opt-in "
             "Skiplagged MCP: USD only, up to 10 adults, no entire-home filter."
         ),
+    )
+
+
+def _add_split_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--split-tickets",
+        action="store_true",
+        default=False,
+        help=(
+            "Opt in to separately ticketed itineraries built from real one-way quotes: a "
+            "self-transfer via a hub for one one-way route, or mixed one-ways for --trip rt. "
+            "Not protected: a missed connection between tickets is not rebooked. Costs extra "
+            "searches (capped)."
+        ),
+    )
+    parser.add_argument(
+        "--split-via",
+        default=None,
+        metavar="CODES",
+        help="Comma-separated hub IATA codes (default: layover airports in the packaged results)",
+    )
+    parser.add_argument(
+        "--split-max-hubs",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            f"Hubs to try (default {DEFAULT_SPLIT_HUBS}, or all named with --split-via; "
+            f"at most {MAX_SPLIT_HUBS})"
+        ),
+    )
+    parser.add_argument(
+        "--split-min-connection",
+        type=float,
+        default=None,
+        metavar="HOURS",
+        help=(
+            f"Minimum hub connection between tickets (default {DEFAULT_MIN_CONNECTION_HOURS:g}; "
+            "a planning default, not provider evidence)"
+        ),
+    )
+    parser.add_argument(
+        "--split-overnight",
+        action="store_true",
+        default=False,
+        help="Also search the second ticket on the next day (one more search per hub)",
+    )
+    parser.add_argument(
+        "--split-leg-stops",
+        type=int,
+        default=None,
+        choices=[0, 1, 2],
+        help="Maximum stops on each hub ticket (default 0)",
     )
 
 
@@ -2038,6 +2251,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_owned_shop_filters(flights)
+    _add_split_flags(flights)
     _add_save_flag(flights)
 
     hotels = sub.add_parser(

@@ -23,6 +23,8 @@ _MONEY_KEYS = frozenset(
         "cheapest",
         "total_price",
         "total",
+        "savings",
+        "extra_cost",
         "flight_fare",
         "hotel_stay",
         "baggage_buffer",

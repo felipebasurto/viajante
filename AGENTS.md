@@ -49,6 +49,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
+- Opt-in split tickets (hub self-transfer, mixed one-ways): `src/viajante/split.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
@@ -62,8 +63,8 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `recheck-offer`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`, `get_guide`.
+CLI: `viajante flights` (`--split-tickets`), `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `recheck-offer`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_split_tickets`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`, `get_guide`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -433,6 +434,49 @@ the one-search process lock: a second search raises
 `MCP error -32001: Request timed out` is not that lock; do not retry timeouts
 as lock-busy. `lookup_airports` may run during a search. Playwright is extra
 `viajante[browser]`.
+
+## Split tickets (opt-in)
+
+`viajante flights --split-tickets` / MCP `search_split_tickets` pair separately
+ticketed real one-way quotes: origin-hub plus hub-destination for a one-way route,
+or the cheapest outbound plus the cheapest return one-way for a `--trip rt` route.
+Never a leg price derived from a round-trip price, never an estimated leg, never
+converted. Every itinerary says `split_ticket: true`, `connection_protected: false`,
+and `self_transfer` (true for a hub), and carries each ticket's own offer and
+`google_flights_url`. Say that a missed connection between tickets is not protected
+and bags may need re-checking. A hub connection needs ticket 1's last segment to land
+at the hub and ticket 2's first segment to leave from it (`airport_mismatch`,
+`airport_unproven`), an owned arrival moment (the segment `arrival_date` plus clock, converted to UTC with the airport's catalogue timezone; a missing zone or a nonexistent or DST-ambiguous local time is unproven, never a number)
+and an owned departure moment; unproven pairs are rejected (`timing_unproven`), pairs
+under `min_connection_hours` (default 3, a planning default, not provider evidence)
+are rejected (`connection_too_short`). Mixed one-ways pair the cheapest outbound and
+return where the return departs after the outbound lands (`return_before_arrival`);
+one pair per currency, cheapest within it. Without an owned arrival date the pair says
+`timing_proven: false` with a `timing_note` and is used only when no proven pair exists
+in its currency (counted in `rejected.timing_unproven` and
+`coverage.scope.timing_unproven_kept`). `total` is summed only when every part has the same owned
+currency, else `null`, and rounded to the currency's minor unit. Ranking and `top`
+work within one currency at a time (requested currency first, unknown totals last);
+raw sums of different currencies never compare. Other-currency groups and the
+unknown-total group keep at most 3 rows each (`omitted_other_currency` counts the rest). `vs_packaged` compares only against
+the cheapest packaged offer in the same currency and carries a non-negative `savings`
+or `extra_cost`. Hubs are named or the layover airports in the packaged segments.
+Extra searches are capped (`MAX_SPLIT_HUBS` = 5, `via` names at most 5 airports (`MAX_VIA`; field-specific errors for unknown codes and the limit), 2 queries per hub, 3 with overnight,
+2 for mixed), sequential under the one-search lock, and stop at a recorded Google
+cooldown (the CLI then exits non-zero). Hub splits do not apply to multi-city;
+`--price-cap` drops splits whose total is unknown, in another currency, or above the cap. Ticket queries carry occupancy, cabin, bags and
+carrier filters; clock, layover, via, and overnight filters do not apply per ticket.
+
+The MCP result carries the envelope from `stamp_split` (`envelope.py`), which reads
+`itineraries`, `legs` and `packaged_report`, not query rows. Any itinerary is `ok`
+(`partial` when a fetch failed). With none, a failed fetch or a recorded cooldown wins:
+its status (`rate_limited`, `blocked`, `timeout`, `failed`), `not_loaded`, `blocked`
+completeness (`partial` when another fetch answered), and the per-error retry fields.
+Answered legs whose pairings were all rejected are `no_results` / `filtered_out`; when
+legs were searched, `provider_empty` (error code `no_results`) needs every leg to be
+provider-empty, whatever the packaged baseline returned. `observed_at` is `searched_at`
+with basis `fetch`, and both are null when nothing reached the provider (every counted
+failure was a recorded cooldown and nothing answered), as in `stamp_search`. A new split-shaped payload must be readable by `stamp_split`, or the tool fails.
 
 ## Trip-planning search strategy
 
