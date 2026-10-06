@@ -10,7 +10,9 @@ from unittest.mock import patch
 from test_flights import FakeSource, card
 from test_trip import _card as trip_card
 from test_trip import _search_trip_cards
+from viajante.envelope import stamp_search
 from viajante.flights import _recommend, _run_search, parse_offer_filters
+from viajante.mcp_guide import GUIDE
 from viajante.mcp_handlers import search_flights_tool
 from viajante.models import FlightOffer, FlightQuery, OfferEvidence, QuerySuccess, RoundTrip
 from viajante.recommend import (
@@ -563,6 +565,30 @@ class SurfaceTests(unittest.TestCase):
         self.assertEqual(recommendation["shortlist"][0]["labels"][0], "recommended")
         self.assertEqual(recommendation["scoring"]["weights"], dict(SCORE_WEIGHTS))
         json.dumps(payload)
+
+    def test_relaxed_pick_sits_next_to_a_filtered_out_envelope(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=0)
+        cards = (card(airline="Iberia", stops="1 stop", price="$480", duration="10 hr"),)
+        report = _run_search(
+            (query,),
+            top=8,
+            source=FakeSource({("JFK", "LHR", "2026-09-01", 0): cards}),
+            sleep=lambda _: None,
+            random_gen=random.Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            currency="USD",
+        )
+        payload = stamp_search(dict(report.to_dict()))
+        row = payload["queries"][0]
+        self.assertEqual(payload["status"], "no_results")
+        self.assertEqual(row["empty_reason"], "filtered_out")
+        self.assertEqual(row["offers"], [])
+        self.assertEqual(row["recommendation"]["relaxed_requirements"], ["max_stops"])
+
+    def test_guide_explains_filtered_out_with_a_pick(self) -> None:
+        flat = " ".join(GUIDE.split())
+        self.assertIn("filtered_out (envelope status no_results) and a recommendation", flat)
+        self.assertIn("a relaxed pick, not an exact match", flat)
 
     def test_search_trip_flights_report_carries_recommendation(self) -> None:
         report, _ = _search_trip_cards(trip_card())

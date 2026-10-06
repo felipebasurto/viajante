@@ -50,6 +50,30 @@ def record(payload: Mapping[str, object]) -> Mapping[str, object]:
     return payload
 
 
+def find_offer(evidence_id: str, price: float, currency: str) -> Optional[Mapping[str, object]]:
+    """The recorded offer with this id, price and currency, or None."""
+
+    def found(node: object) -> Optional[Mapping[str, object]]:
+        if isinstance(node, Mapping):
+            proof = node.get("evidence")
+            if (
+                isinstance(proof, Mapping)
+                and proof.get("evidence_id") == evidence_id
+                and node.get("price") == price
+                and str(node.get("currency") or proof.get("currency")).upper() == currency
+            ):
+                return node
+            children: Iterable[object] = node.values()
+        elif isinstance(node, (list, tuple)):
+            children = node
+        else:
+            return None
+        return next((hit for child in children if (hit := found(child))), None)
+
+    with _lock:
+        return next((hit for payload in _ledger if (hit := found(payload))), None)
+
+
 def clear() -> None:
     with _lock:
         _ledger.clear()

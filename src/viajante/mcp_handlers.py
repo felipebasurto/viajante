@@ -18,7 +18,9 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.evidence import failure_codes, record
+from viajante.envelope import stamp_local, stamp_recheck, stamp_search
+from viajante.evidence import failure_codes, find_offer, record
+from viajante.evidence import verify_answer as verify_answer_evidence
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
     month_window,
@@ -55,6 +57,7 @@ from viajante.quote import (
     first_origin_iata,
     resolve_quote_and_buffer,
 )
+from viajante.recheck import recheck_offer
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.stays import plan_stay_blocks, split_stay_costs
@@ -86,6 +89,10 @@ def _with_search_lock(fn):
 def _owned(payload: dict) -> dict:
     record(payload)
     return payload
+
+
+def _searched(payload: dict) -> dict:
+    return _owned(stamp_search(payload))
 
 
 def _cached(fn):
@@ -197,7 +204,7 @@ def search_flights_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _searched(reports_payload(report))
 
 
 @_cached
@@ -287,7 +294,7 @@ def search_dates_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _searched(reports_payload(report))
 
 
 @_cached
@@ -378,7 +385,7 @@ def search_flex_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _searched(reports_payload(report))
 
 
 @_cached
@@ -472,7 +479,7 @@ def search_explore_tool(
             proxy=proxy,
         )
     )
-    return _owned(reports_payload(report))
+    return _searched(reports_payload(report))
 
 
 MAX_HOTEL_STAYS = 8
@@ -585,7 +592,7 @@ def search_hotels_tool(
             max_distance_km=max_distance_km,
         )
     )
-    return _owned(reports_payload(report))
+    return _searched(reports_payload(report))
 
 
 @_cached
@@ -613,7 +620,7 @@ def search_hotel_rooms_tool(
             rooms=rooms,
         )
     )
-    return _owned(dict(report.to_dict()))
+    return _searched(dict(report.to_dict()))
 
 
 @_cached
@@ -731,7 +738,7 @@ def search_trip_tool(
             hotel_source=source,
         )
     )
-    return _owned(reports_payload(report))
+    return _searched(reports_payload(report))
 
 
 @_cached
@@ -763,7 +770,7 @@ def search_hidden_city_tool(
             currency=currency,
         )
     )
-    return _owned(reports_payload(report))
+    return _searched(reports_payload(report))
 
 
 def compare_awards_tool(
@@ -782,7 +789,7 @@ def compare_awards_tool(
         currency=currency,
         balances=parsed_balances,
     )
-    return dict(report.to_dict())
+    return stamp_local(dict(report.to_dict()))
 
 
 def lookup_transfers_tool(
@@ -793,16 +800,18 @@ def lookup_transfers_tool(
 ) -> Mapping[str, object]:
     parsed = parse_balances(balances or ())
     paths = transfer_paths(program, points, parsed)
-    return {
-        "program": program.strip().casefold(),
-        "points": points,
-        "transfer_paths": [path.to_dict() for path in paths],
-    }
+    return stamp_local(
+        {
+            "program": program.strip().casefold(),
+            "points": points,
+            "transfer_paths": [path.to_dict() for path in paths],
+        }
+    )
 
 
 def plan_stay_blocks_tool(roster: Mapping[str, Sequence[str]]) -> Mapping[str, object]:
     """Local: consecutive nights with the same people, as check-in/check-out blocks."""
-    return dict(plan_stay_blocks(roster).to_dict())
+    return stamp_local(dict(plan_stay_blocks(roster).to_dict()))
 
 
 def split_stay_costs_tool(
@@ -816,7 +825,8 @@ def split_stay_costs_tool(
     report = split_stay_costs(
         stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
     )
-    return _owned(dict(report.to_dict()))
+    payload = dict(report.to_dict())
+    return _owned(stamp_local(payload, partial=bool(payload.get("unallocated_nights"))))
 
 
 def validate_itinerary_tool(
@@ -825,4 +835,66 @@ def validate_itinerary_tool(
     *,
     currency: Optional[str] = None,
 ) -> Mapping[str, object]:
-    return dict(validate_itinerary(legs, constraints, currency=currency).to_dict())
+    payload = dict(validate_itinerary(legs, constraints, currency=currency).to_dict())
+    return stamp_local(payload, partial=payload.get("feasible") is None)
+
+
+def _without_previous(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    return [{key: value for key, value in row.items() if key != "previous"} for row in rows]
+
+
+def recheck_offer_tool(
+    offer: Mapping[str, object],
+    *,
+    query: Optional[Mapping[str, object]] = None,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    fetch: Optional[str] = None,
+    proxy: Optional[str] = None,
+    allow_loose_match: bool = False,
+    allow_substitute: bool = False,
+) -> Mapping[str, object]:
+    """One fresh search, never the replay cache, under the one-search process lock."""
+    result = _with_search_lock(
+        lambda: recheck_offer(
+            offer,
+            query=query,
+            currency=currency,
+            country=country,
+            fetch=fetch,
+            proxy=proxy,
+            allow_loose_match=allow_loose_match,
+            allow_substitute=allow_substitute,
+            ledger_offer=find_offer,
+        )
+    )
+    stamp_recheck(result)
+    # Caller-typed values are not provider evidence: leave them out of the ledger.
+    owned = dict(result)
+    if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
+        del owned["previous"]
+        if "differences" in owned:
+            owned["differences"] = _without_previous(owned["differences"])  # type: ignore[arg-type]
+        if "closest_candidate" in owned:
+            closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
+            closest["differences"] = _without_previous(closest["differences"])
+            owned["closest_candidate"] = closest
+    # Record only a check that ran to a provider answer (a match, a substitution, or a
+    # completed not_found). An unsent or failed check, or incomplete_identity, proves nothing.
+    if result["check_completed"]:
+        record(owned)
+    return result
+
+
+def verify_answer_tool(answer: str) -> Mapping[str, object]:
+    payload = dict(verify_answer_evidence(answer))
+    if payload["ok"]:
+        return stamp_local(payload)
+    # status mirrors the verdict so it never reads "ok" beside "ok": false.
+    nothing = not payload["searches"]
+    return stamp_local(
+        payload,
+        status="failed",
+        completeness="blocked" if nothing else "complete",
+        error_code="no_search_recorded" if nothing else "unowned_claims",
+    )

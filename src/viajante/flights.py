@@ -22,6 +22,7 @@ from viajante.google_flights import (
     GoogleFlightsSource,
     NoFlightsFound,
     RawFlightCard,
+    SweepTransportError,
     google_flights_url,
 )
 from viajante.models import (
@@ -68,6 +69,7 @@ from viajante.parsers import (
     parse_stops_count,
 )
 from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
+from viajante.ratelimit import cooldown_until
 from viajante.recommend import (
     Recommendation,
     Requirements,
@@ -202,6 +204,7 @@ def classify_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc) or "Google Flights blocked the request.",
             rate_limited=exc.status == 429,
+            retry_until=cooldown_until(str(exc)) if exc.status == 429 else None,
         )
     if isinstance(exc, GoogleFlightsMarkupError):
         return SearchError(
@@ -867,7 +870,10 @@ def _empty_excluded_flight_report(
     return SearchReport(
         searched_at=datetime.now(timezone.utc),
         queries=tuple(
-            QuerySuccess(query=trip, raw_count=0, eligible_count=0, offers=()) for trip in seeds
+            QuerySuccess(
+                query=trip, raw_count=0, eligible_count=0, offers=(), empty_reason="filtered_out"
+            )
+            for trip in seeds
         ),
         currency=currency,
         fetch_ms=0,
@@ -1868,7 +1874,7 @@ def _run_search(
             except Exception as exc:
                 failure = classify_failure(exc)
                 _maybe_reset(failure)
-                if failure.code in NON_RETRIABLE_CODES:
+                if failure.code in NON_RETRIABLE_CODES or isinstance(exc, SweepTransportError):
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     delay = retry_backoff(attempt, random_gen)
@@ -1917,7 +1923,9 @@ def _run_search(
                     results.append(_stamp(_success_from_cards(trip, cards_or_exc)))
                     continue
                 failure = classify_failure(cards_or_exc)
-                if failure.code in NON_RETRIABLE_CODES:
+                if failure.code in NON_RETRIABLE_CODES or isinstance(
+                    cards_or_exc, SweepTransportError
+                ):
                     _maybe_reset(failure)
                     outcome = QueryFailure(query=trip, error=failure)
                     report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
