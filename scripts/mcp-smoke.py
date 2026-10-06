@@ -58,6 +58,12 @@ async def main() -> None:
             check(not missing, f"structuredContent lacks {sorted(missing)}")
             check(structured["status"] == "ok", f"status {structured['status']!r}")
             check(structured["completeness"] == "complete", f"completeness {structured!r}")
+            guide_schema = next(t.outputSchema for t in tools if t.name == "get_guide")
+            check(
+                guide_schema["properties"].get("guide", {}).get("type") == "string",
+                "get_guide schema does not declare the guide string",
+            )
+            check("guide" in guide_schema["required"], "get_guide schema does not require guide")
             guide = await session.call_tool("get_guide", {})
             check(not guide.isError, f"get_guide errored: {guide}")
             structured = guide.structuredContent or {}

@@ -380,6 +380,9 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         observed_at: Optional[str]
         observed_at_basis: Optional[Literal[OBSERVED_BASES]]
 
+    class GuideEnvelope(ToolEnvelope):
+        guide: str
+
     options: dict[str, object] = {}
     if host is not None:
         options = {"host": host, "port": port}
@@ -418,7 +421,14 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     server = ViajanteServer("viajante", instructions=_HELP, **options)
     _CONTEXT_FACTORY = getattr(server, "get_context", None)
 
-    def tool(title: str, *, network: bool, envelope: bool = True, writes: bool = False):
+    def tool(
+        title: str,
+        *,
+        network: bool,
+        envelope: bool = True,
+        writes: bool = False,
+        returns: type = ToolEnvelope,
+    ):
         # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
         # provider. A writing tool is neither read-only nor idempotent (it appends), but
         # it never deletes: destructiveHint stays False.
@@ -436,7 +446,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
             if envelope:
                 # `from __future__ import annotations` makes the return a string that cannot
                 # see the class above; FastMCP only builds an outputSchema from a real annotation.
-                fn.__annotations__["return"] = ToolEnvelope
+                fn.__annotations__["return"] = returns
             return register(fn)
 
         return decorate
@@ -1122,7 +1132,7 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         """
         return dict(await run_mcp_tool(watch_price_tool, **locals()))
 
-    @tool("Operational guide", network=False)
+    @tool("Operational guide", network=False, returns=GuideEnvelope)
     def get_guide() -> dict:
         """The long operational guide (markdown); the same text as the viajante://guide resource.
 

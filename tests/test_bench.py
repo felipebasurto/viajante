@@ -163,6 +163,7 @@ class BenchCliTests(unittest.TestCase):
         with (
             patch("viajante.bench.run_gate", return_value=(True, "", 10)),
             patch("viajante.bench.parse_corpus"),
+            patch("viajante.bench.time.perf_counter", return_value=1.0),
             patch("viajante.bench.maybe_live_sweep") as live,
             patch.dict("os.environ", {LIVE_ENV: ""}),
         ):

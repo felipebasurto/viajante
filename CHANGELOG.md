@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rate-limited search errors add `retry_after` (ISO 8601 UTC) and `retry_after_seconds` from the recorded cooldown. They are omitted when no cooldown was recorded (a proxied 429), and the message is unchanged. The end of a cooldown is rounded up to a whole second once, so `retry_after` is never earlier than the real end and `retry_after_seconds` is derived from it. The envelope's top-level `retry_after` / `retry_after_seconds` repeat these per-error values exactly, so a proxied 429 during a direct cooldown no longer shows a top-level value.
 - Opt-in local Streamable HTTP: `viajante-mcp --transport streamable-http [--host 127.0.0.1] [--port 8000]`. Stdio stays the default. No authentication and no `remotes` entry in `server.json`; a non-loopback host prints a warning, and loopback binds refuse a foreign `Host` or `Origin` header (set explicitly, because the SDK only does so itself from 1.23).
 - `viajante://guide` resource (markdown) and a `get_guide` tool carry the long operational guidance.
+- `get_guide`'s output schema declares `guide` (a required string) beside every envelope property, so a client sees the field. No other tool's schema changed.
 - Every MCP tool except `lookup_airports` returns one typed envelope: `status`, `completeness`, `empty_reason` (`provider_empty`, `filtered_out`, `not_loaded`), `error_code`, `retry_after`, `observed_at` and `observed_at_basis`. It is derived from the existing counters and error codes, and is published as the tool's `outputSchema` / `structuredContent`.
 - `empty_reason` on query, date, and explore rows; `timeout` on typed errors when the cause was a timeout. Both appear only when set.
 - Contract: only `provider_empty` may be called "no flights/hotels found".
@@ -70,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hotel schema 2 adds `lodging_evidence_conflict`, exposing explicit room/entire-unit contradictions while retaining the provider title and raw text. The CLI prints the conflicting labels as evidence.
 
 ### Fixed
+
+- The offline bench default-mode test uses a fixed mocked clock so scheduling jitter cannot change its expected score. The product bench and baseline are unchanged.
 
 - MCP validates `deadline_seconds` before a cache replay, retains hotel selection references across deadline changes, and keeps cancellation compatible with opt-in history recording.
 

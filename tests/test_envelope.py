@@ -1202,7 +1202,8 @@ class OutputSchemaTests(unittest.TestCase):
                 continue
             schema = tool.outputSchema
             with self.subTest(tool=name):
-                self.assertEqual(set(schema["required"]), ENVELOPE_KEYS)
+                own = {"guide"} if name == "get_guide" else set()
+                self.assertEqual(set(schema["required"]), ENVELOPE_KEYS | own)
                 self.assertTrue(schema["additionalProperties"])
                 self.assertEqual(schema["properties"]["status"]["enum"], list(STATUSES))
                 self.assertEqual(schema["properties"]["completeness"]["enum"], list(COMPLETENESS))
