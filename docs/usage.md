@@ -246,20 +246,24 @@ viajante recheck-offer --offer offer.json --save /tmp/recheck.json
 The offer is matched by itinerary identity: flight numbers plus scheduled
 departure time for every segment. If the offer carries no flight numbers, it
 falls back to carrier plus times and says so (`match_basis: carrier_times`).
-The result is exactly one outcome:
+The result is exactly one outcome (`previous.source` says whether the old amount came from
+search evidence or was `caller_supplied`):
 
 | Outcome | Meaning |
 | --- | --- |
 | `same_price` | The identical itinerary was found at the same amount and currency. |
-| `price_changed` | The identical itinerary was found at another amount. `previous` and `current` carry each amount with its own currency. If the currencies differ, `price_comparable` is false and nothing is compared or converted. |
-| `substituted` | No identical itinerary, but a close alternative on the same route and dates (same flight number, or a first departure within 90 minutes of the original on every journey). `differences` lists what provably differs; `null` is unknown. |
-| `not_found` | Nothing matching. `reason` is `provider_empty`, `filtered`, or `not_among_offers`. If `check_completed` is false (`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`), the check did not run to an answer; that says nothing about whether the offer still exists. |
+| `price_changed` | The identical itinerary was found at another amount. `previous` and `current` carry each amount with its own currency. A `currency` that differs from the offer's own is refused (exit 1): viajante does not convert. |
+| `substituted` | No identical itinerary, but a close alternative on the same route and dates (a shared flight number, or on every journey a first departure within 90 minutes of the original on the same marketing carrier). `differences` lists what provably differs; `null` is unknown. |
+| `not_found` | A completed check found nothing. `reason` is `provider_empty`, `filtered` (Google returned offers but none passed the query's own constraints), or `not_among_offers`. |
+| `check_failed` | The check did not run to an answer; this says nothing about whether the offer still exists. `check_completed` is false, with `reason` and `error`. `reason` is `blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`, `browser_unavailable`, `currency_mismatch`, or `incomplete_offers` (fresh round-trip or multi-city offers came back without every journey, because the follow-up search for the next journey failed or was ambiguous, and nothing matched). Do not retry a rate limit. |
 
 Every result has `checked_at`. A hand-built identity needs `price`,
 `legs[].segments[]` (flight number and departure clock), a `query` with
 `adults`, `cabin`, and `max_stops`, and a currency; none of them is guessed.
-The CLI exits 0 when the check completed (any outcome), 1 for bad input, and 2
-when it could not be completed. A re-check is not a booking guarantee: the
+The CLI exits 0 when the check completed (any outcome but `check_failed`), 1 for bad
+input, and 2 for `check_failed`. Round trips carry a note: each fresh outbound carries the
+one return that is unique at its cheapest package price, so a still-buyable original
+return can read as a substitution. A re-check is not a booking guarantee: the
 price and terms are confirmed only on the provider's own page. The fresh search
 compares up to the 100 cheapest one-way offers (20 for packaged trips); the
 result notes any truncation.

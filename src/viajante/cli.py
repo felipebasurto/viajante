@@ -2469,9 +2469,9 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Re-check an earlier offer. Runs one fresh search (no cache) and matches by "
             "flight numbers plus departure times. Outcome: same_price, price_changed, "
-            "substituted, or not_found. Not a booking guarantee: confirm the price on "
-            "the provider's own page. Exit 0 check completed, 1 bad input, 2 check not "
-            "completed (blocked or rate limited)."
+            "substituted, not_found, or check_failed. Not a booking guarantee: confirm "
+            "the price on the provider's own page. Exit 0 check completed, 1 bad input, "
+            "2 check_failed (blocked, rate limited, incomplete offers, other provider error)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=RECHECK_EXAMPLES,
@@ -2492,7 +2492,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--currency",
         default=None,
         metavar="CODE",
-        help="ISO 4217 quote currency; defaults to the offer's own, required if it has none",
+        help="The offer's own ISO 4217 currency; required if it has none, refused if it differs",
     )
     recheck.add_argument(
         "--country", default=None, metavar="CC", help="ISO country for Google gl (omit when unset)"

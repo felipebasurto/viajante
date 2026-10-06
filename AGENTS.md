@@ -98,13 +98,19 @@ Google Flights query that skips the MCP replay cache, runs under the one-search 
 and respects the Google cooldown. It matches an earlier offer by flight numbers plus
 scheduled departure times per segment (carrier plus times only when flight numbers are
 absent, stamped `match_basis: carrier_times`) and returns exactly one outcome:
-`same_price`, `price_changed`, `substituted`, or `not_found`, with `checked_at`. A
-positive outcome always rests on a fresh provider match. Amounts are compared only
-within one currency; differing currencies are reported with `price_comparable: false`
-and never converted. A blocked or rate-limited check is `not_found` with
-`check_completed: false` and the provider `error`: the check did not run to an answer,
-which is not evidence the offer is gone. Re-check finalists before presenting them as
-current. A re-check is still not a booking guarantee: confirm the price on the
+`same_price`, `price_changed`, `substituted`, `not_found`, or `check_failed`, with
+`checked_at`. A positive outcome always rests on a fresh provider match. `currency` must be
+the offer's own: a different one is refused, never converted or compared. `not_found` is a
+completed check that found nothing (`reason`: `provider_empty`, `filtered`,
+`not_among_offers`). `check_failed` has `check_completed: false`, a `reason` and the
+provider `error` (`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`,
+`browser_unavailable`, `currency_mismatch`, or `incomplete_offers` when fresh round-trip or
+multi-city offers came back without every journey and nothing matched): the check did not
+run to an answer, which is not evidence the offer is gone. Never branch a rate limit into
+"gone". `substituted` needs a shared flight number, or the same marketing carrier within
+90 minutes of the original departure. A previous price typed by hand
+(`previous.source: caller_supplied`) is not recorded in the evidence ledger. Re-check
+finalists before presenting them as current. A re-check is still not a booking guarantee: confirm the price on the
 provider's own page.
 
 Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.

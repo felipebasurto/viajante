@@ -839,10 +839,16 @@ def recheck_offer_tool(
     proxy: Optional[str] = None,
 ) -> Mapping[str, object]:
     """One fresh search, never the replay cache, under the one-search process lock."""
-    return _owned(
-        _with_search_lock(
-            lambda: recheck_offer(
-                offer, query=query, currency=currency, country=country, fetch=fetch, proxy=proxy
-            )
+    result = _with_search_lock(
+        lambda: recheck_offer(
+            offer, query=query, currency=currency, country=country, fetch=fetch, proxy=proxy
         )
     )
+    # A previous amount the caller typed by hand is not provider evidence from a search.
+    owned = (
+        result
+        if result["previous"]["source"] == "search_evidence"
+        else {key: value for key, value in result.items() if key != "previous"}
+    )
+    record(owned)
+    return result

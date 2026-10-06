@@ -31,7 +31,7 @@ That split explains most design choices:
   becomes pass). `verify_answer` flags amounts, codes, dates, and links in a
   draft reply that no search in this process returned. `recheck_offer` asks
   Google once more whether a finalist still exists at its price; a blocked
-  check says it could not be completed, never that the offer is gone.
+  check is `check_failed`, never that the offer is gone.
 
 When something tempts you to pre-digest the payload for the agent (summaries,
 "cheapest is X" lines, recommendation prose), don't. A capable agent already

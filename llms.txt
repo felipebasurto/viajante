@@ -55,8 +55,9 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 - lookup_airports: offline city or IATA lookup. Does not pick a hub.
 - recheck_offer: one fresh Google Flights search (never cached) that matches an earlier
   offer by flight numbers and departure times. Outcomes: same_price, price_changed,
-  substituted, not_found. check_completed false (blocked, rate limited) means the
-  check did not run to an answer, not that the offer is gone. Re-check finalists
+  substituted, not_found, check_failed. check_failed (blocked, rate limited, incomplete
+  offers, any provider error; check_completed false) means the check did not run to an
+  answer, not that the offer is gone. currency must be the offer's own. Re-check finalists
   before presenting them as current. Not a booking guarantee; confirm the price on
   the provider's own page.
 - search_hidden_city: Skiplagged, opt-in. Cards are USD; omit currency or pass USD. Do not copy a Google/origin quote keep (GBP, JPY, …).

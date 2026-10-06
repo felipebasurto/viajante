@@ -117,11 +117,12 @@ saves N” is **UNKNOWN** without two owned comparison candidates.
 
 Call `recheck_offer` on each finalist before presenting it as current. It runs one
 fresh search (never the 5-minute replay) and returns exactly one of `same_price`,
-`price_changed`, `substituted`, `not_found`, with `checked_at`. Quote the outcome as
+`price_changed`, `substituted`, `not_found`, `check_failed`, with `checked_at`. Quote the outcome as
 found: a `substituted` offer is a different itinerary, so name what differs and do not
-call it the original. `not_found` with `check_completed: false` (blocked, rate limited)
-means the check did not run; do not say the offer is gone, do not retry, and report the
-cooldown. Currencies that differ are reported, never compared. A re-check is still not
+call it the original. `check_failed` (`check_completed: false`: blocked, rate limited, incomplete offers, any
+provider error) means the check did not run; never say the offer is gone, do not retry a
+rate limit, and report the cooldown. `not_found` is a completed check. Pass the offer's own
+currency only; a different one is refused. A re-check is still not
 a booking guarantee: the price is confirmed only on the provider's own page.
 
 Call `validate_itinerary` before saying an assembled itinerary is compliant:

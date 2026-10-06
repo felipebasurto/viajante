@@ -1,11 +1,12 @@
 """Re-check an earlier flight offer against a fresh Google Flights search.
 
-The outcome is one of ``same_price``, ``price_changed``, ``substituted`` or
-``not_found``. A positive outcome always rests on an offer from a search that ran
-now; nothing is replayed from the MCP cache and no amount is inferred. A check
-that Google blocked or rate-limited is ``not_found`` with ``check_completed``
-false: that says the check did not run to an answer, not that the offer is gone.
-A re-check is still not a booking guarantee; the price is confirmed on the
+The outcome is one of ``same_price``, ``price_changed``, ``substituted``,
+``not_found`` or ``check_failed``. A positive outcome always rests on an offer from a
+search that ran now; nothing is replayed from the MCP cache and no amount is inferred.
+``not_found`` means a completed check found nothing. ``check_failed`` means the check
+did not run to an answer (blocked, rate-limited, incomplete offers, any provider
+error): ``check_completed`` is false and that says nothing about whether the offer
+exists. A re-check is still not a booking guarantee; the price is confirmed on the
 provider's own page.
 """
 
@@ -16,10 +17,13 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
+from viajante.airports import airport_geo
+from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.flights import _clock_minutes, search_flights
 from viajante.models import (
     FlightLeg,
@@ -27,7 +31,6 @@ from viajante.models import (
     MultiCity,
     QueryFailure,
     RoundTrip,
-    SearchError,
     SearchErrorCode,
     SearchReport,
     Trip,
@@ -162,14 +165,19 @@ def _shared_numbers(a: tuple[_Segment, ...], b: tuple[_Segment, ...]) -> int:
 
 
 def _closeness(old: tuple, new: tuple) -> Optional[tuple[int, int]]:
-    """(shared flight numbers, total departure gap) when every journey is close, else None."""
+    """(shared flight numbers, total departure gap) when every journey is close, else None.
+
+    Close means a shared flight number, or a first departure within the window on the same
+    marketing carrier. A different carrier at a similar time is another product.
+    """
     if len(old) != len(new):
         return None
     shared, gap_total = 0, 0
     for a, b in zip(old, new, strict=True):
         shares = _shared_numbers(a, b)
         gap = _gap(a[0].clock, b[0].clock)
-        if not shares and (gap is None or gap > CLOSE_DEPARTURE_MINUTES):
+        near = gap is not None and gap <= CLOSE_DEPARTURE_MINUTES and _same_carrier(a[0], b[0])
+        if not shares and not near:
             return None
         shared += shares
         gap_total += gap or 0
@@ -196,6 +204,10 @@ def _differences(
             "flight_numbers": (_numbers(a), _numbers(b)),
             "route": (_path(a), _path(b)),
             "departure": (a[0].clock, b[0].clock),
+            "connection_departures": (
+                [x.clock for x in a[1:]] if len(a) > 1 else None,
+                [x.clock for x in b[1:]],
+            ),
             "arrival": (
                 normalize_clock(_text(old_legs[index].get("arrival"))),
                 normalize_clock(_text(new_legs[index].get("arrival"))),
@@ -218,9 +230,15 @@ def _trip_from_query(query: Mapping[str, Any]) -> Trip:
     for key in ("children", "infants_in_seat", "infants_on_lap", "bags", "carry_on"):
         if query.get(key) is not None:
             shop[key] = query[key]
-    for key in ("airlines", "exclude_airlines", "alliances", "exclude_alliances"):
-        if query.get(key):
-            shop[key] = tuple(query[key])
+    for key, parse in (
+        ("airlines", parse_airline_codes),
+        ("exclude_airlines", parse_airline_codes),
+        ("alliances", parse_alliances),
+        ("exclude_alliances", parse_alliances),
+    ):
+        value = query.get(key)
+        if value:
+            shop[key] = parse(value) if isinstance(value, str) else tuple(value)
     stops = query["max_stops"]
 
     def day(value: object, role: str) -> date:
@@ -235,8 +253,8 @@ def _trip_from_query(query: Mapping[str, Any]) -> Trip:
             raise ValueError("query.legs is required for a multi-city offer")
         legs = tuple(
             FlightLeg(
-                row["origin"],
-                row["destination"],
+                row.get("origin"),  # type: ignore[arg-type]
+                row.get("destination"),  # type: ignore[arg-type]
                 day(row.get("departure_date"), "query.legs[].departure_date"),
                 row.get("max_stops", stops),
             )
@@ -267,25 +285,26 @@ def _unwrap(offer: Mapping[str, Any]) -> Mapping[str, Any]:
     return _mapping(inner, role="offer.offer") if isinstance(inner, Mapping) else offer
 
 
-def recheck_offer(
-    offer: Mapping[str, Any],
-    *,
-    query: Optional[Mapping[str, Any]] = None,
-    currency: Optional[str] = None,
-    country: Optional[str] = None,
-    fetch: Optional[str] = None,
-    proxy: Optional[str] = None,
-    search: Optional[Callable[..., SearchReport]] = None,
-) -> dict[str, object]:
-    """Run one fresh Google Flights search and match ``offer`` by itinerary identity.
+def _departed(day: date, clock: Optional[str], origin: str, now: datetime) -> bool:
+    """True when the journey has left. Uses the origin's owned timezone when it has one."""
+    minutes = _clock_minutes(clock)
+    geo = airport_geo(origin)
+    if minutes is not None and geo is not None:
+        try:
+            zone = ZoneInfo(geo[0])
+        except (KeyError, ValueError):
+            zone = None
+        if zone is not None:
+            return datetime.combine(day, time(minutes // 60, minutes % 60), zone) <= now
+    return day < now.astimezone().date()
 
-    ``offer`` is an offer from an earlier result (or a ``{query, offer}`` row), or enough
-    of one: ``price`` and ``legs[].segments[]`` with flight numbers and departure clocks.
-    ``query`` defaults to the offer's own evidence query. ``currency`` is the quote
-    currency to search in and defaults to the offer's own. An offer that carries no
-    currency needs it named, and then ``currency`` is also the offer's. Naming a
-    different currency than the offer's finds the itinerary but compares no amounts.
-    """
+
+def _prepare(
+    offer: Mapping[str, Any],
+    query: Optional[Mapping[str, Any]],
+    currency: Optional[str],
+    now: datetime,
+) -> tuple[Mapping[str, Any], Mapping[str, Any], Trip, float, str, tuple, str, str]:
     row = _mapping(offer, role="offer")
     if query is None and isinstance(row.get("query"), Mapping):
         query = row["query"]
@@ -300,14 +319,14 @@ def recheck_offer(
     carried = offer.get("currency") or evidence.get("currency")
     if carried is None and currency is None:
         raise ValueError("currency is required: the offer carries none and none is guessed")
-    previous_currency = normalize_currency(carried or currency)  # type: ignore[arg-type]
-    search_currency = normalize_currency(currency or previous_currency)
+    own = normalize_currency(carried or currency)  # type: ignore[arg-type]
+    if currency is not None and normalize_currency(currency) != own:
+        raise ValueError(
+            f"currency {normalize_currency(currency)} differs from the offer's own {own}; "
+            "viajante does not convert, so re-check in the offer's currency"
+        )
 
     trip = _trip_from_query(query)
-    today = date.today()
-    for leg in trip.legs:
-        if leg.departure_date < today:
-            raise ValueError(f"departure date is in the past: {leg.departure_date.isoformat()}")
     old = _journeys(offer)
     if len(old) != len(trip.legs):
         raise ValueError(
@@ -317,9 +336,44 @@ def recheck_offer(
     segments = [s for journey in old for s in journey]
     if any(s.clock is None for s in segments):
         raise ValueError("every offer segment needs a departure clock (HH:MM)")
+    for leg, journey in zip(trip.legs, old, strict=True):
+        if _departed(leg.departure_date, journey[0].clock, leg.origin, now):
+            raise ValueError(
+                f"departure is in the past: {leg.departure_date.isoformat()} {journey[0].clock}"
+            )
     basis = "flight_numbers" if all(s.flight_number for s in segments) else "carrier_times"
     if basis == "carrier_times" and not all(s.carrier or s.airline for s in segments):
         raise ValueError("offer segments carry neither flight numbers nor carriers")
+    source = "search_evidence" if evidence.get("evidence_id") else "caller_supplied"
+    return offer, evidence, trip, float(price), own, old, basis, source
+
+
+def recheck_offer(
+    offer: Mapping[str, Any],
+    *,
+    query: Optional[Mapping[str, Any]] = None,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    fetch: Optional[str] = None,
+    proxy: Optional[str] = None,
+    search: Optional[Callable[..., SearchReport]] = None,
+    now: Optional[datetime] = None,
+) -> dict[str, object]:
+    """Run one fresh Google Flights search and match ``offer`` by itinerary identity.
+
+    ``offer`` is an offer from an earlier result (or a ``{query, offer}`` row), or enough
+    of one: ``price`` and ``legs[].segments[]`` with flight numbers and departure clocks.
+    ``query`` defaults to the offer's own evidence query. ``currency`` is the offer's own
+    currency: an offer that carries none needs it named, and a name that differs from the
+    one the offer carries is refused (viajante does not convert).
+    """
+    try:
+        offer, evidence, trip, price, own, old, basis, source = _prepare(
+            offer, query, currency, now or datetime.now(timezone.utc)
+        )
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(f"malformed offer or query: {type(exc).__name__}: {exc}") from None
+    segments = [s for journey in old for s in journey]
 
     packaged = len(trip.legs) > 1
     if fetch is None:
@@ -330,7 +384,7 @@ def recheck_offer(
         top=PACKAGED_TOP if packaged else ONE_WAY_TOP,
         fetch=fetch,
         sort="fare",
-        currency=search_currency,
+        currency=own,
         country=country,
         proxy=proxy,
     )
@@ -342,8 +396,9 @@ def recheck_offer(
         "check_completed": True,
         "match_basis": basis,
         "previous": {
-            "price": float(price),
-            "currency": previous_currency,
+            "price": price,
+            "currency": own,
+            "source": source,
             "itinerary": [[_segment_json(s) for s in journey] for journey in old],
         },
         "query": dict(trip.to_dict()),
@@ -356,16 +411,27 @@ def recheck_offer(
             "Flight numbers are absent from the offer; matched by carrier and scheduled "
             "departure times, which is a weaker identity."
         )
+    if country is None:
+        notes.append(
+            "No Google country (gl) was applied: offer evidence does not record the original "
+            "search's country. Name country if the original search used one."
+        )
+    if packaged:
+        notes.append(
+            "Each fresh outbound carries the one return that is unique at its cheapest "
+            "package price. An original return that is still buyable but not that one can "
+            "read as a substitution; confirm multi-journey trips on the provider's page."
+        )
 
     if isinstance(result, QueryFailure):
-        return _not_found(out, result.error, notes)
+        error = result.error
+        if error.code == SearchErrorCode.NO_RESULTS:
+            return _not_found(out, "provider_empty")
+        reason = "rate_limited" if error.rate_limited else error.code.value
+        return _check_failed(out, reason, dict(error.to_dict()))
 
-    fresh = [(item, item.to_dict(report.currency)) for item in result.offers]
-    complete = [(i, d, _journeys(d)) for i, d in fresh if len(d["legs"]) == len(old)]  # type: ignore[arg-type]
-    if len(complete) < len(fresh):
-        notes.append(
-            f"{len(fresh) - len(complete)} fresh offer(s) lacked a journey and were not compared."
-        )
+    fresh = [item.to_dict(report.currency) for item in result.offers]
+    complete = [(d, _journeys(d)) for d in fresh if len(d["legs"]) == len(old)]  # type: ignore[arg-type]
     if result.eligible_count > len(result.offers):
         notes.append(
             f"Only the {len(result.offers)} cheapest of {result.eligible_count} eligible "
@@ -373,10 +439,9 @@ def recheck_offer(
         )
     out["offers_compared"] = len(complete)
 
-    identical = [(d, j) for _, d, j in complete if _identical(old, j, basis)]
+    identical = [(d, j) for d, j in complete if _identical(old, j, basis)]
     if identical:
         identical.sort(key=lambda pair: (pair[0]["price"] != price, pair[0]["price"]))
-        found = identical[0][0]
         if len(identical) > 1:
             notes.append(f"{len(identical)} fresh offers matched the itinerary; reporting one.")
         if any(s.day is None for s in segments):
@@ -384,25 +449,34 @@ def recheck_offer(
                 "Segment departure dates were unavailable; the query date and departure "
                 "clocks were compared."
             )
-        return _found(out, found, report.currency, previous_currency, float(price), "identical")
+        return _found(out, identical[0][0], report.currency, price, "identical")
 
-    close = [(score, d, j) for _, d, j in complete if (score := _closeness(old, j)) is not None]
+    missing = len(fresh) - len(complete)
+    if missing:
+        return _check_failed(
+            out,
+            "incomplete_offers",
+            {
+                "code": "incomplete_offers",
+                "message": (
+                    f"{missing} fresh offer(s) came back without every journey (the follow-up "
+                    "search for the next journey failed or was ambiguous), so the original "
+                    "itinerary cannot be ruled out."
+                ),
+            },
+        )
+
+    close = [(score, d, j) for d, j in complete if (score := _closeness(old, j)) is not None]
     if close:
         close.sort(key=lambda row: (-row[0][0], row[0][1], row[1]["price"]))
         _, found, journeys = close[0]
         out["differences"] = _differences(old, journeys, offer["legs"], found["legs"])
-        return _found(out, found, report.currency, previous_currency, float(price), "substituted")
+        return _found(out, found, report.currency, price, "substituted")
 
-    if result.raw_count == 0:
-        out["reason"] = "provider_empty"
-    elif result.eligible_count == 0:
-        out["reason"] = "filtered"
+    if result.raw_count > 0 and result.eligible_count == 0:
         notes.append("Google returned offers, but none passed the query's own constraints.")
-    else:
-        out["reason"] = "not_among_offers"
-    out["outcome"] = "not_found"
-    out["current"] = None
-    return out
+        return _not_found(out, "filtered")
+    return _not_found(out, "provider_empty" if result.raw_count == 0 else "not_among_offers")
 
 
 def _segment_json(segment: _Segment) -> dict[str, object]:
@@ -421,38 +495,35 @@ def _found(
     out: dict[str, object],
     offer: Mapping[str, Any],
     currency: str,
-    previous_currency: str,
     previous_price: float,
     kind: str,
 ) -> dict[str, object]:
-    notes = out["notes"]
-    comparable = currency == previous_currency
     out["current"] = {"price": offer["price"], "currency": currency, "offer": dict(offer)}
-    out["price_comparable"] = comparable
-    if not comparable:
-        notes.append(  # type: ignore[attr-defined]
-            f"Amounts are in {previous_currency} and {currency}; they are not compared "
-            "and no exchange rate is applied."
-        )
     if kind == "substituted":
         out["outcome"] = "substituted"
-    elif comparable and offer["price"] == previous_price:
+    elif offer["price"] == previous_price:
         out["outcome"] = "same_price"
     else:
         out["outcome"] = "price_changed"
     return out
 
 
-def _not_found(out: dict[str, object], error: SearchError, notes: list[str]) -> dict[str, object]:
-    out["outcome"] = "not_found"
-    out["current"] = None
-    if error.code == SearchErrorCode.NO_RESULTS:
-        out["reason"] = "provider_empty"
-        return out
-    out["check_completed"] = False
-    out["reason"] = "rate_limited" if error.rate_limited else error.code.value
-    out["error"] = dict(error.to_dict())
-    notes.append(
+def _not_found(out: dict[str, object], reason: str) -> dict[str, object]:
+    out.update(outcome="not_found", current=None, reason=reason)
+    return out
+
+
+def _check_failed(
+    out: dict[str, object], reason: str, error: Mapping[str, object]
+) -> dict[str, object]:
+    out.update(
+        outcome="check_failed",
+        check_completed=False,
+        current=None,
+        reason=reason,
+        error=dict(error),
+    )
+    out["notes"].append(  # type: ignore[attr-defined]
         "The check could not be completed. This says nothing about whether the offer still exists."
     )
     return out
