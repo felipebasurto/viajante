@@ -862,10 +862,14 @@ def recheck_offer_tool(
     owned = dict(result)
     if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
         del owned["previous"]
-        owned["differences"] = _without_previous(result.get("differences", ()))
+        if "differences" in owned:
+            owned["differences"] = _without_previous(owned["differences"])  # type: ignore[arg-type]
         if "closest_candidate" in owned:
             closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
             closest["differences"] = _without_previous(closest["differences"])
             owned["closest_candidate"] = closest
-    record(owned)
+    # Record only what a provider answer produced. A result built from the caller's own
+    # offer and query (incomplete_identity, a blocked or unsent check) proves nothing.
+    if result.get("current") or result.get("candidates") or result.get("closest_candidate"):
+        record(owned)
     return result

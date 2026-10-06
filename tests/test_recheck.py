@@ -248,7 +248,7 @@ class OutcomeTests(unittest.TestCase):
         )
         self.assertEqual(result["outcome"], "substituted")
         fields = {row["field"] for row in result["differences"]}
-        self.assertEqual(fields, {"flight_numbers", "route", "departure", "arrival"})
+        self.assertEqual(fields, {"flight_numbers", "route", "stops", "departure", "arrival"})
         self.assertEqual(result["current"]["price"], 450.0)
 
     def test_other_airline_near_the_same_time_is_not_a_substitute(self) -> None:
@@ -536,7 +536,7 @@ class StrictMatchingTests(unittest.TestCase):
         self.assertEqual(stub.calls, [])
         self.assertEqual(result["outcome"], "incomplete_identity")
         self.assertFalse(result["check_completed"])
-        self.assertEqual(result["missing"], ["journey 0 segment 0: flight_number"])
+        self.assertEqual(result["missing"], ["journey 0 segment 0: flight number"])
         self.assertIsNone(result["match_basis"])
         self.assertIsNone(result["current"])
         self.assertTrue(any("allow_loose_match" in note for note in result["notes"]))
@@ -629,7 +629,8 @@ class ReplayedFilterTests(unittest.TestCase):
         result, stub = self._check(560.0, price_cap=520)
         self.assertEqual(result["outcome"], "price_changed")
         self.assertEqual(result["filter_violations"], ["price_cap"])
-        self.assertIn("price_cap", result["filters_replayed"])
+        self.assertNotIn("price_cap", result["filters_replayed"])
+        self.assertIn("price_cap", result["filters_checked"])
         self.assertIsNone(stub.calls[0][0][0][0].price_cap)
 
     def test_a_price_within_the_cap_has_no_violation(self) -> None:
@@ -680,6 +681,106 @@ class ReplayedFilterTests(unittest.TestCase):
                     _previous(OUTBOUND, query=self._query(price_cap=bad)),
                     search=_Stub(_report()),
                 )
+
+
+class RoundTwoBugTests(unittest.TestCase):
+    def _mixed(self) -> tuple:
+        first = _segment("JFK", "BOS", "19:30", "20:45", "BA212")
+        second = RawSegment(
+            **{
+                **_segment("BOS", "LHR", "22:00", "09:30", "AA6").__dict__,
+                "carrier": "AA",
+                "airline": "American",
+            }
+        )
+        return first, second
+
+    def _violations(self, **extra: object) -> list[str]:
+        first, second = self._mixed()
+        previous = _previous(first, second, query={**_query().to_dict(), **extra})
+        stub = _Stub(_report(_offer(500.0, (first, second))))
+        result = recheck_offer(previous, search=stub)
+        self.assertEqual(result["outcome"], "same_price")
+        return result["filter_violations"]  # type: ignore[return-value]
+
+    def test_an_allow_list_is_satisfied_by_any_carrier_like_the_search(self) -> None:
+        self.assertEqual(self._violations(airlines=["BA"]), [])
+        self.assertEqual(self._violations(airlines=["AA"]), [])
+        self.assertEqual(self._violations(airlines=["VS"]), ["airlines"])
+
+    def test_an_exclude_list_is_hit_by_any_carrier(self) -> None:
+        self.assertEqual(self._violations(exclude_airlines=["AA"]), ["exclude_airlines"])
+        self.assertEqual(self._violations(exclude_airlines=["VS"]), [])
+
+    def _leg_without_segments(self, stops: str) -> dict:
+        old = _previous(OUTBOUND)
+        leg = {**old["legs"][0], "segments": [], "stops": stops}
+        return {**old, "legs": [leg]}
+
+    def test_loose_match_refuses_a_connecting_leg_without_segments(self) -> None:
+        stub = _Stub(_report(_offer(650.0, (OUTBOUND,))))
+        for stops in ("1 stop", None):
+            with self.subTest(stops):
+                result = recheck_offer(
+                    self._leg_without_segments(stops), allow_loose_match=True, search=stub
+                )
+                self.assertEqual(result["outcome"], "incomplete_identity")
+                self.assertTrue(any("segments" in m for m in result["missing"]))
+        self.assertEqual(stub.calls, [])
+
+    def test_loose_match_still_accepts_a_leg_known_to_be_nonstop(self) -> None:
+        stub = _Stub(_report(_offer(500.0, (OUTBOUND,))))
+        result = recheck_offer(
+            self._leg_without_segments("Nonstop"), allow_loose_match=True, search=stub
+        )
+        self.assertEqual(result["outcome"], "same_price")
+        self.assertEqual(len(stub.calls), 1)
+
+    def test_a_close_alternative_with_nothing_visibly_different_is_not_reported(self) -> None:
+        first = _segment("JFK", "BOS", "19:30", "20:45", "BA212")
+        second = _segment("BOS", "LHR", "22:00", "09:30", "BA213")
+        next_day = _segment("BOS", "LHR", "22:00", "09:30", "BA213", day=FAR + timedelta(days=1))
+        stub = _Stub(_report(_offer(450.0, (first, next_day))))
+        for options in ({}, {"allow_substitute": True}):
+            with self.subTest(options):
+                result = recheck_offer(_previous(first, second), search=stub, **options)
+                self.assertEqual(result["outcome"], "not_found")
+                self.assertNotIn("closest_candidate", result)
+
+    def test_a_different_first_day_is_a_named_difference(self) -> None:
+        next_day = _segment("JFK", "LHR", "19:30", "07:30", "BA178", day=FAR + timedelta(days=1))
+        result = recheck_offer(
+            _previous(OUTBOUND),
+            allow_substitute=True,
+            search=_Stub(_report(_offer(450.0, (next_day,)))),
+        )
+        self.assertEqual(result["outcome"], "substituted")
+        self.assertEqual([r["field"] for r in result["differences"]], ["departure_date"])
+
+    def test_flight_numbers_are_used_in_loose_mode_when_the_offer_has_them(self) -> None:
+        old = _previous(OUTBOUND)
+        segment = {**old["legs"][0]["segments"][0], "origin": None}
+        old = {**old, "legs": [{**old["legs"][0], "segments": [segment]}]}
+        other = _segment("JFK", "LHR", "19:30", "07:30", "BA999")
+        wrong = recheck_offer(
+            old, allow_loose_match=True, search=_Stub(_report(_offer(500.0, (other,))))
+        )
+        self.assertEqual(wrong["outcome"], "not_found")
+        right = recheck_offer(
+            old, allow_loose_match=True, search=_Stub(_report(_offer(500.0, (OUTBOUND,))))
+        )
+        self.assertEqual(right["outcome"], "same_price")
+        self.assertTrue(right["loose_match"])
+
+    def test_airports_are_compared_when_matching(self) -> None:
+        tokyo = _segment("JFK", "NRT", "19:30", "22:30", "BA178")
+        result = recheck_offer(
+            _previous(OUTBOUND),
+            allow_substitute=True,
+            search=_Stub(_report(_offer(500.0, (tokyo,)))),
+        )
+        self.assertEqual(result["outcome"], "not_found")
+        self.assertNotIn("closest_candidate", result)
 
 
 class IncompleteJourneyTests(unittest.TestCase):
@@ -916,26 +1017,27 @@ class McpToolTests(unittest.TestCase):
         result = self._recheck(_previous(OUTBOUND, evidence_id="gf_other"))
         self.assertEqual(result["previous"]["source"], "caller_supplied")
 
+    def _via_boston(self) -> dict:
+        first = _segment("JFK", "BOS", "19:30", "20:45", "BA212")
+        second = _segment("BOS", "LHR", "22:00", "09:30", "BA213")
+        return _previous(first, second, evidence_id=None)
+
     def test_caller_supplied_values_in_differences_are_returned_but_not_recorded(self) -> None:
-        elsewhere = _segment("JFK", "NRT", "19:30", "22:30", "BA999")
-        result = self._recheck(
-            _previous(elsewhere, evidence_id=None), current=500.0, allow_substitute=True
-        )
+        result = self._recheck(self._via_boston(), current=500.0, allow_substitute=True)
         self.assertEqual(result["outcome"], "substituted")
         route = next(r for r in result["differences"] if r["field"] == "route")
-        self.assertEqual(route["previous"], ["JFK", "NRT"])
-        flagged = [row["text"] for row in evidence.verify_answer("JFK NRT LHR")["unowned"]]
-        self.assertIn("NRT", flagged)
+        self.assertEqual(route["previous"], ["JFK", "BOS", "LHR"])
+        flagged = [row["text"] for row in evidence.verify_answer("JFK BOS LHR")["unowned"]]
+        self.assertIn("BOS", flagged)
         self.assertNotIn("LHR", flagged)
 
     def test_caller_values_in_a_closest_candidate_are_not_recorded_either(self) -> None:
-        elsewhere = _segment("JFK", "NRT", "19:30", "22:30", "BA999")
-        result = self._recheck(_previous(elsewhere, evidence_id=None), current=500.0)
+        result = self._recheck(self._via_boston(), current=500.0)
         self.assertEqual(result["outcome"], "not_found")
         route = next(r for r in result["closest_candidate"]["differences"] if r["field"] == "route")
-        self.assertEqual(route["previous"], ["JFK", "NRT"])
-        flagged = [row["text"] for row in evidence.verify_answer("JFK NRT LHR")["unowned"]]
-        self.assertIn("NRT", flagged)
+        self.assertEqual(route["previous"], ["JFK", "BOS", "LHR"])
+        flagged = [row["text"] for row in evidence.verify_answer("JFK BOS LHR")["unowned"]]
+        self.assertIn("BOS", flagged)
         self.assertNotIn("LHR", flagged)
 
     def test_previous_leg_times_come_from_the_ledger_offer_not_the_caller(self) -> None:
@@ -1022,6 +1124,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["outcome"], "multiple_matches")
         self.assertIn("510 USD", out)
         self.assertIn("530 USD", out)
+        self.assertIn("BA178", out)
 
     def test_incomplete_identity_exits_2_and_loose_flag_is_wired(self) -> None:
         bare = _segment("JFK", "LHR", "19:30", "07:30", None)
@@ -1029,10 +1132,16 @@ class CliTests(unittest.TestCase):
             offer = Path(tmp) / "offer.json"
             offer.write_text(json.dumps(_previous(bare)), encoding="utf-8")
             stub = _Stub(_report(_offer(500.0, (bare,))))
-            with patch("viajante.recheck.search_flights", stub), redirect_stdout(io.StringIO()):
+            shown = io.StringIO()
+            with patch("viajante.recheck.search_flights", stub), redirect_stdout(shown):
                 strict = main(["recheck-offer", "--offer", str(offer)])
+                text = shown.getvalue()
                 loose = main(["recheck-offer", "--offer", str(offer), "--allow-loose-match"])
+            shown.truncate(0)
+            shown.write(text)
         self.assertEqual((strict, loose), (2, 0))
+        self.assertIn("no search sent", shown.getvalue())
+        self.assertNotIn("None", shown.getvalue().splitlines()[0])
         self.assertEqual(len(stub.calls), 1)
 
     def test_bad_input_exits_1(self) -> None:

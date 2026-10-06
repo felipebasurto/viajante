@@ -24,7 +24,8 @@ from zoneinfo import ZoneInfo
 
 from viajante.airports import airport_geo
 from viajante.carriers import parse_airline_codes, parse_alliances
-from viajante.flights import _clock_minutes, search_flights
+from viajante.flights import _clock_minutes, _passes_airline_filters, search_flights
+from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
     FlightLeg,
     FlightQuery,
@@ -36,7 +37,7 @@ from viajante.models import (
     Trip,
     normalize_currency,
 )
-from viajante.parsers import normalize_clock
+from viajante.parsers import normalize_clock, parse_stops_count
 from viajante.storage import write_json_atomic
 
 SCHEMA_VERSION = 1
@@ -141,9 +142,13 @@ def _segment_match(old: _Segment, new: _Segment, basis: str) -> bool:
         return False
     if old.day and new.day and old.day != new.day:
         return False
-    if basis == "flight_numbers":
-        return old.flight_number is not None and old.flight_number == new.flight_number
-    return _same_carrier(old, new)
+    if old.origin and new.origin and old.origin != new.origin:
+        return False
+    if old.destination and new.destination and old.destination != new.destination:
+        return False
+    if old.flight_number is not None:
+        return old.flight_number == new.flight_number
+    return basis == "carrier_times" and _same_carrier(old, new)
 
 
 def _identical(old: tuple, new: tuple, basis: str) -> bool:
@@ -166,6 +171,14 @@ def _shared_numbers(a: tuple[_Segment, ...], b: tuple[_Segment, ...]) -> int:
     return len(old & {s.flight_number for s in b if s.flight_number})
 
 
+def _same_route(a: tuple[_Segment, ...], b: tuple[_Segment, ...]) -> bool:
+    """Same end airports unless either is unknown (a query already fixes the route)."""
+    return not (
+        (a[0].origin and b[0].origin and a[0].origin != b[0].origin)
+        or (a[-1].destination and b[-1].destination and a[-1].destination != b[-1].destination)
+    )
+
+
 def _closeness(old: tuple, new: tuple) -> Optional[tuple[int, int]]:
     """(shared flight numbers, total departure gap) when every journey is close, else None.
 
@@ -178,6 +191,8 @@ def _closeness(old: tuple, new: tuple) -> Optional[tuple[int, int]]:
     for a, b in zip(old, new, strict=True):
         shares = _shared_numbers(a, b)
         gap = _gap(a[0].clock, b[0].clock)
+        if not _same_route(a, b):
+            return None
         near = gap is not None and gap <= CLOSE_DEPARTURE_MINUTES and _same_carrier(a[0], b[0])
         if not shares and not near:
             return None
@@ -205,7 +220,9 @@ def _differences(
         pairs = {
             "flight_numbers": (_numbers(a), _numbers(b)),
             "route": (_path(a), _path(b)),
+            "stops": (len(a) - 1, len(b) - 1),
             "departure": (a[0].clock, b[0].clock),
+            "departure_date": (a[0].day, b[0].day),
             "connection_departures": (
                 [x.clock for x in a[1:]] if len(a) > 1 else None,
                 [x.clock for x in b[1:]],
@@ -349,29 +366,42 @@ class _Prepared:
     query: Mapping[str, Any]
 
 
-def _missing_identity(old: tuple, loose: bool) -> tuple[str, list[str]]:
+def _missing_identity(
+    old: tuple, loose: bool, legs: Sequence[Mapping[str, Any]]
+) -> tuple[str, list[str]]:
     """(basis, missing) where missing is empty when the identity is complete for that basis."""
-    strict: list[str] = []
-    for j, journey in enumerate(old):
-        for k, seg in enumerate(journey):
-            for field in ("flight_number", "clock", "origin", "destination"):
-                if getattr(seg, field) is None:
-                    strict.append(f"journey {j} segment {k}: {field}")
+    strict = [
+        f"journey {j} segment {k}: {label}"
+        for j, journey in enumerate(old)
+        for k, seg in enumerate(journey)
+        for field, label in (
+            ("flight_number", "flight number"),
+            ("clock", "departure clock"),
+            ("origin", "origin"),
+            ("destination", "destination"),
+        )
+        if getattr(seg, field) is None
+    ]
     if not strict:
         return "flight_numbers", []
-    if loose:
-        weak = [
-            f"journey {j} segment {k}: {field}"
-            for j, journey in enumerate(old)
-            for k, seg in enumerate(journey)
-            for field, absent in (
-                ("departure clock", seg.clock is None),
-                ("carrier or airline", not (seg.carrier or seg.airline)),
-            )
-            if absent
-        ]
-        return "carrier_times", weak
-    return "flight_numbers", strict
+    if not loose:
+        return "flight_numbers", strict
+    weak = [
+        f"journey {j} segment {k}: {label}"
+        for j, journey in enumerate(old)
+        for k, seg in enumerate(journey)
+        for label, absent in (
+            ("departure clock", seg.clock is None),
+            ("carrier or airline", not (seg.carrier or seg.airline)),
+        )
+        if absent
+    ]
+    for j, leg in enumerate(legs):
+        # A leg without segments collapses to one pseudo-segment; only a leg known to be
+        # nonstop may be compared that way, a connecting one needs its segments.
+        if not leg.get("segments") and parse_stops_count(_text(leg.get("stops"))) != 0:
+            weak.append(f"journey {j}: segments (stop count unknown or connecting)")
+    return "carrier_times", weak
 
 
 def _prepare(
@@ -421,7 +451,7 @@ def _prepare(
             raise ValueError(
                 f"departure is in the past: {leg.departure_date.isoformat()} {journey[0].clock}"
             )
-    basis, missing = _missing_identity(old, loose)
+    basis, missing = _missing_identity(old, loose, offer["legs"])
     evidence_id = evidence.get("evidence_id")
     recorded = (
         ledger_offer(evidence_id, float(price), own)
@@ -456,19 +486,26 @@ def _violations(
         if row.get("segments") and len(journey) - 1 > leg.max_stops:
             found.append("max_stops")
             break
-    carriers = {s.carrier for journey in journeys for s in journey if s.carrier}
-    allowed = {c.upper() for c in getattr(trip, "airlines", None) or ()}
-    barred = {c.upper() for c in getattr(trip, "exclude_airlines", None) or ()}
-    if allowed and carriers - allowed:
+    # The search's own rule: any carrier on the card may satisfy an allow list.
+    card = RawFlightCard(
+        airline=fresh.get("airline"),
+        departure=None,
+        arrival=None,
+        duration=None,
+        stops=None,
+        price=None,
+        airline_codes=tuple(s.carrier for journey in journeys for s in journey if s.carrier),
+    )
+    allowed = getattr(trip, "airlines", None)
+    barred = getattr(trip, "exclude_airlines", None)
+    if allowed and not _passes_airline_filters(card, airlines=allowed, exclude_airlines=None):
         found.append("airlines")
-    if carriers & barred:
+    if barred and not _passes_airline_filters(card, airlines=None, exclude_airlines=barred):
         found.append("exclude_airlines")
     return found
 
 
-def _replayed(query: Mapping[str, Any]) -> list[str]:
-    names = ("cabin", "max_stops", "bags", "carry_on", "price_cap")
-    names += ("airlines", "exclude_airlines", "alliances", "exclude_alliances")
+def _named(query: Mapping[str, Any], names: tuple[str, ...]) -> list[str]:
     return [key for key in names if query.get(key) not in (None, [], ())]
 
 
@@ -547,7 +584,22 @@ def recheck_offer(
             "itinerary": [[_segment_json(s) for s in journey] for journey in old],
         },
         "query": dict(trip.to_dict()),
-        "filters_replayed": _replayed(prep.query),
+        "filters_replayed": _named(
+            prep.query,
+            (
+                "cabin",
+                "max_stops",
+                "bags",
+                "carry_on",
+                "airlines",
+                "exclude_airlines",
+                "alliances",
+                "exclude_alliances",
+            ),
+        ),
+        "filters_checked": _named(
+            prep.query, ("price_cap", "max_stops", "airlines", "exclude_airlines")
+        ),
         "fetch_backend": None,
         "caveat": CAVEAT,
         "notes": notes,
@@ -671,10 +723,14 @@ def recheck_offer(
         )
 
     close = [(score, d, j) for d, j in complete if (score := _closeness(old, j)) is not None]
+    close = [
+        (score, d, j, differences)
+        for score, d, j in close
+        if (differences := _differences(old, j, prep.reference["legs"], d["legs"]))
+    ]
     if close:
         close.sort(key=lambda row: (-row[0][0], row[0][1], row[1]["price"]))
-        _, found, journeys = close[0]
-        differences = _differences(old, journeys, prep.reference["legs"], found["legs"])
+        _, found, journeys, differences = close[0]
         violations = _violations(found, journeys, trip, prep.price_cap)
         if allow_substitute:
             out["differences"] = differences
@@ -752,7 +808,8 @@ def format_recheck(result: Mapping[str, Any]) -> str:
     """Human summary for the CLI. Amounts are only printed beside their own currency."""
     previous = result["previous"]
     basis = "loose carrier_times" if result.get("loose_match") else result["match_basis"]
-    lines = [f"{result['outcome']}  (checked {result['checked_at']}, {basis})"]
+    when = f"checked {result['checked_at']}, {basis}" if result["checked_at"] else "no search sent"
+    lines = [f"{result['outcome']}  ({when})"]
     lines.append(f"  previous {previous['price']:g} {previous['currency']}")
     current = result.get("current")
     if current:
@@ -774,7 +831,10 @@ def format_recheck(result: Mapping[str, Any]) -> str:
     if result.get("closest_candidate"):
         shown.append(("closest", result["closest_candidate"]))
     for label, row in shown:
-        times = "; ".join(f"{j['departure']}->{j['arrival']}" for j in row["journeys"])
+        times = "; ".join(
+            f"{'+'.join(j['flight_numbers'] or ['?'])} {j['departure']}->{j['arrival']}"
+            for j in row["journeys"]
+        )
         lines.append(f"  {label:<8} {row['price']:g} {row['currency']}  {times}")
     lines.extend(f"  note     {note}" for note in result["notes"])
     lines.append(f"  {result['caveat']}")

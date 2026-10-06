@@ -269,8 +269,15 @@ The query (the offer's evidence query, or `--query FILE`) is replayed: cabin,
 stops, bags, carry-on and airline or alliance filters ride the search request.
 A `price_cap` in it is not sent; instead a matched fresh offer that breaks it is
 reported in `filter_violations` (`price_cap`, and for locally provable cases
-`max_stops`, `airlines`, `exclude_airlines`). `filters_replayed` lists what the
-query carried; cabin, bags and alliance filters cannot be proven on the offer.
+`max_stops`, `airlines`, `exclude_airlines`). `filters_replayed` lists what rode the
+request and `filters_checked` what was only checked locally (`price_cap` is never
+sent). `max_stops` and `exclude_airlines` breaches are defensive, because the search
+already applies them; an `airlines` allow list passes when any carrier on the offer
+is allowed, as in the search. Cabin, bags and alliance filters cannot be proven on
+the offer. With `--allow-loose-match`, a connecting leg without segments is still
+`incomplete_identity` (its stops cannot be compared); origin and destination are
+compared in every match. `incomplete_identity`, `check_failed` and input errors are
+never recorded in the MCP evidence ledger.
 
 Every result except `incomplete_identity` has `checked_at`. A hand-built
 identity needs `price`, `legs[].segments[]` (flight number, origin,

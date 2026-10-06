@@ -109,7 +109,13 @@ information only). A positive outcome always rests on a fresh provider match.
 `currency` must be the offer's own: a different one is refused, never converted. The
 query (evidence or supplied) is replayed: cabin, stops, bags and airline/alliance filters
 ride the request; a `price_cap` is not sent but reported in `filter_violations` (also
-`max_stops`, `airlines`, `exclude_airlines`) when the matched fresh offer breaks it. `not_found` is
+`max_stops`, `airlines`, `exclude_airlines`) when the matched fresh offer breaks it
+(`filters_replayed` is what rode the request, `filters_checked` what was only checked
+locally; `max_stops` and `exclude_airlines` breaches are defensive since the search already
+applies them; `airlines` uses the search's any-carrier rule). Loose matching refuses a
+connecting leg without segments. Origin and destination are compared in every match.
+Only a result built from a provider answer is recorded in the evidence ledger;
+`incomplete_identity`, `check_failed` and input errors record nothing. `not_found` is
 a completed check (`reason`: `provider_empty`, `filtered`, `not_among_offers`).
 `check_failed` has `check_completed: false`, a `reason` and the provider `error`
 (`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`,
