@@ -32,6 +32,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Stay only | `search_hotels` (`location`, `check_in`, `check_out`, `currency`; default source google) | `viajante hotels` (CLI default source Booking) |
 | Room rates for one finalist (Skiplagged, USD) | `search_hotel_rooms` (`check_in`, `check_out`, then `hotel_id` or `hotel_name` + `city`) | `viajante hotel-rooms` |
 | Flights then hotel | `search_trip` (`routes`, `location`) | `viajante trip` |
+| Split tickets, opt-in (hub self-transfer or mixed one-ways) | `search_split_tickets` (`route`, optional `hubs`, `trip="rt"`) | `viajante flights --split-tickets` |
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
@@ -41,6 +42,10 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Check a draft reply against this process's search evidence (local) | `verify_answer` (`answer`) | — |
 
 Do not brute-force a date matrix when dates/flex/explore exist. `search_trip` rejects children/infants (hotel occupancy is adults-only). Omit `trip_total` if either side misses, dates miss, or currencies differ.
+
+## Split tickets
+
+Only when the user asks for cheaper or more flexible options, or the packaged fare looks poor. It costs extra searches (capped), so run it after `search_flights`, not instead of it. One-way: `search_split_tickets` pairs origin-hub and hub-destination tickets; `hubs` names IATA hubs, otherwise hubs are the layover airports in the packaged results. `trip="rt"` pairs the cheapest outbound one-way with the cheapest return one-way and compares them with the packaged round-trip. `min_connection_hours` defaults to 3 and is a planning default, not provider evidence; raise it for border control or a terminal change. `allow_overnight` also searches the next day. Always tell the user: these are separate tickets (`split_ticket: true`, `connection_protected: false`); a missed connection is not rebooked by either airline, bags may need collecting and checking in again, and each ticket is confirmed on its own `google_flights_url`. `total` is null when the parts are in different currencies: report the parts, never convert. `vs_packaged.savings` can be negative; quote it only as returned. `rate_limited: true`: stop and tell the user to wait. Never derive a leg price from a round-trip price or estimate a missing ticket.
 
 ## Hidden-city
 

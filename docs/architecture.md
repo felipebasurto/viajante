@@ -41,7 +41,7 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 16 tools. |
+| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 17 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
@@ -55,6 +55,7 @@ One library, three ways in:
 | `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP, Booking browser, or opt-in Skiplagged). |
 | `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
 | `search_trip` | `trip` | Flights then one hotel, plus a sum when both succeed. |
+| `search_split_tickets` | `flights --split-tickets` | Opt-in split tickets from real one-way quotes: a hub self-transfer or mixed one-ways (`split.py`). |
 | `search_hidden_city` | `hidden-city` | Skiplagged, opt-in, never mixed with Google evidence. |
 | `lookup_airports` | `airports` | Offline IATA lookup. |
 | `compare_awards` | `awards` | Award offer vs cash: cents per point, transfer paths. |

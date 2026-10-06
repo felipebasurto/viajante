@@ -106,6 +106,41 @@ Sweep requests for flights, dates, flex, and explore accept `--proxy URL`
 (`proxy` in MCP). Browser detail requests have built-in pacing and run
 sequentially.
 
+### Split tickets (opt-in)
+
+`--split-tickets` adds separately ticketed alternatives built only from real
+one-way quotes. It costs extra searches, so it is off by default and capped.
+
+```bash
+# One-way: origin to hub on one ticket, hub to destination on another
+viajante flights JFK-NRT:2026-11-10 --fetch sweep --split-tickets --split-hubs HKG,ICN
+# Round trip: cheapest outbound one-way plus cheapest return one-way vs the package
+viajante flights --trip rt JFK-NRT:2026-11-10:2026-11-24 --split-tickets
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--split-hubs CODES` | Hubs to try. Unnamed, hubs are the layover airports in the packaged results shown. |
+| `--split-max-hubs N` | Hubs to try (default 3, at most 4). Each hub is 2 searches, or 3 with `--split-overnight`. |
+| `--split-min-connection HOURS` | Minimum gap between tickets at the hub (default 3). A planning default, not provider evidence. |
+| `--split-overnight` | Also search the second ticket on the next day. |
+| `--split-leg-stops N` | Maximum stops on each hub ticket (default 0). |
+
+Each result is labelled `split_ticket: true` and `connection_protected: false`
+(`self_transfer: true` for a hub) and lists both tickets with their own offer
+and Google Flights link. A missed connection between separate tickets is not
+rebooked by either airline, and bags may need to be collected and checked in
+again. Confirm each ticket on its own link.
+
+The total is summed only when every ticket has the same currency; otherwise it
+is `null` and the tickets stay listed (nothing converts). `vs_packaged.savings`
+compares with the cheapest returned packaged offer, only in the same currency,
+and is negative when the split costs more. A hub connection needs an owned
+arrival and departure time at the hub; pairs without them or under the minimum
+are counted in `rejected`, not shown. A recorded Google cooldown stops the
+extra searches. `--save` adds the report under `split_tickets`. The MCP tool is
+`search_split_tickets`; one-way routes use hubs, `trip="rt"` uses mixed one-ways.
+
 ## Dates and flexible travel
 
 Use `dates` to compare departure dates across an inclusive window of up to

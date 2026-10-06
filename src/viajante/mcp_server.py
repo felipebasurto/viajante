@@ -24,11 +24,13 @@ from viajante.mcp_handlers import (
     search_hidden_city_tool,
     search_hotel_rooms_tool,
     search_hotels_tool,
+    search_split_tickets_tool,
     search_trip_tool,
     split_stay_costs_tool,
     validate_itinerary_tool,
 )
 from viajante.runtime import get_runtime_info as runtime_info
+from viajante.split import DEFAULT_MIN_CONNECTION_HOURS, DEFAULT_SPLIT_HUBS
 
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
@@ -45,7 +47,8 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
           (only for --fetch detail and Booking.com; extras must match the MCP env)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
-search_hotels, search_hotel_rooms, search_trip, lookup_airports, search_hidden_city,
+search_hotels, search_hotel_rooms, search_trip, search_split_tickets, lookup_airports,
+search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
 No auth. One search at a time in this process. A second search while one is
@@ -82,6 +85,10 @@ sequentially. Do not mix evidence. Skip when bags were named.
 Skiplagged cards are USD; omit currency or pass USD. Do not copy a
 Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
 currency_mismatch (owned quote stamped), not no_results. No FX.
+search_split_tickets is opt-in and costs extra searches (capped). It builds
+separately ticketed itineraries from real one-way quotes only; read its warning:
+a missed connection between tickets is not protected, bags may need re-checking,
+and each ticket is confirmed on its own link. Totals are null across currencies.
 compare_awards is local points math from a named offer; it does not invent seats.
 lookup_transfers is a local partner table, not live award inventory.
 plan_stay_blocks and split_stay_costs are local arithmetic over a per-night roster
@@ -521,6 +528,57 @@ def build_server():
         country is Google gl (origin market); omit when unset.
         """
         return dict(await run_mcp_tool(search_trip_tool, **locals()))
+
+    @server.tool()
+    async def search_split_tickets(
+        route: str,
+        trip: str = "one-way",
+        max_stops: int = 1,
+        adults: int = 1,
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
+        cabin: str = "economy",
+        top: int = DEFAULT_TOP,
+        fetch: str = "sweep",
+        airlines: str | None = None,
+        exclude_airlines: str | None = None,
+        alliance: str | None = None,
+        exclude_alliance: str | None = None,
+        bags: int | None = None,
+        carry_on: int | None = None,
+        price_cap: int | None = None,
+        hubs: str | None = None,
+        max_hubs: int = DEFAULT_SPLIT_HUBS,
+        min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
+        allow_overnight: bool = False,
+        leg_max_stops: int = 0,
+        currency: str | None = None,
+        country: str | None = None,
+        proxy: str | None = None,
+    ) -> dict:
+        """Opt-in separately ticketed itineraries built from real one-way quotes.
+
+        route is one ORIGIN-DEST:YYYY-MM-DD (one-way: a self-transfer via a hub,
+        origin to hub on one ticket and hub to destination on another) or, with
+        trip="rt", ORIGIN-DEST:OUT:BACK (the cheapest outbound one-way plus the
+        cheapest return one-way, compared with the packaged round-trip). It runs the
+        packaged search itself (returned as packaged_report) and then a capped number
+        of extra searches: max_hubs (at most 4) hubs of 2 queries, 3 with
+        allow_overnight; mixed one-ways use 2. hubs is a named IATA list; unnamed,
+        hubs are the layover airports seen in the packaged results. It stops at a
+        recorded rate limit (rate_limited true): do not retry.
+        Every itinerary says split_ticket true, connection_protected false, and
+        self_transfer true for a hub. A missed connection between tickets is not
+        rebooked by either airline and bags may need to be re-checked: tell the
+        user, and have them confirm each part on its own google_flights_url.
+        min_connection_hours (default 3) is a planning default, not provider
+        evidence. total is summed only when every part is in one owned currency,
+        otherwise it is null; vs_packaged.savings is present only when the split and
+        the best packaged offer share a currency and can be negative. Nothing is
+        split out of a round-trip price, estimated, or converted. Not for multi-city.
+        """
+        return dict(await run_mcp_tool(search_split_tickets_tool, **locals()))
 
     @server.tool()
     async def lookup_airports(query: str, limit: int = 20) -> list:

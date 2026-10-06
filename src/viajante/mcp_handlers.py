@@ -28,6 +28,7 @@ from viajante.explore import (
 from viajante.flights import (
     DEFAULT_TOP,
     FlightSort,
+    _overlay_carrier_filters,
     as_trips,
     expand_nearby_trips,
     parse_depart_window,
@@ -57,6 +58,12 @@ from viajante.quote import (
 )
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
+from viajante.split import (
+    DEFAULT_MIN_CONNECTION_HOURS,
+    DEFAULT_SPLIT_HUBS,
+    search_split_tickets,
+    validate_split_request,
+)
 from viajante.stays import plan_stay_blocks, split_stay_costs
 from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
@@ -198,6 +205,85 @@ def search_flights_tool(
         )
     )
     return _owned(reports_payload(report))
+
+
+@_cached
+def search_split_tickets_tool(
+    route: str,
+    *,
+    trip: str = "one-way",
+    max_stops: int = 1,
+    adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+    cabin: FlightCabin = "economy",
+    top: int = DEFAULT_TOP,
+    fetch: str = "sweep",
+    airlines: Optional[str] = None,
+    exclude_airlines: Optional[str] = None,
+    alliance: Optional[str] = None,
+    exclude_alliance: Optional[str] = None,
+    bags: Optional[int] = None,
+    carry_on: Optional[int] = None,
+    price_cap: Optional[int] = None,
+    hubs: Optional[str] = None,
+    max_hubs: int = DEFAULT_SPLIT_HUBS,
+    min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
+    allow_overnight: bool = False,
+    leg_max_stops: int = 0,
+    currency: Optional[str] = None,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
+) -> Mapping[str, object]:
+    plan = parse_flight_plan(
+        [route],
+        trip=trip,
+        max_stops=max_stops,
+        adults=adults,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
+        cabin=cabin,
+        bags=bags,
+        carry_on=carry_on,
+        price_cap=price_cap,
+    )
+    trips = _overlay_carrier_filters(
+        as_trips(plan),
+        airlines=parse_airline_codes(airlines),
+        exclude_airlines=parse_airline_codes(exclude_airlines),
+        alliances=parse_alliances(alliance),
+        exclude_alliances=parse_alliances(exclude_alliance),
+    )
+    _reject_past([leg.departure_date for item in trips for leg in item.legs])
+    if len(trips) != 1:
+        raise ValueError("split tickets take one one-way route or one round-trip (trip='rt')")
+    hub_codes = parse_via_airports(hubs, role="hub")
+    validate_split_request(
+        trips[0],
+        hubs=hub_codes,
+        max_hubs=max_hubs,
+        min_connection_hours=min_connection_hours,
+        leg_max_stops=leg_max_stops,
+        top=top,
+    )
+    report = _with_search_lock(
+        lambda: search_split_tickets(
+            trips[0],  # type: ignore[arg-type]
+            hubs=hub_codes,
+            max_hubs=max_hubs,
+            min_connection_hours=min_connection_hours,
+            allow_overnight=allow_overnight,
+            leg_max_stops=leg_max_stops,
+            top=top,
+            fetch=fetch,
+            currency=currency,
+            country=country,
+            proxy=proxy,
+        )
+    )
+    return _owned(dict(report.to_dict()))
 
 
 @_cached

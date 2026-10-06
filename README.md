@@ -110,6 +110,7 @@ The server exposes twelve tools:
 | `search_explore` | Discover destinations from an origin airport and price a shortlist. |
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
+| `search_split_tickets` | Opt-in separately ticketed itineraries (a self-transfer via a hub, or mixed one-ways for a round trip) built from real one-way quotes. Connections between tickets are not protected. |
 | `lookup_airports` | Look up airport codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
 | `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
@@ -124,7 +125,7 @@ Each search command accepts `--save FILE` to write a JSON report. Run
 
 | Command | Purpose |
 | --- | --- |
-| `viajante flights` | Search specific routes and dates. |
+| `viajante flights` | Search specific routes and dates. `--split-tickets` opts in to separately ticketed alternatives (not protected if a connection is missed). |
 | `viajante dates` | Compare departure dates across a window of up to 31 days. |
 | `viajante flex` | Search a few days either side of a target date. |
 | `viajante explore` | Find destinations from an origin airport. |

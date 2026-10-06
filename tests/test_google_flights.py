@@ -1961,6 +1961,7 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(card.flight_numbers, ("A3701",))
         self.assertEqual(card.legs[0].segments[0].carrier, "A3")
         self.assertEqual(card.legs[0].segments[0].departure_date, date(2026, 10, 9))
+        self.assertEqual(card.legs[0].segments[0].arrival_date, date(2026, 10, 9))
 
     def test_layover_from_legs_when_itinerary_block_is_missing(self) -> None:
         item = _tap_long_layover()

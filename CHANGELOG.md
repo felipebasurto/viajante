@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in split tickets: `viajante flights --split-tickets` and MCP `search_split_tickets` build separately ticketed itineraries only from real one-way quotes they fetch. A one-way route is paired through hubs (named with `--split-hubs` / `hubs`, otherwise the layover airports seen in the packaged results) with a configurable minimum connection (`--split-min-connection`, default 3 hours; `--split-overnight` also searches the second ticket on the next day). A `--trip rt` route pairs the cheapest outbound one-way with the cheapest return one-way and compares them with the packaged round-trip as a whole.
+- Every split itinerary is labelled `split_ticket: true`, `connection_protected: false`, and `self_transfer` (true for a hub), carries each ticket's own offer and `google_flights_url`, and a warning that a missed connection is not protected and bags may need re-checking. `total` is summed only when every part shares one owned currency and is `null` otherwise; `vs_packaged.savings` appears only when the split total and the best packaged offer share a currency (it can be negative). Nothing is split out of a round-trip price, estimated, or converted.
+- Split searches are capped (at most 4 hubs, 2 queries per hub or 3 with overnight; 2 for mixed one-ways), run sequentially under the existing one-search lock, and stop at a recorded Google cooldown (`rate_limited: true`). Reports include `coverage` with the hubs tried and the reason the search stopped.
+- Sweep segments carry the provider's `arrival_date` when it returns one. A hub connection needs an owned arrival and departure moment; anything unproven is counted under `rejected.timing_unproven` instead of being guessed.
+
 ## [1.4.1] - 2026-10-05
 
 ### Added

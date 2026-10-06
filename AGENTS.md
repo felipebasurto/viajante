@@ -45,6 +45,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
+- Opt-in split tickets (hub self-transfer, mixed one-ways): `src/viajante/split.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
@@ -57,8 +58,8 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
+CLI: `viajante flights` (`--split-tickets`), `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_split_tickets`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
 Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
 
@@ -310,6 +311,28 @@ the one-search process lock: a second search raises
 `MCP error -32001: Request timed out` is not that lock; do not retry timeouts
 as lock-busy. `lookup_airports` may run during a search. Playwright is extra
 `viajante[browser]`.
+
+## Split tickets (opt-in)
+
+`viajante flights --split-tickets` / MCP `search_split_tickets` pair separately
+ticketed real one-way quotes: origin-hub plus hub-destination for a one-way route,
+or the cheapest outbound plus the cheapest return one-way for a `--trip rt` route.
+Never a leg price derived from a round-trip price, never an estimated leg, never
+converted. Every itinerary says `split_ticket: true`, `connection_protected: false`,
+and `self_transfer` (true for a hub), and carries each ticket's own offer and
+`google_flights_url`. Say that a missed connection between tickets is not protected
+and bags may need re-checking. A hub connection needs an owned arrival moment (the
+segment `arrival_date` plus clock) and an owned departure moment; unproven pairs are
+rejected (`timing_unproven`), pairs under `min_connection_hours` (default 3, a planning
+default, not provider evidence) are rejected (`connection_too_short`). `total` is
+summed only when every part has the same owned currency, else `null`; `vs_packaged`
+compares only same-currency real quotes against the cheapest returned packaged offer
+and can be negative. Hubs are named or the layover airports in the packaged segments.
+Extra searches are capped (`MAX_SPLIT_HUBS`, 2 queries per hub, 3 with overnight,
+2 for mixed), sequential under the one-search lock, and stop at a recorded Google
+cooldown. Hub splits do not apply to multi-city; `--price-cap` drops splits whose
+total is unknown or above the cap. Ticket queries carry occupancy, cabin, bags and
+carrier filters; clock, layover, via, and overnight filters do not apply per ticket.
 
 ## Trip-planning search strategy
 
