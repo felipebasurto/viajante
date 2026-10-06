@@ -44,9 +44,26 @@ class MetroPlanTests(unittest.TestCase):
         self.assertEqual({trip.nearby_label for trip in trips}, {"metro NYC"})
         self.assertEqual({trip.departure_date for trip in trips}, {DAY})
 
-    def test_metro_never_pairs_a_member_with_itself(self) -> None:
-        trips = parse_flight_plan([f"NYC-JFK:{DAY}"], max_stops=1)
-        self.assertEqual(_pairs(trips), [("EWR", "JFK"), ("LGA", "JFK")])
+    def test_same_metro_routes_are_rejected(self) -> None:
+        specs = (
+            f"LON-LON:{DAY}",
+            f"JFK-NYC:{DAY}",
+            f"NYC-JFK:{DAY}",
+            f"LHR-LGW:{DAY}",
+            f"JFK-EWR:{DAY}",
+            f"LON-LHR:{DAY}",
+        )
+        for spec in specs:
+            with self.subTest(spec=spec), self.assertRaises(ValueError) as caught:
+                parse_flight_plan([spec], max_stops=1)
+            message = str(caught.exception)
+            origin, destination = spec.split(":", 1)[0].split("-")
+            self.assertIn(f"origin {origin}", message)
+            self.assertIn(f"destination {destination}", message)
+            self.assertIn("same metro", message)
+        with self.assertRaises(ValueError) as caught:
+            parse_flight_plan([f"LON-LON:{DAY}:{BACK}"], trip="rt", max_stops=1)
+        self.assertIn("origin LON and destination LON", str(caught.exception))
 
     def test_member_airport_is_not_expanded_to_its_metro(self) -> None:
         (trip,) = parse_flight_plan([f"JFK-LHR:{DAY}"], max_stops=1)

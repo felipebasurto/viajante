@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, get_args
 
-from viajante.airports import get_airport, is_known_iata, metro_members, same_city_iata
+from viajante.airports import get_airport, is_known_iata, metro_members, metro_of, same_city_iata
 from viajante.browser import chromium_installed, playwright_available
 from viajante.carriers import AIRLINE_CODE_ALIASES
 from viajante.google_flights import (
@@ -276,10 +276,24 @@ def metro_codes_in_label(label: Optional[str]) -> frozenset[str]:
     return frozenset(part[len(_METRO_LABEL) :] for part in parts if part.startswith(_METRO_LABEL))
 
 
+def _reject_same_metro(origin: str, destination: str) -> None:
+    """A route whose ends are one metro, or an airport inside the other's metro, is empty."""
+    left = origin.strip().upper()
+    right = destination.strip().upper()
+    left_metro = left if metro_members(left) else metro_of(left)
+    right_metro = right if metro_members(right) else metro_of(right)
+    if left_metro and left_metro == right_metro:
+        raise ValueError(
+            f"origin {left} and destination {right} resolve to the same metro {left_metro}"
+        )
+
+
 def _expand_metro_spec(spec: str) -> Tuple[tuple[str, Optional[str]], ...]:
     """One route spec per member pair when a side names a metro code; else the spec."""
     pair, colon, rest = spec.partition(":")
     origin, dash, destination = pair.strip().partition("-")
+    if colon and dash and origin and destination:
+        _reject_same_metro(origin, destination)
     named = [code.strip().upper() for code in (origin, destination) if metro_members(code)]
     if not colon or not dash or not named:
         return ((spec, None),)
@@ -1468,9 +1482,8 @@ def _rank_offers(
     *,
     top: int,
     sort: FlightSort = "ranked",
-    preserve: bool = False,
 ) -> Tuple[FlightOffer, ...]:
-    rows = offers if preserve or sort != "ranked" else _hide_slow_connections(offers)
+    rows = offers if sort != "ranked" else _hide_slow_connections(offers)
     rows = sorted(rows, key=lambda offer: _offer_sort_key(offer, sort))
     seen: set[tuple] = set()
     deduped: list[FlightOffer] = []
@@ -1483,7 +1496,7 @@ def _rank_offers(
             offer.stops_count,
             offer.duration_hours,
         )
-        if key in seen and not preserve:
+        if key in seen:
             continue
         seen.add(key)
         deduped.append(offer)
@@ -1747,9 +1760,7 @@ def _attach_missing_legs(
     return tuple(updated)
 
 
-def _passes_packaged_filters(
-    offer: FlightOffer, trip: Trip, filters: OfferFilters, *, check_stops: bool = True
-) -> bool:
+def _passes_packaged_filters(offer: FlightOffer, trip: Trip, filters: OfferFilters) -> bool:
     if filters.named and len(offer.legs) != len(trip.legs):
         return False
     raw = RawFlightCard(
@@ -1781,10 +1792,7 @@ def _passes_packaged_filters(
             layover_hours=None,
             legs=(leg,),
         )
-        if (
-            _normalize_offer(card, query.max_stops if check_stops else 2, **vars(per_journey))
-            is None
-        ):
+        if _normalize_offer(card, query.max_stops, **vars(per_journey)) is None:
             return False
         for layover in leg.layovers:
             if layover.hours is None:
@@ -1833,8 +1841,6 @@ def _run_search(
     currency: str,
     fetch_backend: Optional[FetchBackend] = None,
     sort: FlightSort = "ranked",
-    selection: Literal["top", "pareto"] = "top",
-    _details_candidates: bool = False,
     inter_query_delay: Callable[[random.Random], float] = inter_query_delay_seconds,
     filters: OfferFilters = NO_OFFER_FILTERS,
     retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
@@ -1851,87 +1857,17 @@ def _run_search(
             else filters
         )
         eligible = offers_from_cards(cards, trip, initial_filters, baggage_buffer=baggage_buffer)
-        metadata = None
-        if _details_candidates:
-            candidates = []
-            for raw in cards:
-                offer = _normalize_offer(raw, 2, baggage_buffer=baggage_buffer)
-                if offer is None:
-                    continue
-                named = {
-                    **({} if packaged else vars(filters)),
-                    "airlines": trip.airlines,
-                    "exclude_airlines": trip.exclude_airlines,
-                    "bags": trip.bags,
-                    "carry_on": trip.carry_on,
-                    "price_cap": trip.price_cap,
-                }
-                violations = [
-                    name
-                    for name, value in named.items()
-                    if value is not None and _normalize_offer(raw, 2, **{name: value}) is None
-                ]
-                if not packaged and not _eligible_stops(raw.stops, _trip_max_stops(trip)):
-                    violations.append("max_stops")
-                buffer, verify = _bag_evidence(
-                    raw,
-                    raw.airline or "",
-                    baggage_buffer=baggage_buffer,
-                    requested=trip.bags is not None or trip.carry_on is not None,
+        if packaged:
+            candidates = sorted(eligible, key=lambda offer: _offer_sort_key(offer, sort))
+            eligible = []
+            for start in range(0, len(candidates), top):
+                completed = _attach_missing_legs(trip, candidates[start : start + top], source)
+                eligible.extend(
+                    offer for offer in completed if _passes_packaged_filters(offer, trip, filters)
                 )
-                candidates.append(
-                    replace(
-                        offer,
-                        baggage_buffer=buffer,
-                        needs_bag_verify=verify,
-                        refresh_filter_violations=tuple(violations),
-                    )
-                )
-            eligible = list(_attach_missing_legs(trip, tuple(candidates), source))
-            if packaged:
-                for index, offer in enumerate(eligible):
-                    violations = list(offer.refresh_filter_violations)
-                    for name, value in vars(filters).items():
-                        if value is not None and not _passes_packaged_filters(
-                            offer, trip, OfferFilters(**{name: value}), check_stops=False
-                        ):
-                            violations.append(name)
-                    if any(
-                        not _eligible_stops(leg.stops, query.max_stops)
-                        for leg, query in zip(offer.legs, trip.legs, strict=False)
-                    ):
-                        violations.append("max_stops")
-                    eligible[index] = replace(offer, refresh_filter_violations=tuple(violations))
-            ranked = tuple(eligible)
-        else:
-            if packaged:
-                candidates = sorted(eligible, key=lambda offer: _offer_sort_key(offer, sort))
-                eligible = []
-                for start in range(0, len(candidates), top):
-                    completed = _attach_missing_legs(trip, candidates[start : start + top], source)
-                    eligible.extend(
-                        offer
-                        for offer in completed
-                        if _passes_packaged_filters(offer, trip, filters)
-                    )
-                    if (
-                        selection == "top"
-                        and len(_rank_offers(eligible, top=top, sort=sort)) >= top
-                    ):
-                        break
-            if selection == "pareto":
-                from viajante.selection import pareto_select
-
-                ranked, metadata = pareto_select(
-                    eligible,
-                    trip,
-                    top=top,
-                    order=lambda rows: _rank_offers(
-                        rows, top=max(1, len(rows)), sort=sort, preserve=True
-                    ),
-                )
-            else:
-                ranked = _rank_offers(eligible, top=top, sort=sort)
+                if len(_rank_offers(eligible, top=top, sort=sort)) >= top:
+                    break
+        ranked = _rank_offers(eligible, top=top, sort=sort)
         shown = _stamp_typical(trip, ranked, source, typical_cache)
         return QuerySuccess(
             query=trip,
@@ -1939,7 +1875,6 @@ def _run_search(
             eligible_count=len(eligible),
             offers=shown,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
-            selection=metadata,
         )
 
     def _stamp(result: QueryResult) -> QueryResult:
@@ -2120,7 +2055,6 @@ def get_flights(
     baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
-    selection: Literal["top", "pareto"] = "top",
     fetch: FetchMode = "auto",
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
@@ -2152,7 +2086,6 @@ def get_flights(
         "baggage_buffer": baggage_buffer,
         "progress": progress,
         "sort": sort,
-        "selection": selection,
         "fetch": fetch,
         "max_layover_hours": max_layover_hours,
         "min_layover_hours": min_layover_hours,
@@ -2233,8 +2166,6 @@ def search_flights(
     baggage_buffer: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
     sort: FlightSort = "ranked",
-    selection: Literal["top", "pareto"] = "top",
-    _details_candidates: bool = False,
     fetch: FetchMode = "auto",
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
@@ -2256,11 +2187,6 @@ def search_flights(
     country: Optional[str] = None,
     proxy: Optional[str] = None,
 ) -> SearchReport:
-    search_options = dict(locals())
-    search_options.pop("queries")
-    search_options.pop("_details_candidates")
-    if selection not in ("top", "pareto"):
-        raise ValueError("selection must be top or pareto")
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
@@ -2352,8 +2278,6 @@ def search_flights(
                 currency=source.config.currency,
                 fetch_backend=fetch_backend,
                 sort=sort,
-                selection=selection,
-                _details_candidates=_details_candidates,
                 inter_query_delay=inter_query_delay,
                 filters=filters,
                 retry_backoff=retry_backoff,
@@ -2393,4 +2317,4 @@ def search_flights(
             report = replace(report, queries=tuple(merged))
             backend = "sweep_then_detail"
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    return replace(report, fetch_backend=backend, fetch_ms=fetch_ms, search_options=search_options)
+    return replace(report, fetch_backend=backend, fetch_ms=fetch_ms)

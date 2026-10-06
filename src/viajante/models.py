@@ -746,8 +746,6 @@ class FlightOffer:
     evidence: Optional[OfferEvidence] = None
     completeness: Optional[EvidenceCompleteness] = None
 
-    refresh_filter_violations: Tuple[str, ...] = field(default=(), repr=False, compare=False)
-
     def __post_init__(self) -> None:
         _require_positive_amount(self.price, role="price")
         if self.baggage_buffer < 0:
@@ -952,7 +950,6 @@ class QuerySuccess:
     offers: Tuple[FlightOffer, ...]
     google_flights_url: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
-    selection: Optional[Mapping[str, object]] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -974,8 +971,6 @@ class QuerySuccess:
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
-        if self.selection is not None:
-            payload["selection"] = dict(self.selection)
         return payload
 
 
@@ -1029,7 +1024,6 @@ class SearchReport:
     fetch_backend: Optional[FetchBackend] = None
     fetch_ms: Optional[int] = None
     coverage: Optional[SearchCoverage] = None
-    search_options: Optional[Mapping[str, object]] = field(default=None, repr=False, compare=False)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
@@ -1299,7 +1293,6 @@ class FlexSearchReport:
     error: Optional[SearchError] = None
     nearby_label: Optional[str] = None
     coverage: Optional[SearchCoverage] = None
-    details_report: Optional[SearchReport] = field(default=None, repr=False, compare=False)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
@@ -1874,189 +1867,6 @@ class TripSearchReport:
         return payload
 
 
-SelfTransferStatus = Literal["ok", "unknown", "too_short", "too_long"]
-
-SELF_TRANSFER_WARNINGS: tuple[str, ...] = (
-    "Two separate tickets: a delay or cancellation on the first does not protect the second.",
-    "Checked bags are not through-checked; collect and re-check them at the via airport.",
-    "connection_minutes is measured from provider clocks, not an endorsed minimum.",
-    "Temporal order does not prove baggage recheck, immigration or transit feasibility.",
-)
-
-
-@dataclass(frozen=True)
-class SelfTransferPairing:
-    """Two owned one-way offers on separate tickets and the measured gap between them."""
-
-    via: str
-    first: FlightOffer
-    second: FlightOffer
-    connection_minutes: Optional[int]
-    same_airport: Optional[bool]
-    status: SelfTransferStatus
-    total_price: Optional[float] = None
-    currency: Optional[str] = None
-    protected: Literal[False] = field(init=False, default=False)
-    ticketing: Literal["separate_tickets"] = field(init=False, default="separate_tickets")
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "via", _normalize_iata(self.via, role="via"))
-        if self.connection_minutes is None and self.status != "unknown":
-            raise ValueError("an unmeasured connection must have status unknown")
-        if self.connection_minutes is not None and self.status == "unknown":
-            raise ValueError("a measured connection cannot have status unknown")
-        if (self.total_price is None) != (self.currency is None):
-            raise ValueError("total_price and currency must both be set or both omitted")
-        if self.currency is not None:
-            object.__setattr__(self, "currency", normalize_currency(self.currency))
-        if (
-            self.total_price is not None
-            and abs(self.total_price - (self.first.price + self.second.price)) > 1e-9
-        ):
-            raise ValueError("total_price must equal the two owned fares")
-
-    @property
-    def needs_bag_verify(self) -> bool:
-        return self.first.needs_bag_verify or self.second.needs_bag_verify
-
-    def to_dict(self, currency: str) -> Mapping[str, object]:
-        return {
-            "via": self.via,
-            "ticketing": self.ticketing,
-            "protected": self.protected,
-            "status": self.status,
-            "connection_minutes": self.connection_minutes,
-            "same_airport": self.same_airport,
-            "total_price": self.total_price,
-            "currency": self.currency,
-            "needs_bag_verify": self.needs_bag_verify,
-            "first": dict(self.first.to_dict(currency)),
-            "second": dict(self.second.to_dict(currency)),
-        }
-
-
-def _leg_coverage(result: QueryResult, role: str) -> SearchCoverage:
-    counts = _query_coverage((result,))
-    query = result.query
-    return SearchCoverage(
-        scope={
-            "kind": "self_transfer_leg",
-            "leg": role,
-            "origin": query.origin,
-            "destination": query.destination,
-            "departure_date": query.departure_date.isoformat(),
-        },
-        attempted=counts.attempted,
-        succeeded=counts.succeeded,
-        empty=counts.empty,
-        failed=counts.failed,
-        complete=True,
-        unsearched="unnamed via airports, other dates, and offers outside this leg's shortlist",
-    )
-
-
-@dataclass(frozen=True)
-class SelfTransferReport:
-    """One-way legs through each named via, joined into unprotected pairings.
-
-    ``flights.queries`` holds two legs per via, in via order: origin-via, then
-    via-destination.
-    """
-
-    searched_at: datetime
-    origin: str
-    vias: Tuple[str, ...]
-    destination: str
-    flights: SearchReport
-    pairings: Tuple[SelfTransferPairing, ...]
-    eligible_pairings: int
-    currency: str = field(kw_only=True)
-    min_connection_hours: Optional[float] = None
-    max_connection_hours: Optional[float] = None
-    locale: str = FETCH_LANGUAGE
-    warnings: Tuple[str, ...] = SELF_TRANSFER_WARNINGS
-    schema_version: int = field(init=False, default=2)
-
-    def __post_init__(self) -> None:
-        origin = _normalize_iata(self.origin, role="origin")
-        destination = _normalize_iata(self.destination, role="destination")
-        vias = tuple(_normalize_iata(via, role="via") for via in self.vias)
-        if not vias:
-            raise ValueError("a self-transfer report needs at least one via")
-        if len(set(vias)) != len(vias):
-            raise ValueError("vias must not repeat")
-        if any(via in (origin, destination) for via in vias):
-            raise ValueError("via must differ from origin and destination")
-        if len(self.flights.queries) != 2 * len(vias):
-            raise ValueError("a self-transfer report holds two one-way legs per via")
-        if self.eligible_pairings < len(self.pairings):
-            raise ValueError("eligible_pairings must be >= number of pairings")
-        object.__setattr__(self, "origin", origin)
-        object.__setattr__(self, "vias", vias)
-        object.__setattr__(self, "destination", destination)
-        for via, first, second in self.via_legs:
-            legs = (
-                (first.query.origin, first.query.destination),
-                (
-                    second.query.origin,
-                    second.query.destination,
-                ),
-            )
-            if legs != ((origin, via), (via, destination)):
-                raise ValueError(
-                    f"legs for via {via} must be {origin}-{via} then {via}-{destination}"
-                )
-        failed = set(self.failed_vias)
-        for pairing in self.pairings:
-            if pairing.via not in vias:
-                raise ValueError(f"pairing via {pairing.via} was not searched")
-            if pairing.via in failed:
-                raise ValueError("pairings need both legs of their via to succeed")
-        object.__setattr__(self, "currency", normalize_currency(self.currency))
-        _store_naive_utc(self)
-
-    @property
-    def via_legs(self) -> Tuple[Tuple[str, QueryResult, QueryResult], ...]:
-        queries = self.flights.queries
-        return tuple(zip(self.vias, queries[::2], queries[1::2], strict=True))
-
-    @property
-    def failed_vias(self) -> Tuple[str, ...]:
-        return tuple(
-            via
-            for via, first, second in self.via_legs
-            if isinstance(first, QueryFailure) or isinstance(second, QueryFailure)
-        )
-
-    def to_dict(self) -> Mapping[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "searched_at": _iso_z(self.searched_at),
-            "currency": self.currency,
-            "locale": self.locale,
-            "origin": self.origin,
-            "vias": list(self.vias),
-            "destination": self.destination,
-            "ticketing": "separate_tickets",
-            "protected": False,
-            "min_connection_hours": self.min_connection_hours,
-            "max_connection_hours": self.max_connection_hours,
-            "failed_vias": list(self.failed_vias),
-            "legs": [
-                {
-                    "via": via,
-                    "first": {"coverage": _leg_coverage(first, "first").to_dict()},
-                    "second": {"coverage": _leg_coverage(second, "second").to_dict()},
-                }
-                for via, first, second in self.via_legs
-            ],
-            "eligible_pairings": self.eligible_pairings,
-            "pairings": [pairing.to_dict(self.currency) for pairing in self.pairings],
-            "warnings": list(self.warnings),
-            "flights": dict(self.flights.to_dict()),
-        }
-
-
 EvidenceLevel = Literal["confirmed", "user_supplied", "cached", "estimated"]
 _EVIDENCE: tuple[EvidenceLevel, ...] = ("confirmed", "user_supplied", "cached", "estimated")
 HIDDEN_CITY_SOURCE = "skiplagged"
@@ -2423,12 +2233,17 @@ class HotelRoomsReport:
     rates: Tuple[HotelRoomRate, ...] = ()
     error: Optional[SearchError] = None
     fetch_ms: Optional[int] = None
+    # What the provider echoed, when it did. Absent means the answer did not say.
+    answered_adults: Optional[int] = None
+    answered_rooms: Optional[int] = None
+    answered_check_in: Optional[date] = None
+    answered_check_out: Optional[date] = None
 
     def __post_init__(self) -> None:
         _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "provider": self.provider,
             "searched_at": _iso_z(self.searched_at),
@@ -2453,6 +2268,15 @@ class HotelRoomsReport:
             "error": self.error.to_dict() if self.error else None,
             "fetch_ms": self.fetch_ms,
         }
+        if self.answered_adults is not None:
+            payload["answered_adults"] = self.answered_adults
+        if self.answered_rooms is not None:
+            payload["answered_rooms"] = self.answered_rooms
+        if self.answered_check_in is not None:
+            payload["answered_check_in"] = self.answered_check_in.isoformat()
+        if self.answered_check_out is not None:
+            payload["answered_check_out"] = self.answered_check_out.isoformat()
+        return payload
 
 
 @dataclass(frozen=True)

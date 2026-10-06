@@ -534,7 +534,13 @@ def _arrival_deadline_check(segments, complete, value):
     if not complete or not segments:
         return _status("arrival_deadline", "unknown", "final segment is missing")
     final = segments[-1]
-    bound = local_instant(deadline, final.get("arrival_timezone"))
+    # An explicit offset is already an instant. Compare it in UTC even when the
+    # arrival airport's zone is a different offset. A naive deadline is local
+    # civil time at that airport; ambiguous or missing zones stay unknown.
+    if deadline.tzinfo is not None:
+        bound = deadline.astimezone(timezone.utc)
+    else:
+        bound = local_instant(deadline, final.get("arrival_timezone"))
     arrival = segment_instant(final, "arrival")
     if bound is None or arrival is None:
         return _status(

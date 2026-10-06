@@ -7,14 +7,13 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Callable, Literal, Optional, Sequence, TypeVar
+from typing import Annotated, Callable, Optional, Sequence, TypeVar
 
 from viajante.evidence import verify_answer as verify_answer_tool
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.flights import DEFAULT_TOP
 from viajante.mcp_handlers import (
     compare_awards_tool,
-    get_flight_details_tool,
     get_hotel_details_tool,
     lookup_airports_tool,
     lookup_transfers_tool,
@@ -26,7 +25,6 @@ from viajante.mcp_handlers import (
     search_hidden_city_tool,
     search_hotel_rooms_tool,
     search_hotels_tool,
-    search_self_transfer_tool,
     search_trip_tool,
     split_stay_costs_tool,
     validate_itinerary_tool,
@@ -48,8 +46,8 @@ Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,brow
           (only for --fetch detail and Booking.com; extras must match the MCP env)
 
 Tools: search_flights, search_dates, search_flex, search_explore,
-search_hotels, search_hotel_rooms, get_flight_details, get_hotel_details,
-search_trip, search_self_transfer, lookup_airports, search_hidden_city,
+search_hotels, search_hotel_rooms, get_hotel_details,
+search_trip, lookup_airports, search_hidden_city,
 compare_awards, lookup_transfers, validate_itinerary, plan_stay_blocks,
 split_stay_costs, verify_answer, get_runtime_info.
 No auth. One search at a time in this process. A second search while one is
@@ -90,17 +88,23 @@ compare_awards is local points math from a named offer; it does not invent seats
 lookup_transfers is a local partner table, not live award inventory.
 plan_stay_blocks and split_stay_costs are local arithmetic over a per-night roster
 the caller supplies; they never search, never convert money, never pick a stay.
-search_self_transfer joins two one-way flight legs through each caller-named via
-(comma list, at most 5) into separate-ticket pairings. protected is always false. The measured
-connection is evidence, not an endorsement, and does not prove baggage recheck
-or immigration feasibility. Unnamed connection bounds mean no bound.
 A metro code (LON, NYC, PAR, TYO and others in the owned table) named on a
 search_flights or search_trip route expands to its member airports; a trip total
-takes the cheapest member fare, not a sum. lookup_airports with the code lists
-its members. A metro code is never inferred from an airport or city.
+takes the cheapest member fare, not a sum. A route whose origin and destination
+are the same metro, or an airport that belongs to the other's metro, is rejected.
+lookup_airports with the code lists its members. A metro code is never inferred
+from an airport or city.
+get_hotel_details reads a hotel offer this process returned. The read does not
+search and does not replace stored evidence. room_rates must be a boolean;
+true fetches a separate Skiplagged room quote and is not a quote for the
+original stay when the city is ambiguous or the provider echoes a different
+party or dates.
 validate_itinerary is local and offline. It returns pass, fail, or unknown from
-owned v2 offer evidence; unknown evidence never becomes pass. It never fills
-missing segment, baggage, or fare facts.
+owned v2 offer evidence; unknown evidence never becomes pass. arrival_deadline
+compares the final arrival with a named instant (an explicit offset is UTC;
+a naive time is local at the arrival airport). chronological checks owned
+segment instants. min_stay_days and max_stay_days use owned dates. It never
+fills missing segment, baggage, or fare facts.
 
 Every MCP call is synchronous: never say you are still searching or will
 report back; call the tool now or name the next step. Hotel location is one
@@ -170,8 +174,20 @@ async def run_lookup_tool(fn: Callable[..., _T], /, *args: object, **kwargs: obj
     return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
 
 
+def _room_rates_flag(value: object) -> bool:
+    # Reject before bool coercion, which would treat "yes" as true.
+    if not isinstance(value, bool):
+        raise ValueError("room_rates must be a boolean")
+    return value
+
+
 def build_server():
+    # pydantic arrives with the mcp extra. Help must import this module without it.
+    global _ROOM_RATES
     from mcp.server.fastmcp import FastMCP
+    from pydantic import BeforeValidator
+
+    _ROOM_RATES = Annotated[bool, BeforeValidator(_room_rates_flag)]
 
     server = FastMCP("viajante", instructions=_HELP)
 
@@ -192,7 +208,6 @@ def build_server():
         adults: int = 1,
         cabin: str = "economy",
         top: int = DEFAULT_TOP,
-        selection: Literal["top", "pareto"] = "top",
         fetch: str = "auto",
         airlines: str | None = None,
         exclude_airlines: str | None = None,
@@ -246,20 +261,15 @@ def build_server():
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
     @server.tool()
-    async def get_flight_details(selection_id: str, refresh: bool = False) -> dict:
-        """Read a process-local finalist snapshot. Refresh re-shops the exact query.
+    async def get_hotel_details(selection_id: str, room_rates: _ROOM_RATES = False) -> dict:
+        """Read a hotel offer this process returned. room_rates must be a boolean.
 
-        Matching requires complete segment identity; tokens and prices may change.
-        Original and new quotes stay separate. Unknown/evicted ids send nothing.
-        """
-        return dict(await run_mcp_tool(get_flight_details_tool, **locals()))
-
-    @server.tool()
-    async def get_hotel_details(selection_id: str, room_rates: bool = False) -> dict:
-        """Read a finalist snapshot; optional Skiplagged room quotes are separate USD evidence.
-
-        Exact name and an unambiguous city are required for external finalists.
-        Room conditions never attach to the original Google/Booking quote.
+        False returns the stored quote and does not search. True asks Skiplagged
+        for a separate USD room quote. That quote is not the original stay when
+        the city matches more than one place, the returned coordinates do not
+        match the hotel, or the provider echoes different adults, rooms, or
+        dates (occupancy_mismatch / dates_mismatch). A read does not evict
+        stored searches. Unknown or evicted ids send nothing.
         """
         return dict(await run_mcp_tool(get_hotel_details_tool, **locals()))
 
@@ -557,49 +567,6 @@ def build_server():
         return dict(await run_mcp_tool(search_trip_tool, **locals()))
 
     @server.tool()
-    async def search_self_transfer(
-        origin: str,
-        via: str,
-        destination: str,
-        departure: str,
-        second_date: str | None = None,
-        min_connection_hours: float | None = None,
-        max_connection_hours: float | None = None,
-        top: int = DEFAULT_TOP,
-        max_stops: int = 1,
-        adults: int = 1,
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-        cabin: str = "economy",
-        bags: int | None = None,
-        carry_on: int | None = None,
-        airlines: str | None = None,
-        exclude_airlines: str | None = None,
-        alliance: str | None = None,
-        exclude_alliance: str | None = None,
-        currency: str | None = None,
-        country: str | None = None,
-        proxy: str | None = None,
-    ) -> dict:
-        """Two one-way flight legs, origin-via and via-destination, on separate tickets.
-
-        via is one IATA code or a comma list of at most 5; use only codes the
-        caller named, never invented candidates. Repeats are shopped once. Pairings
-        from every via share one order (out-of-bounds last, then total price,
-        then margin) and one top cap; each pairing names its via. Pairings are unprotected:
-        protected is always false. connection_minutes is measured in UTC from
-        provider clocks; null means unknown and status is unknown, never ok.
-        Connection bounds are caller-named; unnamed means no bound. A margin is
-        evidence, not an endorsed minimum, and does not prove baggage recheck,
-        immigration or transit feasibility. second_date defaults to departure.
-        total_price appears only when both fares share one owned currency.
-        A failed leg is kept as error evidence; its via is listed in failed_vias
-        and yields no pairings.
-        """
-        return dict(await run_mcp_tool(search_self_transfer_tool, **locals()))
-
-    @server.tool()
     async def lookup_airports(query: str, limit: int = 20) -> list:
         return await run_lookup_tool(lookup_airports_tool, **locals())
 
@@ -662,6 +629,10 @@ def build_server():
 
         Each leg must preserve its exact query and one selected offer. The
         result is tri-state: unknown evidence never becomes pass.
+        arrival_deadline is an ISO date and time; an explicit offset is compared
+        in UTC, and a naive time is local at the arrival airport. Ambiguous or
+        missing timezones stay unknown. chronological checks owned segment
+        instants. min_stay_days and max_stay_days use owned journey dates.
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 

@@ -7,7 +7,7 @@ import threading
 import time
 from copy import deepcopy
 from datetime import date
-from typing import Literal, Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
@@ -19,7 +19,7 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.details import get_flight_details, get_hotel_details
+from viajante.details import get_hotel_details
 from viajante.evidence import failure_codes, record, selected_reference, selection_records
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
@@ -57,7 +57,6 @@ from viajante.quote import (
     first_origin_iata,
     resolve_quote_and_buffer,
 )
-from viajante.self_transfer import search_self_transfer
 from viajante.skiplagged import search_hidden_city
 from viajante.skiplagged_hotels import search_hotel_rooms
 from viajante.stays import plan_stay_blocks, split_stay_costs
@@ -134,7 +133,6 @@ def search_flights_tool(
     adults: int = 1,
     cabin: FlightCabin = "economy",
     top: int = DEFAULT_TOP,
-    selection: Literal["top", "pareto"] = "top",
     fetch: str = "auto",
     airlines: Optional[str] = None,
     exclude_airlines: Optional[str] = None,
@@ -187,7 +185,6 @@ def search_flights_tool(
         lambda: search_flights(
             trips,
             top=top,
-            selection=selection,
             fetch=fetch,  # type: ignore[arg-type]
             airlines=parse_airline_codes(airlines),
             exclude_airlines=parse_airline_codes(exclude_airlines),
@@ -750,67 +747,6 @@ def search_trip_tool(
 
 
 @_cached
-def search_self_transfer_tool(
-    origin: str,
-    via: str,
-    destination: str,
-    departure: str,
-    *,
-    second_date: Optional[str] = None,
-    min_connection_hours: Optional[float] = None,
-    max_connection_hours: Optional[float] = None,
-    top: int = DEFAULT_TOP,
-    max_stops: int = 1,
-    adults: int = 1,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-    cabin: FlightCabin = "economy",
-    bags: Optional[int] = None,
-    carry_on: Optional[int] = None,
-    airlines: Optional[str] = None,
-    exclude_airlines: Optional[str] = None,
-    alliance: Optional[str] = None,
-    exclude_alliance: Optional[str] = None,
-    currency: Optional[str] = None,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
-) -> Mapping[str, object]:
-    """Two one-way flight legs through each named via (comma list), on separate tickets."""
-    first_date = date.fromisoformat(departure)
-    second = date.fromisoformat(second_date) if second_date else first_date
-    _reject_past((first_date, second))
-    report = _with_search_lock(
-        lambda: search_self_transfer(
-            origin,
-            via.split(","),
-            destination,
-            first_date,
-            second_date=second,
-            min_connection_hours=min_connection_hours,
-            max_connection_hours=max_connection_hours,
-            top=top,
-            max_stops=max_stops,
-            adults=adults,
-            children=children,
-            infants_in_seat=infants_in_seat,
-            infants_on_lap=infants_on_lap,
-            cabin=cabin,
-            bags=bags,
-            carry_on=carry_on,
-            airlines=parse_airline_codes(airlines),
-            exclude_airlines=parse_airline_codes(exclude_airlines),
-            alliances=parse_alliances(alliance),
-            exclude_alliances=parse_alliances(exclude_alliance),
-            currency=currency,
-            country=country,
-            proxy=proxy,
-        )
-    )
-    return _owned(reports_payload(report), report)
-
-
-@_cached
 def search_hidden_city_tool(
     route: str,
     departure: str,
@@ -904,23 +840,15 @@ def validate_itinerary_tool(
     return dict(validate_itinerary(legs, constraints, currency=currency).to_dict())
 
 
-def get_flight_details_tool(selection_id: str, *, refresh: bool = False) -> Mapping[str, object]:
-    report, query_index, offer_index = selected_reference(selection_id, "flight")
-
-    def action():
-        return get_flight_details(report, query_index, offer_index, refresh=refresh)
-
-    detail = _with_search_lock(action) if refresh else action()
-    detail["original_quote"]["offer"]["selection_id"] = selection_id
-    return record(detail)
-
-
 def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Mapping[str, object]:
+    if not isinstance(room_rates, bool):
+        raise ValueError("room_rates must be a boolean")
     report, query_index, offer_index = selected_reference(selection_id, "hotel")
 
     def action():
         return get_hotel_details(report, query_index, offer_index, room_rates=room_rates)
 
+    # A read does not enter the evidence ledger or the selection store.
     detail = _with_search_lock(action) if room_rates else action()
     detail["original_quote"]["offer"]["selection_id"] = selection_id
-    return record(detail)
+    return detail

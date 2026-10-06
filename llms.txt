@@ -46,20 +46,34 @@ Installing `viajante[browser]` elsewhere does not update the uvx environment.
 
 ## Tools
 
-- search_flights: named routes and dates
+Seventeen tools:
+
+- search_flights: named routes and dates. A metro code (LON, NYC, PAR, TYO)
+  expands to its member airports on one-way and round-trip routes. A route
+  whose ends are the same metro is rejected.
 - search_dates: cheapest-per-day calendar (cheapest week). Max 31 days.
 - search_flex: ±N around one date, then one shop. Not a date matrix.
 - search_explore: dest triage from a named origin
 - search_hotels: total-stay prices. Currency required. Default source google.
+- search_hotel_rooms: Skiplagged room rates for one named hotel, in USD.
+- get_hotel_details: read a hotel offer this process returned. room_rates must
+  be a boolean. true fetches a separate USD room quote and does not replace
+  the original stay. A read does not evict stored searches.
 - search_trip: flights then hotels. Same currency. Default hotel source google.
-- lookup_airports: offline city or IATA lookup. Does not pick a hub.
+- lookup_airports: offline city, IATA, or metro lookup. Does not pick a hub.
 - search_hidden_city: Skiplagged, opt-in. Cards are USD; omit currency or pass USD. Do not copy a Google/origin quote keep (GBP, JPY, …).
 - compare_awards: local award vs cash math. No live award seats.
 - lookup_transfers: local transfer-partner table for a named program.
+- validate_itinerary: local pass/fail/unknown check of selected offers.
+  arrival_deadline compares the final arrival with a named instant (an explicit
+  offset is UTC; a naive time is local at the arrival airport). chronological
+  checks owned segment instants. min_stay_days and max_stay_days use owned
+  dates. Unknown never becomes pass.
+- plan_stay_blocks: local grouping of consecutive nights with the same people.
+- split_stay_costs: local per-person split of named stay totals. No FX.
 - verify_answer: flags amounts, codes, dates, and links in a draft reply that no
   search in this process returned.
-- validate_itinerary: local pass/fail/unknown check of selected offers against
-  named constraints (layovers, stay length, bags). Unknown never becomes pass.
+- get_runtime_info: executing package, Python, and hotel schema versions. Offline.
 
 One search at a time in the MCP process.
 

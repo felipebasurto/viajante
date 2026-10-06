@@ -60,6 +60,7 @@ jobs:
                           "search_explore",
                           "search_hotels",
                           "search_hotel_rooms",
+                          "get_hotel_details",
                           "search_trip",
                           "lookup_airports",
                           "search_hidden_city",

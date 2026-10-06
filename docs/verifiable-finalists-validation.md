@@ -1,46 +1,41 @@
-# Verifiable journeys and finalist evidence: implementation validation
+# Verifiable journeys and hotel finalists
 
-Implemented on `feat/verifiable-finalists`, based on candidate commit `36864c3`.
-Package versions remain unchanged. This branch is for review; merge, tags and
-publication remain separate release decisions.
+This branch keeps three additions and the fixes that make them safe to use.
 
-The change adds owned segment arrival dates and catalogue IANA zones, UTC
-chronology/deadline validation and local stay-day bounds, opt-in Pareto flight
-selection, process-local finalist references, flight snapshots/exact refresh,
-and separate Skiplagged hotel room quotes. Technical behavior and examples are
-in [architecture](architecture.md) and [usage](usage.md).
+- Owned segment `arrival_date` and catalogue IANA timezones, with completeness
+  `segment_dates` / `segment_timezones`. `validate_itinerary` checks
+  `arrival_deadline`, `chronological`, and `min_stay_days` / `max_stay_days`.
+  An `arrival_deadline` with an explicit offset is compared in UTC. A naive
+  deadline is local at the arrival airport. Ambiguous, nonexistent, and missing
+  civil times stay unknown.
+- Metro codes (`LON`, `NYC`, `PAR`, `TYO`, and the rest of the owned table) on
+  one-way and round-trip routes, and in `lookup_airports`. A route whose origin
+  and destination resolve to the same metro is rejected.
+- `get_hotel_details` reads a hotel offer this process returned. `selection_id`
+  is stored only for those offers. A read does not enter the evidence ledger.
+  `room_rates` must be a boolean. A separate Skiplagged room quote is not
+  presented for the original stay when the city matches more than one place,
+  the returned coordinates do not match the hotel, or the provider echoes
+  different adults, rooms, or dates.
 
-## Executed offline checks
+Flight search ranking matches the default search. Hidden-city offers keep
+`evidence: "confirmed"` and do not receive a `selection_id`.
 
-- `uv sync --locked --extra mcp`: locked environment synchronized.
-- `uv run python -m unittest discover -s tests -v`: **1,094 passed**, including
-  45 new tests across temporal evidence, Pareto, finalist details and real stdio.
-- `uv run ruff check src tests` and `uv run ruff format --check src tests`: passed.
-- `VIAJANTE_BENCH_LIVE=0 uv run viajante bench`: **gate: ok**. The baseline and
-  scoring policy were not changed or optimized.
-- `git diff --check`: passed.
-- Real MCP stdio client/server: **18 tools**, Pareto enum/default schema,
-  flight snapshot, exact refresh with changed price/token, successful cache
-  replay retaining timestamp/id, hotel snapshot, separate EUR/USD quotes,
-  and unknown reference rejection. Sources were offline fixtures.
+Offline gates on this tree, with fixtures only:
 
-Coverage includes date-line crossing, next-day arrival, DST ambiguity/gaps,
-missing dates/zones, missed deadlines, overlapping segments, packaged stays,
-short/long stays, Pareto ties/dominance/baggage/incomplete packages/budgets,
-changed flight identities, multiple matches, filter violations before top,
-cooldown without network/browser contact, ledger eviction/cache restoration,
-flex/nested-trip/multi-stay references, exact hotel names/homonyms, missing or
-contradictory cities, unknown occupancy/unit conflicts and provider failures
-preserving the original quote.
+- `uv run ruff check src tests` — `All checks passed!`
+- `uv run ruff format --check src tests` — `76 files already formatted`
+- `uv run --with pytest pytest -q` — `1123 passed, 297 subtests passed`
+- `uv run python -m unittest discover -s tests` — `Ran 1123 tests` / `OK`
+- `uv run viajante bench` — `gate: ok` (`tests_ms: 1688`, `parse_ms: 31`, `score_ms: 1719`)
 
-`README.md`, `bench-baseline.json`, version stamps and the candidate branch
-are preserved. No provider requests or Chromium runs were part of these checks.
+A stdio session against offline fixtures listed 17 tools. `search_hidden_city`
+returned a priced offer (`622`, `evidence: confirmed`) with no `selection_id`.
+`get_hotel_details` succeeded 25 times on one id. `room_rates: "yes"` was
+rejected. `LON-LON` and `JFK-NYC` were rejected as the same metro. An arrival
+at 09:00Z against `2099-07-02T09:00Z` was `pass`.
 
-## Pending live evidence
+`search_flights` on the same offline card as `develop` differs only by
+`completeness.segment_dates` and `completeness.segment_timezones`.
 
-Live provider availability and the later release decision remain pending.
-The next provider check should be small and sequential, stop at a challenge or
-cooldown, and distinguish provider availability from the offline result above.
-Incomplete flight identity remains inconclusive; some DOM cards and partial
-packages cannot refresh an exact finalist. Hotel room conditions remain specific
-to their own quote and do not resolve unknown original occupancy or unit conflicts.
+Live provider checks were not run. A Google 429 would not be evidence.

@@ -109,6 +109,14 @@ class TemporalEvidenceTests(unittest.TestCase):
             self.assertEqual(check(selected, "arrival_deadline", deadline), expected)
         self.assertEqual(check(selected, "chronological", True), "pass")
 
+    def test_aware_deadline_is_compared_in_utc(self):
+        # 10:00 Europe/London on 2099-07-02 is 09:00Z. An explicit offset is that
+        # instant, even when it is not the airport's civil clock.
+        selected = [row([segment()])]
+        self.assertEqual(check(selected, "arrival_deadline", "2099-07-02T09:00Z"), "pass")
+        self.assertEqual(check(selected, "arrival_deadline", "2099-07-02T08:59Z"), "fail")
+        self.assertEqual(check(selected, "arrival_deadline", "2099-07-02T05:00-04:00"), "pass")
+
     def test_date_line_uses_utc_not_civil_date_order(self):
         flight = segment(
             "NRT",

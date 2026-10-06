@@ -15,7 +15,7 @@ import unicodedata
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from viajante.models import (
     FETCH_LANGUAGE,
@@ -214,6 +214,28 @@ class SkiplaggedHotelsSource:
         return None
 
 
+def _echo_int(detail: Mapping[str, Any], *keys: str) -> Optional[int]:
+    for key in keys:
+        value = detail.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _echo_date(detail: Mapping[str, Any], *keys: str) -> Optional[date]:
+    for key in keys:
+        value = detail.get(key)
+        if not isinstance(value, str):
+            continue
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            continue
+    return None
+
+
 def _number(value: Any) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -284,6 +306,10 @@ def parse_rooms_report(
         longitude=_number(place.get("lng")),
         link=detail.get("bookingLink") if isinstance(detail.get("bookingLink"), str) else None,
         rates=rates,
+        answered_adults=_echo_int(detail, "numAdults", "adults"),
+        answered_rooms=_echo_int(detail, "numRooms", "rooms"),
+        answered_check_in=_echo_date(detail, "checkin", "checkIn", "check_in"),
+        answered_check_out=_echo_date(detail, "checkout", "checkOut", "check_out"),
     )
 
 

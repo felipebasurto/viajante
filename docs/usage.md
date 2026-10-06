@@ -69,7 +69,6 @@ list and accepted values.
 | `--price-cap 500` | Remove returned fares above this amount in the quote currency. |
 | `--nearby` | Include known airports in the same city as the named origin or destination. |
 | `--include-airports LHR,LGW` / `--exclude-airports STN` | Restrict destinations or exclude origins and destinations; exclusions take priority. |
-| `--selection pareto` | Retain price/duration/stops alternatives with bounded selection metadata; default `top`. |
 | `--sort duration` | Order by `ranked`, `fare`/`price`, `duration`, `departure`, or `arrival`. |
 | `--baggage-buffer 30` | Add a ranking allowance for recognized low-cost carriers, in the quote currency. |
 
@@ -88,9 +87,12 @@ airports. Each expanded query carries `nearby_label` `metro NYC`, and
 `--exclude-airports` still removes members. Only a code you name expands: `JFK`
 searches `JFK` alone. Metro codes work on one-way and `--trip rt` routes in
 `flights` and `trip`, not on open-jaw or multi-city routes, and not in
-`dates`, `flex`, `explore` or `self-transfer`. Combining `--nearby` with a metro code
+`dates`, `flex`, or `explore`. Combining `--nearby` with a metro code
 is an error, because expanding only the other side would drop part of the
 request. Name metros or airports on both sides instead (`NYC-LON`).
+A route whose two ends are the same metro is rejected: `LON-LON`, `JFK-NYC`,
+and `LHR-LGW` do not expand. The error names the origin, the destination, and
+the metro.
 
 Time, layover, duration, and price-cap filters operate on returned flight
 details. Unknown details can remain in results for some filters, so inspect
@@ -251,54 +253,6 @@ Only nearby or metro airport alternatives for the same dated journey share a
 minimum;
 separate dates and different multi-city legs are not collapsed.
 
-## Self-transfer through named vias
-
-Use `self-transfer` to pair two separate one-way tickets through an airport you
-name:
-
-```bash
-viajante self-transfer MAD-LHR-JFK:2026-11-10 --min-connection 3 --currency EUR
-```
-
-The command shops `MAD-LHR` and `LHR-JFK` in one sweep and pairs each returned
-first-leg offer with each returned second-leg offer.
-
-To compare several vias, list them with commas. Name up to five; more is an
-error. A repeated via is shopped once:
-
-```bash
-viajante self-transfer MAD-LHR,CDG,AMS-JFK:2026-11-10 --min-connection 3 --currency EUR
-```
-
-All legs for all vias go in one sweep. Viajante does not suggest vias; it
-searches only the ones you name. Add `--second-date` when
-the second ticket departs on a later day. Each pairing reports:
-
-- `connection_minutes`: the gap between the first ticket's last arrival and the
-  second ticket's first departure, in UTC. It is `null` when either clock, date
-  or timezone is missing or ambiguous.
-- `status`: `ok`, `too_short`, `too_long` or `unknown`. The bounds are the ones
-  you name with `--min-connection` and `--max-connection`; without them there
-  is no bound. A departure at or before the arrival is always `too_short`. An
-  unmeasured gap is always `unknown`, never `ok`.
-- `via`: the airport this pairing connects through.
-- `same_airport`: whether the first ticket lands at the airport the second
-  departs from, or `null` when segments do not show it.
-- `total_price`: the sum of both fares, only when both carry the same quote
-  currency.
-
-Every pairing has `protected: false`. The two tickets are separate: a delay on
-the first does not protect the second, and checked bags must be collected and
-re-checked. The measured margin is evidence, not an endorsed minimum
-connection, and it does not show that baggage recheck, immigration or transit
-rules allow the connection. Pairings with an out-of-bounds status sort after
-the rest, then by total price and margin, across all vias. `--top` caps each
-leg's shortlist and the pairings shown across all vias; `eligible_pairings` is
-the count before the cap. If either leg of a via fails, the report keeps that
-leg's error, lists the via in `failed_vias`, and has no pairings through it.
-The other vias still pair. Coverage covers only the named vias, dates and
-returned offers.
-
 ## Saving results and handling errors
 
 Search commands print tables. Add `--save FILE` to write JSON as well:
@@ -365,8 +319,7 @@ for result in hotels.queries:
 
 `get_flights` takes a route spec or trip objects, not prose. Turning a request
 into a route is the calling agent's job. For other search types, use
-`search_dates`, `search_flex`, `search_explore`, `search_trip`, or
-`search_self_transfer`.
+`search_dates`, `search_flex`, `search_explore`, or `search_trip`.
 
 See the exported types in [`viajante.__init__`](../src/viajante/__init__.py)
 for the Python interface.
@@ -393,12 +346,6 @@ For flights and a hotel stay in one request:
 search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="rt")
 ```
 
-For two separate tickets through one or more named vias:
-
-```text
-search_self_transfer(origin="MAD", via="LHR,CDG", destination="JFK", departure="2026-11-10", min_connection_hours=3)
-```
-
 These are tool-call examples, not Python library calls. The MCP server uses
 stdio and runs one search at a time. See the signatures in
 [`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
@@ -412,25 +359,12 @@ for that installation, or refresh an explicitly published version:
 `uvx --refresh --from 'viajante==VERSION' viajante --version`. Reload MCP after
 upgrading; confirm the executing version before using new parameters.
 
-## Verifiable times and diverse finalists
-
-Use Pareto when the caller wants alternatives on price, duration and stops:
-
-```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep --selection pareto --top 3
-```
-
-`selection="pareto"` is also accepted by `get_flights`, `search_flights` and
-MCP `search_flights`. Explicit filters still apply. Comparison is limited to
-returned candidates in that query and currency, with equivalent known baggage.
-Incomplete metrics and unproven baggage equivalence cannot eliminate an offer.
-The budget first reserves cheapest, shortest and fewest-stop alternatives,
-then uses the requested sort on the frontier, then incomplete rows. Packaged
-metrics require every journey. `top` remains the default selection mode.
+## Owned segment times
 
 Flight segments may include `arrival_date`, `departure_timezone` and
-`arrival_timezone`. Missing facts remain absent; completeness reports dates
-and zones as known/unknown. To validate selected rows locally:
+`arrival_timezone`. Missing facts remain absent; completeness reports
+`segment_dates` and `segment_timezones` as known or unknown. To validate
+selected rows locally:
 
 ```python
 from viajante import get_flights, validate_itinerary
@@ -439,14 +373,15 @@ report = get_flights("JFK-LHR:2026-11-15", fetch="sweep")
 result = report.to_dict()["queries"][0]
 selected = [{"status": "ok", "query": result["query"], "offer": result["offers"][0]}]
 validation = validate_itinerary(selected, {
-    "arrival_deadline": "2026-11-16T12:00",
+    "arrival_deadline": "2026-11-16T12:00Z",
     "chronological": True,
 })
 ```
 
-The deadline is interpreted in the final destination's local IANA zone.
-An explicit ISO offset must agree with that local time. Missing dates/zones,
-ambiguous or nonexistent DST times return unknown. `chronological` checks
+An `arrival_deadline` with an explicit offset is compared in UTC, even when
+that offset differs from the arrival airport's zone. A deadline without an
+offset is local civil time at the arrival airport. Missing dates or zones,
+and ambiguous or nonexistent DST times, stay unknown. `chronological` checks
 segment and selected-journey UTC order, including overlap. Optional
 `min_stay_days` and `max_stay_days` count local date differences between a
 journey arrival and the next journey departure from that same airport, including
@@ -456,51 +391,32 @@ and `depart_after` still test the existing local-clock bounds. Chronology
 alone does not prove connection protection, immigration requirements or
 sufficient time to change airports. Unknown never means compliant.
 
-## Finalist details in MCP and Python
+## Hotel finalist details
 
-MCP Google flight shopping offers and hotel offers receive an opaque
-`selection_id`. Flex shopping and nested trip offers also receive references.
-References belong to this process and expire when their ledger group is
-expelled from the last 20 groups. Unknown references fail without a request.
-Successful cache replay within five minutes retains the original reference
-and retrieval date and re-registers its snapshot when necessary.
+A hotel search stamps `selection_id` on each returned stay. Flight, calendar,
+explore, and hidden-city rows do not. The id belongs to this process. A read
+does not search and does not push the search out of `verify_answer`. Unknown
+ids fail before any provider call.
 
-Call `get_flight_details(selection_id)` for the existing segments, baggage,
-links, age and unknown fields. `refresh=True` re-shops the original query;
-it bypasses the response cache and retains cooldowns, retries and the process
-lock. The original and new quotes are separate. Matching requires complete
-segment identities across all journeys and the same occupancy/cabin/baggage
-request. Tokens and prices may change. Incomplete identity, zero matches,
-multiple matches or missing original context are inconclusive; no similar
-flight substitutes for the selection. A unique match reports same-currency
-`price_change` and original `filter_violations` without hiding its new fare.
-Refund rules, extras and current availability remain unproven unless returned.
-
-Call `get_hotel_details(selection_id)` to inspect original evidence and its
-limits. With `room_rates=True`, Skiplagged room rates are a separate quote
-in `room_quotes`; `original_quote` keeps the Google/Booking/Skiplagged price.
-External finalists require exact normalized names and a named city identified
-unambiguously by the offline catalogue (for example `Prague` or `London, GB`). An ambiguous location or a different
-provider-resolved place raises an input error: repeat the hotel search with a
-sufficiently identified city. Skiplagged finalists use their own provider ids.
-Dates, adults and rooms are preserved, within the helper's limits (10 adults,
-5 rooms). No match, homonyms or provider failures preserve the original quote
-and return the helper's error. Rates remain in provider order and USD; their
-cancellation and occupancy evidence does not attach to the original fare or
-prove combined capacity. Missing cancellation deadlines remain unknown.
-
-The library uses the original typed report and zero-based query/offer indices:
+`get_hotel_details(selection_id)` returns the stored quote. `room_rates` must
+be a boolean. `room_rates=true` asks Skiplagged for a separate USD room quote
+in `room_quotes`; `original_quote` keeps the price that was searched. The city
+must be one place (`Prague`, or `London, GB`). Springfield, Portland, and
+Columbus match more than one place: the result is `room_rates_status:
+inconclusive` and no room request is sent, unless the original offer's
+coordinates identify one place and the returned quote is that property.
+Skiplagged finalists use their own provider ids. If the provider echoes
+different adults, rooms, or dates, the result is `occupancy_mismatch` or
+`dates_mismatch` and `room_quotes` stays empty. A missing echo stays unknown.
+Rates remain in provider order and USD. Their cancellation and occupancy
+evidence does not attach to the original fare or prove combined capacity.
 
 ```python
-from viajante import get_flight_details, get_hotel_details
+from viajante import get_hotel_details
 
-snapshot = get_flight_details(report, 0, 0)
-refreshed = get_flight_details(report, 0, 0, refresh=True)
 hotel_snapshot = get_hotel_details(hotels, 0, 0)
 room_quotes = get_hotel_details(hotels, 0, 0, room_rates=True)
 ```
 
-A serialized report can supply snapshot evidence, but flight refresh needs the
-original typed report's internal search context. There are no details CLI
-commands. Run provider searches sequentially and verify finalist prices and
-terms on the provider before booking.
+There is no details CLI command. Verify the final total and the room terms on
+the provider before booking.

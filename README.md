@@ -100,7 +100,7 @@ Once connected, you can ask:
 > Search for hotels in Tokyo from November 12 to November 16, 2026, for two
 > adults. Use JPY and require free cancellation.
 
-The server exposes twelve tools:
+The server exposes seventeen tools:
 
 | Tool | Use it to |
 | --- | --- |
@@ -109,13 +109,18 @@ The server exposes twelve tools:
 | `search_flex` | Check dates around a target departure, then fetch flights for the cheapest day. |
 | `search_explore` | Discover destinations from an origin airport and price a shortlist. |
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
+| `search_hotel_rooms` | Read Skiplagged room rates for one named hotel. |
+| `get_hotel_details` | Read a hotel offer this process returned, with an optional separate room quote. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
-| `lookup_airports` | Look up airport codes offline. |
+| `lookup_airports` | Look up airport or metro codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
 | `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
 | `lookup_transfers` | Local points transfer-partner table. |
 | `validate_itinerary` | Check a proposed itinerary against the searches' own evidence. |
+| `plan_stay_blocks` | Group consecutive nights that have the same people. |
+| `split_stay_costs` | Split named stay totals among the people who sleep there. |
 | `verify_answer` | Flag amounts, codes, dates, or links in a draft reply that no search returned. |
+| `get_runtime_info` | Read the executing package version offline. |
 
 ## Use the command line
 

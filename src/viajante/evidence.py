@@ -21,7 +21,6 @@ LEDGER_SIZE = 20
 _MONEY_KEYS = frozenset(
     {
         "price",
-        "price_change",
         "typical",
         "cheapest",
         "total_price",
@@ -50,58 +49,45 @@ _selections: dict[str, object] = {}
 
 
 def selection_records(payload: Mapping[str, object], report=None) -> dict[str, object]:
-    """Attach opaque references to actual offers, never calendar/catalog cells."""
+    """Attach opaque references to hotel offers this process can open again.
+
+    Flight, calendar, explore, and hidden-city rows are not stored: nothing
+    looks them up. Hidden-city ``evidence`` is a string and must not be treated
+    as a mapping.
+    """
     records = {}
 
-    def add_offers(result, query_index, typed, context):
-        for offer_index, offer in enumerate(result.get("offers", ())):
-            if not isinstance(offer, dict):
-                continue
-            kind = "hotel" if "total_price" in offer else "flight"
-            if kind == "flight" and "legs" not in offer:
+    def add_hotels(result, query_index, typed):
+        offers = result.get("offers")
+        if not isinstance(offers, list):
+            return
+        for offer_index, offer in enumerate(offers):
+            if not isinstance(offer, dict) or "total_price" not in offer:
                 continue
             selection_id = offer.setdefault("selection_id", "sel_" + uuid4().hex)
-            snapshot = {
-                key: deepcopy(context.get(key))
-                for key in ("currency", "searched_at", "provider", "fetch_backend")
-            }
-            snapshot["queries"] = [deepcopy(result)]
-            records[selection_id] = (
-                kind,
-                typed or snapshot,
-                query_index if typed else 0,
-                offer_index,
-            )
+            records[selection_id] = ("hotel", typed, query_index, offer_index)
 
-    def walk(node, context=None, typed=None):
+    def walk(node, typed=None):
         if not isinstance(node, dict):
             return
-        context = {**(context or {}), **node}
         queries = node.get("queries")
         if isinstance(queries, list):
-            for query_index, result in enumerate(queries):
-                if not isinstance(result, dict):
-                    continue
-                direct = typed if hasattr(typed, "queries") else None
-                add_offers(result, query_index, direct, context)
-                child = typed[query_index] if isinstance(typed, tuple) else None
-                walk(result, context, child)
-        # Flex owns actual shopping offers; the calendar cells remain reference-free.
-        if "offers" in node and "queries" not in node and "query" not in node:
-            shop = getattr(typed, "details_report", None)
-            for index, offer in enumerate(node["offers"]):
-                evidence = offer.get("evidence") or {}
-                query = evidence.get("query")
-                if query:
-                    selected = {"query": query, "offers": [offer]}
-                    add_offers(selected, 0, None, context)
-                    selection_id = offer["selection_id"]
-                    if shop is not None:
-                        records[selection_id] = ("flight", shop, 0, index)
+            # A typed hotel report is what a later read opens. A bare hotel
+            # payload is itself the snapshot. Flight reports have queries too;
+            # their offers have no total_price and are skipped below.
+            owner = typed if hasattr(typed, "queries") else None
+            if owner is None and typed is None:
+                owner = node
+            if owner is not None:
+                for query_index, result in enumerate(queries):
+                    if isinstance(result, dict):
+                        add_hotels(result, query_index, owner)
         for key in ("flights", "hotels"):
-            walk(node.get(key), context, getattr(typed, key, None))
+            child = node.get(key)
+            if isinstance(child, dict):
+                walk(child, getattr(typed, key, None) if typed is not None else None)
 
-    walk(payload, typed=deepcopy(report))
+    walk(payload, typed=report)
     return records
 
 
@@ -154,8 +140,7 @@ class _Owned:
             return
         elif isinstance(node, (int, float)):
             if key in _MONEY_KEYS:
-                amount = float(node)
-                self.amounts.append((abs(amount) if key == "price_change" else amount, currency))
+                self.amounts.append((float(node), currency))
         elif isinstance(node, str):
             self.texts.add(node)
             self.dates.update(_ISO_DATE.findall(node))

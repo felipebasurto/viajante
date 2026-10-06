@@ -43,7 +43,6 @@ from viajante.models import (
     RoundTrip,
     SearchError,
     SearchErrorCode,
-    SearchReport,
     StopsCompare,
     Trip,
     format_money,
@@ -773,24 +772,6 @@ def _flex_report_for_seed(
             retrieved_at=searched_at,
         )
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
-    details_report = None
-    if shop is not None and offers:
-        details_report = SearchReport(
-            searched_at=searched_at,
-            queries=(QuerySuccess(shop, len(cards), len(eligible), offers),),
-            currency=currency,
-            fetch_backend="sweep",
-            search_options={
-                **vars(filters),
-                "top": top,
-                "sort": sort,
-                "baggage_buffer": baggage_buffer,
-                "currency": currency,
-                "country": country,
-                "proxy": getattr(client, "_proxy", None),
-                "fetch": "sweep",
-            },
-        )
     return FlexSearchReport(
         searched_at=searched_at,
         origin=seed.origin,
@@ -803,7 +784,6 @@ def _flex_report_for_seed(
         chosen_date=chosen,
         return_date=returning,
         offers=offers,
-        details_report=details_report,
         stops_compare=compare,
         typical=typical,
         vs_typical=label,
