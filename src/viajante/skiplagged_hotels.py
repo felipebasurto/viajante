@@ -334,8 +334,20 @@ def _failure(exc: BaseException) -> SearchError:
 
 
 def _normalized_name(value: str) -> str:
-    ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_text.casefold()).split())
+    text = unicodedata.normalize("NFKC", value).casefold()
+    # Ignore Latin accents as before; other scripts' marks can change identity.
+    text = "".join(
+        unicodedata.normalize("NFD", char)[0]
+        if unicodedata.name(char, "").startswith("LATIN")
+        else char
+        for char in text
+    )
+    return " ".join(
+        "".join(
+            char if char.isalnum() or unicodedata.category(char).startswith("M") else " "
+            for char in text
+        ).split()
+    )
 
 
 def resolve_hotel_id(
@@ -376,7 +388,7 @@ def resolve_hotel_id(
                 "the requested city was not searched. Nothing was guessed."
             )
     wanted = _normalized_name(name)
-    hits = [card for card in page.cards if _normalized_name(card.title) == wanted]
+    hits = [card for card in page.cards if wanted and _normalized_name(card.title) == wanted]
     if len(hits) == 1 and hits[0].provider_id:
         return int(hits[0].provider_id), hits[0].title
     place = page.resolved_place or city

@@ -6,10 +6,10 @@ from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Mapping, Optional
 
-from viajante.airports import airport_geo, lookup_airports, metro_of
+from viajante.airports import airport_geo, canonical_city_name, lookup_airports, metro_of
 from viajante.envelope import stamp_local, stamp_search
 from viajante.hotels import _raw_distance_km
-from viajante.skiplagged_hotels import search_hotel_rooms
+from viajante.skiplagged_hotels import _normalized_name, search_hotel_rooms
 
 _ENVELOPE = (
     "status",
@@ -143,6 +143,12 @@ def _near_places(hits, groups, point: tuple[float, float]) -> list[list[int]]:
     return chosen
 
 
+def _city_label(value: str) -> str:
+    parts = value.split(",", 1)
+    city = canonical_city_name(parts[0])
+    return city if len(parts) == 1 else f"{city}, {parts[1].strip().casefold()}"
+
+
 def _city_decision(result, offer):
     """One catalogue place, or the offer's own coordinates. Otherwise inconclusive."""
     location = result["query"]["location"].strip()
@@ -154,7 +160,7 @@ def _city_decision(result, offer):
     hits = [
         airport
         for airport in lookup_airports(city, limit=100)
-        if airport.city.casefold() == city.casefold()
+        if canonical_city_name(airport.city) == canonical_city_name(city)
         and (country is None or airport.country == country)
     ]
     if not hits:
@@ -163,11 +169,11 @@ def _city_decision(result, offer):
     point = _point(offer)
     if len(groups) == 1:
         resolved = result.get("resolved_place")
-        if resolved and resolved.casefold() not in (city.casefold(), location.casefold()):
+        if resolved and _city_label(resolved) not in (_city_label(city), _city_label(location)):
             raise ValueError(
                 "resolved place differs from the named city; room-rate city is unproven"
             )
-        return location, point
+        return f"{hits[0].city}, {country}" if country else hits[0].city, point
     if point and len(_near_places(hits, groups, point)) == 1:
         return location, point
     names = ", ".join(sorted({hits[group[0]].iata for group in groups}))
@@ -304,6 +310,13 @@ def get_hotel_details(
         detail.update(flags)
         code = "occupancy_mismatch" if flags.get("occupancy_mismatch") else "dates_mismatch"
         return _filtered(detail, code)
+    if rooms.name is not None and (
+        not _normalized_name(offer["title"])
+        or _normalized_name(rooms.name) != _normalized_name(offer["title"])
+    ):
+        detail["room_rates_status"] = "inconclusive"
+        detail["reason"] = "room quote name differs from the selected hotel"
+        return _filtered(detail, "property_mismatch")
     if anchor is not None:
         quoted = _point(quotes)
         if quoted is None or _raw_distance_km(anchor, quoted[0], quoted[1]) > _PROPERTY_KM:

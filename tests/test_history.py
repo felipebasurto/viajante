@@ -22,6 +22,7 @@ from test_recheck import _offer as _recheck_offer
 from test_recheck import _report as _recheck_report
 from viajante import history, mcp_handlers, watch
 from viajante.cli import main
+from viajante.control import SearchCancelled, SearchControl, active
 from viajante.envelope import ENVELOPE_KEYS
 from viajante.evidence import _Owned
 from viajante.flights import DEFAULT_TOP, as_trips, parse_flight_plan, search_flights
@@ -141,6 +142,19 @@ class _State(unittest.TestCase):
 
 
 class RecordingGateTests(_State):
+    def test_cancelled_final_hotel_fetch_is_not_recorded(self):
+        self.enable()
+        control = SearchControl()
+
+        @history.recorded_hotels
+        def held_search():
+            control.cancel.set()
+            return _hotel_report(100.0)
+
+        with active(control), self.assertRaises(SearchCancelled):
+            held_search()
+        self.assertFalse((self.state / history.HISTORY_FILE).exists())
+
     def test_off_by_default_writes_nothing(self) -> None:
         self.record_flights(_flight_report(500.0))
         self.assertFalse((self.state / history.HISTORY_FILE).exists())
@@ -213,6 +227,27 @@ class RecordingGateTests(_State):
 
 
 class ImmutabilityAndBoundsTests(_State):
+    def test_malformed_query_rows_are_skipped_and_preserved_on_append(self) -> None:
+        self.enable()
+        self.record_flights(_flight_report(500.0))
+        good = history.read_observations()[0]
+        bad_queries = (
+            {**good["query"], "legs": [None]},
+            {**good["query"], "legs": [{}]},
+            {**good["query"], "legs": "invalid"},
+            {},
+            {**good["query"], "adults": None},
+        )
+        broken = [json.dumps({**good, "query": query}) for query in bad_queries]
+        path = self.state / history.HISTORY_FILE
+        path.write_text("\n".join(broken) + "\n" + path.read_text(), encoding="utf-8")
+        payload = history.price_history(date=DEPART.isoformat())
+        self.assertEqual(payload["stored_entries"], 1)
+        self.assertEqual(len(payload["series"]), 1)
+        self.record_flights(_flight_report(450.0))
+        self.assertEqual(len(history.read_observations()), 2)
+        self.assertEqual(path.read_text().splitlines()[: len(broken)], broken)
+
     def test_entries_are_never_rewritten(self) -> None:
         self.enable()
         self.record_flights(_flight_report(500.0))
@@ -399,6 +434,20 @@ class TrendTests(_State):
         self.assertIsNone(trend["change_since_previous"])
         self.assertIn("Only one observation", trend["note"])
         self.assertEqual(trend["first_seen"], trend["last_seen"])
+
+    def test_three_decimal_currency_changes_keep_the_owned_minor_unit(self) -> None:
+        for currency in ("BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"):
+            self.record_flights(_flight_report(100.001, currency=currency))
+            self.record_flights(
+                _flight_report(100.002, currency=currency, at=T0 + timedelta(hours=1))
+            )
+            (item,) = history.price_history(currency=currency)["series"]
+            change = item["trend"]["change_since_previous"]
+            self.assertEqual((change["price_change"], change["direction"]), (0.001, "higher"))
+            lowered = history.change_between(
+                {"cheapest": 100.002, "observed_at": "2099-01-01"}, {"cheapest": 100.001}
+            )
+            self.assertEqual((lowered["price_change"], lowered["direction"]), (-0.001, "lower"))
 
     def test_facts_for_one_comparable_series(self) -> None:
         for hours, price in enumerate((500.0, 430.0, 610.0, 580.0)):
@@ -823,7 +872,8 @@ while not start.exists():
     time.sleep(0.001)
 row = {"id": "id" + index, "kind": "flight", "query_key": "k", "currency": "USD",
        "observed_at": "2026-10-06T09:00:00Z", "cheapest": 100.0 + int(index),
-       "query": {}, "filters": {}}
+       "query": {"origin": "JFK", "destination": "LHR", "trip": "one-way",
+                 "departure_date": "2026-12-01", "adults": 1}, "filters": {}}
 history.append_observations([row])
 """
 
@@ -1013,6 +1063,16 @@ class CliTests(_State):
         self.assertIn("Cleared 2", text)
         code, text = self.run_cli("history")
         self.assertIn("No recorded observation", text)
+
+    def test_history_prints_three_decimal_prices_and_changes(self) -> None:
+        self.enable()
+        self.record_flights(_flight_report(100.001, currency="BHD"))
+        self.record_flights(_flight_report(100.002, currency="BHD", at=T0 + timedelta(hours=1)))
+        code, text = self.run_cli("history", "--currency", "BHD")
+        self.assertEqual(code, 0)
+        self.assertIn("lowest 100.001 BHD", text)
+        self.assertIn("+0.001 BHD (", text)
+        self.assertIn("higher)", text)
 
     def test_history_single_observation_wording(self) -> None:
         self.enable()

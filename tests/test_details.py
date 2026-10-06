@@ -62,6 +62,46 @@ def hotel(
 
 
 class HotelDetailsTests(unittest.TestCase):
+    def test_owned_city_aliases_use_the_catalogue_name_for_room_search(self):
+        for alias, canonical, country in (
+            ("Lisboa", "Lisbon", "PT"),
+            ("Ciudad de México", "Mexico City", "MX"),
+        ):
+            for resolved in (alias, canonical, f"{canonical}, {country}"):
+                with self.subTest(alias=alias, resolved=resolved):
+                    qualified = "," in resolved
+                    location = f"{alias}, {country}" if qualified else alias
+                    expected = f"{canonical}, {country}" if qualified else canonical
+                    original = hotel(location=location)
+                    original["queries"][0]["resolved_place"] = resolved
+                    with patch(
+                        "viajante.details.search_hotel_rooms", return_value=_rooms()
+                    ) as rooms:
+                        get_hotel_details(original, 0, 0, room_rates=True)
+                    self.assertEqual(rooms.call_args.kwargs["city"], expected)
+
+    def test_distinct_unicode_property_does_not_resolve_or_fetch_rooms(self):
+        search = _search_result()
+        for card in search["structuredContent"]["results"]:
+            card["name"] = "大阪ホテル"
+        search["content"][0]["text"] = (
+            search["content"][0]["text"]
+            .replace("Czech Inn", "大阪ホテル")
+            .replace("a&o Prague Rhea", "大阪ホテル")
+        )
+        result, calls = self._rates(hotel(title="東京ホテル"), search_result=search)
+        self.assertEqual(result["room_quotes"]["rates"], [])
+        self.assertEqual(result["room_quotes"]["error"]["code"], "no_results")
+        self.assertEqual(result["status"], "no_results")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["name"], "sk_hotels_search")
+
+    def test_room_detail_name_cannot_contradict_the_selected_property(self):
+        with patch("viajante.details.search_hotel_rooms", return_value=_rooms(name="大阪ホテル")):
+            detail = get_hotel_details(hotel(title="東京ホテル"), 0, 0, room_rates=True)
+        self.assertEqual(detail["error_code"], "property_mismatch")
+        self.assertIsNone(detail["room_quotes"])
+
     def test_unambiguous_city_keeps_property_coordinates(self):
         original = hotel(latitude=50.07, longitude=14.44)
         for latitude, longitude, accepted in ((48.85, 2.35, False), (50.0701, 14.4401, True)):

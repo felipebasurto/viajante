@@ -71,6 +71,9 @@ inventory, compatibility changes, candidate validation and publication handoff.
 
 ### Fixed
 
+- Hotel finalist matching preserves non-Latin names and meaningful Unicode marks, rejects empty-name matches and contradictory room-detail names, and resolves owned city aliases such as Lisboa and Ciudad de México before room lookup.
+- Cancellation during the final provider fetch is checked before writing price history, recording MCP evidence or caching the result; a cancelled cache replay does not record another search. Deadline-completed evidence is preserved.
+- Price history retains three-decimal quote changes in JSON and CLI output. Malformed nested query rows are skipped when reading and preserved byte-for-byte when appending.
 - Fresh re-checks validate complete segment identity across all journeys before confirming or ruling out an earlier itinerary. Missing fresh flight numbers, airports, clocks or journeys yield `incomplete_offers` unless a complete exact match exists.
 - Split-ticket CLI searches pass `--top` into the search and reject unsupported named clock, layover, via, overnight, airport and baggage-buffer filters before provider contact.
 - Hotel finalist quotes preserve original coordinates for unambiguous cities and reject a different property. Only accepted fresh room quotes enter the evidence ledger; original snapshots, local reads, rejected quotes and provider failures do not become new evidence.
