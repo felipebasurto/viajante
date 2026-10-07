@@ -7,8 +7,11 @@ import re
 from viajante.models import CancellationEvidence, LodgingKind, PropertyTypeEvidence
 
 _PRICE_NUMBER = re.compile(r"([\d.,']+)")
-_CURRENCY_PREFIX = re.compile(r"([A-Za-z]{3})")
 _THREE_DEC_CURRENCIES = frozenset({"BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"})
+_THREE_DEC_CODE = re.compile(
+    r"(?<![A-Za-z])(?:" + "|".join(sorted(_THREE_DEC_CURRENCIES)) + r")(?![A-Za-z])",
+    re.IGNORECASE,
+)
 _APOSTROPHE_GROUPS = re.compile(r"^-?\d{1,3}(?:'\d{3})+(?:[.,]\d{1,2})?$")
 _DURATION_DAYS = re.compile(r"(\d+)\s*(?:days?|d)\b")
 _DURATION_HOURS = re.compile(r"(\d+)\s*(?:h|hr|hrs|hours?)\b")
@@ -71,17 +74,9 @@ def parse_price(price_text: str | None) -> float | None:
     leftover = (cleaned[: match.start()] + cleaned[match.end() :]).replace("-", "")
     if _DIGIT.search(leftover):
         return None
-    iso = None
-    prefix = _CURRENCY_PREFIX.search(cleaned[: match.start()])
-    if prefix:
-        iso = prefix.group(1).upper()
-    else:
-        # The RPC price text puts the code after the amount ("45.125 KWD").
-        suffix = cleaned[match.end() :]
-        if re.fullmatch(r"[A-Za-z]{3}", suffix):
-            iso = suffix.upper()
+    three_decimal = _THREE_DEC_CODE.search(price_text) is not None
     try:
-        return _parse_grouped_number(num, three_decimal=iso in _THREE_DEC_CURRENCIES)
+        return _parse_grouped_number(num, three_decimal=three_decimal)
     except ValueError:
         return None
 
