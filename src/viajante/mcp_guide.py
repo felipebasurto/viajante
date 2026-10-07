@@ -167,6 +167,10 @@ VIAJANTE_SWEEP_MODE=conservative caps HTTP/2 dispatch at two requests instead of
 the standard eight. get_runtime_info reports the active mode and concurrency.
 RPC status 13 has an unknown cause; it alone does not establish throttling or an IP
 block. A 429 or status 13 stops unsent work and is not replayed or switched to detail.
+A round-trip date or flex window reads its pages in two bounded batches at that same
+sweep concurrency: every day's outbound board, then the selected return pages (still
+at most eight per day). A 429 in either batch stops the unsent pages and does not
+start the next batch.
 Error diagnostics distinguish real HTTP status from RPC status and unsent requests;
 cooldown_basis distinguishes provider Retry-After from a heuristic pause.
 
