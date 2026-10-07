@@ -21,6 +21,7 @@ from viajante.google_flights import (
     SweepHttpResponse,
     SweepTransportError,
     build_search_params,
+    looks_blocked,
     raise_for_sweep_response,
 )
 from viajante.google_flights_page import parse_shopping_page
@@ -406,6 +407,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 response.status in {403, 429}
                 or response.stopped
                 or raw_rpc_error_status(response.text) == 13
+                or looks_blocked(response.text, response.url)
             )
         return responses
 

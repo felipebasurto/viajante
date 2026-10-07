@@ -700,17 +700,30 @@ class ChromeSweepClient:
             job = jobs[0]
             return [self.post(job.url, data=job.data, headers=job.headers, timeout=timeout)]
         out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        sent = [False] * len(jobs)
         control = current_control()
         cancel_event = control.cancel if control is not None else None
         try:
             return list(
-                self._submit(self._apost_many(jobs, timeout, out, cancel_event), timeout=timeout)
+                self._submit(
+                    self._apost_many(jobs, timeout, out, cancel_event, sent=sent),
+                    timeout=timeout,
+                )
             )
         except SearchDeadline:
             # Responses that already arrived are real; only the rest were not loaded.
             return [
-                item if item is not None else SweepHttpResponse(0, "", job.url, deadline=True)
-                for item, job in zip(out, jobs, strict=True)
+                item
+                if item is not None
+                else SweepHttpResponse(
+                    0,
+                    "",
+                    job.url,
+                    deadline=True,
+                    request_sent=sent[index],
+                    attempts=1 if sent[index] else 0,
+                )
+                for index, (item, job) in enumerate(zip(out, jobs, strict=True))
             ]
 
     def get_many(self, urls: Sequence[str], *, timeout: float) -> list[SweepHttpResponse]:
@@ -718,12 +731,14 @@ class ChromeSweepClient:
             return []
         jobs = [SweepPost(url, "", {}) for url in urls]
         out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        sent = [False] * len(jobs)
         control = current_control()
         cancel_event = control.cancel if control is not None else None
         try:
             return list(
                 self._submit(
-                    self._apost_many(jobs, timeout, out, cancel_event, get=True), timeout=timeout
+                    self._apost_many(jobs, timeout, out, cancel_event, get=True, sent=sent),
+                    timeout=timeout,
                 )
             )
         except SearchDeadline:
@@ -731,9 +746,14 @@ class ChromeSweepClient:
                 item
                 if item is not None
                 else SweepHttpResponse(
-                    0, "", job.url, deadline=True, request_sent=False, attempts=0
+                    0,
+                    "",
+                    job.url,
+                    deadline=True,
+                    request_sent=sent[index],
+                    attempts=1 if sent[index] else 0,
                 )
-                for item, job in zip(out, jobs, strict=True)
+                for index, (item, job) in enumerate(zip(out, jobs, strict=True))
             ]
 
     async def _apost_many(
@@ -744,6 +764,7 @@ class ChromeSweepClient:
         cancel_event: Optional[threading.Event] = None,
         *,
         get: bool = False,
+        sent: Optional[list[bool]] = None,
     ) -> list[SweepHttpResponse]:
         # Keep HTTP/2 multiplex on the happy path. After HTTP 429 or a transport
         # failure, stop feeding this TLS session. Unsent blocking jobs have no HTTP
@@ -751,6 +772,7 @@ class ChromeSweepClient:
         semaphore = self._asyncio.Semaphore(getattr(self, "_streams", _SWEEP_STREAMS))
         stop = self._asyncio.Event()
         stop_status = 0
+        dispatched = sent if sent is not None else [False] * len(jobs)
 
         async def _one(index: int, job: SweepPost) -> None:
             nonlocal stop_status
@@ -759,6 +781,7 @@ class ChromeSweepClient:
             async with semaphore:
                 if stop.is_set():
                     return
+                dispatched[index] = True
                 try:
                     response = (
                         await self._aget(job.url, timeout, cancel_event)
@@ -794,11 +817,11 @@ class ChromeSweepClient:
                 if stop_status == SWEEP_TRANSPORT_STATUS
                 else "Not sent. Remaining batch stopped after a provider block.",
                 job.url,
-                request_sent=False,
-                attempts=0,
+                request_sent=dispatched[index],
+                attempts=1 if dispatched[index] else 0,
                 stopped=True,
             )
-            for item, job in zip(out, jobs, strict=True)
+            for index, (item, job) in enumerate(zip(out, jobs, strict=True))
         ]
 
     def close(self) -> None:
