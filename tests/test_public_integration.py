@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
-from viajante.control import SearchCancelled, SearchDeadline
+from viajante.control import SearchCancelled, SearchDeadline, current_control
 from viajante.dates import search_dates, search_flex
 from viajante.google_flights import (
     ChromeSweepClient,
@@ -557,6 +557,48 @@ class DatesDeadlineCancelTests(unittest.TestCase):
         )
         self.assertTrue(all(row.status == "error" for row in report.days))
         self.assertTrue(all(row.error.code == SearchErrorCode.REJECTED for row in report.days))
+
+    def test_round_trip_deadline_keeps_finished_days_and_marks_the_rest(self) -> None:
+        card = RawFlightCard("Iberia", "08:00", "09:20", "1 hr 20 min", "Nonstop", "€41")
+        fetched: list[date] = []
+
+        class Transport:
+            automatic_typical = False
+
+            def fetch(self, trip):
+                fetched.append(trip.departure_date)
+                if len(fetched) == 2:
+                    control = current_control()
+                    assert control is not None
+                    # The second day finished; the next checkpoint is past the deadline.
+                    control.deadline_at = control.clock()
+                return (card,)
+
+            def fetch_many(self, trips):
+                raise AssertionError("a round-trip window stops between days")
+
+            def close(self) -> None:
+                return None
+
+        report = search_dates(
+            "JFK",
+            "LHR",
+            OUT,
+            date(2099, 1, 17),
+            nights=5,
+            source=Transport(),
+            currency="EUR",
+            baggage_buffer=0,
+            deadline_seconds=60,
+        )
+        self.assertEqual(fetched, [OUT, date(2099, 1, 15)])
+        self.assertEqual([row.status for row in report.days], ["ok", "ok", "error", "error"])
+        self.assertEqual(report.days[0].price, 41)
+        self.assertEqual(report.days[1].price, 41)
+        self.assertEqual(report.days[2].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(report.days[3].error.code, SearchErrorCode.DEADLINE)
+        self.assertFalse(report.coverage.complete)
+        self.assertEqual(report.coverage.stopping_reason, "deadline")
 
 
 class FlexShopReplayTests(unittest.TestCase):

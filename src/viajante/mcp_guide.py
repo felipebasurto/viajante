@@ -95,6 +95,10 @@ unknown, never "no results". The error carries no retry_after. A partial result 
 cached; ask again with a larger deadline_seconds or none.
 In search_explore, `not_loaded` under a deadline means the prices weren't loaded,
 even if destinations are listed.
+Long round-trip date sweeps (search_dates or search_flex with a stay) run one day
+at a time. Pass deadline_seconds on those calls so finished days come back early
+instead of waiting out the whole window. Unfinished days carry error code deadline
+and empty_reason not_loaded; finished days keep the prices that arrived.
 
 ## The result envelope
 
@@ -170,7 +174,9 @@ cooldown_basis distinguishes provider Retry-After from a heuristic pause.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
-search_dates uses bounded per-day public-page GETs and has no fetch parameter. If it returns
+search_dates uses bounded per-day public-page GETs and has no fetch parameter. A long
+round-trip window should pass deadline_seconds so finished days return early and the
+rest are deadline, not empty. If it returns
 blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
