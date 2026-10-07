@@ -306,7 +306,10 @@ def parse_rooms_report(
     detail = result.get("structuredContent") if isinstance(result, dict) else None
     if not isinstance(detail, dict):
         raise SkiplaggedParseMiss("hotel details had no structured content")
-    rates = tuple(rate for row in detail.get("rooms") or [] if (rate := _rate(row)) is not None)
+    rows = detail.get("rooms") or []
+    if not isinstance(rows, list):
+        raise SkiplaggedParseMiss("hotel details rooms were not a list")
+    rates = tuple(rate for row in rows if (rate := _rate(row)) is not None)
     if not rates:
         raise SkiplaggedNoHotels("Skiplagged listed no bookable room rates for these dates.")
     place = detail.get("location") if isinstance(detail.get("location"), dict) else {}

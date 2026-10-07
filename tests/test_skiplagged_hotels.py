@@ -569,6 +569,18 @@ class SkiplaggedRoomsTests(unittest.TestCase):
         self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
         self.assertEqual(report.rates, ())
 
+    def test_non_list_rooms_is_drift_not_a_no_rooms_claim(self) -> None:
+        drifted = {"content": [], "structuredContent": {"rooms": {"unexpected": "shape"}}}
+        report = search_hotel_rooms(
+            1,
+            date(2026, 12, 1),
+            date(2026, 12, 4),
+            rpc=_fake_rpc(drifted, []),
+            sleep=lambda _: None,
+        )
+        self.assertEqual(report.error.code, SearchErrorCode.MARKUP_DRIFT)
+        self.assertEqual(report.rates, ())
+
     def test_limits_fail_before_any_request(self) -> None:
         for kwargs in ({"adults": 11}, {"rooms": 6}, {"adults": 0}):
             with self.subTest(kwargs=kwargs):
