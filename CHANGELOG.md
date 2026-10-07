@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The [1.4.6 candidate record](docs/release-1.4.6.md) describes the public-page
-Google Flights transport. Local validation passed; PR CI and publication are
-separate release gates.
+## [1.4.6] - 2026-10-07
+
+See the [release record](docs/release-1.4.6.md) for transport behavior,
+compatibility changes, validation, and publication verification.
 
 ### Changed
 
@@ -39,6 +40,20 @@ separate release gates.
   page issues in Chromium, checking its origin and date echo.
 - Provider-block diagnostics distinguish queued requests from dispatched ones.
 
+### Fixed
+
+- Explore preserves HTTP 429 and `Retry-After`, detects status 13 in every RPC
+  row/chunk, and stops pending searches after a block, including proxied calls.
+- Explore checks cancellation and deadlines during browser waits; cancelled
+  responses do not write cooldowns, and a deadline never becomes provider-empty.
+- Airline filters match owned codes exactly, including returned codeshares;
+  name aliases are a fallback only when codes are absent, with word boundaries.
+- Multi-city reselection rejects ambiguous or incomplete identities and uses
+  the current selected row's evidence with the provider's final package total.
+- Empty flight pages still require the requested alliance's catalog echo.
+- Runtime capability flags retain boolean types, with additive transport and
+  scope limits. Agent guidance matches the supported public-page filters.
+
 ### Known limitations
 
 - Public-page sweep refuses checked bags, a zero carry-on, alliance exclusion,
@@ -46,7 +61,7 @@ separate release gates.
   carrier filter. Airline exclusion cannot prove the operating carrier of each
   segment. Explore needs Chromium, accepts only one adult in economy, and its
   catalog request often returned status 13 during validation. Round-trip results are scope-bound to at most eight outbound
-  candidates. See the candidate record for details and pending validation.
+  candidates. See the release record for validation boundaries.
 
 ## [1.4.5] - 2026-10-07
 
@@ -257,7 +272,9 @@ inventory, compatibility changes, candidate validation and publication handoff.
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.3.1...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.4.6...develop
+[1.4.6]: https://github.com/felipebasurto/viajante/compare/v1.4.5...v1.4.6
+[1.4.5]: https://github.com/felipebasurto/viajante/compare/v1.4.1...v1.4.5
 [1.3.1]: https://github.com/felipebasurto/viajante/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/felipebasurto/viajante/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/felipebasurto/viajante/compare/v1.2.0...v1.2.1

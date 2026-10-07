@@ -1,13 +1,13 @@
-# Viajante 1.4.6 release candidate
+# Viajante 1.4.6 release
 
-Prepared on 2026-10-07 as the 1.4.6 candidate after 1.4.5. Candidate version
+Prepared on 2026-10-07 as the 1.4.6 release after 1.4.5. Version
 stamps are aligned across Python metadata, `uv.lock`, npm metadata, and the
-server and package entries in `server.json`. This is a review record, not a
-publication record. Local gates and installed artifacts passed; PR CI and public
-registry verification are separate release gates. This document does not authorize
-a merge, tag, or publication.
+server and package entries in `server.json`. Local gates and PR CI passed.
+The maintainer authorized merge, tag, and publication. Public registry and
+installed-client verification remain separate release gates; their results
+will be recorded below after publication.
 
-The candidate changes the Google Flights production path used by flights,
+The release changes the Google Flights production path used by flights,
 dates, and flex to read results from the public Google Flights page. See the
 [user guide](usage.md) for CLI behavior and the [architecture notes](architecture.md)
 for the request and parse flow.
@@ -148,6 +148,6 @@ These corrections made no new live provider requests; the live and installed
 artifact checks above describe the pre-review candidate. Multi-city remains
 unverified live.
 
-Supported-Python PR CI and public registry verification remain separate release
-gates. Review the final diff and PR before merge. No tag or publication has been
-created or authorized.
+PR CI passed for the corrected candidate on Python 3.10–3.14, the minimum MCP
+SDK, built distributions, and lint. Main CI, tag publication, and public
+registry verification are separate gates in the authorized release workflow.
