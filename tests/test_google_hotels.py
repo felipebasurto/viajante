@@ -359,6 +359,36 @@ class GoogleHotelsFetchTests(unittest.TestCase):
         self.assertEqual(failure.error.code.value, "fetch_failed")
         self.assertFalse(failure.error.rate_limited)
 
+    def test_unsent_sibling_job_429_is_still_rate_limited(self) -> None:
+        url = "https://www.google.com/travel/search"
+        rated = HotelQuery("Prague", date(2099, 12, 4), date(2099, 12, 7), min_rating=4.5)
+
+        class _Throttled:
+            def post_many(self, jobs, *, timeout: float) -> list[SweepHttpResponse]:
+                # First job was never sent after its sibling hit a real 429: the
+                # transport stamps the status but no cooldown advice.
+                return [
+                    SweepHttpResponse(429, "", url),
+                    SweepHttpResponse(429, "", url, rate_limit="pause advice"),
+                ]
+
+            def close(self) -> None:
+                return None
+
+        report = _run_search(
+            (rated,),
+            top=1,
+            source=GoogleHotelsSource(client=_Throttled(), currency="CZK"),
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            provider="google-hotels",
+            currency="CZK",
+        )
+        failure = report.queries[0]
+        self.assertEqual(failure.error.code.value, "blocked")
+        self.assertTrue(failure.error.rate_limited)
+
     def test_temporary_network_failure_can_retry(self) -> None:
         body = _wrap_wrb(_search_payload(_hotel_record()))
         client = _ScriptedHotelClient(

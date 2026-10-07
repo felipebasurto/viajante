@@ -187,7 +187,12 @@ class GoogleHotelsSource:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
             raise HotelsBlocked(message, rate_limited=True)
         if response.status in {403, 429, 503} or _looks_blocked(f"{response.text} {response.url}"):
-            raise HotelsBlocked(f"Google Hotels HTTP {response.status} from {url}")
+            # A multiplexed job never sent because a sibling was 429'd carries the
+            # status but no advice; it is still a rate limit, not a content block.
+            raise HotelsBlocked(
+                f"Google Hotels HTTP {response.status} from {url}",
+                rate_limited=response.status == 429,
+            )
         if _server_error(response.status):
             raise SweepTransportError(f"Google Hotels HTTP {response.status} from {url}")
         if response.status >= 400:
