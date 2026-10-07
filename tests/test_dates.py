@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.cli import main
-from viajante.control import SearchDeadline
+from viajante.control import SearchDeadline, current_control
 from viajante.dates import (
     EMPTY_DAY_MARK,
     MAX_DATE_WINDOW_DAYS,
@@ -439,12 +439,17 @@ class DateSearchTests(unittest.TestCase):
         class Transport:
             automatic_typical = False
 
+            def fetch_round_trip_window(self, trips, on_day):
+                events.append(("batch", len(trips)))
+                for index, trip in enumerate(trips):
+                    events.append(("complete", trip.departure_date))
+                    on_day(index, (card,))
+
             def fetch(self, trip):
-                events.append(("complete", trip.departure_date))
-                return (card,)
+                raise AssertionError("a round-trip window is one bounded batch")
 
             def fetch_many(self, trips):
-                raise AssertionError("round-trip days are not one multiplexed batch")
+                raise AssertionError("a round-trip window does not use one-way fetch_many")
 
             def close(self) -> None:
                 return None
@@ -466,7 +471,15 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual([row.return_date for row in report.days][0], date(2026, 11, 6))
         self.assertEqual(
             [kind for kind, _value in events],
-            ["complete", "progress", "complete", "progress", "complete", "progress"],
+            [
+                "batch",
+                "complete",
+                "progress",
+                "complete",
+                "progress",
+                "complete",
+                "progress",
+            ],
         )
         self.assertEqual(
             [value for kind, value in events if kind == "progress"],
@@ -548,6 +561,84 @@ class DateSearchTests(unittest.TestCase):
         )
         self.assertEqual([row.status for row in report.days], ["ok", "error", "error"])
         self.assertEqual(report.days[0].price, 90.0)
+        self.assertEqual(report.days[1].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(report.days[2].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(events, ["[1/3] JFK -> LHR 2026-09-01"])
+
+    def test_serial_round_trip_deadline_before_a_day_fills_the_rest(self) -> None:
+        events: list[str] = []
+        fetched: list[date] = []
+        card = _card()
+
+        class Transport:
+            automatic_typical = False
+
+            def fetch(self, trip):
+                fetched.append(trip.departure_date)
+                control = current_control()
+                if control is None:
+                    raise RuntimeError("deadline_seconds did not install a control")
+                control.deadline_at = control.clock()
+                control.mark_cut()
+                return (card,)
+
+            def close(self) -> None:
+                return None
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                events.append(line)
+
+        report = search_dates(
+            "JFK",
+            "LHR",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            nights=5,
+            source=Transport(),
+            progress=progress,
+            currency="USD",
+            deadline_seconds=30,
+        )
+        self.assertEqual(fetched, [date(2026, 9, 1)])
+        self.assertEqual([row.status for row in report.days], ["ok", "error", "error"])
+        self.assertEqual(report.days[1].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(report.days[2].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(events, ["[1/3] JFK -> LHR 2026-09-01"])
+
+    def test_serial_round_trip_deadline_result_skips_the_rest(self) -> None:
+        events: list[str] = []
+        fetched: list[date] = []
+        card = _card()
+
+        class Transport:
+            automatic_typical = False
+
+            def fetch(self, trip):
+                fetched.append(trip.departure_date)
+                if len(fetched) > 1:
+                    raise SearchDeadline()
+                return (card,)
+
+            def close(self) -> None:
+                return None
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                events.append(line)
+
+        report = search_dates(
+            "JFK",
+            "LHR",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            nights=5,
+            source=Transport(),
+            progress=progress,
+            currency="USD",
+        )
+        self.assertEqual(fetched, [date(2026, 9, 1), date(2026, 9, 2)])
+        self.assertEqual([row.status for row in report.days], ["ok", "error", "error"])
         self.assertEqual(report.days[1].error.code, SearchErrorCode.DEADLINE)
         self.assertEqual(report.days[2].error.code, SearchErrorCode.DEADLINE)
         self.assertEqual(events, ["[1/3] JFK -> LHR 2026-09-01"])
