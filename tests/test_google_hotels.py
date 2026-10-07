@@ -227,6 +227,17 @@ class HotelsParseTests(unittest.TestCase):
         with self.assertRaises(HotelsParseMiss):
             parse_hotels_page(_wrap_wrb(["not", "hotels"]))
 
+    def test_dict_shaped_slot_is_a_parse_miss_not_an_uncaught_keyerror(self) -> None:
+        for mutate in (
+            lambda record: record.__setitem__(6, {"unexpected": "shape"}),
+            lambda record: record[6].__setitem__(2, {"unexpected": "shape"}),
+        ):
+            with self.subTest(mutate=mutate):
+                record = _hotel_record()
+                mutate(record)
+                with self.assertRaises(HotelsParseMiss):
+                    parse_hotels_page(_wrap_wrb(_search_payload(record)))
+
     def test_closed_title_is_not_a_property(self) -> None:
         body = _wrap_wrb(
             _search_payload(
