@@ -1160,6 +1160,16 @@ class SplitEnvelopeTests(unittest.TestCase):
         with self.assertRaises(EnvelopeShapeError):
             stamp_search(_split_payload([_leg()]))
 
+    def test_legs_cut_by_the_deadline_are_partial_never_blocked(self) -> None:
+        # stamp_search treats an all-deadline result as a chosen stop (partial);
+        # a split search cut by an enclosing deadline reads the same way.
+        deadline = _split_error(SearchErrorCode.DEADLINE, "cut", timeout=True)
+        payload = stamp_split(_split_payload([_leg(deadline), _leg(deadline)]))
+        self.assertEqual(payload["status"], "timeout")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["empty_reason"], "not_loaded")
+        self.assertEqual(payload["error_code"], "deadline")
+
 
 class ErrorTaxonomyTests(unittest.TestCase):
     def test_timeout_flag_is_typed_at_classification(self) -> None:

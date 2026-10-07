@@ -390,7 +390,9 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
             not_loaded=bool(tally.not_loaded), provider_only=only_provider
         )
     if failures:
-        completeness = "partial" if itineraries or answered else "blocked"
+        # As in stamp_search, a deadline cut is a chosen stop, not a provider refusal.
+        cut = all(code == "deadline" for _, code, _ in failures)
+        completeness = "partial" if itineraries or answered or cut else "blocked"
     else:
         completeness = "complete"
     error_code = next((code for s, code, _ in failures if s == worst), None)
