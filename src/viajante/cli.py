@@ -2275,8 +2275,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         choices=["auto", "sweep", "detail"],
         help=(
-            "sweep is a fast HTTP shortlist (owned shopping RPC, Chrome TLS session); "
-            "detail is the Playwright scrape. "
+            "sweep reads the public results page over a Chrome-TLS HTTP/2 session; "
+            "detail is the Playwright scrape (required for --trip multi; "
+            "refuses bag and carrier filters). "
             "auto uses public-page sweep; detail is an explicit browser mode (default auto)"
         ),
     )

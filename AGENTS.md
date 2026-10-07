@@ -249,10 +249,15 @@ cheapest owned fare in that city group, not a sum.
 
 `--baggage-buffer` / MCP `baggage_buffer` is a ranking add-on in the same quote
 currency. **Unnamed is 0.** Named `N` is used as-is (not FX-converted). A
-positive `--carry-on` rides the tfs `BaggageFilter` on the public page and must
-be echoed by the Bags filter chip (`N carry-on bag(s), Bags, Selected`) or the
-page read fails; `--bags N` (checked) and a named zero keep the preflight
-refusal (no provable echo). Do not invent a bag fee. Dates per-day rows pick a day's winner by fare+buffer.
+positive `--carry-on` (one bag for the whole party) rides the tfs
+`BaggageFilter` on the public page and must be echoed by the Bags filter chip
+(`N carry-on bag(s), Bags, Selected`) or the page read fails; `--bags N`
+(checked) and a named zero keep the preflight refusal (no provable echo).
+Airline include/exclude and alliance include ride per-leg tfs carrier fields
+and need the `Airlines` chip echo (alliances also a catalog row); Google does
+not apply an exclusion, so the loop drops excluded and carrier-unknown cards.
+`--exclude-alliance` stays refused. Multi-city runs only with explicit
+`--fetch detail`; detail refuses every bag and carrier filter. Do not invent a bag fee. Dates per-day rows pick a day's winner by fare+buffer.
 Explore catalog recovery is unsupported and must fail closed.
 
 ## Invariants
@@ -276,8 +281,8 @@ Explore catalog recovery is unsupported and must fail closed.
   the original two-journey round-trip query. The selected return page must echo
   the outbound route and clock. Its returned amount is the complete provider
   package total; never add separate one-way fares. This search is scope-bound
-  and keeps partial page errors. The public path refuses named bags, carry-on,
-  airline/alliance filters, and multi-city before networking. Explore catalog
+  and keeps partial page errors. The public path refuses checked bags, a zero
+  carry-on, alliance exclusion, and multi-city before networking. Explore catalog
   search is unsupported and fails closed; ask the caller for named destinations.
 - `VIAJANTE_SWEEP_MODE` accepts only `standard` (8 concurrent GETs) and
   `conservative` (2). Invalid values fail before network work. This is a local
@@ -355,13 +360,13 @@ Explore catalog recovery is unsupported and must fail closed.
   Default trip kind is one-way.
   `ORIGIN-DEST:OUT:BACK` without `--trip` is two one-ways. Public `--trip rt`
   opens selected return pages and keeps only provider package totals; the public
-  sweep currently refuses `--trip multi`. `--sort ranked` (default on flights) selects `--top` by
+  sweep refuses `--trip multi` (explicit `--fetch detail` only). `--sort ranked` (default on flights) selects `--top` by
   fare+buffer (`DEFAULT_TOP` in `flights.py`). Explore unnamed sort stays
   `price`. Dates unnamed sort stays date order. Sort is order, not a `--top` cut
   on the date grid.
-- Public-page sweep refuses named airline/alliance filters because it cannot
-  prove them. Explicit detail may support them; never silently remove them.
-  Alliances have no member list here. `--depart-window`,
+- Airline include/exclude and alliance include need the page's filter echo;
+  `--exclude-alliance` is refused and detail refuses all carrier filters. Never
+  silently remove them. Alliances have no member list here. `--depart-window`,
   clocks, layover hours, `--via`, overnight, duration, and `--price-cap` are
   local post-filters after parse, before `--top`. “morning” / “late” / “Europe”
   / a city vibe does not invent a clock, dest, or alliance code.

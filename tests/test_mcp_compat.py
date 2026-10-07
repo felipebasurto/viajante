@@ -582,7 +582,7 @@ class GuideTests(_StateDir):
         }
         missing = [s for s in sentences if s not in covered and s not in changed_transport_rules]
         self.assertIn("bounded per-day public-page GETs", covered)
-        self.assertIn("refuses named bags/carry_on", covered)
+        self.assertIn("refuses named checked bags", covered)
         self.assertEqual(missing, [])
 
     def test_guide_mentions_metro_codes_hotel_details_and_arrival_deadline(self) -> None:

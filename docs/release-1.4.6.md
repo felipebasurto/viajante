@@ -41,11 +41,18 @@ for the request and parse flow.
 
 ## Explicit limits and failure behavior
 
-The public-page path refuses named checked-bag or carry-on constraints and
-airline or alliance filters because its page evidence cannot prove them. It
-also refuses multi-city. These requests fail before networking instead of
-silently losing constraints. Explicit browser detail remains available where
-its evidence supports the requested features. Public Explore catalog recovery
+The public-page path sends a carry-on (a party total: Google's counter caps at
+the number of adults), airline includes and exclusions, and alliance includes.
+Every page read must echo each filter (the `Bags` / `Airlines` chips, plus an
+airline-catalog row per alliance) or it fails as `markup_drift`. Google
+registers an airline exclusion without applying it, so Viajante drops cards
+with an excluded or unknown carrier; excluded codeshare rows vanish from the
+page and operator evidence is limited. Checked bags, a zero carry-on, and
+alliance exclusion have no provable echo and are refused before networking
+instead of silently losing constraints. The public page bootstraps no
+multi-city results: sweep refuses it, and an explicit `--fetch detail` drives
+the browser through each leg. Detail reads no filter echo and refuses bag and
+carrier filters. Public Explore catalog recovery
 is not implemented; `explore` fails closed and asks for named destinations.
 
 HTTP 429 and raw RPC status 13 stop pending sweep work without replay or

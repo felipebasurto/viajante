@@ -28,10 +28,21 @@ separate release gates.
 - Provider-block diagnostics expose endpoint host and path, HTTP/RPC status, sent state,
   attempt count, and cooldown basis. Status 13 alone does not identify its cause.
 
+- Public-page sweep sends `--carry-on` (one bag for the whole party),
+  `--airlines`, `--exclude-airlines`, and `--alliance`, and fails the page read
+  unless the page echoes each filter. Airline exclusion is also enforced
+  locally because Google does not apply it; cards with no carrier evidence are
+  dropped under an exclusion.
+- `--trip multi --fetch detail` searches multi-city packages in the browser.
+  Not yet verified against the live provider.
+- Provider-block diagnostics distinguish queued requests from dispatched ones.
+
 ### Known limitations
 
-- Public-page sweep refuses named bags, carry-on, airline/alliance filters, and
-  multi-city before networking. Explore catalog recovery is unavailable and
+- Public-page sweep refuses checked bags, a zero carry-on, alliance exclusion,
+  and multi-city before networking. Browser detail refuses every bag and
+  carrier filter. Airline exclusion cannot prove the operating carrier of each
+  segment. Explore catalog recovery is unavailable and
   fails closed. Round-trip results are scope-bound to at most eight outbound
   candidates. See the candidate record for details and pending validation.
 

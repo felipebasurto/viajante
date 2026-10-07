@@ -27,7 +27,7 @@ def get_runtime_info() -> dict[str, object]:
             "bags": False,
             "carry_on": True,
             "carrier_filters": "except exclude_alliances",
-            "multi_city": False,
+            "multi_city": "detail_only",
             "explore_catalog": False,
         },
         "sweep_mode": sweep.mode,

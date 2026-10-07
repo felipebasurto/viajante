@@ -19,7 +19,7 @@ codes, dates and links no search in this process returned. Never invent a fare, 
 currency, IATA code or exchange rate. Viajante does not convert; you do the FX.
 Currency: pass currency, or name an origin airport so it is proven. Hotels require currency.
 If country, destination or currency is not proven, ask. Unnamed baggage_buffer is 0.
-bags / carry_on are unsupported in 1.4.6; read get_guide for transport limits.
+bags / carry_on: carry_on is verified on the page, checked bags are refused; see get_guide.
 Empty is not absent: no_results, blocked, markup_drift or an empty shortlist is not proof
 that nothing exists. Say what was searched; do not claim availability either way.
 Rate limits: if an error has rate_limited true, wait until retry_after (UTC) and tell the
@@ -327,10 +327,16 @@ destination, or currency is not proven (a city with several airports,
 Europe, unnamed origin, two possible currencies), do not pick: ask or
 error. Unknown cannot prove include. Do not invent IATA, gl, or ISO 4217
 from vibe. Optional country is Google gl (origin market); omit when unset;
-do not pass a destination ISO. Unnamed baggage_buffer is 0. Prefer bags /
-carry_on only in a supported transport. The 1.4.6 public-page transport refuses
-named bags/carry_on and carrier/alliance filters, multi-city and Explore catalogs before
-network work. Do not remove a requested filter without an explicitly separate scenario.
+do not pass a destination ISO. Unnamed baggage_buffer is 0. The 1.4.6
+public-page transport sends a positive carry_on (a party total, not per
+passenger) and airline, exclude-airline and alliance filters, and every page
+must echo each one or the read fails. Google registers an airline exclusion
+without applying it, so viajante drops excluded or carrier-unknown cards
+itself. It refuses named checked bags, carry_on 0, exclude_alliances,
+multi-city (use fetch=detail) and Explore catalogs before network work. Detail
+refuses every bag and carrier filter because it reads no page echo. Offer bag
+allowances stay unknown. Do not remove a requested filter without an
+explicitly separate scenario.
 Do not invent a bag fee. Fetch locale is English. User prompts may be any language.
 Compute ISO dates from today; do not send a past start.
 """

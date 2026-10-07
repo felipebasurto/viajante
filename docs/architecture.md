@@ -125,9 +125,10 @@ SearchReport → JSON                models.py
 
 Everything starts as a frozen dataclass: `FlightQuery`, `RoundTrip`, or
 `MultiCity` (`models.py`). Occupancy, cabin, stops, bags, and airline or
-alliance filters are fields on the query. The current public-page path
-fail-closes named bag and airline/alliance constraints because its evidence
-cannot prove them. Clock windows, layover limits, via cities, overnight rules,
+alliance filters are fields on the query. The public-page path sends carry-on,
+airline, and alliance-include filters and requires the page to echo each one;
+it fail-closes checked bags and alliance exclusion because no page evidence
+proves them. Clock windows, layover limits, via cities, overnight rules,
 and price caps are
 *local* post-filters applied after parsing, because Google has no request
 slot for them.
@@ -167,10 +168,18 @@ sums two one-way amounts or reports the outbound amount as a standalone fare.
 The eight-outbound cap makes the result scope-bound, and a failed follow-up can
 leave a partial report with a page error.
 
-Named checked bags, carry-on, airline, or alliance filters cannot be verified
-by this public-page path. It refuses those requests before sending them; remove
-one only for a separately described scenario. Multi-city is also refused until
-its public-page behavior is supported. The Explore destination catalog is not
+A carry-on rides tfs field 13 (`BaggageFilter`) as a party total, and every
+page must echo the `Bags` chip with the same count. Airline includes and
+exclusions and alliance includes ride each leg's carrier fields; every page
+must echo the `Airlines` chip, and an alliance must also appear as a row in
+the page's airline catalog. A pure airline include must hold on every card.
+Google registers an airline exclusion without applying it, so the search loop
+drops cards that show an excluded carrier or no carrier evidence. A missing
+echo is `markup_drift`, never a silently unfiltered result. Checked bags, a
+zero carry-on, and alliance exclusion have no provable echo and are refused
+before sending; remove one only for a separately described scenario. The
+public page bootstraps no multi-city results, so sweep refuses multi-city and
+names `--fetch detail`. The Explore destination catalog is not
 supported on this path, so `explore` fails closed and directs callers to name a
 destination route. It does not substitute destinations or infer prices.
 
@@ -181,7 +190,10 @@ the DOM. It is slower (4.5 s + jitter between queries, 3 attempts with
 exponential backoff) and optional (`viajante[browser]`). `--fetch auto` uses
 sweep for flight searches, regardless of Playwright availability or query
 count. Use `--fetch detail` only when browser DOM evidence is specifically
-needed and the requested itinerary is supported there. A public sweep never
+needed and the requested itinerary is supported there. Detail is the only
+multi-city path: it selects each leg's first owned card in the browser and
+reads the final package. Detail reads no filter echo, so it refuses bag and
+carrier filters before launching Chromium. A public sweep never
 falls back to browser detail after an empty page, parse failure, or provider
 block. A failed search remains unknown unless the provider returned a
 recognized empty result.

@@ -58,8 +58,10 @@ list and accepted values.
 | `--currency GBP` | Request prices in a specific currency. No currency conversion is performed. |
 | `--cabin business` | Select a cabin: `economy`, `premium-economy`, `business`, or `first`. |
 | `--max-stops 0` | Set the maximum number of stops to `0`, `1`, or `2`. |
-| `--airlines BA,AA` / `--exclude-airlines BA,AA` | Include or exclude airline codes when the selected fetch mode can prove the filter. |
-| `--alliance oneworld` / `--exclude-alliance star` | Include or exclude `oneworld`, `skyteam`, or `star` when the selected fetch mode can prove the filter. |
+| `--airlines BA,AA` / `--exclude-airlines BA,AA` | Include or exclude airline codes. Public-page sweep only; see the limits below. |
+| `--alliance oneworld` | Include `oneworld`, `skyteam`, or `star`. Public-page sweep only. `--exclude-alliance` is refused in 1.4.6. |
+| `--carry-on` | Request one carry-on bag for the whole party (Google's counter is a party total). Public-page sweep only. |
+| `--bags N` | Checked bags. Refused in 1.4.6: no transport can verify them. |
 | `--depart-window 06:00-12:00` | Keep flights departing within a local time window. |
 | `--depart-after 08:00` / `--arrive-before 20:00` | Filter on reported local departure or arrival times. |
 | `--via IST` / `--exclude-via DXB` | Filter on reported connecting airports. |
@@ -73,12 +75,19 @@ list and accepted values.
 | `--baggage-buffer 30` | Add a ranking allowance for recognized low-cost carriers, in the quote currency. |
 
 The default `auto` and explicit `sweep` modes use Google's public results page.
-They refuse named checked-bag/carry-on or airline/alliance filters before any
-request because those constraints cannot be verified from this page payload.
-For `flights`, use an explicit `--fetch detail` browser search when those
-provider-side filters are needed. `dates` and `flex` stay on the public-page
-transport. A baggage buffer is only a local ranking allowance and never proves
-a bag is included.
+A carry-on, airline include, airline exclusion, or alliance include rides the
+page request, and every page read must echo it (the `Bags` or `Airlines`
+filter chip, and for alliances the airline catalog) or the read fails as
+`markup_drift`. Google registers an airline exclusion without applying it, so
+Viajante also drops cards that show an excluded airline or no carrier at all.
+Excluded airlines' codeshare rows disappear from the page, and operating-carrier
+evidence on a card is limited, so an exclusion is not proof about who operates
+each segment. Checked bags, a zero carry-on, and alliance exclusion are refused
+before any request because no page evidence can prove them. Browser detail
+reads no filter echo and refuses all bag and carrier filters. A carry-on
+filter does not prove an offer's bag allowance; verify it on Google Flights.
+`dates` and `flex` stay on the public-page transport. A baggage buffer is only
+a local ranking allowance and never proves a bag is included.
 
 For `--trip rt`, the page's displayed outbound amounts are selection references,
 not standalone fares. Viajante checks at most eight outbound candidates on
@@ -208,10 +217,10 @@ A public sweep never falls back to detail after an empty result, parse failure,
 or provider block. A missing or malformed `ds:1` bootstrap payload is a parse
 failure; only a recognized provider-empty shape means no results. Round-trip
 searches check at most eight outbound candidates through selected return pages.
-Named bags, carry-on, airline/alliance filters, and multi-city itineraries are
-refused before a public-page request because the current page path cannot verify
-them. Explicit detail remains available when its browser evidence can satisfy
-the requested filters.
+The public page bootstraps no multi-city results, so `auto` and `sweep` refuse
+`--trip multi` before any request. Use an explicit `--fetch detail` for
+multi-city; it drives the browser through each leg and is not yet verified
+against the live provider in 1.4.6. Detail refuses bag and carrier filters.
 
 Flights, dates, and flex sweep requests accept `--proxy URL` (`proxy` in MCP).
 `VIAJANTE_SWEEP_MODE=standard` allows at most 8 concurrent GETs; `conservative`
@@ -456,8 +465,8 @@ reported in `filter_violations` (`price_cap`, and for locally provable cases
 request and `filters_checked` what was only checked locally (`price_cap` is never
 sent). `max_stops` and `exclude_airlines` breaches are defensive, because the search
 already applies them; an `airlines` allow list passes when any carrier on the offer
-is allowed, as in the search. Cabin, bags and alliance filters cannot be proven on
-the offer. With `--allow-loose-match`, a connecting leg without segments is still
+is allowed, as in the search. Cabin, carry-on and alliance filters are proven by the
+fresh page's echo, not on the offer. With `--allow-loose-match`, a connecting leg without segments is still
 `incomplete_identity` (its stops cannot be compared); origin and destination are
 compared in every match. `incomplete_identity`, `check_failed` and input errors are
 never recorded in the MCP evidence ledger.
