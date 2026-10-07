@@ -19,6 +19,7 @@ from viajante.skiplagged_hotels import (
     SkiplaggedHotelsSource,
     SkiplaggedNoHotels,
     SkiplaggedParseMiss,
+    _normalized_name,
     build_applied_filters,
     parse_rooms_report,
     parse_search_page,
@@ -303,6 +304,80 @@ def _routing_rpc(search_result: dict, details_result: dict, calls: list):
 
 class SkiplaggedNameLookupTests(unittest.TestCase):
     DAY = (date(2026, 12, 1), date(2026, 12, 4))
+
+    def test_city_prefix_cannot_resolve_to_a_different_catalogue_city(self) -> None:
+        result = _search_result(
+            url=(
+                "https://skiplagged.com/hotels/1/"
+                "san-jose-del-cabo-mexico-hotels/2026-12-01/2026-12-04"
+            )
+        )
+        # Even a provider heading that echoes the shorter input city cannot
+        # override a slug whose longer prefix is another owned city.
+        result["content"][0]["text"] = result["content"][0]["text"].replace(
+            "# Hotels in Prague", "# Hotels in San Jose"
+        )
+        with self.assertRaisesRegex(SkiplaggedNoHotels, "different city"):
+            resolve_hotel_id(
+                "Czech Inn",
+                "San Jose, US",
+                *self.DAY,
+                adults=3,
+                rpc=_routing_rpc(result, {}, []),
+            )
+
+    def test_city_country_slug_and_provider_heading_keep_the_owned_city(self) -> None:
+        result = _search_result(
+            url=(
+                "https://skiplagged.com/hotels/1/prague-czech-republic-hotels/2026-12-01/2026-12-04"
+            )
+        )
+        self.assertEqual(
+            resolve_hotel_id(
+                "Czech Inn",
+                "Prague, CZ",
+                *self.DAY,
+                adults=3,
+                rpc=_routing_rpc(result, {}, []),
+            ),
+            (25584, "Czech Inn"),
+        )
+
+    def test_explicit_provider_heading_country_cannot_contradict_the_request(self) -> None:
+        result = _search_result()
+        result["content"][0]["text"] = result["content"][0]["text"].replace(
+            "# Hotels in Prague", "# Hotels in Prague, US"
+        )
+        with self.assertRaisesRegex(SkiplaggedNoHotels, "requested city was not searched"):
+            resolve_hotel_id(
+                "Czech Inn",
+                "Prague, CZ",
+                *self.DAY,
+                adults=3,
+                rpc=_routing_rpc(result, {}, []),
+            )
+
+    def test_non_latin_marks_remain_part_of_property_identity(self):
+        for left, right in (("ガホテル", "カホテル"), ("होटल", "हटल")):
+            with self.subTest(left=left, right=right):
+                self.assertNotEqual(_normalized_name(left), _normalized_name(right))
+        self.assertEqual(_normalized_name("ガホテル"), _normalized_name("カ\u3099ホテル"))
+        self.assertEqual(_normalized_name("Hôtel"), _normalized_name("Hotel"))
+
+    def test_unicode_property_names_match_only_the_same_name(self):
+        result = _search_result()
+        result["structuredContent"]["results"][1]["name"] = "東京ホテル"
+        result["content"][0]["text"] = result["content"][0]["text"].replace(
+            "Czech Inn", "東京ホテル"
+        )
+        rpc = _routing_rpc(result, {}, [])
+        self.assertEqual(
+            resolve_hotel_id("東京ホテル", "Prague", *self.DAY, adults=3, rpc=rpc),
+            (25584, "東京ホテル"),
+        )
+        for other in ("大阪ホテル", "---"):
+            with self.subTest(other=other), self.assertRaises(SkiplaggedNoHotels):
+                resolve_hotel_id(other, "Prague", *self.DAY, adults=3, rpc=rpc)
 
     def test_exact_name_ignoring_case_accents_and_punctuation_resolves_one_id(self) -> None:
         rpc = _routing_rpc(_search_result(), {}, [])

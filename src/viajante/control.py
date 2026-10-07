@@ -82,9 +82,12 @@ class SearchControl:
     def expired(self) -> bool:
         return self.deadline_at is not None and self.clock() >= self.deadline_at
 
-    def checkpoint(self) -> None:
+    def check_cancelled(self) -> None:
         if self.cancel.is_set():
             raise SearchCancelled()
+
+    def checkpoint(self) -> None:
+        self.check_cancelled()
         if self.expired():
             self.mark_cut()
             raise SearchDeadline()
@@ -164,6 +167,13 @@ def checkpoint() -> None:
         control.checkpoint()
 
 
+def check_cancelled() -> None:
+    """Discard a cancelled result without cutting evidence completed at a deadline."""
+    control = current_control()
+    if control is not None:
+        control.check_cancelled()
+
+
 def interruptible_sleep(seconds: float) -> None:
     control = current_control()
     if control is None:
@@ -203,6 +213,7 @@ def controlled(fn: Callable[..., Any]) -> Callable[..., Any]:
             kwargs["progress"] = control.progress
         with active(control):
             result = fn(*args, **kwargs)
+            check_cancelled()
         if control is not None and control.cut:
             result = cut_by_deadline(result)
         return result

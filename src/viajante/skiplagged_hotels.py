@@ -18,6 +18,7 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
+from viajante.airports import canonical_city_name, lookup_airports
 from viajante.control import checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
@@ -55,6 +56,7 @@ _HOTEL_ID_IN_URL = re.compile(r"/hotel/(\d+)/")
 _RATING = re.compile(r"(\d+(?:\.\d+)?)\s*/\s*10")
 _MONEY = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)")
 _LINK = re.compile(r"\]\(([^)]+)\)")
+_HOTELS_HEADING = re.compile(r"^\s*#\s*Hotels\s+in\s+(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 class SkiplaggedNoHotels(Exception):
@@ -334,8 +336,53 @@ def _failure(exc: BaseException) -> SearchError:
 
 
 def _normalized_name(value: str) -> str:
-    ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_text.casefold()).split())
+    text = unicodedata.normalize("NFKC", value).casefold()
+    # Ignore Latin accents as before; other scripts' marks can change identity.
+    text = "".join(
+        unicodedata.normalize("NFD", char)[0]
+        if unicodedata.name(char, "").startswith("LATIN")
+        else char
+        for char in text
+    )
+    return " ".join(
+        "".join(
+            char if char.isalnum() or unicodedata.category(char).startswith("M") else " "
+            for char in text
+        ).split()
+    )
+
+
+def _provider_city_heading(text: str) -> Optional[tuple[str, Optional[str]]]:
+    match = _HOTELS_HEADING.search(text)
+    if match is None:
+        return None
+    # Some provider headings include a country after a comma. Preserve an
+    # explicit ISO code so it can be compared without inventing country names.
+    parts = [part.strip() for part in match.group(1).split(",", 1)]
+    country = (
+        parts[1].upper() if len(parts) == 2 and re.fullmatch(r"[A-Za-z]{2}", parts[1]) else None
+    )
+    return parts[0], country
+
+
+def _longest_catalogue_city(place: str) -> tuple[Optional[str], tuple]:
+    """Find an airport-catalogue city at the start of a provider URL slug.
+
+    Slugs such as ``prague-czech-republic`` add a country after the city, so
+    test successively shorter token prefixes. A longer owned city such as
+    ``san-jose-del-cabo-mexico`` remains distinct from ``San Jose``.
+    """
+    tokens = _normalized_name(place.replace("-", " ")).split()
+    for end in range(len(tokens), 0, -1):
+        candidate = " ".join(tokens[:end])
+        hits = tuple(
+            airport
+            for airport in lookup_airports(candidate, limit=100)
+            if canonical_city_name(airport.city) == canonical_city_name(candidate)
+        )
+        if hits:
+            return canonical_city_name(candidate), hits
+    return None, ()
 
 
 def resolve_hotel_id(
@@ -367,16 +414,44 @@ def resolve_hotel_id(
         tool=SKIPLAGGED_HOTELS_TOOL,
     )
     page = parse_search_page(result)
+    requested_city = city.split(",", 1)[0].strip()
+    requested_canonical = canonical_city_name(requested_city)
+    requested_country = city.split(",", 1)[1].strip().upper() if "," in city else None
+    heading = _provider_city_heading(_text(result))
+    if heading:
+        heading_city, heading_country = heading
+        if canonical_city_name(heading_city) != requested_canonical or (
+            requested_country and heading_country and requested_country != heading_country
+        ):
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to {heading_city!r}; "
+                "the requested city was not searched. Nothing was guessed."
+            )
     if page.resolved_place:
-        requested_city = _normalized_name(city.split(",", 1)[0])
-        resolved_city = _normalized_name(page.resolved_place)
+        resolved_city = _normalized_name(page.resolved_place.replace("-", " "))
+        requested_city = _normalized_name(requested_city)
         if resolved_city != requested_city and not resolved_city.startswith(requested_city + " "):
             raise SkiplaggedNoHotels(
                 f"Skiplagged resolved {city!r} to {page.resolved_place!r}; "
                 "the requested city was not searched. Nothing was guessed."
             )
+        catalog_city, city_hits = _longest_catalogue_city(page.resolved_place)
+        if catalog_city is not None and catalog_city != requested_canonical:
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to a different city ({catalog_city}); "
+                "the requested city was not searched. Nothing was guessed."
+            )
+        if (
+            requested_country
+            and city_hits
+            and not any(airport.country == requested_country for airport in city_hits)
+        ):
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to a different country; "
+                "the requested city was not searched. Nothing was guessed."
+            )
     wanted = _normalized_name(name)
-    hits = [card for card in page.cards if _normalized_name(card.title) == wanted]
+    hits = [card for card in page.cards if wanted and _normalized_name(card.title) == wanted]
     if len(hits) == 1 and hits[0].provider_id:
         return int(hits[0].provider_id), hits[0].title
     place = page.resolved_place or city

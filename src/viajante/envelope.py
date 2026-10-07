@@ -121,6 +121,8 @@ def _error(
 
 
 def _query_row(row: dict, tally: _Tally, provider: str) -> None:
+    if row.get("scope_bound") is True:
+        tally.scope_partial = True
     for error in row.get("page_errors", ()):
         tally.scope_partial = True
         _error(error, tally, provider)
@@ -138,6 +140,11 @@ def _query_row(row: dict, tally: _Tally, provider: str) -> None:
 
 
 def _date_row(row: dict, tally: _Tally, provider: str, *, calendar: bool) -> None:
+    if row.get("scope_bound") is True:
+        tally.scope_partial = True
+    for error in row.get("page_errors", ()):
+        tally.scope_partial = True
+        _error(error, tally, provider)
     status = row.get("status")
     error = row.get("error")
     if isinstance(error, Mapping):

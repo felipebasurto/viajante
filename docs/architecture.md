@@ -8,10 +8,10 @@ shaped the way they are.
 ## The stance: superpowers, not answers
 
 Viajante is a tool for an agent, not a travel agent. It does the part an LLM
-cannot do on its own: speak Google Flights' and Google Hotels' private wire
-formats, fast, from one machine, and hand back evidence that is exactly what
-the provider said. The agent does the part viajante should not: decide what
-the user meant, which trade-off matters, and what to recommend.
+cannot do on its own: read Google Flights' public results page and Google
+Hotels' provider evidence, fast, from one machine, and hand back facts that are
+exactly what the provider returned. The agent does the part viajante should not:
+decide what the user meant, which trade-off matters, and what to recommend.
 
 That split explains most design choices:
 
@@ -56,7 +56,7 @@ One library, three ways in:
 | `get_hotel_details` | — | Stored hotel quote, plus an optional separate Skiplagged room quote. |
 | `search_dates` | `dates` | Cheapest fare per day across a window (≤31 days). |
 | `search_flex` | `flex` | Cheapest day in ±N around a date, then one shop. |
-| `search_explore` | `explore` | Destinations from an origin, shortlist priced. |
+| `search_explore` | `explore` | Public Explore page catalog via the page's own browser-issued request; default occupancy/cabin only, refuses non-default before networking. |
 | `get_runtime_info` | `--version` | Executing package/Python and hotel schema versions, offline. |
 | `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP, Booking browser, or opt-in Skiplagged). |
 | `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
@@ -107,17 +107,16 @@ the MCP request to that control and forwards progress as
 
 ```
 query (Trip)                       models.py
-  │ encode                         tfs.py (URL), google_flights_rpc.py (RPC body)
+  │ encode                         tfs.py (public URL)
   ▼
-Chrome-TLS HTTP/2 session          google_flights.py (ChromeSweepClient)
-  │ POST GetShoppingResults        many queries multiplexed on one connection
+Chrome-TLS HTTP/2 GET              google_flights.py (ChromeSweepClient)
+  │ public Google Flights page     standard 8 / conservative 2 concurrent GETs
   ▼
-wrb.fr envelope → itineraries      google_flights_rpc.py
-  │ RawFlightCard (raw text kept)
+AF_initDataCallback ds:1           google_flights_page.py (balanced JSON, no eval)
+  │ decoded shopping data          google_flights_rpc.py (shared data decoder)
   ▼
-normalize, filter, rank            flights.py
-  │ + same-route calendar median   typical.py (GetCalendarGrid/Graph)
-  │ + next-leg shop for packaged RT
+RawFlightCard (provider text kept)
+  │ normalize, filter, rank        flights.py
   ▼
 SearchReport → JSON                models.py
 ```
@@ -126,43 +125,81 @@ SearchReport → JSON                models.py
 
 Everything starts as a frozen dataclass: `FlightQuery`, `RoundTrip`, or
 `MultiCity` (`models.py`). Occupancy, cabin, stops, bags, and airline or
-alliance filters are fields on the query, because Google prices them. Clock
-windows, layover limits, via cities, overnight rules, and price caps are
+alliance filters are fields on the query. The public-page path sends carry-on,
+airline, and alliance-include filters and requires the page to echo each one;
+it fail-closes checked bags and alliance exclusion because no page evidence
+proves them. Clock windows, layover limits, via cities, overnight rules,
+and price caps are
 *local* post-filters applied after parsing, because Google has no request
 slot for them.
 
-### 2. Two encodings of the same trip
+### 2. The public URL and provider data
 
-- `tfs.py` builds the `tfs=` protobuf that Google Flights URLs carry. That is
-  the link the agent can hand the user (`google_flights_url`).
-- `google_flights_rpc.py` builds the JSON body for the frontend's own RPCs:
-  `GetShoppingResults`, `GetCalendarGrid` (one-way), `GetCalendarGraph`
-  (round-trip), and `GetExploreDestinations`. The body is a positional
-  nested list (`f.req=[null, "<inner json>"]`); the slots are documented
-  where they are built.
+- `tfs.py` builds the `tfs=` protobuf in public Google Flights URLs. Those URLs
+  reproduce the searched route and are returned as evidence; they do not promise
+  that the price is still available.
+- `google_flights_page.py` reads the page's `AF_initDataCallback` `ds:1` value
+  with balanced string-aware scanning and `json.loads`. It does not execute
+  page scripts. Missing or malformed bootstrap data is a parse failure, while
+  a recognized empty result shape remains provider-empty.
+- `google_flights_rpc.py` owns compact-provider decoding. The public-page path
+  passes its decoded `data` array to the same `parse_shopping_data` function
+  used by the RPC adapter; it does not invent a `wrb.fr` wrapper.
 
-### 3. The sweep client
+### 3. The public-page sweep
 
 `ChromeSweepClient` is a process-wide `curl_cffi` `AsyncSession` impersonating
-Chrome's TLS fingerprint over HTTP/2, with up to 8 streams on one connection.
-A search with ten routes sends ten POSTs concurrently and waits roughly one
-round-trip, not ten. There is no inter-query delay on this path. The client
-completes Google's EU consent interstitial once per session when it appears.
+Chrome's TLS fingerprint over HTTP/2. The default `standard` mode sends at most
+8 concurrent GETs; `VIAJANTE_SWEEP_MODE=conservative` lowers this to 2. An
+unknown mode fails before provider work. Flight, dates, and flex searches use
+the public results page; their production path does not send unsigned shopping
+or calendar RPC requests. `VIAJANTE_SWEEP_MODE` controls concurrency, not
+provider quotas or a request rate guarantee. The client completes Google's EU
+consent interstitial once per session when it appears.
 
-The response is Google's anti-XSSI-prefixed, length-chunked stream. The
-`first_wrb_data` scanner finds the first `wrb.fr` envelope and its JSON
-payload; the parsers walk that into `RawFlightCard`s.
+One-way page rows are checked against the requested route, date, and stop limit.
+For packaged round trips, the first page supplies outbound candidates. Viajante
+tries at most eight outbound choices, sorted by their displayed amount, and
+opens a return page for each. The return URL encodes the outbound's owned
+physical segments, including carrier and bare flight number. Before accepting
+return rows, Viajante checks that the page echoes the selected route and clock.
+The accepted price is the provider's returned package total; Viajante never
+sums two one-way amounts or reports the outbound amount as a standalone fare.
+The eight-outbound cap makes the result scope-bound, and a failed follow-up can
+leave a partial report with a page error.
+
+A carry-on rides tfs field 13 (`BaggageFilter`) as a party total, and every
+page must echo the `Bags` chip with the same count. Airline includes and
+exclusions and alliance includes ride each leg's carrier fields; every page
+must echo the `Airlines` chip, and an alliance must also appear as a row in
+the page's airline catalog. A pure airline include must hold on every card.
+Google registers an airline exclusion without applying it, so the search loop
+drops cards that show an excluded carrier or no carrier evidence. A missing
+echo is `markup_drift`, never a silently unfiltered result. Checked bags, a
+zero carry-on, and alliance exclusion have no provable echo and are refused
+before sending; remove one only for a separately described scenario. The
+public page bootstraps no multi-city results, so sweep refuses multi-city and
+names `--fetch detail`. The Explore destination catalog is not in any public
+page bootstrap: `explore` loads the Explore page in Chromium and captures the
+catalog request the page issues, checks its origin, date, cabin and occupancy
+echo, and keeps only priced rows whose token proves origin and destination.
+A status 13 there records the shared cooldown like any other. It does not
+substitute destinations or infer prices.
 
 ### 4. Detail mode (the browser)
 
 `--fetch detail` loads the real results page in Playwright Chromium and parses
 the DOM. It is slower (4.5 s + jitter between queries, 3 attempts with
 exponential backoff) and optional (`viajante[browser]`). `--fetch auto` uses
-sweep for 3+ queries or any packaged round-trip/multi-city (only sweep can
-shop the return leg) and detail for other 1–2 query searches when Playwright
-is installed. If sweep comes back empty or blocked, auto may fall back to
-detail once and says so (`fetch_backend: sweep_then_detail`). A rate-limited
-failure never falls back to detail.
+sweep for flight searches, regardless of Playwright availability or query
+count. Use `--fetch detail` only when browser DOM evidence is specifically
+needed and the requested itinerary is supported there. Detail is the only
+multi-city path: it selects each leg's first owned card in the browser and
+reads the final package. Detail reads no filter echo, so it refuses bag and
+carrier filters before launching Chromium. A public sweep never
+falls back to browser detail after an empty page, parse failure, or provider
+block. A failed search remains unknown unless the provider returned a
+recognized empty result.
 
 ### 5. From cards to offers
 
@@ -171,9 +208,10 @@ duration, layovers, flight numbers, and bags; drop what the local filters
 reject; rank by fare (+ an optional named baggage buffer) or by duration or
 clock; keep the top N. Then it stamps:
 
-- `typical` / `vs_typical`: the median of the same route's cheapest-per-day
-  calendar (`typical.py`). Fewer than three priced days, or a multi-city trip,
-  means no stamp. It is never a market average from somewhere else.
+- `typical` / `vs_typical`: date and flex reports may derive a median only from
+  their explicitly requested same-route daily fares. Fewer than three priced
+  days, or a multi-city trip, means no stamp. A normal flight search has no
+  hidden 31-day lookup. It is never a market average from somewhere else.
 - `stops_compare`: the cheapest nonstop vs cheapest one-stop, from the same
   payload.
 - The return leg of a packaged round-trip, from a follow-up shop that sends the
@@ -191,17 +229,25 @@ Every provider failure becomes a `SearchError` with a code: `no_results`,
 `rejected`, `blocked`, `markup_drift`, `fetch_failed`, `browser_unavailable`.
 Only failures that can succeed on a second try are retried:
 
-- Sweep retries empty, drift, and 5xx once after 50 ms.
+- Empty results, markup drift, and HTTP 5xx may be retried once. The public-page
+  sweep does not replay a request after HTTP 429 or raw RPC status 13, and does
+  not switch to browser detail after a block. A batch stops
+  scheduling pending work on a block; unsent work reports `request_sent: false`
+  and `attempts: 0`.
 - A direct HTTP 429 resets the TLS session and writes a shared cooldown file in the
   state dir (2 min, doubling to 30 min). While it runs, every Google search in
   any viajante process on the machine fails instantly with `Not sent.` and
   `rate_limited: true`. A named `Retry-After` takes precedence over the guessed
   delay; a proxied response does not pause the machine's direct searches.
-- A data-less RPC error envelope (`["wrb.fr", null, …, [13]]`) is `blocked`,
-  not `markup_drift`, and records that same cooldown for direct sessions.
-  Google Hotels also stamps `rate_limited: true`. This status is treated as
-  throttling evidence, though it can have another cause. The browser path detects
-  `google.com/sorry` right away instead of waiting for result cards.
+- A raw data-less RPC status 13 is preserved in additive diagnostics even when
+  the body also resembles a shopping `ErrorResponse`. For a direct session it
+  records the existing guessed cooldown; it is not replayed and pending work
+  stops. Status 13 alone does not prove an IP block or explain the cause. Error
+  diagnostics report only the endpoint host and path, HTTP/RPC status, whether the
+  request was sent, attempts, and cooldown basis; they omit query parameters.
+  An already active cooldown reports no request sent, zero attempts, and null
+  HTTP/RPC status. The browser path detects `google.com/sorry` right away
+  instead of waiting for result cards.
 
 ### 7. One MCP envelope
 
@@ -240,15 +286,16 @@ cannot carry top-level fields without breaking its shape).
 
 ## Dates, flex, explore
 
-- **Dates** asks the calendar RPC for cheapest-per-day prices across a window.
-  If the calendar misses, it prices each day with multiplexed shopping calls.
-- **Flex** reads the calendar around one date, picks the cheapest day, and
-  shops only that day. A calendar parse miss stops there with an error; it does
-  not guess a day.
-- **Explore** asks `GetExploreDestinations` for the catalog from one origin,
-  then prices the first N destinations with shopping + calendar on one
-  multiplexed round-trip. Catalog prices are hints, not offers, so they carry
-  no typical, token, or filters.
+- **Flights** does not add a hidden 31-day price lookup for `typical`.
+- **Dates** explicitly fans out public-page GETs across the requested inclusive
+  window, capped at 31 days. Each day is an independent row; successful days
+  remain visible when other days fail.
+- **Flex** uses the same bounded per-day GETs for its named window, chooses the
+  cheapest returned day, then makes one fresh public-page shop for that date.
+  It does not guess a winner from failed or unpriced days.
+- **Explore** reads the catalog request the Explore page issues in Chromium
+  (one adult, economy), then shops each owned destination over the public
+  page. A status 13 on the catalog stops it and records the shared cooldown.
 
 ## Hotels
 

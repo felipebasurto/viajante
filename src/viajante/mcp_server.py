@@ -124,10 +124,10 @@ class ProgressRelay:
 
     ``[i/n]`` becomes progress i of total n; any other line is message-only and moves the
     value by a small step, so the value only ever increases and never passes the total
-    (a line that cannot advance within the total is dropped). ``[i/n]`` marks the i-th query
-    starting, not finishing. At most one notification per interval; the newest held line is
-    flushed when the interval ends and when the search finishes. A notification that cannot
-    be sent never breaks the search.
+    (a line that cannot advance within the total is dropped). A per-day sweep sends
+    ``[i/n]`` after that day finishes; other searches send it as the query starts. At most
+    one notification per interval; the newest held line is flushed when the interval ends
+    and when the search finishes. A notification that cannot be sent never breaks the search.
     """
 
     def __init__(self, ctx: Any, loop: asyncio.AbstractEventLoop, interval: float) -> None:
@@ -525,8 +525,10 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         convert for the user. Unproven country, dest, or currency (city with
         several airports, Europe, unnamed origin, two currencies) must not be
         guessed. Optional country is Google gl (origin market); omit when
-        unset. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
-        shopping request. Do not invent a bag fee. max_stops is 0, 1, or 2.
+        unset. Unnamed baggage_buffer is 0. A positive carry_on rides the
+        request and is verified against the page's bag-filter echo; named bags
+        stay refused (no provable echo).
+        Do not invent a bag fee. max_stops is 0, 1, or 2.
         After a named hub or leisure trunk returns, the caller may run
         search_hidden_city once with the same route and date. Sequential; do
         not mix payloads. Skip if bags were named. Omit hidden-city currency
@@ -861,8 +863,9 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         """Flights then hotel. Currency follows the flight origin or an explicit code.
 
         If unknown, ask. Viajante does not convert. The calling agent may convert
-        for the user. Unnamed baggage_buffer is 0. Prefer bags / carry_on on the
-        shopping request. The same currency is passed to hotels. Optional
+        for the user. Unnamed baggage_buffer is 0. A positive carry_on rides
+        the request (verified by the page's bag-filter echo); named bags stay
+        refused. The same currency is passed to hotels. Optional
         country is Google gl (origin market); omit when unset. The flights
         queries carry the same recommendation block as search_flights.
         """

@@ -18,6 +18,9 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 ## Where to edit
 
 - `tfs` bytes, cabin, or occupancy in the Google Flights URL: `src/viajante/tfs.py`
+- Public Google Flights `ds:1` page decode: `src/viajante/google_flights_page.py`
+- Public Flights page GETs and selected round-trip return pages: `src/viajante/google_flights_public.py`
+- Public sweep GET concurrency: `src/viajante/sweep_config.py`
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
 - Routes, LCC buffer, nearby expand, flight ranking, or `get_flights`: `src/viajante/flights.py`
@@ -62,7 +65,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Saved on-demand `watch` and the `price_history` / `watch_price` tool bodies: `src/viajante/watch.py`; their CLI: `src/viajante/history_cli.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
 
-`google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
+`google_flights.py` owns URL building, consent, card parsing, typed provider failures, the shared Chrome-TLS HTTP client, and the legacy RPC adapter. `google_flights_page.py` safely extracts public-page `AF_initDataCallback` `ds:1` JSON without executing scripts. `google_flights_rpc.py` owns the compact shopping data decoder and retained RPC encoders/parsers. `google_flights_public.py` owns public-page flight, date, flex, and selected-return GET behavior; `sweep_config.py` validates `VIAJANTE_SWEEP_MODE` and its concurrency. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
 
 ## Public contract
 
@@ -129,16 +132,18 @@ or exchange rate.
 > skill line omits a flag `cli.py` defines, the code wins. Do not silently
 > “complete” the skill into a second CLI contract.
 
-Successful flights, dates, flex, and explore may carry owned `google_flights_url`
-(`booking_token` wins when present on a shop offer; omit if encode cannot run)
-and `stops_compare`. Flights offers, dates priced rows, and shopped explore dests
-may carry `typical` / `vs_typical` / `vs_typical_pct` / `typical_deal`. A flex
-report stamps `typical` / `vs_typical` only at report level. Flex offers and day
-rows use the full triple. Stamp rules live with the search loops (`flights.py`,
-`dates.py`, `explore.py`, `typical.py`). Compact calendar cells and Explore
-catalog places are not offers: they may carry a query URL; they do not grow a
-token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
-dest typical from the explore catalog mix or from other dests.
+Successful flight/date/flex results may carry owned `google_flights_url`
+(`booking_token` wins when returned on a shop offer; omit if encode cannot run)
+and `stops_compare`. The default public flight search does not make a hidden
+31-day typical lookup. Dates/flex may carry `typical` only when at least three
+priced rows come from the caller's explicit window; a flex report stamps it at
+report level. Stamp rules live with the loops (`flights.py`, `dates.py`,
+`typical.py`). Compact date rows are not offers: they may carry a query URL but
+do not grow a token, buffer stamp, overnight/via filter, or `stops_compare`.
+Explore catalog recovery uses the public Explore page's own browser-issued
+catalog request (no unsigned RPC); a non-default party or cabin refuses before
+networking, and priced rows must prove the requested origin. Do not infer
+catalog prices or substitute a destination.
 
 Hotel `selection_id` values belong to this process. Only a hotel search adds
 them, and only on offers `get_hotel_details` can open. A detail read does not
@@ -245,29 +250,46 @@ occupancy (hotel occupancy is adults-only). Nearby alternatives take the
 cheapest owned fare in that city group, not a sum.
 
 `--baggage-buffer` / MCP `baggage_buffer` is a ranking add-on in the same quote
-currency. **Unnamed is 0.** Named `N` is used as-is (not FX-converted). Compare
-bags with `--bags N` / `--carry-on` on the shopping request so Google prices
-them. Do not invent a bag fee. Compact date-grid cells and Explore catalog
-places omit the stamp. Dates sweep-fallback / shopped day rows pick the day's
-winner by fare+buffer. Explore dest ranking applies a named buffer only when
-`--sort ranked`.
+currency. **Unnamed is 0.** Named `N` is used as-is (not FX-converted). A
+positive `--carry-on` (one bag for the whole party) rides the tfs
+`BaggageFilter` on the public page and must be echoed by the Bags filter chip
+(`N carry-on bag(s), Bags, Selected`) or the page read fails; `--bags N`
+(checked) and a named zero keep the preflight refusal (no provable echo).
+Airline include/exclude and alliance include ride per-leg tfs carrier fields
+and need the `Airlines` chip echo (alliances also a catalog row); Google does
+not apply an exclusion, so the loop drops excluded and carrier-unknown cards.
+`--exclude-alliance` stays refused. Multi-city runs only with explicit
+`--fetch detail`; detail refuses every bag and carrier filter. Do not invent a bag fee. Dates per-day rows pick a day's winner by fare+buffer.
 
 ## Invariants
 
 - Validate CLI input before starting Chromium. Reject departure dates in the past.
   Compute ISO dates from today; roll a named season to the next legal year.
   Do not send a past `start`.
-- Two flight fetch modes, one public contract. Sweep: one Chrome TLS session
-  (`curl_cffi`), HTTP/2 multiplex, owned shopping RPC, HTML fallback if compact
-  parse misses. Detail: Playwright (`viajante[browser]`). `--fetch {auto,sweep,detail}`:
-  auto uses sweep for 3+ flight queries or any packaged RT/multi (only sweep
-  shops the next leg), and detail for other 1–2 when Playwright is importable. Auto without Playwright stays on sweep. Sweep empty or `blocked` may
-  fall back to detail once (`fetch_backend: sweep_then_detail`) only when Playwright
-  is installed; do not re-run successful sweep legs. Shopping `ErrorResponse` and
-  owned markup drift fail without Chromium. Do not silently mix backends unless
-  that fallback fired.
-- Sweep inter-query delay is 0. No Playwright/Chromium required for sweep. One
-  lazy Chromium per process, only when detail runs. Install Chromium with
+- Flight `--fetch auto` and `--fetch sweep` use the public Google Flights results
+  page over the shared Chrome-TLS HTTP/2 client. `--fetch auto` always uses this
+  path; `--fetch detail` explicitly uses Playwright (`viajante[browser]`) when
+  installed. Public-page sweep never falls back to detail after an empty page,
+  parse failure, or provider block. Its `ds:1` data is extracted as balanced JSON,
+  then passed to `parse_shopping_data`; do not execute page scripts or fabricate
+  an RPC envelope. Flights, dates, and flex do not send unsigned shopping or
+  calendar RPCs. An ordinary flight search does not make a hidden 31-day typical
+  lookup; dates and flex explicitly fetch their named days (up to 31), and flex
+  makes one additional fresh shop on the selected day.
+- Public packaged round trips select at most 8 returned outbound candidates and
+  GET one return page per selection. Each outbound's physical route, carrier,
+  and bare flight number are encoded in its selected TFS segment fields; preserve
+  the original two-journey round-trip query. The selected return page must echo
+  the outbound route and clock. Its returned amount is the complete provider
+  package total; never add separate one-way fares. This search is scope-bound
+  and keeps partial page errors. The public path refuses checked bags, a zero
+  carry-on, alliance exclusion, and multi-city before networking. Explore needs
+  Chromium (`viajante[browser]`) for the catalog, one-adult economy only; a
+  status 13 on the page's catalog request records the shared cooldown.
+- `VIAJANTE_SWEEP_MODE` accepts only `standard` (8 concurrent GETs) and
+  `conservative` (2). Invalid values fail before network work. This is a local
+  concurrency choice, not a provider quota guarantee. No Chromium is required
+  for sweep. One lazy Chromium per process is used only when detail runs. Install Chromium with
   `pip install 'viajante[browser]' && playwright install chromium`. Flights block
   images, media, and fonts. Booking blocks images and media (fonts stay). Use
   Playwright's Chromium UA for detail; do not spoof a stale Chrome/macOS UA.
@@ -282,24 +304,26 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
  `VIAJANTE_MCP_DEADLINE_SECONDS`) returns a partial result: unfinished queries
  are error code `deadline` (never `no_results`), `coverage.complete` false,
  `stopping_reason` `deadline`, not cached. The cache and `coverage` follow
- `SearchControl.cut` (set when a deadline error is raised or a sleep is cut short),
- never elapsed time; a cut that loses only optional evidence (typical) keeps the row. Never swallow `SearchDeadline` in a
+  `SearchControl.cut` (set when a deadline error is raised or a sleep is cut short),
+  never elapsed time; a cut that loses only optional evidence keeps the row. Never swallow `SearchDeadline` in a
  broad `except Exception` around a provider call (re-raise it); a cancel is a
  `BaseException` and passes through. MCP text is compact JSON. Core is
  `src/viajante/control.py`; do not add summary prose to partial results.
-- Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
-  once after 50 ms; happy path does not sleep. After that, `markup_drift` still
-  fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
-  jobs. A multiplexed request that raised before any response (reset, timeout)
-  is a transport failure, not a 429: it replays once on a fresh session, then
-  fails `fetch_failed` (`timeout` when it timed out), never `rate_limited`. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
+- Empty/drift/HTTP 5xx page responses may be retried once under the existing
+  bounded sweep retry policy. HTTP 429 and raw RPC status 13 stop the public
+  sweep: do not replay, fall back, or continue pending batch jobs. Diagnostics
+  include endpoint host and path, HTTP/RPC status, `request_sent`, `attempts`,
+  and cooldown basis; no query
+  parameters. A raw status 13 does not establish an IP block or cause. An active
+  cooldown answering locally has `request_sent: false`, `attempts: 0`, and null
+  HTTP/RPC status. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
   writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat limit up to 30 min, or
   a named `Retry-After`). While it runs, new flight/hotel Google searches in any
   process send nothing and fail `blocked` with `rate_limited: true` (plus
   `retry_after` ISO UTC and `retry_after_seconds` only when a recorded cooldown
   names one; a proxied 429 records none); a search
-  already running keeps its replay. Rate-limited failures do not fall back to
-  detail. MCP search tools replay an identical successful call for 5 min
+  already running stops at the provider block; rate-limited failures do not fall
+  back to detail. MCP search tools replay an identical successful call for 5 min
   (`cached: true`) instead of asking Google again. The replay cache holds at
   most 20 entries; a new successful search drops the oldest. `no_results`, `rejected`, `blocked`,
   `markup_drift`, and `browser_unavailable` do not get a Playwright second attempt.
@@ -311,8 +335,9 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   Do not hammer Booking after a challenge.
   `rejected` and `markup_drift` do not fall back to detail.
 - Every offer keeps raw text beside parsed fields. Sweep and detail clocks are
-  24-hour `HH:MM`. Omit typical / cheapest keys when the compact calendar misses,
-  has fewer than three priced days, or the query is multi-city. Never invent a
+  24-hour `HH:MM`. No automatic typical fanout runs during a flight search.
+  Dates/flex may derive same-route medians only from their explicitly requested
+  priced days; fewer than three priced days means no median. Never invent a
   market average.
 - JSON output only with `--save`. Browser state lives outside the checkout
   (`VIAJANTE_STATE_DIR` or XDG state dir), always write-temp-then-rename. Booking
@@ -325,21 +350,27 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   baggage buffer in both modes. JSON `locale` stays `"en"`. Currency is `curr`,
   independent of `hl`. Planner prompts may be any language; the plan still emits
   English IATA and English fetch locale.
-- Occupancy and cabin are query fields. Shopping constraints index 6 is
-  `[adults, children, infants_in_seat, infants_on_lap]`. `--bags N` / `--carry-on`
-  fill index 10; leave both unset so that slot stays `None`. A non-zero buffer
-  implies `needs_bag_verify` while bag counts are unknown. Never invent a bag fee
-  or bag count. Callers must verify baggage on Google Flights before booking.
+- Occupancy and cabin are query fields. Retained RPC shopping constraints index 6
+  is `[adults, children, infants_in_seat, infants_on_lap]`. The default public
+  page verifies positive carry-on, airline include/exclude, and alliance include
+  through the page echo. Checked bags, carry_on 0, and alliance exclusion remain
+  refused before sending; detail refuses every bag and carrier filter.
+  Never silently drop a filter.
+  A non-zero buffer implies `needs_bag_verify` while bag counts are unknown.
+  Never invent a bag fee or bag count. Callers must verify baggage on Google
+  Flights before booking.
 - `max_stops` is 0, 1, or 2. The product cannot require 3+ stops. If the user
   needs 3+, say so and search with 2, or refuse; do not invent a fare.
   Default trip kind is one-way.
-  `ORIGIN-DEST:OUT:BACK` without `--trip` is two one-ways. `--trip rt` / `multi`
-  POST one package. `--sort ranked` (default on flights) selects `--top` by
+  `ORIGIN-DEST:OUT:BACK` without `--trip` is two one-ways. Public `--trip rt`
+  opens selected return pages and keeps only provider package totals; the public
+  sweep refuses `--trip multi` (explicit `--fetch detail` only). `--sort ranked` (default on flights) selects `--top` by
   fare+buffer (`DEFAULT_TOP` in `flights.py`). Explore unnamed sort stays
   `price`. Dates unnamed sort stays date order. Sort is order, not a `--top` cut
   on the date grid.
-- `--airlines` / `--exclude-airlines` / `--alliance` / `--exclude-alliance` ride
-  the shopping request. Alliances have no member list here. `--depart-window`,
+- Airline include/exclude and alliance include need the page's filter echo;
+  `--exclude-alliance` is refused and detail refuses all carrier filters. Never
+  silently remove them. Alliances have no member list here. `--depart-window`,
   clocks, layover hours, `--via`, overnight, duration, and `--price-cap` are
   local post-filters after parse, before `--top`. “morning” / “late” / “Europe”
   / a city vibe does not invent a clock, dest, or alliance code.

@@ -12,7 +12,13 @@ from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
-from viajante.control import SearchControl, active, current_control, validate_deadline_seconds
+from viajante.control import (
+    SearchControl,
+    active,
+    check_cancelled,
+    current_control,
+    validate_deadline_seconds,
+)
 from viajante.dates import (
     flex_window,
     parse_route_pair,
@@ -126,6 +132,7 @@ def _with_search_lock(fn):
 
 
 def _owned(payload: dict, report=None) -> dict:
+    check_cancelled()
     selections = selection_records(payload, report)
     record(payload, selections=selections)
     _SELECTION_CONTEXT.records = selections
@@ -148,6 +155,7 @@ def _cached(fn):
         now = time.monotonic()
         hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
+            check_cancelled()
             result = {**deepcopy(hit[1]), "cached": True}
             record(result, selections=hit[2])
             return result
@@ -155,6 +163,7 @@ def _cached(fn):
         control = current_control() or SearchControl()
         with active(control):
             result = fn(*args, **kwargs)
+            check_cancelled()
         selections = getattr(_SELECTION_CONTEXT, "records", {})
         _SELECTION_CONTEXT.records = {}
         if not control.cut and not failure_codes(result):

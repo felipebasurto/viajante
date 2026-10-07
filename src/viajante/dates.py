@@ -29,7 +29,8 @@ from viajante.flights import (
     parse_offer_filters,
     validate_sort,
 )
-from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard, google_flights_url
+from viajante.google_flights import RawFlightCard, google_flights_url
+from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
 from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
 from viajante.models import (
     DateCalendarReport,
@@ -502,8 +503,13 @@ def _date_calendar_for_seed(
     backend = "calendar"
     try:
         checkpoint()
-        compact = client.fetch_calendar(seed, start, end)
-        days = _rows_from_calendar(start, end, compact, nights=stay)
+        if getattr(client, "automatic_typical", True) is False:
+            days = _sweep_per_day(
+                client, seed, start, end, stay, report_progress, filters, baggage_buffer
+            )
+        else:
+            compact = client.fetch_calendar(seed, start, end)
+            days = _rows_from_calendar(start, end, compact, nights=stay)
     except CompactParseMiss:
         report_progress("calendar miss; pricing each day with shopping sweep")
         days = _sweep_per_day(
@@ -731,8 +737,13 @@ def _flex_report_for_seed(
     shop: FlightQuery | RoundTrip | None = None
     try:
         checkpoint()
-        compact = client.fetch_calendar(seed, start, end)
-        days = _rows_from_calendar(start, end, compact, nights=stay)
+        if getattr(client, "automatic_typical", True) is False:
+            days = _sweep_per_day(
+                client, seed, start, end, stay, report_progress, filters, baggage_buffer
+            )
+        else:
+            compact = client.fetch_calendar(seed, start, end)
+            days = _rows_from_calendar(start, end, compact, nights=stay)
     except CompactParseMiss as exc:
         report_progress("calendar miss; no fare")
         days = ()
@@ -744,10 +755,14 @@ def _flex_report_for_seed(
         error = classify_failure(exc)
         days = _error_rows(start, end, error, nights=stay)
     else:
+        if any(row.error is not None for row in days):
+            error = next(row.error for row in days if row.error is not None)
         typical = typical_from_daily_prices([row.price for row in days])
         winner = cheapest_priced_day(days, around)
         if winner is None:
             report_progress("no priced day in flex window; no fare")
+        elif error is not None and error.code == SearchErrorCode.BLOCKED:
+            report_progress("provider blocked the date window; no further shop")
         else:
             chosen = winner.departure_date
             returning = winner.return_date
@@ -1047,32 +1062,68 @@ def _sweep_per_day(
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
-    span = date_window_days(start, end)
-    index = 0
     while cursor <= end:
-        index += 1
-        progress(f"[{index}/{span}] {seed.origin} -> {seed.destination} {cursor.isoformat()}")
         day_queries.append((cursor, _day_trip(seed, cursor, nights)))
         cursor = shift_day(cursor, 1)
+    span = len(day_queries)
 
+    def row_for(day: date, day_query: FlightQuery | RoundTrip, result: object) -> DatePriceRow:
+        returning = _return_for(day, nights)
+        if isinstance(result, BaseException):
+            return _row_from_day_error(day, result, returning)
+        row = _row_from_day_cards(day, day_query, result, returning, filters, baggage_buffer)
+        if getattr(source, "transport", None) == "public_page":
+            page_error, scope_bound = source.metadata_for(day_query)
+            row = replace(
+                row,
+                scope_bound=scope_bound,
+                page_errors=(classify_failure(page_error),) if page_error is not None else (),
+            )
+        return row
+
+    def note(index: int, day: date) -> None:
+        progress(f"[{index}/{span}] {seed.origin} -> {seed.destination} {day.isoformat()}")
+
+    # ponytail: one-way days stay one multiplexed fetch_many, so their progress
+    # lines land together after that batch. A per-response callback on the HTTP
+    # client is the upgrade if a client needs a tick per one-way day.
     fetch_many = getattr(source, "fetch_many", None)
-    if callable(fetch_many):
+    one_way_batch = callable(fetch_many) and all(
+        isinstance(day_query, FlightQuery) for _day, day_query in day_queries
+    )
+    rows: list[DatePriceRow] = []
+    if one_way_batch:
         try:
             checkpoint()
-            results = fetch_many([day_query for _cursor, day_query in day_queries])
+            results = fetch_many([day_query for _day, day_query in day_queries])
         except SearchDeadline as exc:
-            results = [exc] * len(day_queries)
-    else:
-        results = [_fetch_or_exception(source, day_query) for _cursor, day_query in day_queries]
-    rows: list[DatePriceRow] = []
-    for (cursor, day_query), result in zip(day_queries, results, strict=True):
-        returning = _return_for(cursor, nights)
-        if isinstance(result, BaseException):
-            rows.append(_row_from_day_error(cursor, result, returning))
-        else:
-            rows.append(
-                _row_from_day_cards(cursor, day_query, result, returning, filters, baggage_buffer)
+            return tuple(row_for(day, day_query, exc) for day, day_query in day_queries)
+        for index, ((day, day_query), result) in enumerate(
+            zip(day_queries, results, strict=True), start=1
+        ):
+            rows.append(row_for(day, day_query, result))
+            if not isinstance(result, SearchDeadline):
+                note(index, day)
+        return tuple(rows)
+
+    for index, (day, day_query) in enumerate(day_queries, start=1):
+        try:
+            checkpoint()
+        except SearchDeadline as exc:
+            rows.extend(
+                row_for(rest_day, rest_query, exc)
+                for rest_day, rest_query in day_queries[index - 1 :]
             )
+            return tuple(rows)
+        result = _fetch_or_exception(source, day_query)
+        rows.append(row_for(day, day_query, result))
+        if isinstance(result, SearchDeadline):
+            rows.extend(
+                row_for(rest_day, rest_query, result)
+                for rest_day, rest_query in day_queries[index:]
+            )
+            return tuple(rows)
+        note(index, day)
     return tuple(rows)
 
 

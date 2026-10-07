@@ -348,6 +348,30 @@ def _departed(day: date, clock: Optional[str], origin: str, now: datetime) -> bo
     return day < now.astimezone().date()
 
 
+def _same_query_identity(left: Trip, right: Trip) -> bool:
+    """Compare only the route and departure dates that define itinerary identity."""
+    return len(left.legs) == len(right.legs) and all(
+        (a.origin, a.destination, a.departure_date) == (b.origin, b.destination, b.departure_date)
+        for a, b in zip(left.legs, right.legs, strict=True)
+    )
+
+
+def _bind_query_to_offer(trip: Trip, journeys: tuple[tuple[_Segment, ...], ...]) -> None:
+    """A supplied query must describe this offer's route and every known departure date."""
+    if len(journeys) != len(trip.legs):
+        raise ValueError("query trip and offer journey counts differ")
+    for index, (leg, journey) in enumerate(zip(trip.legs, journeys, strict=True)):
+        if not journey:
+            raise ValueError(f"query leg {index} cannot be bound to an empty offer journey")
+        first, last = journey[0], journey[-1]
+        if first.origin and first.origin.upper() != leg.origin:
+            raise ValueError(f"query leg {index} origin does not match the offer itinerary")
+        if last.destination and last.destination.upper() != leg.destination:
+            raise ValueError(f"query leg {index} destination does not match the offer itinerary")
+        if first.day and first.day != leg.departure_date.isoformat():
+            raise ValueError(f"query leg {index} departure_date does not match the offer itinerary")
+
+
 @dataclass(frozen=True)
 class _Prepared:
     offer: Mapping[str, Any]
@@ -440,15 +464,23 @@ def _prepare(
         )
 
     trip = _trip_from_query(query)
-    cap = _whole(query, "price_cap") if query.get("price_cap") is not None else None
-    if cap is not None and cap <= 0:
-        raise ValueError("query.price_cap must be positive")
     old = _journeys(offer)
     if len(old) != len(trip.legs):
         raise ValueError(
             f"offer carries {len(old)} journey(s) but its query needs {len(trip.legs)}; "
             "an incomplete itinerary cannot be re-checked"
         )
+
+    evidence_query = evidence.get("query")
+    if isinstance(evidence_query, Mapping):
+        owned_trip = _trip_from_query(evidence_query)
+        if not _same_query_identity(trip, owned_trip):
+            raise ValueError("query route and departure dates differ from the offer's owned query")
+    _bind_query_to_offer(trip, old)
+
+    cap = _whole(query, "price_cap") if query.get("price_cap") is not None else None
+    if cap is not None and cap <= 0:
+        raise ValueError("query.price_cap must be positive")
     for leg, journey in zip(trip.legs, old, strict=True):
         if _departed(leg.departure_date, journey[0].clock, leg.origin, now):
             raise ValueError(

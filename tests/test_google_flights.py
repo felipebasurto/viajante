@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +42,7 @@ from viajante.google_flights import (
     reset_shared_chrome_sweep_client,
     shared_chrome_sweep_client,
 )
+from viajante.google_flights_public import GoogleFlightsUnsupported
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
@@ -302,6 +304,25 @@ class QueryEncodingTests(unittest.TestCase):
         trip = RoundTrip("MAD", "OPO", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
         self.assertEqual(encode_tfs(trip), GOLDEN_TFS_ROUND_TRIP)
         self.assertEqual(build_search_params(trip, currency="EUR")["tfs"], GOLDEN_TFS_ROUND_TRIP)
+
+    def test_carrier_filters_encode_per_leg_fields_six_and_seven(self) -> None:
+        trip = FlightQuery(
+            "MAD",
+            "BCN",
+            date(2026, 12, 4),
+            max_stops=1,
+            airlines=("IB", "VY"),
+            exclude_airlines=("FR",),
+            alliances=("oneworld",),
+            exclude_alliances=("star",),
+        )
+        fields = _proto_fields(base64.b64decode(encode_tfs(trip)))
+        (leg,) = [payload for field, payload in fields if field == 3]
+        leg_fields = _proto_fields(leg)
+        include = [value.decode("ascii") for field, value in leg_fields if field == 6]
+        exclude = [value.decode("ascii") for field, value in leg_fields if field == 7]
+        self.assertEqual(include, ["IB", "VY", "ONEWORLD"])
+        self.assertEqual(exclude, ["FR", "STAR_ALLIANCE"])
 
     def test_multi_city_tfs_repeats_legs_and_sets_trip_kind(self) -> None:
         trip = MultiCity(
@@ -1928,6 +1949,48 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(offer.flight_numbers, ("TP1013", "TP1922"))
         self.assertEqual(offer.booking_token, "tok")
 
+    def test_codeshare_marketing_codes_feed_airline_codes(self) -> None:
+        day = [2026, 10, 9]
+        leg = _live_leg(
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
+            dest="LHR",
+            dest_name="Heathrow Airport",
+            dep=[23, 10],
+            arr=[11, 10],
+            minutes=420,
+            dep_date=day,
+            arr_date=day,
+            code="AA",
+            number="100",
+            airline="American",
+        )
+        # Codeshare rows live at leg slot 15: [code, number, _, carrier name].
+        leg[15] = [["BA", "1511", None, "British Airways"]]
+        card = parse_shopping_body(
+            _compact_body(
+                _priced(
+                    _live_flight(
+                        code="AA",
+                        airline="American",
+                        legs=[leg],
+                        origin="JFK",
+                        dest="LHR",
+                        dep_date=day,
+                        dep=[23, 10],
+                        arr_date=day,
+                        arr=[11, 10],
+                        minutes=420,
+                        stops=0,
+                    ),
+                    60000,
+                )
+            ),
+            currency="USD",
+        )[0]
+        self.assertEqual(card.flight_numbers, ("AA100",))
+        self.assertEqual(card.airline_codes, ("AA", "BA"))
+
     def test_digit_carrier_and_integer_flight_number_stay_owned(self) -> None:
         day = [2026, 10, 9]
         leg = _live_leg(
@@ -2241,7 +2304,7 @@ class SweepRateLimitSessionTests(unittest.TestCase):
             FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, n + 1)
         )
 
-    def test_fetch_many_continues_remaining_after_429_on_a_fresh_session(self) -> None:
+    def test_fetch_many_preserves_successes_and_does_not_replay_after_429(self) -> None:
         shop = _compact_body(_itinerary(price=41, airline="Vueling"))
         sleeps: list[float] = []
         client = _ScriptedMuxClient(
@@ -2251,19 +2314,19 @@ class SweepRateLimitSessionTests(unittest.TestCase):
                     SweepHttpResponse(200, shop),
                     SweepHttpResponse(429, "slow down"),
                 ),
-                (SweepHttpResponse(200, shop),),
             )
         )
         source = _TrackingHttpSource(client=client, sleep=sleeps.append)
         results = source.fetch_many(self._trips(3))
         self.assertEqual(len(results), 3)
-        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
-        self.assertEqual(results[2][0].airline, "Vueling")
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(len(client.posts), 4)
-        self.assertEqual(source.reset_calls, 1)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-        self.assertLess(sleeps[0], 0.2)
+        self.assertFalse(isinstance(results[0], BaseException))
+        self.assertFalse(isinstance(results[1], BaseException))
+        self.assertIsInstance(results[2], GoogleFlightsBlocked)
+        self.assertEqual(results[2].status, 429)
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(len(client.posts), 3)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
 
     def test_fetch_many_happy_path_does_not_sleep_or_reset(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
@@ -2322,23 +2385,20 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         self.assertEqual(source.reset_calls, 0)
         self.assertEqual(sleeps, [])
 
-    def test_fetch_many_second_429_stays_blocked(self) -> None:
+    def test_fetch_many_429_stays_blocked_without_retry(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
         sleeps: list[float] = []
         client = _ScriptedMuxClient(
-            (
-                (SweepHttpResponse(429, "slow"), SweepHttpResponse(200, shop)),
-                (SweepHttpResponse(429, "still slow"),),
-            )
+            ((SweepHttpResponse(429, "slow"), SweepHttpResponse(200, shop)),)
         )
         source = _TrackingHttpSource(client=client, sleep=sleeps.append)
         results = source.fetch_many(self._trips(2))
         self.assertIsInstance(results[0], GoogleFlightsBlocked)
         self.assertEqual(results[0].status, 429)
         self.assertFalse(isinstance(results[1], BaseException))
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(source.reset_calls, 1)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
 
     def test_fetch_many_transport_failure_replays_on_a_fresh_session(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
@@ -2417,7 +2477,7 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         client = shared_chrome_sweep_client()
         self.addCleanup(reset_shared_chrome_sweep_client)
 
-        async def boom(url, data, headers, timeout):
+        async def boom(url, data, headers, timeout, cancel_event=None):
             raise TimeoutError("read timed out")
 
         client._apost = boom
@@ -2443,7 +2503,7 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         self.assertEqual(source.reset_calls, 0)
         self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
 
-    def test_fetch_many_with_calendar_continues_remaining_after_429(self) -> None:
+    def test_fetch_many_with_calendar_preserves_successes_without_429_replay(self) -> None:
         shop = _compact_body(_itinerary(price=88, airline="Iberia"))
         calendar = _calendar_rpc_body(
             [
@@ -2463,10 +2523,6 @@ class SweepRateLimitSessionTests(unittest.TestCase):
                     SweepHttpResponse(200, shop),
                     SweepHttpResponse(200, calendar),
                 ),
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(200, calendar),
-                ),
             )
         )
         source = _TrackingHttpSource(client=client, sleep=sleeps.append)
@@ -2480,13 +2536,41 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         )
         results = source.fetch_many_with_calendar(jobs)
         self.assertEqual(len(results), 3)
-        for cards, days in results:
-            self.assertFalse(isinstance(cards, BaseException))
-            self.assertEqual(cards[0].airline, "Iberia")
-            self.assertEqual(len(days), 3)
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(source.reset_calls, 1)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+        self.assertFalse(isinstance(results[0][0], BaseException))
+        self.assertEqual(results[0][0][0].airline, "Iberia")
+        self.assertEqual(len(results[0][1]), 3)
+        self.assertIsInstance(results[1][0], GoogleFlightsBlocked)
+        self.assertEqual(results[1][0].status, 429)
+        self.assertFalse(isinstance(results[2][0], BaseException))
+        self.assertEqual(results[2][0][0].airline, "Iberia")
+        self.assertEqual(len(results[2][1]), 3)
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
+
+    def test_fetch_many_blocked_and_drift_mixed_batch_does_not_replay(self) -> None:
+        shop = _compact_body(_itinerary(price=88, airline="Iberia"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(429, "slow down"),
+                    SweepHttpResponse(200, "not a compact response"),
+                ),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(3))
+        self.assertFalse(isinstance(results[0], BaseException))
+        self.assertIsInstance(results[1], GoogleFlightsBlocked)
+        self.assertIsInstance(results[2], GoogleFlightsBlocked)
+        self.assertIsNone(results[2].status)
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(len(client.posts), 3)
+        self.assertEqual(len(client.gets), 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
 
 
 class SweepClientShapeTests(unittest.TestCase):
@@ -2683,6 +2767,346 @@ class SweepClientShapeTests(unittest.TestCase):
             self.assertIsNone(created[1].proxy)
             self.assertEqual(len(closed), 1)
             reset_shared_chrome_sweep_client()
+
+
+def _multi_board_html(rows) -> str:
+    """Synthetic results board a card parser can read like the real DOM."""
+    items = "".join(
+        f'<li><div class="YMlIz FpEdX">{price}</div>'
+        f'<span class="mv1WYe"><div>{dep}</div></span>'
+        f'<span class="mv1WYe"><div>arr</div></span>'
+        f'<div class="Ak5kof"><div>1 hr</div></div>'
+        f'<div class="BbR8Ec"><span class="ogfYpf">Nonstop</span></div>'
+        f'<div class="sSHqwe tPgKwe ogfYpf"><span>Carrier</span></div>'
+        f'<div data-travelimpactmodelwebsiteurl="https://x/{org}-{dst}-{cc}-{num}-{day}">'
+        f"</div></li>"
+        for org, dst, cc, num, day, dep, price in rows
+    )
+    return f'<div jsname="IWWDBc"><ul class="Rk10dc">{items}</ul></div>'
+
+
+class _MultiRow:
+    """One locator chain: ``.first`` waits, ``.nth(i).click()`` advances a board."""
+
+    def __init__(self, page) -> None:
+        self._page = page
+        self._index = 0
+
+    @property
+    def first(self):
+        return self
+
+    def nth(self, index):
+        self._index = index
+        return self
+
+    def wait_for(self, **_):
+        return None
+
+    def click(self, **_):
+        self._page.row_indexes.append(self._index)
+        self._page.clicks += 1
+        self._page.step = min(self._page.step + 1, len(self._page._boards) - 1)
+
+
+class _MultiPage:
+    """Fake detail page serving one board innerHTML per click step."""
+
+    def __init__(self, boards, *, fail_after_clicks=()) -> None:
+        self._boards = list(boards)
+        self._fail = set(fail_after_clicks)
+        self.step = 0
+        self.clicks = 0
+        self.row_indexes: list[int] = []
+        self.url = "https://www.google.com/travel/flights?tfs=x"
+
+    def goto(self, url, **_):
+        self.url = url
+        self.step = 0
+
+    def locator(self, _selector):
+        return _MultiRow(self)
+
+    def evaluate(self, script):
+        if "querySelector('h3')" in script:
+            return f"step:{self.step}"
+        return self._boards[self.step]
+
+    def wait_for_function(self, _script, **_):
+        if self.clicks in self._fail:
+            raise TimeoutError("board never advanced")
+
+    def close(self):
+        return None
+
+
+class _MultiSession:
+    def __init__(self, page) -> None:
+        self._page = page
+
+    def new_page(self):
+        return self._page
+
+
+class MultiCityDetailTests(unittest.TestCase):
+    """The detail source completes multi-city packages by clicking boards."""
+
+    @staticmethod
+    def _source(page) -> GoogleFlightsSource:
+        return GoogleFlightsSource(Path("."), session=_MultiSession(page), currency="GBP")  # type: ignore[arg-type]
+
+    def test_two_leg_package_uses_last_board_total(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+                (
+                    "LHR",
+                    "JFK",
+                    "BA",
+                    "113",
+                    "20261110",
+                    "4:40 PM on Tue, Nov 10",
+                    "£400",
+                ),
+            ]
+        )
+        board2 = _multi_board_html(
+            [
+                (
+                    "JFK",
+                    "LAX",
+                    "AA",
+                    "201",
+                    "20261114",
+                    "9:00 AM on Sat, Nov 14",
+                    "£1,200",
+                ),
+                (
+                    "JFK",
+                    "LAX",
+                    "DL",
+                    "55",
+                    "20261114",
+                    "1:00 PM on Sat, Nov 14",
+                    "£1,300",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        source = self._source(_MultiPage([board1, board2]))
+        cards = source.fetch(trip)
+        self.assertEqual(len(cards), 4)  # 2 first-leg candidates x 2 last-board rows
+        for card in cards:
+            self.assertEqual(len(card.legs), 2)
+            self.assertEqual(card.legs[0].segments[0].origin, "LHR")
+            self.assertEqual(card.legs[0].segments[0].destination, "JFK")
+            self.assertEqual(card.legs[1].segments[0].origin, "JFK")
+            self.assertEqual(card.legs[1].segments[0].destination, "LAX")
+            self.assertIn(card.price, {"£1,200", "£1,300"})
+            self.assertEqual(len(card.flight_numbers or ()), 2)
+        self.assertEqual(source.metadata_for(trip), (None, True))
+
+    def test_three_leg_package_picks_cheapest_middle_board_row(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+            ]
+        )
+        board2 = _multi_board_html(
+            [
+                (
+                    "JFK",
+                    "LAX",
+                    "AA",
+                    "201",
+                    "20261114",
+                    "9:00 AM on Sat, Nov 14",
+                    "£900",
+                ),
+                (
+                    "JFK",
+                    "LAX",
+                    "DL",
+                    "55",
+                    "20261114",
+                    "1:00 PM on Sat, Nov 14",
+                    "£700",
+                ),
+            ]
+        )
+        board3 = _multi_board_html(
+            [
+                (
+                    "LAX",
+                    "LHR",
+                    "BA",
+                    "282",
+                    "20261118",
+                    "8:00 PM on Wed, Nov 18",
+                    "£2,400",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+                FlightLeg("LAX", "LHR", date(2026, 11, 18)),
+            )
+        )
+        page = _MultiPage([board1, board2, board3])
+        cards = self._source(page).fetch(trip)
+        self.assertEqual(len(cards), 1)
+        card = cards[0]
+        self.assertEqual(len(card.legs), 3)
+        self.assertEqual(card.price, "£2,400")  # Provider package total, never a sum.
+        # The cheapest middle-board row (DL55 £700) was the chosen continuation.
+        self.assertEqual(card.flight_numbers, ("AA103", "DL55", "BA282"))
+
+    def test_board_echo_mismatch_is_not_a_package(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+            ]
+        )
+        wrong_leg = _multi_board_html(
+            [
+                (
+                    "LAX",
+                    "LHR",
+                    "BA",
+                    "282",
+                    "20261118",
+                    "8:00 PM on Wed, Nov 18",
+                    "£900",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        source = self._source(_MultiPage([board1, wrong_leg]))
+        with self.assertRaisesRegex(
+            GoogleFlightsMarkupError, "did not prove the requested journey"
+        ):
+            source.fetch(trip)
+
+    def test_failed_follow_up_preserves_completed_packages(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+                (
+                    "LHR",
+                    "JFK",
+                    "BA",
+                    "113",
+                    "20261110",
+                    "4:40 PM on Tue, Nov 10",
+                    "£400",
+                ),
+            ]
+        )
+        board2 = _multi_board_html(
+            [
+                (
+                    "JFK",
+                    "LAX",
+                    "AA",
+                    "201",
+                    "20261114",
+                    "9:00 AM on Sat, Nov 14",
+                    "£1,200",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        # The second candidate's click never advances its board.
+        page = _MultiPage([board1, board2], fail_after_clicks={2})
+        source = self._source(page)
+        cards = source.fetch(trip)
+        self.assertEqual(len(cards), 1)
+        error, scope_bound = source.metadata_for(trip)
+        self.assertIsInstance(error, GoogleFlightsMarkupError)
+        self.assertTrue(scope_bound)
+
+    def test_multi_city_with_bags_still_fails_before_the_browser(self) -> None:
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            ),
+            bags=1,
+        )
+
+        class NoBrowser:
+            def new_page(self):
+                raise AssertionError("unsupported filter must not open the browser")
+
+        source = GoogleFlightsSource(Path("."), session=NoBrowser(), currency="GBP")  # type: ignore[arg-type]
+        with self.assertRaises(GoogleFlightsUnsupported):
+            source.fetch(trip)
+
+    def test_multi_row_index_matches_owned_identity(self) -> None:
+        from viajante.google_flights import _multi_row_index
+
+        cards = parse_flight_cards(
+            _multi_board_html(
+                [
+                    ("LHR", "JFK", "AA", "103", "20261110", "10:15 AM", "£1"),
+                    ("LHR", "JFK", "BA", "113", "20261110", "4:40 PM", "£2"),
+                ]
+            )
+        )
+        board = [(0, cards[0]), (2, cards[1])]
+        self.assertEqual(_multi_row_index(board, board[1][1]), 2)
+        different_clock = replace(cards[1], departure="5:40 PM")
+        with self.assertRaises(GoogleFlightsMarkupError):
+            _multi_row_index(board, different_clock)
 
 
 class DetailSorryPageTests(unittest.TestCase):

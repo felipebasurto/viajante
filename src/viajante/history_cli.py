@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -44,8 +45,13 @@ or the 5-minute cache means a run records nothing.
 """
 
 
+def _amount(amount: float, *, signed: bool = False) -> str:
+    digits = max(2, -Decimal(str(amount)).as_tuple().exponent)
+    return format(amount, f"{'+' if signed else ''},.{digits}f")
+
+
 def _money(amount: float, currency: str) -> str:
-    return f"{amount:,.2f} {currency}"
+    return f"{_amount(amount)} {currency}"
 
 
 def add_parsers(sub: Any) -> None:
@@ -109,7 +115,7 @@ def _print_change(change: Mapping[str, Any] | None, currency: str) -> None:
         return
     print(
         f"    change since {change['previous']['observed_at']}: "
-        f"{change['price_change']:+,.2f} {currency} "
+        f"{_amount(change['price_change'], signed=True)} {currency} "
         f"({change['percent']:+.1f}%, {change['direction']})"
     )
 

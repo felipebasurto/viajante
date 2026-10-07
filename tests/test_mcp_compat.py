@@ -576,7 +576,13 @@ class GuideTests(_StateDir):
             if len(s) > 12
         ]
         self.assertGreater(len(sentences), 60)
-        missing = [s for s in sentences if s not in covered]
+        changed_transport_rules = {
+            "search_dates is HTTP-calendar only and has no fetch parameter.",
+            "Prefer bags / carry_on on the shopping request so Google prices the bag.",
+        }
+        missing = [s for s in sentences if s not in covered and s not in changed_transport_rules]
+        self.assertIn("bounded per-day public-page GETs", covered)
+        self.assertIn("refuses named checked bags", covered)
         self.assertEqual(missing, [])
 
     def test_guide_mentions_metro_codes_hotel_details_and_arrival_deadline(self) -> None:
@@ -591,6 +597,15 @@ class GuideTests(_StateDir):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, guide)
         self.assertIn("Also search_split_tickets", INSTRUCTIONS)
+
+    def test_guide_tells_round_trip_date_sweeps_to_pass_a_deadline(self) -> None:
+        guide = self._flat(GUIDE)
+        self.assertIn("Long round-trip date sweeps", guide)
+        self.assertIn(
+            "Pass deadline_seconds on those calls so finished days come back early",
+            guide,
+        )
+        self.assertNotIn("Long round-trip date sweeps", self._flat(INSTRUCTIONS))
 
     def test_guide_lists_get_guide_among_tools_that_may_run_during_a_search(self) -> None:
         text = self._flat(GUIDE)

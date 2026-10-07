@@ -32,7 +32,8 @@ from viajante.flights import (
     parse_offer_filters,
     validate_sort,
 )
-from viajante.google_flights import GoogleFlightsHttpSource, RawFlightCard, google_flights_url
+from viajante.google_flights import RawFlightCard, google_flights_url
+from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
 from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.models import (
     ExploreDestination,

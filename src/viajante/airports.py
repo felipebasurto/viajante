@@ -399,12 +399,18 @@ def same_city_iata(code: str) -> Tuple[str, ...]:
     return (seed, *rest)[:NEARBY_MAX]
 
 
+def canonical_city_name(query: str) -> str:
+    """Normalize only the city aliases owned by this catalogue."""
+    needle = " ".join(query.split()).casefold()
+    return _QUERY_REWRITE.get(needle, needle)
+
+
 def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
     needle = " ".join(query.split()).casefold()
     if not needle:
         raise ValueError("airport query must not be blank")
     extra_codes = _QUERY_EXTRA_IATA.get(needle, ())
-    needle = _QUERY_REWRITE.get(needle, needle)
+    needle = canonical_city_name(query)
     rows, by_code, by_city = _lookup_indexes()
     if len(needle) == 3 and needle.isalpha():
         exact = by_code.get(needle.upper())

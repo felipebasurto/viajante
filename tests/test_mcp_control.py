@@ -223,6 +223,18 @@ class ProgressTests(McpControlCase):
 
 
 class CancelTests(McpControlCase):
+    def test_cancelled_cached_replay_does_not_record_another_search(self):
+        source = self.use_source(FakeFlights())
+        args = _tool_args(routes=ROUTES[:1])
+        mcp_handlers.search_flights_tool(**args)
+        before = evidence.verify_answer("x")["searches"]
+        control = SearchControl()
+        control.cancel.set()
+        with active(control), self.assertRaises(SearchCancelled):
+            mcp_handlers.search_flights_tool(**args)
+        self.assertEqual(evidence.verify_answer("x")["searches"], before)
+        self.assertEqual(source.calls, 1)
+
     def test_cancelled_request_stops_the_worker_and_frees_the_lock(self) -> None:
         from mcp import types
 
@@ -274,6 +286,41 @@ class CancelTests(McpControlCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
             await loop.run_in_executor(None, mcp_server._SEARCH_BUSY.acquire)
+            mcp_server._SEARCH_BUSY.release()
+
+        with patch.dict(os.environ, {"VIAJANTE_PRICE_HISTORY": "1"}):
+            asyncio.run(main())
+        self.assertEqual(source.calls, 1)
+        self.assert_untouched()
+        self.assertEqual(evidence.verify_answer("x")["searches"], 0)
+
+    def test_cancellation_during_the_final_fetch_records_and_caches_nothing(self) -> None:
+        class HeldFlight(FakeFlights):
+            def __init__(self):
+                super().__init__()
+                self.release = threading.Event()
+
+            def fetch(self, trip):
+                self.calls += 1
+                self.started.set()
+                if not self.release.wait(5):
+                    raise AssertionError("test did not release the provider")
+                return [_card()]
+
+        source = self.use_source(HeldFlight())
+
+        async def main():
+            task = asyncio.create_task(
+                mcp_server.run_mcp_tool(
+                    mcp_handlers.search_flights_tool, **_tool_args(routes=ROUTES[:1])
+                )
+            )
+            self.assertTrue(await asyncio.to_thread(source.started.wait, 5))
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            source.release.set()
+            await asyncio.to_thread(mcp_server._SEARCH_BUSY.acquire)
             mcp_server._SEARCH_BUSY.release()
 
         with patch.dict(os.environ, {"VIAJANTE_PRICE_HISTORY": "1"}):
@@ -965,7 +1012,7 @@ class PartialBatchTests(unittest.TestCase):
         self.addCleanup(thread.join, 2)
         self.addCleanup(client._loop.call_soon_threadsafe, client._loop.stop)
 
-        async def apost(url, data, headers, timeout):
+        async def apost(url, data, headers, timeout, cancel_event=None):
             if url.endswith("slow"):
                 await asyncio.sleep(30)
             return SweepHttpResponse(200, "arrived", url)

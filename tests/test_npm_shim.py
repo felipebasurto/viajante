@@ -47,7 +47,7 @@ class NpmShimTests(unittest.TestCase):
 
     def test_shim_pins_uvx_to_this_version(self) -> None:
         text = (NPM / "bin" / "cli.js").read_text(encoding="utf-8")
-        self.assertIn("viajante[mcp]==${version}", text)
+        self.assertIn("viajante[mcp,browser]==${version}", text)
         self.assertIn("viajante==${version}", text)
         self.assertIn('spawn("uvx"', text)
         self.assertIn('name !== "viajante"', text)
@@ -69,7 +69,8 @@ require(shim);
         version = _pyproject_version()
         for name, spec, binary in (
             ("viajante", f"viajante=={version}", "viajante"),
-            ("viajante-mcp", f"viajante[mcp]=={version}", "viajante-mcp"),
+            ("viajante-mcp", f"viajante[mcp,browser]=={version}", "viajante-mcp"),
+            ("mcp", f"viajante[mcp,browser]=={version}", "viajante-mcp"),
         ):
             result = subprocess.run(
                 ["node", "-e", script, str(NPM / "bin" / "cli.js"), name],

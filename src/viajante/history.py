@@ -27,8 +27,10 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
+from viajante.control import check_cancelled
 from viajante.models import HotelQuerySuccess, QuerySuccess
 from viajante.runtime import package_version
 from viajante.storage import default_state_dir, exclusive_lock, write_bytes_atomic
@@ -110,9 +112,38 @@ def _valid(line: bytes) -> Optional[dict]:
     cheapest = row.get("cheapest")
     if isinstance(cheapest, bool) or not isinstance(cheapest, (int, float)):
         return None
-    if not math.isfinite(cheapest) or cheapest <= 0:
+    try:
+        finite = math.isfinite(cheapest)
+    except OverflowError:
+        # JSON integers are arbitrary precision; malformed local history must
+        # not make a reader or the next append fail while coercing one to float.
+        return None
+    if not finite or cheapest <= 0:
         return None
     if not isinstance(row.get("query"), dict) or not isinstance(row.get("filters"), dict):
+        return None
+    query = row["query"]
+    legs = query.get("legs")
+    if legs is not None and (
+        not isinstance(legs, list)
+        or not all(
+            isinstance(leg, dict) and isinstance(leg.get("departure_date"), str) for leg in legs
+        )
+    ):
+        return None
+    required = (
+        ("location", "check_in", "check_out")
+        if row["kind"] == "hotel"
+        else ("origin", "destination", "departure_date", "trip")
+    )
+    if row["kind"] not in ("flight", "hotel") or not all(
+        isinstance(query.get(key), str) for key in required
+    ):
+        return None
+    if not all(
+        isinstance(query.get(key), int) and not isinstance(query[key], bool) and query[key] > 0
+        for key in (("adults", "rooms") if row["kind"] == "hotel" else ("adults",))
+    ):
         return None
     return row
 
@@ -301,6 +332,7 @@ def _recorded(build: Callable[[Any, Mapping[str, Any]], list[dict]]):
         @functools.wraps(search)
         def wrapper(*args, **kwargs):
             report = search(*args, **kwargs)
+            check_cancelled()
             if recording_enabled():
                 sink = _sink.get()
                 entries: list[dict] = []
@@ -334,7 +366,7 @@ def _point(row: Mapping[str, Any]) -> dict:
 
 def change_between(previous: Mapping[str, Any], current: Mapping[str, Any]) -> dict:
     """Difference between two observations the caller has already matched."""
-    delta = round(current["cheapest"] - previous["cheapest"], 2)
+    delta = float(Decimal(str(current["cheapest"])) - Decimal(str(previous["cheapest"])))
     return {
         "previous": _point(previous),
         "price_change": delta,

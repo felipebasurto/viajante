@@ -11,12 +11,18 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlsplit
 
 from selectolax.lexbor import LexborHTMLParser
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
-from viajante.control import SearchDeadline, checkpoint, wait_for_future
+from viajante.control import (
+    SearchCancelled,
+    SearchDeadline,
+    checkpoint,
+    current_control,
+    wait_for_future,
+)
 from viajante.google_flights_rpc import (
     SHOPPING_POST_HEADERS,
     CompactCalendarDay,
@@ -31,17 +37,21 @@ from viajante.google_flights_rpc import (
     parse_calendar_body,
     parse_explore_body,
     parse_shopping_body,
+    raw_rpc_error_status,
     rpc_error_status,
 )
 from viajante.models import (
     FETCH_LANGUAGE,
     FETCH_LOCALE,
     FlightCabin,
+    FlightLeg,
+    MultiCity,
     RawJourneyLeg,
     RawLayover,
     RawSegment,
     Trip,
 )
+from viajante.parsers import normalize_clock, parse_price
 from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tests
     NOT_SENT,
     RATE_LIMIT_COOLDOWN_SECONDS,
@@ -50,6 +60,7 @@ from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tes
     rate_limit_advice,
     rate_limit_status,
 )
+from viajante.sweep_config import get_sweep_config
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
@@ -84,6 +95,9 @@ _SHORT_SHELL_MARK = "short unknown shell"
 RESULTS_SELECTOR = ".eQ35Ce"
 EMPTY_STATE_SELECTOR = "div.QEk4oc.BgYkof"
 READY_SELECTOR = f"{RESULTS_SELECTOR}, {EMPTY_STATE_SELECTOR}"
+# Multi-city clicks through one board per extra journey; the budget keeps total
+# selections on the round-trip scale (~8) regardless of leg count.
+_MULTI_CLICK_BUDGET = 8
 EMPTY_STATE_TEXT = "No options matching your search"
 
 SECTION_SELECTOR = 'div[jsname="IWWDBc"], div[jsname="YdtKid"]'
@@ -129,9 +143,16 @@ class GoogleFlightsMarkupError(RuntimeError):
 class GoogleFlightsBlocked(RuntimeError):
     """HTTP sweep hit a consent wall, captcha, or traffic block."""
 
-    def __init__(self, message: str = "", *, status: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        status: Optional[int] = None,
+        diagnostics: Optional[Mapping[str, object]] = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
+        self.diagnostics = diagnostics
 
 
 class SweepTransportError(RuntimeError):
@@ -381,6 +402,10 @@ class SweepHttpResponse:
     url: str = ""
     rate_limit: Optional[str] = None
     deadline: bool = False
+    request_sent: bool = True
+    attempts: int = 1
+    stopped: bool = False
+    cooldown_basis: Optional[str] = None
 
 
 # Not an HTTP status: marks a multiplexed job whose request raised before any response.
@@ -404,14 +429,33 @@ class _CooldownClient:
 
     def __init__(self, state: Mapping[str, float]) -> None:
         self._advice = rate_limit_advice(state, sent=False)
+        self._basis = str(state.get("basis", "unknown"))
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+        return SweepHttpResponse(
+            0,
+            "",
+            url,
+            rate_limit=self._advice,
+            request_sent=False,
+            attempts=0,
+            stopped=True,
+            cooldown_basis=self._basis,
+        )
 
     def post(
         self, url: str, *, data: str, headers: Mapping[str, str], timeout: float
     ) -> SweepHttpResponse:
-        return SweepHttpResponse(429, "", url, rate_limit=self._advice)
+        return SweepHttpResponse(
+            0,
+            "",
+            url,
+            rate_limit=self._advice,
+            request_sent=False,
+            attempts=0,
+            stopped=True,
+            cooldown_basis=self._basis,
+        )
 
     def close(self) -> None:
         return None
@@ -421,7 +465,7 @@ COOLDOWN_UNCHECKED: Any = object()
 
 
 def cooldown_client(snapshot: Any) -> tuple[Any, Optional[_CooldownClient]]:
-    """Read the cooldown once per search; mid-search 429 replays keep the live session."""
+    """Read the cooldown once per search; live responses have their own stop policy."""
     state = rate_limit_status() if snapshot is COOLDOWN_UNCHECKED else snapshot
     return state, (_CooldownClient(state) if state is not None else None)
 
@@ -456,6 +500,12 @@ def _as_sweep_response(response: Any) -> SweepHttpResponse:
     )
 
 
+def _raise_if_cancelled(cancel_event: Optional[threading.Event]) -> None:
+    """Carry the caller's cancellation across the sweep client's event-loop thread."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise SearchCancelled()
+
+
 @dataclass(frozen=True)
 class SweepPost:
     url: str
@@ -478,6 +528,9 @@ class ChromeSweepClient:
 
         from curl_cffi import CurlHttpVersion
 
+        config = get_sweep_config()
+        self._streams = config.concurrency
+        self.sweep_mode = config.mode
         curl_requests = _curl_requests()
         self._asyncio = asyncio
         self._proxied = _normalize_proxy(proxy) is not None
@@ -489,7 +542,7 @@ class ChromeSweepClient:
         ready = threading.Event()
         session_kw: dict[str, Any] = {
             "impersonate": "chrome",
-            "max_clients": _SWEEP_STREAMS,
+            "max_clients": self._streams,
             "timeout": HTTP_TIMEOUT_SECONDS,
             "allow_redirects": True,
             "loop": self._loop,
@@ -534,8 +587,14 @@ class ChromeSweepClient:
         future = self._asyncio.run_coroutine_threadsafe(coro, self._loop)
         return wait_for_future(future, max(timeout + 5.0, 10.0))
 
-    async def _dismiss_consent(self, response: Any, timeout: float) -> bool:
+    async def _dismiss_consent(
+        self,
+        response: Any,
+        timeout: float,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> bool:
         async with self._consent_lock:
+            _raise_if_cancelled(cancel_event)
             if self._consent_ok:
                 return True
             parsed = _consent_reject_form(response.text, str(response.url))
@@ -545,34 +604,57 @@ class ChromeSweepClient:
             save = await self._session.post(
                 action, data=fields, timeout=timeout, allow_redirects=True
             )
+            _raise_if_cancelled(cancel_event)
             # ponytail: SOCS is process-lifetime; 429 reset builds a new client.
             self._consent_ok = not _is_consent_interstitial(str(save.url))
             return self._consent_ok
 
-    async def _exchange(self, send: Any, timeout: float) -> SweepHttpResponse:
+    async def _exchange(
+        self,
+        send: Any,
+        timeout: float,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> SweepHttpResponse:
+        _raise_if_cancelled(cancel_event)
         response = await send()
+        _raise_if_cancelled(cancel_event)
         if _is_consent_interstitial(str(response.url)) and await self._dismiss_consent(
-            response, timeout
+            response, timeout, cancel_event
         ):
+            _raise_if_cancelled(cancel_event)
             response = await send()
+            _raise_if_cancelled(cancel_event)
         out = _as_sweep_response(response)
         # ponytail: a proxy is another egress IP, so its limit does not pause direct searches.
         if self._proxied:
             return out
+        _raise_if_cancelled(cancel_event)
         if out.status == 429:
             state = note_rate_limited(_retry_after_seconds(response))
-            out = replace(out, rate_limit=rate_limit_advice(state))
-        elif out.status == 200 and rpc_error_status(out.text) == RPC_THROTTLE_STATUS:
-            state = note_rate_limited()
             out = replace(
-                out, rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}")
+                out,
+                rate_limit=rate_limit_advice(state),
+                cooldown_basis=state.get("basis", "unknown"),
+            )
+        elif out.status == 200 and raw_rpc_error_status(out.text) == RPC_THROTTLE_STATUS:
+            state = note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+            out = replace(
+                out,
+                rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}"),
+                cooldown_basis=state.get("basis", "unknown"),
             )
         return out
 
-    async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
+    async def _aget(
+        self,
+        url: str,
+        timeout: float,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> SweepHttpResponse:
         return await self._exchange(
             lambda: self._session.get(url, timeout=timeout, allow_redirects=True),
             timeout,
+            cancel_event,
         )
 
     async def _apost(
@@ -581,6 +663,7 @@ class ChromeSweepClient:
         data: str,
         headers: Mapping[str, str],
         timeout: float,
+        cancel_event: Optional[threading.Event] = None,
     ) -> SweepHttpResponse:
         return await self._exchange(
             lambda: self._session.post(
@@ -591,10 +674,13 @@ class ChromeSweepClient:
                 allow_redirects=True,
             ),
             timeout,
+            cancel_event,
         )
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-        return self._submit(self._aget(url, timeout), timeout=timeout)
+        control = current_control()
+        cancel_event = control.cancel if control is not None else None
+        return self._submit(self._aget(url, timeout, cancel_event), timeout=timeout)
 
     def post(
         self,
@@ -604,7 +690,9 @@ class ChromeSweepClient:
         headers: Mapping[str, str],
         timeout: float,
     ) -> SweepHttpResponse:
-        return self._submit(self._apost(url, data, headers, timeout), timeout=timeout)
+        control = current_control()
+        cancel_event = control.cancel if control is not None else None
+        return self._submit(self._apost(url, data, headers, timeout, cancel_event), timeout=timeout)
 
     def post_many(
         self,
@@ -618,13 +706,60 @@ class ChromeSweepClient:
             job = jobs[0]
             return [self.post(job.url, data=job.data, headers=job.headers, timeout=timeout)]
         out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        sent = [False] * len(jobs)
+        control = current_control()
+        cancel_event = control.cancel if control is not None else None
         try:
-            return list(self._submit(self._apost_many(jobs, timeout, out), timeout=timeout))
+            return list(
+                self._submit(
+                    self._apost_many(jobs, timeout, out, cancel_event, sent=sent),
+                    timeout=timeout,
+                )
+            )
         except SearchDeadline:
             # Responses that already arrived are real; only the rest were not loaded.
             return [
-                item if item is not None else SweepHttpResponse(0, "", job.url, deadline=True)
-                for item, job in zip(out, jobs, strict=True)
+                item
+                if item is not None
+                else SweepHttpResponse(
+                    0,
+                    "",
+                    job.url,
+                    deadline=True,
+                    request_sent=sent[index],
+                    attempts=1 if sent[index] else 0,
+                )
+                for index, (item, job) in enumerate(zip(out, jobs, strict=True))
+            ]
+
+    def get_many(self, urls: Sequence[str], *, timeout: float) -> list[SweepHttpResponse]:
+        if not urls:
+            return []
+        jobs = [SweepPost(url, "", {}) for url in urls]
+        out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        sent = [False] * len(jobs)
+        control = current_control()
+        cancel_event = control.cancel if control is not None else None
+        try:
+            return list(
+                self._submit(
+                    self._apost_many(jobs, timeout, out, cancel_event, get=True, sent=sent),
+                    timeout=timeout,
+                )
+            )
+        except SearchDeadline:
+            return [
+                item
+                if item is not None
+                else SweepHttpResponse(
+                    0,
+                    "",
+                    job.url,
+                    deadline=True,
+                    request_sent=sent[index],
+                    attempts=1 if sent[index] else 0,
+                )
+                for index, (item, job) in enumerate(zip(out, jobs, strict=True))
             ]
 
     async def _apost_many(
@@ -632,13 +767,18 @@ class ChromeSweepClient:
         jobs: Sequence[SweepPost],
         timeout: float,
         out: list[SweepHttpResponse | None],
+        cancel_event: Optional[threading.Event] = None,
+        *,
+        get: bool = False,
+        sent: Optional[list[bool]] = None,
     ) -> list[SweepHttpResponse]:
         # Keep HTTP/2 multiplex on the happy path. After HTTP 429 or a transport
-        # failure, stop feeding this TLS session; unsent jobs carry the same status
-        # so the caller can continue them on a fresh session.
-        semaphore = self._asyncio.Semaphore(_SWEEP_STREAMS)
+        # failure, stop feeding this TLS session. Unsent blocking jobs have no HTTP
+        # status; only transport failures may be continued on a fresh session.
+        semaphore = self._asyncio.Semaphore(getattr(self, "_streams", _SWEEP_STREAMS))
         stop = self._asyncio.Event()
-        stop_status = 429
+        stop_status = 0
+        dispatched = sent if sent is not None else [False] * len(jobs)
 
         async def _one(index: int, job: SweepPost) -> None:
             nonlocal stop_status
@@ -647,8 +787,17 @@ class ChromeSweepClient:
             async with semaphore:
                 if stop.is_set():
                     return
+                dispatched[index] = True
                 try:
-                    response = await self._apost(job.url, job.data, job.headers, timeout)
+                    response = (
+                        await self._aget(job.url, timeout, cancel_event)
+                        if get
+                        else await self._apost(
+                            job.url, job.data, job.headers, timeout, cancel_event
+                        )
+                    )
+                except SearchDeadline:
+                    raise
                 except Exception as exc:
                     if not stop.is_set():
                         stop_status = SWEEP_TRANSPORT_STATUS
@@ -658,7 +807,10 @@ class ChromeSweepClient:
                     )
                     return
                 out[index] = response
-                if response.status == 429:
+                if (
+                    response.status == 429
+                    or raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS
+                ):
                     stop.set()
 
         await self._asyncio.gather(*[_one(index, job) for index, job in enumerate(jobs)])
@@ -669,10 +821,13 @@ class ChromeSweepClient:
                 stop_status,
                 "not sent after an earlier transport failure"
                 if stop_status == SWEEP_TRANSPORT_STATUS
-                else "",
+                else "Not sent. Remaining batch stopped after a provider block.",
                 job.url,
+                request_sent=dispatched[index],
+                attempts=1 if dispatched[index] else 0,
+                stopped=True,
             )
-            for item, job in zip(out, jobs, strict=True)
+            for index, (item, job) in enumerate(zip(out, jobs, strict=True))
         ]
 
     def close(self) -> None:
@@ -688,28 +843,36 @@ class ChromeSweepClient:
 _SHARED_CLIENT_LOCK = threading.Lock()
 _SHARED_CLIENT: Optional[ChromeSweepClient] = None
 _SHARED_CLIENT_PROXY: Optional[str] = None
+_SHARED_CLIENT_MODE: Optional[str] = None
 
 
 def shared_chrome_sweep_client(*, proxy: Optional[str] = None) -> ChromeSweepClient:
-    global _SHARED_CLIENT, _SHARED_CLIENT_PROXY
+    global _SHARED_CLIENT, _SHARED_CLIENT_PROXY, _SHARED_CLIENT_MODE
     wanted = _normalize_proxy(proxy)
+    mode = get_sweep_config().mode
     with _SHARED_CLIENT_LOCK:
-        if _SHARED_CLIENT is not None and _SHARED_CLIENT_PROXY == wanted:
+        if (
+            _SHARED_CLIENT is not None
+            and _SHARED_CLIENT_PROXY == wanted
+            and _SHARED_CLIENT_MODE == mode
+        ):
             return _SHARED_CLIENT
         old = _SHARED_CLIENT
         _SHARED_CLIENT = ChromeSweepClient(proxy=wanted)
         _SHARED_CLIENT_PROXY = wanted
+        _SHARED_CLIENT_MODE = mode
     if old is not None:
         old.close()
     return _SHARED_CLIENT
 
 
 def reset_shared_chrome_sweep_client() -> None:
-    global _SHARED_CLIENT, _SHARED_CLIENT_PROXY
+    global _SHARED_CLIENT, _SHARED_CLIENT_PROXY, _SHARED_CLIENT_MODE
     with _SHARED_CLIENT_LOCK:
         client = _SHARED_CLIENT
         _SHARED_CLIENT = None
         _SHARED_CLIENT_PROXY = None
+        _SHARED_CLIENT_MODE = None
     if client is not None:
         client.close()
 
@@ -754,13 +917,53 @@ def _raise_if_blocked(
         # Seen alongside google.com/sorry for the same IP while shopping still answers.
         raise GoogleFlightsBlocked(
             f"Google Flights answered with RPC error status {rpc_status} and no data "
-            f"from {fallback_url}. Google does this while throttling this IP; "
-            "wait before searching again."
+            f"from {urlsplit(fallback_url).netloc}{urlsplit(fallback_url).path}. "
+            "The cause is unknown; this status alone does not prove an IP block."
         )
     if looks_blocked(body, final_url):
         raise GoogleFlightsBlocked(
             f"Google Flights blocked the sweep at {final_url or fallback_url}"
         )
+
+
+def response_diagnostics(response: SweepHttpResponse, url: str) -> dict[str, object]:
+    endpoint = urlsplit(url)
+    return {
+        "http_status": response.status
+        if response.request_sent and response.status != SWEEP_TRANSPORT_STATUS
+        else None,
+        "rpc_status": raw_rpc_error_status(response.text) if response.request_sent else None,
+        "request_sent": response.request_sent,
+        "attempts": response.attempts,
+        "endpoint": endpoint.netloc + endpoint.path,
+        "cooldown_basis": response.cooldown_basis,
+    }
+
+
+def raise_for_sweep_response(response: SweepHttpResponse, url: str) -> None:
+    if response.deadline:
+        raise SearchDeadline()
+    diagnostics = response_diagnostics(response, url)
+    if response.stopped and not response.request_sent and response.status != SWEEP_TRANSPORT_STATUS:
+        raise GoogleFlightsBlocked(
+            response.rate_limit or response.text,
+            status=429 if response.rate_limit else None,
+            diagnostics=diagnostics,
+        )
+    raw_status = raw_rpc_error_status(response.text)
+    if raw_status == RPC_THROTTLE_STATUS:
+        message = response.rate_limit or (
+            "Google Flights returned RPC status 13. The cause is unknown; "
+            "availability is not disproved."
+        )
+        raise GoogleFlightsBlocked(
+            message, status=429 if response.rate_limit else None, diagnostics=diagnostics
+        )
+    try:
+        _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
+    except GoogleFlightsBlocked as exc:
+        exc.diagnostics = diagnostics
+        raise
 
 
 def _is_retriable_sweep_failure(exc: BaseException) -> bool:
@@ -790,12 +993,46 @@ def fetch_search_html(
         _, paused = cooldown_client(COOLDOWN_UNCHECKED)
         client = paused or shared_chrome_sweep_client()
     response = client.get(url, timeout=timeout)
-    _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
+    raise_for_sweep_response(response, url)
     return response.text, response.url
 
 
 def parse_http_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     return parse_flight_cards(extract_main_html(html))
+
+
+def _multi_identity(card: RawFlightCard) -> tuple[object, ...]:
+    """Owned segment routes/numbers/dates and the board's departure clock."""
+    departure = normalize_clock(card.departure)
+    if departure is None or len(card.legs) != 1 or not card.legs[0].segments:
+        raise GoogleFlightsMarkupError("The selected journey has an incomplete identity.")
+    segments = card.legs[0].segments
+    identity = tuple(
+        (s.origin, s.destination, s.departure_date, s.carrier, s.flight_number) for s in segments
+    )
+    if any(value is None or value == "" for row in identity for value in row):
+        raise GoogleFlightsMarkupError("The selected journey has an incomplete identity.")
+    return departure, identity
+
+
+def _multi_row_index(board: Sequence[tuple[int, RawFlightCard]], wanted: RawFlightCard) -> int:
+    """DOM index of the unique board row matching the complete owned identity."""
+    identity = _multi_identity(wanted)
+    matches = []
+    for index, card in board:
+        try:
+            same = _multi_identity(card) == identity
+        except GoogleFlightsMarkupError:
+            continue
+        if same:
+            matches.append(index)
+    if len(matches) > 1:
+        raise GoogleFlightsMarkupError("The selected journey is ambiguous on the reloaded board.")
+    if not matches:
+        raise GoogleFlightsMarkupError(
+            "The selected journey no longer appears on the reloaded board."
+        )
+    return matches[0]
 
 
 def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
@@ -959,16 +1196,18 @@ class GoogleFlightsHttpSource:
     def _plan_replay(
         self, client: SweepHttpClient, outcomes: Sequence[object]
     ) -> tuple[SweepHttpClient, list[int]]:
-        """One replay of retriable failures; a 429 or transport failure resets TLS and replays too.
+        """One replay of retriable failures; a provider block prevents every replay.
 
         Transport failures are replayed only here, as a batch, never again per query.
         """
         failures = [(i, o) for i, o in enumerate(outcomes) if isinstance(o, BaseException)]
-        rate = [
-            i
-            for i, exc in failures
-            if _is_rate_limited_sweep_failure(exc) or isinstance(exc, SweepTransportError)
-        ]
+        if any(
+            isinstance(exc, GoogleFlightsBlocked)
+            and (exc.status in {403, 429} or (exc.diagnostics or {}).get("rpc_status") == 13)
+            for _, exc in failures
+        ):
+            return client, []
+        rate = [i for i, exc in failures if isinstance(exc, SweepTransportError)]
         retry = [i for i, exc in failures if i not in rate and _is_retriable_sweep_failure(exc)]
         replay = sorted(rate + retry) if rate else retry
         if not replay or SWEEP_RETRY_LIMIT < 1:
@@ -1117,6 +1356,7 @@ class GoogleFlightsHttpSource:
     ) -> tuple[RawFlightCard, ...]:
         if response.deadline:
             raise SearchDeadline()
+        raise_for_sweep_response(response, url)
         if (
             response.status in {403, 429}
             or response.status >= 500
@@ -1233,7 +1473,19 @@ class GoogleFlightsHttpSource:
         return response
 
 
+_DETAIL_UNPROVEN = (
+    "bags",
+    "carry_on",
+    "airlines",
+    "exclude_airlines",
+    "alliances",
+    "exclude_alliances",
+)
+
+
 class GoogleFlightsSource:
+    automatic_typical = False
+
     def __init__(
         self,
         state_dir: Path,
@@ -1253,12 +1505,32 @@ class GoogleFlightsSource:
         self._session = session or ChromiumSession(state_dir, self._config)
         self._http: Optional[GoogleFlightsHttpSource] = None
         self._started = False
+        self.partial_error: Optional[BaseException] = None
+        self.scope_bound = False
+        self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
 
     @property
     def config(self) -> BrowserSessionConfig:
         return self._config
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
+        from viajante.google_flights_public import (
+            GoogleFlightsUnsupported,
+            PublicGoogleFlightsHttpSource,
+        )
+
+        # Detail reads no page echo, so a bag or carrier filter it sends stays unproven.
+        unproven = [key for key in _DETAIL_UNPROVEN if getattr(trip, key, None) is not None]
+        if unproven:
+            raise GoogleFlightsUnsupported(
+                "Not sent. Browser detail cannot verify these requested capabilities: "
+                + ", ".join(unproven)
+                + ". The public-page sweep verifies carry-on and airline or alliance includes."
+            )
+        # The public page bootstraps no multi-city results; the browser UI renders them.
+        PublicGoogleFlightsHttpSource._validate_capabilities(self, trip, allow_multi_city=True)
+        if isinstance(trip, MultiCity):
+            return self._fetch_multi(trip)
         return parse_flight_cards(
             self._fetch_html(
                 build_search_url(
@@ -1269,6 +1541,180 @@ class GoogleFlightsSource:
                 )
             )
         )
+
+    def _fetch_multi(self, trip: MultiCity) -> tuple[RawFlightCard, ...]:
+        """Complete multi-city packages by clicking through the real board UI.
+
+        The public results page returns a shell for multi-city searches; the
+        browser renders each journey's board after the previous selection. Each
+        emitted card is a complete provider package: every journey leg comes
+        from an owned board row echoed against the request, priced by the
+        provider's own package total on the last board (never a sum of one-way
+        fares). Coverage is bounded to a few first-journey candidates; middle
+        journeys take their cheapest displayed continuation. Completed packages
+        survive a failed follow-up.
+        """
+        if not self._started:
+            state = rate_limit_status()
+            if state is not None:
+                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+            self._started = True
+        self.partial_error = None
+        self.scope_bound = True  # Bounded first-journey coverage, like the RT cap.
+        url = build_search_url(
+            trip,
+            html_lang=self._config.html_lang,
+            currency=self._config.currency,
+            country=self._config.country,
+        )
+        page = self._session.new_page()
+        complete: list[RawFlightCard] = []
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            if "consent.google" in page.url:
+                self._dismiss_consent(page)
+            if looks_blocked("", page.url):
+                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
+            leaders = sorted(
+                self._multi_board(page, trip.legs[0]),
+                key=lambda ic: parse_price(ic[1].price) or float("inf"),
+            )
+            budget = max(2, _MULTI_CLICK_BUDGET // (len(trip.legs) - 1))
+            for index, (_first_index, leader) in enumerate(leaders[:budget]):
+                checkpoint()
+                try:
+                    if index:
+                        self._multi_reset(page, url)
+                    # Re-locate the candidate on the (re)loaded board by owned
+                    # identity; row order is not guaranteed across reloads.
+                    board = self._multi_board(page, trip.legs[0])
+                    dom_index = _multi_row_index(board, leader)
+                    selected_leader = next(card for row, card in board if row == dom_index)
+                    path = [selected_leader.legs[0]]
+                    self._multi_click(page, dom_index)
+                    for leg in trip.legs[1:-1]:
+                        checkpoint()
+                        continuations = sorted(
+                            self._multi_board(page, leg),
+                            key=lambda ic: parse_price(ic[1].price) or float("inf"),
+                        )
+                        next_index, next_card = continuations[0]
+                        path.append(next_card.legs[0])
+                        self._multi_click(page, next_index)
+                    finals = self._multi_board(page, trip.legs[-1])
+                except SearchDeadline:
+                    if not complete:
+                        raise
+                    self.partial_error = SearchDeadline()
+                    break
+                except Exception as exc:
+                    self.partial_error = exc
+                    if isinstance(exc, GoogleFlightsBlocked):
+                        break
+                else:
+                    for _last_index, last in finals:
+                        selected = tuple(path) + (last.legs[0],)
+                        complete.append(
+                            replace(
+                                selected_leader,
+                                price=last.price,
+                                booking_token=last.booking_token,
+                                legs=selected,
+                                flight_numbers=tuple(
+                                    segment.flight_number
+                                    for journey in selected
+                                    for segment in journey.segments
+                                    if segment.flight_number
+                                ),
+                            )
+                        )
+            if not complete:
+                if self.partial_error is not None and not isinstance(
+                    self.partial_error, NoFlightsFound
+                ):
+                    raise self.partial_error
+                raise GoogleFlightsMarkupError(
+                    "No complete multi-city package was proved by the browser pages."
+                )
+        finally:
+            with contextlib.suppress(Exception):
+                page.close()
+        self._query_meta[trip] = (self.partial_error, self.scope_bound)
+        return tuple(complete)
+
+    def _multi_board(self, page: object, leg: FlightLeg) -> list[tuple[int, RawFlightCard]]:
+        """(DOM row index, card) pairs echoing the requested journey leg.
+
+        The index counts every ``ul.Rk10dc li`` in document order so the row can
+        be clicked back with ``locator(CARD_SELECTOR).nth(index)``.
+        """
+        from viajante.google_flights_public import PublicGoogleFlightsHttpSource
+
+        page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+        checkpoint()
+        html = page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
+        matches_leg = PublicGoogleFlightsHttpSource._matches_leg
+        matched: list[tuple[int, RawFlightCard]] = []
+        parser = LexborHTMLParser(html)
+        for position, item in enumerate(parser.css(CARD_SELECTOR)):
+            card = _extract_card(item)
+            if card is not None and matches_leg(card, leg):
+                matched.append((position, card))
+        if not matched:
+            raise GoogleFlightsMarkupError(
+                "Browser board rows did not prove the requested journey."
+            )
+        return matched
+
+    def metadata_for(self, trip: Trip):
+        return self._query_meta.get(trip, (None, False))
+
+    @staticmethod
+    def _multi_sig(page: object) -> str:
+        return page.evaluate(
+            "() => {"
+            "const m = document.querySelector('[role=\"main\"]');"
+            "if (!m) return '';"
+            "const h = m.querySelector('h3');"
+            "const r = m.querySelector('ul.Rk10dc li');"
+            "return (h ? h.textContent : '') + '|' + (r ? r.textContent : '');}"
+        )
+
+    def _multi_click(self, page: object, dom_index: int) -> None:
+        """Click one board row and wait for the board to advance."""
+        prev_sig = self._multi_sig(page)
+        page.locator(CARD_SELECTOR).nth(dom_index).click(timeout=CONSENT_CLICK_TIMEOUT_MS)
+        try:
+            page.wait_for_function(
+                "(prev) => {"
+                "const m = document.querySelector('[role=\"main\"]');"
+                "if (!m) return false;"
+                "const h = m.querySelector('h3');"
+                "const r = m.querySelector('ul.Rk10dc li');"
+                "const sig = (h ? h.textContent : '') + '|' + (r ? r.textContent : '');"
+                "return r !== null && sig !== prev;}",
+                arg=prev_sig,
+                timeout=PAGE_TIMEOUT_MS,
+            )
+        except SearchDeadline:
+            raise
+        except Exception as exc:
+            raise GoogleFlightsMarkupError(
+                "The clicked board did not advance to the next journey."
+            ) from exc
+
+    def _multi_reset(self, page: object, url: str) -> None:
+        """Return to the first journey's board for the next candidate."""
+        checkpoint()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            if looks_blocked("", page.url):
+                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
+            page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+        except (SearchDeadline, GoogleFlightsBlocked):
+            raise
+        except Exception as exc:
+            raise GoogleFlightsMarkupError("Could not reload the first journey board.") from exc
 
     def fetch_calendar(
         self,

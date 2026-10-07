@@ -134,9 +134,17 @@ def _previous(
     evidence_id: str | None = "gf_test",
 ) -> dict:
     row = dict(_offer(price, segments).to_dict("USD"))
+    inferred_query = FlightQuery(
+        segments[0].origin or "JFK",
+        segments[-1].destination or "LHR",
+        segments[0].departure_date or FAR,
+        max_stops=1,
+        adults=1,
+        cabin="economy",
+    )
     evidence_row: dict = {
         "source": "google_flights",
-        "query": query if query is not None else dict(_query().to_dict()),
+        "query": query if query is not None else dict(inferred_query.to_dict()),
         "fetch_backend": backend,
     }
     if currency:
@@ -478,6 +486,56 @@ class IdentityTests(unittest.TestCase):
         previous = _previous(OUTBOUND)
         row = {"status": "ok", "query": previous["evidence"]["query"], "offer": previous}
         result = recheck_offer(row, search=_Stub(_report(_offer(500.0, (OUTBOUND,)))))
+        self.assertEqual(result["outcome"], "same_price")
+
+    def test_explicit_query_cannot_change_the_offer_route_or_any_journey_date(self) -> None:
+        wrong_route = {**_query().to_dict(), "destination": "CDG"}
+        wrong_outbound_date = dict(_query(FAR + timedelta(days=1)).to_dict())
+        wrong_return_date = dict(
+            RoundTrip(
+                "JFK", "LHR", FAR, RETURN_DAY + timedelta(days=1), adults=1, cabin="economy"
+            ).to_dict()
+        )
+        cases = (
+            (_previous(OUTBOUND), wrong_route),
+            (_previous(OUTBOUND), wrong_outbound_date),
+            (_round_trip_previous(), wrong_return_date),
+        )
+        for previous, query in cases:
+            stub = _Stub(_report())
+            with self.subTest(query=query), self.assertRaisesRegex(ValueError, "query"):
+                recheck_offer(previous, query=query, search=stub)
+            self.assertEqual(stub.calls, [])
+
+    def test_future_override_cannot_hide_a_past_owned_departure(self) -> None:
+        past_day = date.today() - timedelta(days=1)
+        past_segment = _segment("JFK", "LHR", "19:30", "07:30", "BA178", day=past_day)
+        previous = _previous(past_segment, query=dict(_query(past_day).to_dict()))
+        stub = _Stub(_report())
+        with self.assertRaisesRegex(ValueError, "query"):
+            recheck_offer(previous, query=dict(_query().to_dict()), search=stub)
+        self.assertEqual(stub.calls, [])
+
+    def test_external_offer_can_use_query_when_arrival_date_is_unknown(self) -> None:
+        previous = _previous(OUTBOUND)
+        previous.pop("evidence")
+        row = {"query": dict(_query().to_dict()), "offer": previous}
+        result = recheck_offer(
+            row,
+            currency="USD",
+            search=_Stub(_report(_offer(500.0, (OUTBOUND,)))),
+        )
+        self.assertEqual(result["outcome"], "same_price")
+        self.assertEqual(result["previous"]["source"], "caller_supplied")
+
+    def test_airport_change_between_segments_does_not_break_route_binding(self) -> None:
+        first = _segment("JFK", "LGA", "08:00", "09:00", "AA100")
+        second = _segment("EWR", "LHR", "12:00", "19:00", "BA200")
+        previous = _previous(first, second)
+        result = recheck_offer(
+            previous,
+            search=_Stub(_report(_offer(500.0, (first, second)))),
+        )
         self.assertEqual(result["outcome"], "same_price")
 
     def test_unsupported_input_is_refused_before_any_search(self) -> None:
@@ -1242,10 +1300,10 @@ class McpToolTests(unittest.TestCase):
     def test_a_real_id_on_another_itinerary_is_caller_supplied_and_not_owned(self) -> None:
         evidence.record({"offers": [_previous(OUTBOUND)]})
         elsewhere = _segment("JFK", "NRT", "19:30", "22:30", "BA999")
-        result = self._recheck(_previous(elsewhere), current=500.0)
+        result = self._recheck(_previous(elsewhere, price=700.0), current=500.0)
         self.assertEqual(result["previous"]["source"], "caller_supplied")
-        flagged = evidence.verify_answer("Take BA999 JFK-NRT for USD 500")["unowned"]
-        self.assertIn("NRT", [row["text"] for row in flagged])
+        flagged = evidence.verify_answer("The previous quote was USD 700")["unowned"]
+        self.assertIn("USD 700", [row["text"] for row in flagged])
 
     def test_another_offers_id_at_the_same_price_does_not_own_this_itinerary(self) -> None:
         other = _segment("JFK", "LHR", "09:00", "21:00", "BA112")

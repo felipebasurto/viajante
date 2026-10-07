@@ -19,12 +19,28 @@ RATE_LIMIT_COOLDOWN_SECONDS = 120.0
 RATE_LIMIT_MAX_COOLDOWN_SECONDS = 1800.0
 NOT_SENT = "Not sent. "
 PAUSE_PHRASE = "searches until"
+_COOLDOWN_BASES = {
+    "provider_retry_after",
+    "heuristic_http_429",
+    "heuristic_rpc_13",
+    "unknown",
+}
+_COOLDOWN_CAUSES = {"http_429", "rpc_13", "unknown"}
 
 
 def _read_rate_limit(file: str) -> Optional[dict]:
     try:
         state = json.loads((default_state_dir() / file).read_text(encoding="utf-8"))
-        return state if all(isinstance(state[k], (int, float)) for k in ("at", "until")) else None
+        if not all(isinstance(state[k], (int, float)) for k in ("at", "until")):
+            return None
+        # Older state files predate these diagnostic fields. Keep them readable
+        # and identify their provenance as unknown rather than guessing.
+        state = dict(state)
+        if state.get("basis") not in _COOLDOWN_BASES:
+            state["basis"] = "unknown"
+        if state.get("cause") not in _COOLDOWN_CAUSES:
+            state["cause"] = "unknown"
+        return state
     except (OSError, ValueError, TypeError, KeyError):
         return None
 
@@ -43,8 +59,27 @@ def note_rate_limited(
     now: Optional[float] = None,
     *,
     file: str = GOOGLE_RATE_LIMIT_FILE,
+    basis: Optional[str] = None,
+    cause: Optional[str] = None,
 ) -> dict:
     """Record a real rate limit in the state dir so the next search in any process waits."""
+    if basis is None:
+        basis = (
+            "provider_retry_after"
+            if retry_after is not None and retry_after > 0
+            else "heuristic_http_429"
+        )
+    if basis not in _COOLDOWN_BASES:
+        raise ValueError(f"invalid cooldown basis: {basis!r}")
+    if cause is None:
+        cause = {
+            "provider_retry_after": "http_429",
+            "heuristic_http_429": "http_429",
+            "heuristic_rpc_13": "rpc_13",
+            "unknown": "unknown",
+        }[basis]
+    if cause not in _COOLDOWN_CAUSES:
+        raise ValueError(f"invalid cooldown cause: {cause!r}")
     current = time.time() if now is None else now
     previous = _read_rate_limit(file)
     if previous is not None and previous["until"] > current:
@@ -54,7 +89,13 @@ def note_rate_limited(
         cooldown = retry_after
     elif previous is not None and current < previous["until"] + previous.get("cooldown_s", 0):
         cooldown = min(RATE_LIMIT_MAX_COOLDOWN_SECONDS, previous["cooldown_s"] * 2)
-    state = {"at": current, "until": current + cooldown, "cooldown_s": cooldown}
+    state = {
+        "at": current,
+        "until": current + cooldown,
+        "cooldown_s": cooldown,
+        "basis": basis,
+        "cause": cause,
+    }
     with contextlib.suppress(OSError):
         write_json_atomic(state, default_state_dir() / file)
     return state
@@ -72,8 +113,12 @@ def rate_limit_advice(
 
     minutes = max(1, math.ceil((state["until"] - time.time()) / 60))
     prefix = "" if sent else NOT_SENT
+    if state.get("cause") == "rpc_13":
+        observation = f"{provider} returned RPC status 13; its cause is unknown"
+    else:
+        observation = f"{provider} is rate-limiting this machine"
     return (
-        f"{prefix}{provider} is rate-limiting this machine ({reason} at {clock(state['at'])} UTC). "
+        f"{prefix}{observation} ({reason} at {clock(state['at'])} UTC). "
         f"Viajante pauses {provider} {PAUSE_PHRASE} {clock(state['until'])} UTC (~{minutes} min). "
         "Tell the user to wait; do not retry or switch fetch mode."
     )

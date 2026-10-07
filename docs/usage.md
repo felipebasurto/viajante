@@ -7,6 +7,10 @@ This guide assumes Viajante is installed. See the
 [browser support](../README.md#optional-browser-support) for Booking.com.
 Examples use November 2026; replace the dates with future travel dates.
 
+The [1.4.5 release record](release-1.4.5.md) lists changes from 1.4.1. The
+[1.4.6 candidate record](release-1.4.6.md) documents the public-page flight
+transport and its current limits; release validation is still pending.
+
 - [Flights](#flights)
 - [Dates and flexible travel](#dates-and-flexible-travel)
 - [Explore destinations](#explore-destinations)
@@ -31,13 +35,9 @@ viajante flights JFK-LHR:2026-11-15:2026-11-22 --trip rt --fetch sweep
 ```
 
 Without `--trip rt`, a route with outbound and return dates produces two
-separate one-way searches. For a multi-city itinerary, pass each leg with
-`--trip multi`:
-
-```bash
-viajante flights JFK-LHR:2026-11-15 LHR-CDG:2026-11-19 CDG-JFK:2026-11-22 \
-  --trip multi --fetch sweep
-```
+separate one-way searches. The public-page flight transport currently refuses
+`--trip multi` before making a request; it does not approximate a multi-city
+route with separate searches.
 
 ### Filters and ranking
 
@@ -47,7 +47,7 @@ offers shown. The buffer defaults to zero.
 
 ```bash
 viajante flights JFK-LHR:2026-11-15 --fetch sweep \
-  --max-stops 0 --adults 2 --bags 1 --carry-on --top 5 --sort fare
+  --max-stops 0 --adults 2 --top 5 --sort fare
 ```
 
 Common options are listed below. Run `viajante flights --help` for the full
@@ -58,8 +58,10 @@ list and accepted values.
 | `--currency GBP` | Request prices in a specific currency. No currency conversion is performed. |
 | `--cabin business` | Select a cabin: `economy`, `premium-economy`, `business`, or `first`. |
 | `--max-stops 0` | Set the maximum number of stops to `0`, `1`, or `2`. |
-| `--airlines BA,AA` / `--exclude-airlines BA,AA` | Include or exclude airline codes in the shopping request. |
-| `--alliance oneworld` / `--exclude-alliance star` | Include or exclude `oneworld`, `skyteam`, or `star`. |
+| `--airlines BA,AA` / `--exclude-airlines BA,AA` | Include or exclude airline codes. Public-page sweep only; see the limits below. |
+| `--alliance oneworld` | Include `oneworld`, `skyteam`, or `star`. Public-page sweep only. `--exclude-alliance` is refused in 1.4.6. |
+| `--carry-on` | Request one carry-on bag for the whole party (Google's counter is a party total). Public-page sweep only. |
+| `--bags N` | Checked bags. Refused in 1.4.6: no transport can verify them. |
 | `--depart-window 06:00-12:00` | Keep flights departing within a local time window. |
 | `--depart-after 08:00` / `--arrive-before 20:00` | Filter on reported local departure or arrival times. |
 | `--via IST` / `--exclude-via DXB` | Filter on reported connecting airports. |
@@ -71,6 +73,29 @@ list and accepted values.
 | `--include-airports LHR,LGW` / `--exclude-airports STN` | Restrict destinations or exclude origins and destinations; exclusions take priority. |
 | `--sort duration` | Order by `ranked`, `fare`/`price`, `duration`, `departure`, or `arrival`. |
 | `--baggage-buffer 30` | Add a ranking allowance for recognized low-cost carriers, in the quote currency. |
+
+The default `auto` and explicit `sweep` modes use Google's public results page.
+A carry-on, airline include, airline exclusion, or alliance include rides the
+page request, and every page read must echo it (the `Bags` or `Airlines`
+filter chip, and for alliances the airline catalog) or the read fails as
+`markup_drift`. Google registers an airline exclusion without applying it, so
+Viajante also drops cards that show an excluded airline or no carrier at all.
+Owned airline codes, including returned codeshare marketing codes, match
+exactly. When codes are absent, standalone code tokens and known name aliases
+are the fallback; fragments of another airline's name never establish a match.
+Excluded airlines' codeshare rows disappear from the page, and operating-carrier
+evidence on a card is limited, so an exclusion is not proof about who operates
+each segment. Checked bags, a zero carry-on, and alliance exclusion are refused
+before any request because no page evidence can prove them. Browser detail
+reads no filter echo and refuses all bag and carrier filters. A carry-on
+filter does not prove an offer's bag allowance; verify it on Google Flights.
+`dates` and `flex` stay on the public-page transport. A baggage buffer is only
+a local ranking allowance and never proves a bag is included.
+
+For `--trip rt`, the page's displayed outbound amounts are selection references,
+not standalone fares. Viajante checks at most eight outbound candidates on
+selected return pages; only the provider's returned package total is reported.
+The report is scope-bound because additional outbound choices were not checked.
 
 ### Metro city codes
 
@@ -159,8 +184,9 @@ count and slot with another pick, the entry is the best by that measure among
 different ones, labelled `cheapest_distinct` / `fastest_distinct`, and a note
 says what was not listed. A free third slot is an `alternative`. Offers with the
 same carrier, clocks, and stop count are one flight; the cheaper fare is kept.
-Connections many times slower than the fastest nonstop are left out of the
-comparison, as in the `ranked` sort.
+Connections longer than three times the fastest nonstop (or the shortest known
+offer when no nonstop exists) are left out of the comparison and the `ranked`
+shortlist. `--sort price` retains those connections in the fare-ordered offers.
 
 **Score.** `100 * (1 - weighted penalty)`, higher is better. The price and
 duration penalties are how much worse an offer is than the best in the compared
@@ -186,19 +212,24 @@ There are no savings claims and no reference prices.
 
 | Mode | Behavior |
 | --- | --- |
-| `--fetch sweep` | Use HTTP requests without launching a browser for the initial search. |
+| `--fetch sweep` | Fetch the public Google Flights results page over Chrome-TLS HTTP/2; no browser or unsigned shopping RPC is used. |
 | `--fetch detail` | Use Playwright and Chromium. Requires the browser extra and a Chromium installation. |
-| `--fetch auto` | Use sweep for three or more flight queries; for one or two, use detail when Playwright is installed, otherwise sweep. |
+| `--fetch auto` | Use the public-page sweep for every flight search, regardless of query count or browser availability. |
 
-A sweep search that returns empty results or a `blocked` failure can fall back
-to detail once when Playwright is installed. The report records this as
-`fetch_backend: sweep_then_detail`. Rejected shopping requests and markup
-changes do not trigger browser fallback. Successful sweep queries are not
-repeated.
+A public sweep never falls back to detail after an empty result, parse failure,
+or provider block. A missing or malformed `ds:1` bootstrap payload is a parse
+failure; only a recognized provider-empty shape means no results. Round-trip
+searches check at most eight outbound candidates through selected return pages.
+The public page bootstraps no multi-city results, so `auto` and `sweep` refuse
+`--trip multi` before any request. Use an explicit `--fetch detail` for
+multi-city; it drives the browser through each leg and is not yet verified
+against the live provider in 1.4.6. Detail refuses bag and carrier filters.
 
-Sweep requests for flights, dates, flex, and explore accept `--proxy URL`
-(`proxy` in MCP). Browser detail requests have built-in pacing and run
-sequentially.
+Flights, dates, and flex sweep requests accept `--proxy URL` (`proxy` in MCP).
+`VIAJANTE_SWEEP_MODE=standard` allows at most 8 concurrent GETs; `conservative`
+allows 2. Any other value fails before provider access. This is a local
+concurrency setting, not a provider quota guarantee. Browser detail requests
+have built-in pacing and run sequentially.
 
 ### Split tickets (opt-in)
 
@@ -288,43 +319,37 @@ side of it:
 viajante flex BOS-LHR --around 2026-11-15 --flex 3 --nights 7
 ```
 
-This checks November 12–18, selects the cheapest calendar date, then runs one
-flight search for that date. If that search returns no matching offers, the
-result is empty; it does not keep searching other days.
+This checks November 12–18 with one public-page GET per day (up to 31), selects
+the cheapest returned date, then makes one additional fresh public-page search
+for that date when a provider block has not stopped the search. Day failures
+remain attached to their rows; an unpriced or failed day is never treated as a
+fare. `dates` and `flex` use public-page GETs even if their accepted fetch
+setting says `detail`; they do not launch Playwright.
+
+`dates` uses the same explicit per-day GET fanout across its requested window,
+up to 31 days. Successful dates stay visible when other dates fail. An ordinary
+`flights` query does not add an automatic 31-day typical-price lookup; dates and
+flex use only the windows the caller explicitly named.
 
 Date grids stay in date order unless you request another sort. Sorting a grid
-does not cut it down to a top-N list. When there is enough calendar data,
-`typical` describes the same-route calendar median; it is omitted when the
-calendar is unavailable, has fewer than three priced days, or the query is
-multi-city.
+does not cut it down to a top-N list. When there are at least three priced days,
+`typical` describes the same-route median of the explicitly searched days. It is
+omitted when fewer than three days are priced or the query is multi-city.
 
 ## Explore destinations
 
-Start with an origin airport. Viajante reads Google's Explore catalog and
-searches flight prices for a shortlist of destinations on the departure date:
-
-```bash
-viajante explore JFK --from 2026-11-15 --top 5
-viajante explore NRT --from 2026-11-15 --exclude-regions asia --top 3
-```
-
-`--include-airports` can restrict the destination list. `--exclude-regions`
-uses IANA timezone regions such as `asia` or `europe`.
-
-Explore sorts by price by default. Its `--days` value records the intended
-stay length, but destination flight searches use the outbound date only.
-Likewise, `--month YYYY-MM` selects that month's first day and records its
-length; it does not compare every departure date in the month. Use `dates` or
-`flex` once you have chosen a route.
-
-For an open-ended trip, start with a small destination shortlist on fixed
-dates, then compare nearby dates for the most promising routes.
-
-Pricing failures are separate from empty results: JSON includes additive
-`pricing_errors` with the affected query and provider error, and `coverage`
-counts each attempted destination. The CLI prints those failures and returns
-exit 2 when all pricing attempts fail, or exit 3 for mixed outcomes. MCP does
-not cache a report containing pricing failures as a successful search.
+`explore` needs the browser extra and Chromium. It opens Google's public
+Explore page once and reads the catalog request the page itself issues; it
+never sends that request directly. The request must echo the named origin (or
+a same-city airport) and date, and each priced catalog row must prove its
+origin and destination, otherwise the read fails or the row is dropped. Only
+the page's default one-adult economy state can be proven, so a non-default
+party or cabin is refused before networking. Owned destinations are then
+shopped over the public page as ordinary one-way searches. A raw RPC status 13
+on the catalog stops the search and records the shared Google cooldown. In
+1.4.6 that status was frequent on the catalog request, so an empty or blocked
+explore proves nothing about destinations; name routes and use `flights`,
+`dates`, or `flex` instead.
 
 ## Hotels
 
@@ -451,8 +476,8 @@ reported in `filter_violations` (`price_cap`, and for locally provable cases
 request and `filters_checked` what was only checked locally (`price_cap` is never
 sent). `max_stops` and `exclude_airlines` breaches are defensive, because the search
 already applies them; an `airlines` allow list passes when any carrier on the offer
-is allowed, as in the search. Cabin, bags and alliance filters cannot be proven on
-the offer. With `--allow-loose-match`, a connecting leg without segments is still
+is allowed, as in the search. Cabin, carry-on and alliance filters are proven by the
+fresh page's echo, not on the offer. With `--allow-loose-match`, a connecting leg without segments is still
 `incomplete_identity` (its stops cannot be compared); origin and destination are
 compared in every match. `incomplete_identity`, `check_failed` and input errors are
 never recorded in the MCP evidence ledger.
@@ -555,8 +580,8 @@ parsed fields. The report types and JSON fields are defined in
 | `no_results` | The search returned no results. |
 | `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
 | `rejected` | The provider rejected the request. |
-| `blocked` | The provider blocked access or presented a challenge. |
-| `markup_drift` | The response could not be read in the expected format. |
+| `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 is reported without assuming its cause. |
+| `markup_drift` | The response could not be read in the expected page or `ds:1` format. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |
 
@@ -653,7 +678,8 @@ search at a time. See the signatures in
 - **Progress.** If the client sends a `progressToken`, the server emits
   `notifications/progress` while a search runs: `[i/n]` lines become
   `progress=i`, `total=n`; other lines carry a message and a still-increasing
-  value. `[i/n]` marks the i-th query starting, not finishing. At most about one
+  value. Per-day date sweeps emit `[i/n]` after that day finishes; other searches
+  emit it as the query starts. At most about one
   notification per 250 ms; the newest held line is flushed when the search
   finishes, and progress never passes the total. A notification that cannot be
   sent never breaks the search (logged once to stderr).
@@ -731,6 +757,13 @@ the same roughly 2.7 KB difference.
   from the recorded cooldown. Both are omitted when no cooldown was recorded, for
   example a proxied 429. The envelope's top-level `retry_after` fields repeat the
   latest of these per-error values exactly, so they are null whenever the errors carry none.
+  Sweep provider failures may also include `diagnostics`: endpoint host and path,
+  `http_status`, raw `rpc_status`, `request_sent`, `attempts`, and
+  `cooldown_basis`. A locally active cooldown has `request_sent: false`,
+  `attempts: 0`, and null HTTP/RPC status. HTTP 429 or raw RPC status 13 stops
+  pending sweep work without a replay or browser fallback. Status 13 is a
+  provider response; by itself it does not identify the cause or prove an IP
+  block.
 - **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
   [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
   not meant to be hosted. A non-loopback `--host` prints a warning: every client

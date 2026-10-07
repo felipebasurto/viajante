@@ -28,9 +28,12 @@ class ClassifyFailureTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 error = classify_failure(RuntimeError(marker))
                 self.assertEqual(error.code, SearchErrorCode.BROWSER_UNAVAILABLE)
-                self.assertIn("playwright install chromium", error.message)
-                self.assertIn("Detail is optional", error.message)
-                self.assertIn("Sweep does not need a browser", error.message)
+                self.assertIn(
+                    "uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium",
+                    error.message,
+                )
+                self.assertIn("viajante[browser]", error.message)
+                self.assertNotIn("Sweep does not need a browser", error.message)
 
     def test_hotels_do_not_treat_empty_pages_as_no_results_by_default(self) -> None:
         error = classify_failure(
