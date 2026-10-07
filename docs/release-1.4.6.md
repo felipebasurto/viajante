@@ -89,15 +89,28 @@ outside this flight transport change.
 
 ## Validation and release handoff
 
-The full offline test suite passed (1,671 tests, 2 skipped). A live stdio MCP
-check on runtime 1.4.6 verified the public flight path in conservative mode:
-an unsupported baggage-constrained query failed preflight with no request and
-zero attempts; the corresponding unconstrained one-way search returned three
-offers with `ok` / `complete`; and a round-trip search returned three complete
-packages with both journeys present, `ok` / `partial`, and no page errors.
-The partial round-trip status reflects the documented eight-outbound scope
-bound. Archived page evidence also verified currency, passenger, cabin, and
-selected-outbound echoes without committing those private captures.
+The full offline test suite passed (1,725 tests, 2 skipped). Live checks ran
+serially through the real stdio MCP server in conservative mode, at least 45
+seconds apart, with no provider block or cooldown recorded:
+
+| Case | Result |
+| --- | --- |
+| One-way, two adults, carry-on, nonstop | `ok` / `complete`; Bags chip echoed |
+| Checked bags; alliance exclusion; multi-city on sweep | `failed` / `rejected` preflight, nothing sent |
+| Airline include | `ok` / `complete`; every card carries the airline (codeshares count) |
+| Airline exclusion | `ok` / `complete`; no card shows the excluded airline |
+| Alliance include | `ok` / `complete`; catalog row echoed |
+| Connecting round trip | `ok` / `partial` (eight-outbound bound); package totals only |
+| Dates with an airline filter; flex with carry-on | `ok` / `complete`; filters encoded on every page |
+| Re-check of an airline-filtered offer | `same_price`, previous source `search_evidence` |
+| Split tickets via a named hub | `ok`; separate-ticket warning, same-currency total |
+| Trip, carry-on flight side | `ok` / `complete`; flight query keeps carry-on |
+| Explore, then owned destination shops | `ok` / `complete`; three destinations priced by shops |
+| Multi-city with `--fetch detail` | `timeout` / `not_loaded`: result cards never rendered; unverified |
+
+The first domestic United States checks failed closed as `markup_drift`
+because the page labelled the cabin `Economy (include Basic)`; that label is
+now accepted for economy, and `Economy (exclude Basic)` is not.
 
 The offline bench reports `gate: ok`; Ruff lint and formatting pass. Wheel and
 sdist builds passed. The installed wheel reports 1.4.6 and passes the stdio smoke
