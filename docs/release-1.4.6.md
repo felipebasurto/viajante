@@ -3,9 +3,9 @@
 Prepared on 2026-10-07 as the 1.4.6 release after 1.4.5. Version
 stamps are aligned across Python metadata, `uv.lock`, npm metadata, and the
 server and package entries in `server.json`. Local gates and PR CI passed.
-The maintainer authorized merge, tag, and publication. Public registry and
-installed-client verification remain separate release gates; their results
-will be recorded below after publication.
+The maintainer authorized merge, tag, and publication. PyPI, npm, MCP Registry,
+and GitHub publication completed; independent public-artifact and installed-client
+verification passed. The evidence is recorded below.
 
 The release changes the Google Flights production path used by flights,
 dates, and flex to read results from the public Google Flights page. See the
@@ -149,5 +149,44 @@ artifact checks above describe the pre-review candidate. Multi-city remains
 unverified live.
 
 PR CI passed for the corrected candidate on Python 3.10–3.14, the minimum MCP
-SDK, built distributions, and lint. Main CI, tag publication, and public
-registry verification are separate gates in the authorized release workflow.
+SDK, built distributions, and lint.
+
+## Publication verification
+
+Published and independently verified on 2026-10-07:
+
+- [PR #67](https://github.com/felipebasurto/viajante/pull/67) merged the exact
+  green head `90488f37253ac40fe0d687011b017a588a1b1e57` as
+  `f38b9041801523c3029eb858377ca82eabc2b2b4`. Tag `v1.4.6` points to that merge.
+- [Main CI](https://github.com/felipebasurto/viajante/actions/runs/37636861258)
+  passed all eight jobs for the merge commit: Python 3.10–3.14, the minimum MCP
+  SDK, installed distributions, and lint.
+- [Release workflow](https://github.com/felipebasurto/viajante/actions/runs/37637171113)
+  passed build, PyPI, npm, and MCP Registry publication. npm propagation completed
+  during the workflow's bounded availability wait.
+- [PyPI 1.4.6](https://pypi.org/project/viajante/1.4.6/) serves the wheel and
+  sdist. Downloaded artifacts match the public SHA-256 metadata; all 52 wheel
+  package files match the tagged source. Strict Twine and the installed wheel's
+  minimum-SDK stdio checks passed before publication.
+- [npm 1.4.6](https://www.npmjs.com/package/@viajante/mcp/v/1.4.6) carries the
+  expected `mcpName`. Its downloaded tarball matches both registry hashes and
+  the three intended source files, including the exact Python version pin.
+- The [MCP Registry entry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.felipebasurto%2Fviajante/versions/1.4.6)
+  lists the PyPI and npm packages at 1.4.6, both using stdio, with no hosted remote.
+- Fresh public installs using
+  `uvx --isolated --refresh --from 'viajante[mcp]==1.4.6' viajante-mcp` and
+  `npx -y @viajante/mcp@1.4.6` each passed initialization, all 22 tool names,
+  typed envelope schemas, local runtime/guide calls, the guide resource, and
+  undeclared-argument rejection. Both report runtime 1.4.6 and preserve boolean
+  carrier, multi-city, and Explore capability keys.
+- The [GitHub release](https://github.com/felipebasurto/viajante/releases/tag/v1.4.6)
+  includes the changelog and the public wheel/sdist. Its asset digests match PyPI.
+
+| Public artifact | SHA-256 |
+| --- | --- |
+| `viajante-1.4.6-py3-none-any.whl` | `61d1825728ee650455654ac59037f1e4c761b65b29a996da242947a7bad4842a` |
+| `viajante-1.4.6.tar.gz` | `5cb075f40530ee0484ea588dca9c7ef8f19546dde1f42b1951602077b7a28ed6` |
+
+Publication checks made no Google, Booking, or Skiplagged requests. They prove
+package availability and the installed MCP contract; multi-city detail remains
+unverified live.
