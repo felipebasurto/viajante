@@ -6,12 +6,15 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Optional
 
+from viajante.control import SearchDeadline, note_cut
 from viajante.google_flights import (
     COOLDOWN_UNCHECKED,
     NOT_SENT,
+    SWEEP_TRANSPORT_STATUS,
     SweepHttpClient,
     SweepHttpResponse,
     SweepPost,
+    SweepTransportError,
     cooldown_client,
     dispatch_posts,
     reset_shared_chrome_sweep_client,
@@ -36,6 +39,8 @@ from viajante.models import (
     AppliedHotelFilters,
     HotelPage,
     HotelQuery,
+    SearchError,
+    SearchErrorCode,
 )
 
 HTTP_TIMEOUT_SECONDS = 30
@@ -94,11 +99,34 @@ class GoogleHotelsSource:
             )
             posts.append(SweepPost(url, body, HOTELS_POST_HEADERS))
         responses = dispatch_posts(client, posts, timeout=self._timeout)
+        lost = [i for i, r in enumerate(responses) if r.status == SWEEP_TRANSPORT_STATUS]
+        if lost:
+            # One replay on a fresh session; a second transport failure is final (the
+            # hotel loop does not retry it).
+            self.reset()
+            client = self._ensure_client()
+            for i, again in zip(
+                lost,
+                dispatch_posts(client, [posts[i] for i in lost], timeout=self._timeout),
+                strict=True,
+            ):
+                responses[i] = again
         first = self._page(responses[0], posts[0].url)
         cards = list(first.cards[:limit])
+        page_errors = []
         for post, response in zip(posts[1:], responses[1:], strict=True):
             try:
                 cards.extend(self._page(response, post.url).cards[:limit])
+            except SearchDeadline:
+                # The price page already arrived; only the widening page was cut.
+                note_cut()
+                continue
+            except SweepTransportError as exc:
+                page_errors.append(
+                    SearchError(
+                        code=SearchErrorCode.FETCH_FAILED, message=str(exc), timeout=exc.timeout
+                    )
+                )
             except (HotelsBlocked, HotelsParseMiss, EmptyHotelResults, HotelsRejected):
                 continue
         params = hotel_navigation_params(query, currency=self._currency, html_lang=self._html_lang)
@@ -109,16 +137,24 @@ class GoogleHotelsSource:
                 else card
                 for card in cards
             ),
+            page_errors=tuple(page_errors),
             resolved_place=first.resolved_place,
             place_bounds=first.place_bounds,
         )
 
     @staticmethod
     def _page(response: SweepHttpResponse, url: str) -> HotelPage:
+        if response.deadline:
+            raise SearchDeadline()
         advice = response.rate_limit
         if advice and response.status < 400:
             # A data-less RPC status 13 envelope: the cooldown is already recorded.
             raise HotelsBlocked(advice, rate_limited=True)
+        if response.status == SWEEP_TRANSPORT_STATUS:
+            raise SweepTransportError(
+                f"Google Hotels request failed before any response: {response.text}",
+                timeout="timeout" in response.text.partition(":")[0].casefold(),
+            )
         if response.status == 429 and advice:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
             raise HotelsBlocked(message, rate_limited=True)

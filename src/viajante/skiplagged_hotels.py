@@ -10,13 +10,16 @@ from __future__ import annotations
 import difflib
 import random
 import re
+import threading
 import time
 import unicodedata
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
+from viajante.airports import canonical_city_name, lookup_airports
+from viajante.control import checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -29,6 +32,7 @@ from viajante.models import (
     SearchErrorCode,
 )
 from viajante.orchestration import MAX_ATTEMPTS, retry_backoff_seconds
+from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import (
     SKIPLAGGED_MCP_URL,
     RpcPost,
@@ -52,6 +56,7 @@ _HOTEL_ID_IN_URL = re.compile(r"/hotel/(\d+)/")
 _RATING = re.compile(r"(\d+(?:\.\d+)?)\s*/\s*10")
 _MONEY = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)")
 _LINK = re.compile(r"\]\(([^)]+)\)")
+_HOTELS_HEADING = re.compile(r"^\s*#\s*Hotels\s+in\s+(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 class SkiplaggedNoHotels(Exception):
@@ -214,6 +219,28 @@ class SkiplaggedHotelsSource:
         return None
 
 
+def _echo_int(detail: Mapping[str, Any], *keys: str) -> Optional[int]:
+    for key in keys:
+        value = detail.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _echo_date(detail: Mapping[str, Any], *keys: str) -> Optional[date]:
+    for key in keys:
+        value = detail.get(key)
+        if not isinstance(value, str):
+            continue
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            continue
+    return None
+
+
 def _number(value: Any) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -284,12 +311,21 @@ def parse_rooms_report(
         longitude=_number(place.get("lng")),
         link=detail.get("bookingLink") if isinstance(detail.get("bookingLink"), str) else None,
         rates=rates,
+        answered_adults=_echo_int(detail, "numAdults", "adults"),
+        answered_rooms=_echo_int(detail, "numRooms", "rooms"),
+        answered_check_in=_echo_date(detail, "checkin", "checkIn", "check_in"),
+        answered_check_out=_echo_date(detail, "checkout", "checkOut", "check_out"),
     )
 
 
 def _failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
-        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+        return SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message=str(exc),
+            rate_limited=True,
+            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+        )
     if isinstance(exc, (SkiplaggedNoHotels, SkiplaggedAmbiguousName)):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):
@@ -300,8 +336,53 @@ def _failure(exc: BaseException) -> SearchError:
 
 
 def _normalized_name(value: str) -> str:
-    ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_text.casefold()).split())
+    text = unicodedata.normalize("NFKC", value).casefold()
+    # Ignore Latin accents as before; other scripts' marks can change identity.
+    text = "".join(
+        unicodedata.normalize("NFD", char)[0]
+        if unicodedata.name(char, "").startswith("LATIN")
+        else char
+        for char in text
+    )
+    return " ".join(
+        "".join(
+            char if char.isalnum() or unicodedata.category(char).startswith("M") else " "
+            for char in text
+        ).split()
+    )
+
+
+def _provider_city_heading(text: str) -> Optional[tuple[str, Optional[str]]]:
+    match = _HOTELS_HEADING.search(text)
+    if match is None:
+        return None
+    # Some provider headings include a country after a comma. Preserve an
+    # explicit ISO code so it can be compared without inventing country names.
+    parts = [part.strip() for part in match.group(1).split(",", 1)]
+    country = (
+        parts[1].upper() if len(parts) == 2 and re.fullmatch(r"[A-Za-z]{2}", parts[1]) else None
+    )
+    return parts[0], country
+
+
+def _longest_catalogue_city(place: str) -> tuple[Optional[str], tuple]:
+    """Find an airport-catalogue city at the start of a provider URL slug.
+
+    Slugs such as ``prague-czech-republic`` add a country after the city, so
+    test successively shorter token prefixes. A longer owned city such as
+    ``san-jose-del-cabo-mexico`` remains distinct from ``San Jose``.
+    """
+    tokens = _normalized_name(place.replace("-", " ")).split()
+    for end in range(len(tokens), 0, -1):
+        candidate = " ".join(tokens[:end])
+        hits = tuple(
+            airport
+            for airport in lookup_airports(candidate, limit=100)
+            if canonical_city_name(airport.city) == canonical_city_name(candidate)
+        )
+        if hits:
+            return canonical_city_name(candidate), hits
+    return None, ()
 
 
 def resolve_hotel_id(
@@ -311,6 +392,7 @@ def resolve_hotel_id(
     check_out: date,
     *,
     adults: int,
+    rooms: int = 1,
     rpc: RpcPost = _rpc_post,
 ) -> tuple[int, str]:
     """Skiplagged id of the one hotel in ``city`` whose name matches ``name`` exactly.
@@ -324,7 +406,7 @@ def resolve_hotel_id(
             "checkin": check_in.isoformat(),
             "checkout": check_out.isoformat(),
             "numAdults": adults,
-            "numRooms": 1,
+            "numRooms": rooms,
             "limit": PAGE_LIMIT,
             "sort": "price",
         },
@@ -332,8 +414,44 @@ def resolve_hotel_id(
         tool=SKIPLAGGED_HOTELS_TOOL,
     )
     page = parse_search_page(result)
+    requested_city = city.split(",", 1)[0].strip()
+    requested_canonical = canonical_city_name(requested_city)
+    requested_country = city.split(",", 1)[1].strip().upper() if "," in city else None
+    heading = _provider_city_heading(_text(result))
+    if heading:
+        heading_city, heading_country = heading
+        if canonical_city_name(heading_city) != requested_canonical or (
+            requested_country and heading_country and requested_country != heading_country
+        ):
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to {heading_city!r}; "
+                "the requested city was not searched. Nothing was guessed."
+            )
+    if page.resolved_place:
+        resolved_city = _normalized_name(page.resolved_place.replace("-", " "))
+        requested_city = _normalized_name(requested_city)
+        if resolved_city != requested_city and not resolved_city.startswith(requested_city + " "):
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to {page.resolved_place!r}; "
+                "the requested city was not searched. Nothing was guessed."
+            )
+        catalog_city, city_hits = _longest_catalogue_city(page.resolved_place)
+        if catalog_city is not None and catalog_city != requested_canonical:
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to a different city ({catalog_city}); "
+                "the requested city was not searched. Nothing was guessed."
+            )
+        if (
+            requested_country
+            and city_hits
+            and not any(airport.country == requested_country for airport in city_hits)
+        ):
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to a different country; "
+                "the requested city was not searched. Nothing was guessed."
+            )
     wanted = _normalized_name(name)
-    hits = [card for card in page.cards if _normalized_name(card.title) == wanted]
+    hits = [card for card in page.cards if wanted and _normalized_name(card.title) == wanted]
     if len(hits) == 1 and hits[0].provider_id:
         return int(hits[0].provider_id), hits[0].title
     place = page.resolved_place or city
@@ -352,6 +470,7 @@ def resolve_hotel_id(
     )
 
 
+@controlled
 def search_hotel_rooms(
     hotel_id: Optional[int],
     check_in: date,
@@ -362,8 +481,9 @@ def search_hotel_rooms(
     adults: int = 2,
     rooms: int = 1,
     rpc: RpcPost = _rpc_post,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] = interruptible_sleep,
     random_gen: Any = None,
+    cancel: Optional[threading.Event] = None,
 ) -> HotelRoomsReport:
     """Room rates for one Skiplagged hotel, by id or by exact name in a city.
 
@@ -389,9 +509,16 @@ def search_hotel_rooms(
     resolved_id = hotel_id
     for attempt in range(MAX_ATTEMPTS):
         try:
+            checkpoint()
             if resolved_id is None:
                 resolved_id, _matched = resolve_hotel_id(
-                    hotel_name or "", city or "", check_in, check_out, adults=adults, rpc=rpc
+                    hotel_name or "",
+                    city or "",
+                    check_in,
+                    check_out,
+                    adults=adults,
+                    rooms=rooms,
+                    rpc=rpc,
                 )
             result = _call_mcp(
                 {

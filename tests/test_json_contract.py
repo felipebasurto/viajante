@@ -4,6 +4,7 @@ import json
 import unittest
 from datetime import date, datetime, timezone
 
+import _isolate  # noqa: F401
 from viajante.google_flights import google_flights_url
 from viajante.models import (
     FlightLeg,

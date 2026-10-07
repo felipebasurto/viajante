@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import threading
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -17,7 +18,9 @@ from viajante.booking import (
     build_applied_filters as build_booking_filters,
 )
 from viajante.browser import playwright_available
+from viajante.control import checkpoint, controlled, interruptible_sleep
 from viajante.flights import DEFAULT_TOP
+from viajante.google_flights import SweepTransportError
 from viajante.google_hotels import (
     GoogleHotelsSource,
 )
@@ -31,6 +34,7 @@ from viajante.google_hotels_rpc import (
     HotelsParseMiss,
     HotelsRejected,
 )
+from viajante.history import recorded_hotels
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -67,6 +71,7 @@ from viajante.parsers import (
     parse_unit_hints,
 )
 from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
+from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged_hotels import (
     SKIPLAGGED_HOTEL_CURRENCY,
@@ -262,7 +267,12 @@ def _rank_offers(
 
 def _classify_hotel_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
-        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+        return SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message=str(exc),
+            rate_limited=True,
+            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+        )
     if isinstance(exc, SkiplaggedNoHotels):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):
@@ -285,6 +295,7 @@ def _classify_hotel_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc) if exc.rate_limited else "Google Hotels blocked the sweep.",
             rate_limited=exc.rate_limited,
+            retry_until=cooldown_until(str(exc)) if exc.rate_limited else None,
         )
     if isinstance(exc, HotelsParseMiss):
         return SearchError(
@@ -335,6 +346,7 @@ def _run_search(
         failure: Optional[SearchError] = None
         for attempt in range(MAX_ATTEMPTS):
             try:
+                checkpoint()
                 page = source.fetch(query, applied, fetch_limit)
                 normalized = tuple(
                     _with_distance(offer, near)
@@ -359,12 +371,15 @@ def _run_search(
                     offers=ranked[:top],
                     resolved_place=page.resolved_place,
                     place_bounds=page.place_bounds,
+                    page_errors=page.page_errors,
                 )
                 break
             except Exception as exc:
                 failure = _classify_hotel_failure(exc)
                 source.reset()
-                if failure.code in NON_RETRIABLE_CODES or isinstance(exc, BookingResultsTimeout):
+                if failure.code in NON_RETRIABLE_CODES or isinstance(
+                    exc, (BookingResultsTimeout, SweepTransportError)
+                ):
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     sleep(retry_backoff_seconds(attempt, random_gen))
@@ -439,18 +454,11 @@ def _skiplagged_currency_mismatch(
     )
 
 
-def search_hotels(
-    queries: Sequence[HotelQuery],
-    *,
-    top: int = DEFAULT_TOP,
-    progress: Optional[Callable[[str], None]] = None,
-    source: HotelSourceName = "booking",
-    currency: Optional[str] = None,
-    near: Optional[Tuple[float, float]] = None,
-    max_distance_km: Optional[float] = None,
-) -> HotelSearchReport:
-    near = validate_near(near)
-    max_distance_km = validate_max_distance(max_distance_km, near)
+def validate_hotel_search_args(queries: Sequence[HotelQuery], *, top: int, source: str) -> None:
+    """Every check on search arguments alone, before any lock, fetch or state write.
+
+    Shared by `search_hotels`, the MCP tool and saved watches so they reject the same input.
+    """
     if not queries:
         raise ValueError("at least one query is required")
     if top <= 0:
@@ -466,6 +474,25 @@ def search_hotels(
             validate_search_party(query.adults, query.rooms)
             if query.entire_home:
                 raise ValueError("entire_home is not supported with source skiplagged")
+
+
+@controlled
+@recorded_hotels
+def search_hotels(
+    queries: Sequence[HotelQuery],
+    *,
+    top: int = DEFAULT_TOP,
+    progress: Optional[Callable[[str], None]] = None,
+    source: HotelSourceName = "booking",
+    currency: Optional[str] = None,
+    near: Optional[Tuple[float, float]] = None,
+    max_distance_km: Optional[float] = None,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
+) -> HotelSearchReport:
+    near = validate_near(near)
+    max_distance_km = validate_max_distance(max_distance_km, near)
+    validate_hotel_search_args(queries, top=top, source=source)
     currency = resolve_hotel_currency(source, currency)
     if source == "skiplagged" and currency != SKIPLAGGED_HOTEL_CURRENCY:
         return replace(
@@ -520,7 +547,7 @@ def search_hotels(
             queries,
             top=top,
             source=hotel_source,
-            sleep=time.sleep,
+            sleep=interruptible_sleep,
             random_gen=random.Random(),
             now=lambda: datetime.now(timezone.utc),
             html_lang=hotel_source.config.html_lang,  # type: ignore[attr-defined]

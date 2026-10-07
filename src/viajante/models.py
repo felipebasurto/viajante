@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import math
+import time
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
 from statistics import median
-from typing import Literal, Mapping, Optional, Sequence, Tuple, Union, get_args
+from typing import TYPE_CHECKING, Literal, Mapping, Optional, Sequence, Tuple, Union, get_args
 
 from viajante.airports import is_known_iata
+
+if TYPE_CHECKING:
+    # recommend.py builds on these models; the import is for annotations only.
+    from viajante.recommend import Recommendation
 
 # Fetch/browser locale is English so owned card parsers stay on English evidence.
 FETCH_LANGUAGE = "en"
@@ -427,6 +433,9 @@ class RawSegment:
     flight_number: Optional[str] = None
     departure_date: Optional[date] = None
     carrier: Optional[str] = None
+    arrival_date: Optional[date] = None
+    departure_timezone: Optional[str] = None
+    arrival_timezone: Optional[str] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -439,6 +448,12 @@ class RawSegment:
         }
         if self.departure_date is not None:
             payload["departure_date"] = self.departure_date.isoformat()
+        if self.arrival_date is not None:
+            payload["arrival_date"] = self.arrival_date.isoformat()
+        if self.departure_timezone is not None:
+            payload["departure_timezone"] = self.departure_timezone
+        if self.arrival_timezone is not None:
+            payload["arrival_timezone"] = self.arrival_timezone
         if self.carrier is not None:
             payload["carrier"] = self.carrier
         return payload
@@ -488,6 +503,8 @@ class EvidenceCompleteness:
     segment_clocks: EvidenceKnowledge = "unknown"
     layovers: EvidenceKnowledge = "unknown"
     baggage: EvidenceKnowledge = "unknown"
+    segment_dates: EvidenceKnowledge = "unknown"
+    segment_timezones: EvidenceKnowledge = "unknown"
 
     def to_dict(self) -> Mapping[str, str]:
         return {
@@ -497,6 +514,8 @@ class EvidenceCompleteness:
             "segment_clocks": self.segment_clocks,
             "layovers": self.layovers,
             "baggage": self.baggage,
+            "segment_dates": self.segment_dates,
+            "segment_timezones": self.segment_timezones,
         }
 
 
@@ -690,6 +709,14 @@ def _offer_completeness(
         ),
         segment_clocks=known(
             segments_complete and all(segment.departure and segment.arrival for segment in segments)
+        ),
+        segment_dates=known(
+            segments_complete
+            and all(segment.departure_date and segment.arrival_date for segment in segments)
+        ),
+        segment_timezones=known(
+            segments_complete
+            and all(segment.departure_timezone and segment.arrival_timezone for segment in segments)
         ),
         layovers=known(layovers_known),
         baggage=known(checked_bags is not None or carry_on is not None),
@@ -898,6 +925,9 @@ class StopsCompare:
         return payload
 
 
+EmptyReason = Literal["provider_empty", "filtered_out", "not_loaded"]
+
+
 class SearchErrorCode(str, Enum):
     NO_RESULTS = "no_results"
     REJECTED = "rejected"
@@ -906,6 +936,7 @@ class SearchErrorCode(str, Enum):
     FETCH_FAILED = "fetch_failed"
     BROWSER_UNAVAILABLE = "browser_unavailable"
     CURRENCY_MISMATCH = "currency_mismatch"
+    DEADLINE = "deadline"
 
 
 @dataclass(frozen=True)
@@ -913,11 +944,25 @@ class SearchError:
     code: SearchErrorCode
     message: str
     rate_limited: bool = False
+    # Epoch seconds a recorded cooldown ends; None unless a cooldown file named one.
+    retry_until: Optional[float] = None
+    timeout: bool = False
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {"code": self.code.value, "message": self.message}
         if self.rate_limited:
             payload["rate_limited"] = True
+            now = time.time()
+            if self.retry_until is not None and self.retry_until > now:
+                # Round up once: the ISO instant is never earlier than the real end, and
+                # the seconds come from that same instant.
+                end = math.ceil(self.retry_until)
+                payload["retry_after"] = datetime.fromtimestamp(end, timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+                payload["retry_after_seconds"] = max(1, math.ceil(end - now))
+        if self.timeout:
+            payload["timeout"] = True
         return payload
 
 
@@ -929,6 +974,8 @@ class QuerySuccess:
     offers: Tuple[FlightOffer, ...]
     google_flights_url: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
+    empty_reason: Optional[EmptyReason] = None
+    recommendation: Optional["Recommendation"] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -936,6 +983,8 @@ class QuerySuccess:
             raise ValueError("raw_count must be >= eligible_count")
         if self.eligible_count < len(self.offers):
             raise ValueError("eligible_count must be >= number of offers")
+        if self.empty_reason is not None and self.offers:
+            raise ValueError("empty_reason applies only to a query with no offers")
 
     def to_dict(self, currency: str) -> Mapping[str, object]:
         query = dict(self.query.to_dict())
@@ -950,6 +999,10 @@ class QuerySuccess:
         }
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
+        if self.recommendation is not None:
+            payload["recommendation"] = self.recommendation.to_dict(currency)
+        if self.empty_reason is not None:
+            payload["empty_reason"] = self.empty_reason
         return payload
 
 
@@ -976,7 +1029,21 @@ QueryResult = Union[QuerySuccess, QueryFailure]
 FetchBackend = Literal["sweep", "detail", "sweep_then_detail"]
 
 
+def _deadline_stop(codes: Sequence[Optional[SearchErrorCode]]) -> Optional[str]:
+    """Why a deadline made a scope incomplete, from the rows' own error codes."""
+    cut = sum(code == SearchErrorCode.DEADLINE for code in codes)
+    if not cut:
+        return None
+    return (
+        f"{cut} of {len(codes)} units did not finish before deadline_seconds: "
+        "not loaded, not proven empty"
+    )
+
+
 def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
+    cut = _deadline_stop(
+        [result.error.code if isinstance(result, QueryFailure) else None for result in results]
+    )
     succeeded = sum(isinstance(result, QuerySuccess) for result in results)
     empty = sum(
         isinstance(result, QueryFailure) and result.error.code == SearchErrorCode.NO_RESULTS
@@ -989,8 +1056,13 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
         succeeded=succeeded,
         empty=empty,
         failed=failed,
-        complete=True,
-        unsearched="queries outside the submitted finite scope",
+        complete=cut is None,
+        stopping_reason="completed_scope" if cut is None else "deadline",
+        unsearched=(
+            "queries outside the submitted finite scope"
+            if cut is None
+            else f"{cut}; queries outside the submitted finite scope"
+        ),
     )
 
 
@@ -1110,8 +1182,11 @@ class DatePriceRow:
     duration_hours: Optional[float] = None
     departure: Optional[str] = None
     arrival: Optional[str] = None
+    empty_reason: Optional[EmptyReason] = None
 
     def __post_init__(self) -> None:
+        if self.empty_reason is not None and self.status != "empty":
+            raise ValueError("empty_reason applies only to empty rows")
         _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
         if (self.status != "ok" or self.price is None) and self.typical is not None:
             raise ValueError("empty/error rows omit typical")
@@ -1151,6 +1226,8 @@ class DatePriceRow:
             payload["departure"] = self.departure
         if self.arrival:
             payload["arrival"] = self.arrival
+        if self.empty_reason is not None:
+            payload["empty_reason"] = self.empty_reason
         payload.update(_typical_json(self.typical, self.vs_typical, self.vs_typical_pct, currency))
         return payload
 
@@ -1194,7 +1271,10 @@ class DateCalendarReport:
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
             expected = (self.end_date - self.start_date).days + 1
-            coverage_complete = len({row.departure_date for row in self.days}) == expected
+            cut = _deadline_stop([row.error.code if row.error else None for row in self.days])
+            coverage_complete = (
+                cut is None and len({row.departure_date for row in self.days}) == expected
+            )
             object.__setattr__(
                 self,
                 "coverage",
@@ -1209,9 +1289,17 @@ class DateCalendarReport:
                     empty=empty,
                     failed=failed,
                     complete=coverage_complete,
-                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    stopping_reason=(
+                        "completed_scope"
+                        if coverage_complete
+                        else "deadline"
+                        if cut
+                        else "partial_results"
+                    ),
                     unsearched=(
-                        None if coverage_complete else "dates missing from the requested window"
+                        None
+                        if coverage_complete
+                        else cut or "dates missing from the requested window"
                     ),
                 ),
             )
@@ -1290,7 +1378,13 @@ class FlexSearchReport:
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
             expected = (self.end_date - self.start_date).days + 1
-            coverage_complete = len({row.departure_date for row in self.days}) == expected
+            codes = [row.error.code if row.error else None for row in self.days]
+            cut = _deadline_stop(codes + [self.error.code if self.error else None])
+            # A shop cut by the deadline is one more unit that was attempted and failed.
+            shop_cut = self.error is not None and self.error.code == SearchErrorCode.DEADLINE
+            coverage_complete = (
+                cut is None and len({row.departure_date for row in self.days}) == expected
+            )
             object.__setattr__(
                 self,
                 "coverage",
@@ -1301,16 +1395,22 @@ class FlexSearchReport:
                         "from": self.start_date.isoformat(),
                         "to": self.end_date.isoformat(),
                     },
-                    attempted=len(self.days),
+                    attempted=len(self.days) + shop_cut,
                     succeeded=succeeded,
                     empty=empty,
-                    failed=failed,
+                    failed=failed + shop_cut,
                     complete=coverage_complete,
-                    stopping_reason=("completed_scope" if coverage_complete else "partial_results"),
+                    stopping_reason=(
+                        "completed_scope"
+                        if coverage_complete
+                        else "deadline"
+                        if cut
+                        else "partial_results"
+                    ),
                     unsearched=(
                         None
                         if coverage_complete
-                        else "dates missing from the requested flex window"
+                        else cut or "dates missing from the requested flex window"
                     ),
                 ),
             )
@@ -1405,6 +1505,19 @@ class ExploreDestination:
         return payload
 
 
+def explore_stop(
+    error: Optional["SearchError"], pricing_errors: Sequence["QueryFailure"]
+) -> tuple[str, str]:
+    """Explore never proves the catalog; a deadline is named when it cut the search short."""
+    cut = _deadline_stop(
+        [error.code if error else None] + [row.error.code for row in pricing_errors]
+    )
+    shortlist = "destinations outside the provider shortlist and local top limit"
+    if cut is None:
+        return "shortlist_limit", shortlist
+    return "deadline", f"{cut}; {shortlist}"
+
+
 @dataclass(frozen=True)
 class ExploreReport:
     searched_at: datetime
@@ -1421,6 +1534,7 @@ class ExploreReport:
     nearby_label: Optional[str] = None
     coverage: Optional[SearchCoverage] = None
     pricing_errors: Tuple[QueryFailure, ...] = field(default=(), kw_only=True)
+    empty_reason: Optional[EmptyReason] = field(default=None, kw_only=True)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
@@ -1434,6 +1548,7 @@ class ExploreReport:
                 for row in self.destinations
             )
             failed = len(self.pricing_errors) + int(self.error is not None)
+            reason, unsearched = explore_stop(self.error, self.pricing_errors)
             object.__setattr__(
                 self,
                 "coverage",
@@ -1450,8 +1565,8 @@ class ExploreReport:
                     failed=failed,
                     complete=False,
                     strategy="heuristic",
-                    stopping_reason="shortlist_limit",
-                    unsearched="destinations outside the provider shortlist and local top limit",
+                    stopping_reason=reason,
+                    unsearched=unsearched,
                 ),
             )
 
@@ -1475,6 +1590,8 @@ class ExploreReport:
             payload["error"] = self.error.to_dict()
         if self.pricing_errors:
             payload["pricing_errors"] = [row.to_dict() for row in self.pricing_errors]
+        if self.empty_reason is not None:
+            payload["empty_reason"] = self.empty_reason
         return payload
 
 
@@ -1567,6 +1684,7 @@ class HotelPage:
     resolved_place: Optional[str] = None
     place_bounds: Optional[Tuple[float, float, float, float]] = None
     search_url: Optional[str] = None
+    page_errors: Tuple[SearchError, ...] = ()
 
 
 HotelProvider = Literal["booking.com", "google-hotels", "skiplagged"]
@@ -1663,6 +1781,7 @@ class HotelQuerySuccess:
     raw_count: int
     eligible_count: int
     offers: Tuple[HotelOffer, ...]
+    page_errors: Tuple[SearchError, ...] = field(default=(), kw_only=True)
     resolved_place: Optional[str] = None
     place_bounds: Optional[Tuple[float, float, float, float]] = None
     status: Literal["ok"] = field(init=False, default="ok")
@@ -1674,7 +1793,7 @@ class HotelQuerySuccess:
             raise ValueError("eligible_count must be >= number of offers")
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload = {
             "status": self.status,
             "query": self.query.to_dict(),
             "applied": self.applied.to_dict(),
@@ -1684,6 +1803,9 @@ class HotelQuerySuccess:
             "place_bounds": list(self.place_bounds) if self.place_bounds else None,
             "offers": [offer.to_dict() for offer in self.offers],
         }
+        if self.page_errors:
+            payload["page_errors"] = [error.to_dict() for error in self.page_errors]
+        return payload
 
 
 @dataclass(frozen=True)
@@ -1722,6 +1844,8 @@ class HotelSearchReport:
     # A point the caller named; offers carry their straight-line distance to it.
     near: Optional[Tuple[float, float]] = None
     max_distance_km: Optional[float] = None
+    # A deadline cut a step that left no failed row (for example a second results page).
+    deadline_cut: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         _store_naive_utc(self)
@@ -1729,7 +1853,7 @@ class HotelSearchReport:
     def to_dict(self) -> Mapping[str, object]:
         from viajante.runtime import package_version
 
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "viajante_version": package_version(),
             "provider": self.provider,
@@ -1744,6 +1868,34 @@ class HotelSearchReport:
             "property_matrix": _property_matrix(self.queries),
             "queries": [result.to_dict() for result in self.queries],
         }
+        cut = _deadline_stop(
+            [r.error.code if isinstance(r, HotelQueryFailure) else None for r in self.queries]
+        )
+        if cut is None and self.deadline_cut:
+            cut = "deadline_seconds cut part of this search: that evidence was not loaded"
+        page_failed = any(isinstance(r, HotelQuerySuccess) and r.page_errors for r in self.queries)
+        if cut is not None or page_failed:
+            payload["coverage"] = SearchCoverage(
+                scope={"kind": "submitted_queries", "size": len(self.queries)},
+                attempted=len(self.queries),
+                succeeded=sum(isinstance(r, HotelQuerySuccess) for r in self.queries),
+                empty=sum(
+                    isinstance(r, HotelQueryFailure) and r.error.code == SearchErrorCode.NO_RESULTS
+                    for r in self.queries
+                ),
+                failed=sum(
+                    isinstance(r, HotelQueryFailure) and r.error.code != SearchErrorCode.NO_RESULTS
+                    for r in self.queries
+                ),
+                complete=False,
+                stopping_reason="deadline" if cut else "additional_page_failed",
+                unsearched=(
+                    f"{cut}; stays outside the submitted finite scope"
+                    if cut
+                    else "Additional results page(s) failed; their hotel evidence was not loaded"
+                ),
+            ).to_dict()
+        return payload
 
 
 def _property_key(offer: "HotelOffer") -> Tuple[str, str]:
@@ -2212,12 +2364,17 @@ class HotelRoomsReport:
     rates: Tuple[HotelRoomRate, ...] = ()
     error: Optional[SearchError] = None
     fetch_ms: Optional[int] = None
+    # What the provider echoed, when it did. Absent means the answer did not say.
+    answered_adults: Optional[int] = None
+    answered_rooms: Optional[int] = None
+    answered_check_in: Optional[date] = None
+    answered_check_out: Optional[date] = None
 
     def __post_init__(self) -> None:
         _store_naive_utc(self)
 
     def to_dict(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "provider": self.provider,
             "searched_at": _iso_z(self.searched_at),
@@ -2242,6 +2399,15 @@ class HotelRoomsReport:
             "error": self.error.to_dict() if self.error else None,
             "fetch_ms": self.fetch_ms,
         }
+        if self.answered_adults is not None:
+            payload["answered_adults"] = self.answered_adults
+        if self.answered_rooms is not None:
+            payload["answered_rooms"] = self.answered_rooms
+        if self.answered_check_in is not None:
+            payload["answered_check_in"] = self.answered_check_in.isoformat()
+        if self.answered_check_out is not None:
+            payload["answered_check_out"] = self.answered_check_out.isoformat()
+        return payload
 
 
 @dataclass(frozen=True)

@@ -21,6 +21,7 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
 - Routes, LCC buffer, nearby expand, flight ranking, or `get_flights`: `src/viajante/flights.py`
+- Per-query `recommendation` (requirements, relaxation, score, shortlist, highlights/tradeoffs): `src/viajante/recommend.py`
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
 - Google Hotels HTTP shortlist: `src/viajante/google_hotels.py`, `src/viajante/google_hotels_rpc.py`
@@ -31,7 +32,10 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags or printed tables: `src/viajante/cli.py`
-- Stdio MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
+- Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
+- MCP result envelope (status, completeness, empty_reason, retry_after, observed_at): `src/viajante/envelope.py`
+- MCP input-error JSON body: `src/viajante/mcp_errors.py`
+- MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
 - Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
@@ -45,22 +49,66 @@ reads the payload, weighs trade-offs, and recommends. Do not add summaries,
 - Cheapest-per-day calendar and flex window (calendar then one shop): `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
+- Opt-in split tickets (hub self-transfer, mixed one-ways): `src/viajante/split.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
-- Offline evidence-bound itinerary validation: `src/viajante/validate.py`
+- Offline evidence-bound itinerary validation and UTC civil-time resolution: `src/viajante/validate.py`, `src/viajante/temporal.py`
+- Hotel finalist snapshot and separate room quote: `src/viajante/details.py`
+- Fresh re-check of an earlier flight offer (`recheck-offer` / `recheck_offer`): `src/viajante/recheck.py`
 - Offline stay blocks and per-person cost split: `src/viajante/stays.py`
 - MCP evidence ledger and `verify_answer`: `src/viajante/evidence.py`
+- Opt-in local observation log, per-query trend, recording hooks: `src/viajante/history.py`
+- Saved on-demand `watch` and the `price_history` / `watch_price` tool bodies: `src/viajante/watch.py`; their CLI: `src/viajante/history_cli.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
 
 `google_flights.py` owns URL building, consent, card parsing, typed provider failures, the sweep HTTP client, and `GoogleFlightsSource`. `google_flights_rpc.py` owns the compact shopping request and `wrb.fr` parse. `booking.py` owns Booking.com URL/chips, consent, card extract, and `BookingHotelsSource`. Session lifecycle lives in `browser.py`. `flights.py` and `hotels.py` are the search loops: pure and offline-testable outside the browser source. `trip.py` joins owned flight fare and hotel stay when dates overlap; it omits the sum if either side missed.
 
 ## Public contract
 
-CLI: `viajante flights`, `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `bench`.
-MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `get_runtime_info`.
-Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
+CLI: `viajante flights` (`--split-tickets`), `dates`, `flex`, `explore`, `airports`, `hotels`, `hotel-rooms`, `trip`, `hidden-city`, `awards`, `points`, `recheck-offer`, `history`, `watch`, `bench`.
+MCP (stdio): `search_flights`, `search_dates`, `search_flex`, `search_trip`, `search_explore`, `lookup_airports`, `search_hotels`, `search_hotel_rooms`, `get_hotel_details`, `search_split_tickets`, `search_hidden_city`, `compare_awards`, `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`, `split_stay_costs`, `verify_answer`, `price_history`, `watch_price`, `get_runtime_info`, `get_guide`.
+Library: `get_flights` (route spec or trips; natural language is the caller's job), plus the `search_*` functions, `get_hotel_details`, and `validate_itinerary`. Sweep `--proxy` / MCP `proxy` on flights, dates, flex, explore. `search_hidden_city` is Skiplagged-only and does not mix Google evidence. Skiplagged cards are USD; named keep is USD/omit. A keep that matches no owned card is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. `compare_award`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`, and `split_stay_costs` are local; validation returns pass/fail/unknown and does not invent seats or fill missing evidence.
 Flags and defaults: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. JSON keys: `src/viajante/models.py`.
+
+### MCP result envelope
+
+Every MCP tool except `lookup_airports` (a bare list) returns the same top-level
+envelope, stamped by `envelope.py` from the owned payload. Read it first; the
+rest of the payload is unchanged and additive. `status`: `ok`, `no_results`,
+`rate_limited`, `blocked`, `timeout`, `failed`. `completeness`: `complete`,
+`partial` (something answered, something did not, or the search is scope-bound),
+`blocked` (nothing usable). `empty_reason` is set only when `status` is not `ok`:
+`provider_empty`, `filtered_out`, `not_loaded`. Also `error_code`, `retry_after` /
+`retry_after_seconds` (taken from the per-error `retry_after` fields, which a recorded cooldown names; a proxied 429 has none), and `observed_at`
+with `observed_at_basis` (`fetch` = our fetch clock; `provider` is reserved).
+Offline tools report `ok` / `complete` with the rest null; `verify_answer`'s
+`status` follows its verdict (`failed` with `error_code` `unowned_claims` or
+`no_search_recorded` when `ok` is false). `observed_at` / basis are null when a
+recorded cooldown answered and nothing was sent. A calendar day with no price is
+`not_loaded` (an unpriced cell does not prove there are no flights), and a
+`partial` completeness. `error_code` only rides with the `empty_reason` it
+supports (never `no_results` beside `filtered_out`); an `ok` / `partial` result
+may still carry the worst failure's `error_code` with `empty_reason` null. An
+explore destination without a price (its shop failed or came back empty) is
+`not_loaded`, not a usable row. A new search tool must
+stamp through `stamp_search`, which raises on a payload shape it does not
+recognise, and must advertise the envelope schema (a test enforces it).
+`recheck_offer` stamps through `stamp_recheck`, which maps its own outcome: a found
+itinerary (`same_price`, `price_changed`, `substituted`, `multiple_matches`) is `ok` /
+`complete`; `not_found` is `no_results` / `complete` with `provider_empty` or
+`filtered_out`, but `not_among_offers` is `ok` (the provider returned flights; `partial`
+when only the N cheapest of M were compared); `check_failed` carries the failure status
+(`rate_limited` with `retry_after` from the cooldown, `blocked`, `timeout`, else `failed`),
+`not_loaded`, `blocked` completeness (`partial` for `incomplete_offers`) and the error's
+code; `incomplete_identity` is `failed` / `blocked`. `observed_at` is `checked_at` (basis
+`fetch`), null when nothing was sent. A completed check is recorded in the evidence ledger
+(caller values stripped); `check_failed` and `incomplete_identity` are not.
+
+Wording rule: only `provider_empty` may be told to a traveller as "no flights/hotels
+found". `filtered_out` means viajante's filters removed rows the provider returned
+(availability is not disproved). `not_loaded` means the search did not complete
+(availability is unknown). Never merge the three.
 
 English fetch. Prompts any language. Product voice is English. A Spanish
 (or other) prompt is caller *input*, not product voice. No implied home hub.
@@ -92,6 +140,77 @@ catalog places are not offers: they may carry a query URL; they do not grow a
 token, buffer stamp, overnight/via filter, or `stops_compare`. Never invent a
 dest typical from the explore catalog mix or from other dests.
 
+Hotel `selection_id` values belong to this process. Only a hotel search adds
+them, and only on offers `get_hotel_details` can open. A detail read does not
+enter the evidence ledger and does not evict a stored search. `room_rates` false
+is a local read and does not take the search worker. Unknown ids fail
+before a provider call. `room_rates` must be a boolean. `true` fetches a
+separate Skiplagged USD room quote for the original dates, adults, and rooms.
+The tool envelope is `stamp_local` (`ok` / `complete`) when `room_rates` is
+false. An accepted room quote is `stamp_search` of that quote: `ok`,
+`no_results` / `provider_empty`, or `rate_limited` / `blocked` / `timeout` /
+`failed` with the error's own `retry_after` fields. A city that matches more
+than one place sends nothing: `stamp_local` partial, `error_code`
+`ambiguous_city`. Occupancy, dates, or coordinates that do not match are
+`no_results`, `empty_reason` `filtered_out`, and `error_code`
+`occupancy_mismatch`, `dates_mismatch`, or `property_mismatch`. When both
+occupancy and dates differ, `error_code` is `occupancy_mismatch` and both flags
+stay. Absence of an echo is `echo: unknown` and is not a confident match
+(never `ok` / `complete`). An inconclusive read never shows `ok` / `complete`.
+Never apply those rates' terms to the original price or infer combined room
+capacity. A missing provider label stays unknown.
+
+Segment arrival dates are provider-owned; IANA zones come from the airport catalogue.
+`local_instant` is the public zone-to-instant helper: both DST folds must agree,
+and a missing, ambiguous, or nonexistent civil time stays unknown.
+Pass selected legs in travel order. `arrival_deadline` with an explicit offset is compared in UTC, including when
+that offset is not the arrival airport's civil offset. A naive deadline is local
+at the arrival airport. `chronological` compares UTC instants in that order. Stay-day bounds
+count local dates only between an arrival and the next journey departure from
+that same airport; fewer than two journeys is unknown. Do not invent a stay after the final flight. Existing
+travel-window and local-clock constraints retain their meanings. Temporal order
+does not prove connection protection, immigration eligibility or adequate
+airport transfer margins.
+
+`recheck_offer` / `viajante recheck-offer` is a search, not a local helper: one fresh
+Google Flights query that skips the MCP replay cache, runs under the one-search lock,
+and respects the Google cooldown. It matches an earlier offer by flight numbers plus
+scheduled departure times per segment and never picks between ambiguous matches. The
+offer needs a full segment identity (flight number, origin, destination, departure
+clock); otherwise the outcome is `incomplete_identity`, no search is sent, and `missing`
+names the fields. `allow_loose_match` opts in to carrier plus departure times and stamps
+`loose_match: true`, `match_basis: carrier_times`. Exactly one outcome: `same_price`,
+`price_changed`, `not_found`, `multiple_matches` (more than one identical fresh offer:
+`candidates` lists their prices and times, no verdict), `incomplete_identity`,
+`check_failed`, or `substituted` (only with `allow_substitute`; by default a close
+alternative is a `not_found` / `not_among_offers` with a `closest_candidate` listed for
+information only). A positive outcome always rests on a fresh provider match.
+`currency` must be the offer's own: a different one is refused, never converted. The
+query (evidence or supplied) is replayed: cabin, stops, bags and airline/alliance filters
+ride the request; a `price_cap` is not sent but reported in `filter_violations` (also
+`max_stops`, `airlines`, `exclude_airlines`) when the matched fresh offer breaks it
+(`filters_replayed` is what rode the request, `filters_checked` what was only checked
+locally; `max_stops` and `exclude_airlines` breaches are defensive since the search already
+applies them; `airlines` uses the search's any-carrier rule). Loose matching refuses a
+connecting leg without segments. Origin and destination are compared in every match.
+Only a result built from a provider answer is recorded in the evidence ledger;
+`incomplete_identity`, `check_failed` and input errors record nothing. `not_found` is
+a completed check (`reason`: `provider_empty`, `filtered`, `not_among_offers`).
+`check_failed` has `check_completed: false`, a `reason` and the provider `error`
+(`blocked`, `rate_limited`, `markup_drift`, `rejected`, `fetch_failed`,
+`browser_unavailable`, `currency_mismatch`, or `incomplete_offers` when fresh round-trip or
+multi-city offers came back without every journey and nothing matched): the check did not
+run to an answer, which is not evidence the offer is gone. Never branch a rate limit into
+"gone". `substituted` needs a shared flight number, or the same marketing carrier within
+90 minutes of the original departure. `previous.source` is `search_evidence` only when
+the offer's `evidence_id`, price, currency and itinerary (every segment) match an offer a
+search in this process returned, and then previous leg times are read from that ledger
+offer; anything else (hand-typed, invented or borrowed id, edited amount or itinerary,
+CLI) is `caller_supplied`, and its `previous` block and `differences[].previous` values
+(also inside `closest_candidate`) are returned but not recorded in the evidence ledger.
+Re-check finalists before presenting them as current. A re-check is still not a booking
+guarantee: confirm the price on the provider's own page.
+
 Schema v2 flight offers carry immutable `evidence` and explicit `completeness`.
 The URL evidence reproduces a query, not guaranteed current fare availability.
 Empty segments cannot prove segment count, operators, clocks, airport changes,
@@ -101,7 +220,14 @@ constraints are a separate scenario. Search `coverage` is bounded to its named
 scope and is not proof over unsearched routes, dates, gateways, or permutations.
 
 `--nearby` is opt-in same-city IATA (default off; open-jaw not rewritten; no
-invented codes). `--exclude-airports` / `--include-airports` are named owned
+invented codes). A metro code (`METRO_GROUPS` in `airports.py`) named on a
+one-way or `rt` flights/trip route expands to its members with `nearby_label`
+`metro XXX`; an airport never expands to its metro. `--nearby` with a named metro
+code is an error, never a partial expand. A route whose origin and destination
+resolve to the same metro — the metro code itself, or an airport that belongs to
+the other's metro — is rejected before any search. Open-jaw and multi-city reject metro codes; dates,
+flex, explore, hotels, and hidden-city do not take them. Add
+a metro only when tests can confirm every member from the airport table. `--exclude-airports` / `--include-airports` are named owned
 IATA lists (same parse as via). Include is dests only, not origins. Exclude wins
 on overlap. `--exclude-regions` is explore-only (owned IANA tz prefixes). Named
 origin/dest in an exclude list is empty unless `--nearby` already owned a
@@ -148,16 +274,34 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
 - Detail delays: 4.5s + up to 1.5s jitter between queries; 3 attempts with 8s
   exponential backoff + jitter; browser reset after each failed attempt. No flags
   to shorten detail delays or parallelize requests. Progress goes to stderr.
+- MCP control: a client `progressToken` gets `notifications/progress` (`[i/n]`
+ parsed, throttled ~250 ms); `notifications/cancelled` stops the search between
+ queries, retries, and sleeps and frees the lock; a cancelled search is never
+ cached, recorded in the evidence ledger, or written to a cooldown file. Optional
+ `deadline_seconds` (flights, dates, flex, explore, hotels, trip; env default
+ `VIAJANTE_MCP_DEADLINE_SECONDS`) returns a partial result: unfinished queries
+ are error code `deadline` (never `no_results`), `coverage.complete` false,
+ `stopping_reason` `deadline`, not cached. The cache and `coverage` follow
+ `SearchControl.cut` (set when a deadline error is raised or a sleep is cut short),
+ never elapsed time; a cut that loses only optional evidence (typical) keeps the row. Never swallow `SearchDeadline` in a
+ broad `except Exception` around a provider call (re-raise it); a cancel is a
+ `BaseException` and passes through. MCP text is compact JSON. Core is
+ `src/viajante/control.py`; do not add summary prose to partial results.
 - Retry only what can succeed on a second try. Sweep HTTP retries empty/drift/5xx
   once after 50 ms; happy path does not sleep. After that, `markup_drift` still
   fails without Chromium. HTTP 429 resets TLS, waits 50 ms, continues remaining
-  jobs. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
+  jobs. A multiplexed request that raised before any response (reset, timeout)
+  is a transport failure, not a 429: it replays once on a fresh session, then
+  fails `fetch_failed` (`timeout` when it timed out), never `rate_limited`. A real direct (unproxied) Google 429, or a data-less RPC status 13, also
   writes `google-rate-limit.json` in the state dir: a guessed cooldown (2 min, doubling per repeat limit up to 30 min, or
   a named `Retry-After`). While it runs, new flight/hotel Google searches in any
-  process send nothing and fail `blocked` with `rate_limited: true`; a search
+  process send nothing and fail `blocked` with `rate_limited: true` (plus
+  `retry_after` ISO UTC and `retry_after_seconds` only when a recorded cooldown
+  names one; a proxied 429 records none); a search
   already running keeps its replay. Rate-limited failures do not fall back to
   detail. MCP search tools replay an identical successful call for 5 min
-  (`cached: true`) instead of asking Google again. `no_results`, `rejected`, `blocked`,
+  (`cached: true`) instead of asking Google again. The replay cache holds at
+  most 20 entries; a new successful search drops the oldest. `no_results`, `rejected`, `blocked`,
   `markup_drift`, and `browser_unavailable` do not get a Playwright second attempt.
   A Skiplagged 429 does the same in `skiplagged-rate-limit.json` (`blocked`,
   `rate_limited`, no retry, live calls paced 1s apart). A calendar
@@ -206,6 +350,22 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   overnight constraints.
 - The low-cost carrier list is partial. Absence from it is not evidence that a
   fare includes a bag.
+- `recommendation` on a successful flights query is additive evidence, not a
+  verdict: the `offers` list and `ranked` sort do not change. The pick respects
+  named `max_stops`, `depart_window`, `depart_after`, `arrive_before`,
+  `max_duration`, `bags`, `carry_on`. Other filters (price cap, airlines, via,
+  overnight, layover bounds) are never relaxed. If nothing meets them all, the
+  fewest are relaxed (ties: earlier in `RELAX_ORDER`) and named in
+  `relaxed_requirements`; never drop one silently. An unknown clock, or an
+  unknown stop count under direct-only, cannot prove a requirement; unknown bags
+  or duration are `unknown`, not `met`. Round-trip and multi-city packages
+  cannot be relaxed. Score weights are `SCORE_WEIGHTS` in `recommend.py`;
+  unknown duration or stops take the worst penalty. Offers whose currency differs
+  or is unproven are never price-compared or price-scored. `highlights` /
+  `tradeoffs` come only from returned fields (price text, duration, stops,
+  layover, clocks, carrier, bag counts) and say unknown when absent. No savings
+  claims, no reference prices, no refundable or fare-rule claims (provider rows
+  carry none).
 
 ### Hotels
 
@@ -265,6 +425,27 @@ winner by fare+buffer. Explore dest ranking applies a named buffer only when
   lock). Child or infant occupancy is rejected (hotel occupancy is adults-only).
   Hotel `price_basis` stays `total_stay`. Never invent a fare or a stay.
 
+## Price history
+
+Recording is opt-in: `VIAJANTE_PRICE_HISTORY=1` (CLI and MCP), or a `watch` run
+(an explicit request). It hooks `search_flights` / `search_hotels` themselves, so
+an MCP cache replay never reaches it and is never logged. Only a real
+`QuerySuccess` / `HotelQuerySuccess` with an offer becomes an entry (cheapest
+owned amount in the report's own currency); failures, empty results and
+cooldown-blocked searches record nothing. `price-history.jsonl` is append-only
+(oldest entries drop past `MAX_ENTRIES`; `viajante history --clear` deletes it).
+A series is one `query_key` in one currency: any differing query parameter or
+filter is a different series, and currencies are never merged or converted. One
+observation reports no trend. Never forecast, estimate a missing day, or compare
+across series. `watch_price` / `viajante watch` re-run a saved
+`search_flights` / `search_hotels` argument set only when called: no scheduler,
+no notification, no loop; a cached or rate-limited run records nothing. A
+`proxy` is never stored in a watch. Only a missing log is an empty log: any other read error must stop an append
+or `--clear` (the file stays) and be reported, never read as empty history.
+A recording failure must not lose the
+search result; a watch run surfaces it (`recording_error`) instead of claiming no offer. `price_history` may run during a search; `watch_price` is a search.
+On the MCP side `price_history` is a local result (`stamp_local`); an unreadable log is `failed` / `blocked` / `history_unreadable` with `series` null (unknown, not empty). `watch_price` list mode is local; a run copies the inner search's envelope (`partial` when history could not be read). `watch_price` is the one tool that writes, so it is not read-only or idempotent (`tool(..., writes=True)`). `watch_price` list mode on a corrupt or unreadable `price-watches.json` is `failed` / `blocked` / `watches_unreadable` with `watches` null; `save_watch` / `remove_watch` then refuse and leave the file byte-identical (`_load` is strict, like the log). A watch's `kind` is `flight` or `hotel` everywhere, and saving builds the queries first (`check_search_params`) so a bad route or date is never persisted. Read-modify-write on the log and the watches file runs under `storage.exclusive_lock` (`flock`, `msvcrt` on Windows, else a documented no-op). `recheck_offer` goes through the recorded `search_flights`, so with history on it also records one real observation.
+
 ## Local stay arithmetic and known limits
 
 Known release limits: a data-less status 13 can have a cause other than throttling
@@ -277,6 +458,23 @@ just identical headcounts. `split_stay_costs` uses named currency and optional
 per-person nightly fee, allocates exact cents per stay only among its occupants,
 and reports uncovered roster nights as `unallocated_nights`. Neither fetches
 prices or converts currency.
+
+## MCP client surface
+
+Every tool has a title and read-only annotations; `openWorldHint` is true only for
+tools on the search runner (`search_*`). Invalid input stays an `isError` result
+whose text is the SDK's exact `Error executing tool <name>: ` prefix followed by
+`{"error": {"code": "invalid_parameter", "field": <param or null>, "message"}}`;
+clients strip that prefix and parse the rest only if it starts with `{`.
+`search_in_progress` is the busy code. Missing or mistyped arguments (the SDK's
+pydantic check) and undeclared top-level arguments (a misspelled filter) get the same
+body; `field` is set only when every failure is on one top-level parameter. Other
+`field` values are set only when the message names exactly one parameter or quotes
+exactly one parameter's value; never guess it. Decode errors and an unreadable result shape (`EnvelopeShapeError`) are viajante's, never blamed on the caller.
+Long guidance lives in `viajante://guide` / `get_guide`; the server instructions
+keep only currency, bags, evidence, hidden-city sequencing, empty-is-not-absent
+and rate limits. Do not drop a rule from both. Floor `mcp>=1.14.1`; loopback HTTP
+passes `transport_security` explicitly because the SDK only does it itself from 1.23.
 
 ## Tests
 
@@ -294,22 +492,73 @@ then `gate` and `score_ms` (`tests_ms` + owned `tests/bench/` parse). No Chromiu
 No live Google unless `VIAJANTE_BENCH_LIVE=1`; that extra `sweep_ms` is never the
 score. **Do not optimize `score_ms`.**
 
+The suite is isolated from the caller's environment (`tests/_isolate.py`: no
+`VIAJANTE_PRICE_HISTORY`, temporary `VIAJANTE_STATE_DIR`); every new
+`tests/test_*.py` must start with `import _isolate  # noqa: F401` (a test enforces it); the bench gate strips
+the opt-in from its subprocesses. Keep new tests off the real state dir.
+
 `pip install -e .` still works; `uv` is the reproducible path. Tests are offline.
 They must not launch Chromium or use the network. CI runs the suite on Python
 3.10 through 3.14.
 
 Pin owned seams, not upstream HTML rewriting. A renamed or dropped JSON key is a
 breaking change. `tests/test_mcp.py` imports FastMCP when the `mcp` extra is
-installed (`mcp>=1.6,<2`).
+installed (`mcp>=1.14.1,<2`).
 
 Stdio MCP: `npx -y @viajante/mcp`, or
 `uvx --from 'viajante[mcp]' viajante-mcp`, or checkout `uv sync --extra mcp`
-then `viajante-mcp`. No Streamable HTTP. Keep
+then `viajante-mcp`. Local Streamable HTTP is opt-in
+(`viajante-mcp --transport streamable-http [--host 127.0.0.1] [--port N]`): no
+auth, loopback by default, never hosted, no `remotes` in `server.json`; a
+non-loopback host warns. Keep
 the one-search process lock: a second search raises
 `a viajante search is already running in this process` immediately.
 `MCP error -32001: Request timed out` is not that lock; do not retry timeouts
 as lock-busy. `lookup_airports` may run during a search. Playwright is extra
 `viajante[browser]`.
+
+## Split tickets (opt-in)
+
+`viajante flights --split-tickets` / MCP `search_split_tickets` pair separately
+ticketed real one-way quotes: origin-hub plus hub-destination for a one-way route,
+or the cheapest outbound plus the cheapest return one-way for a `--trip rt` route.
+Never a leg price derived from a round-trip price, never an estimated leg, never
+converted. Every itinerary says `split_ticket: true`, `connection_protected: false`,
+and `self_transfer` (true for a hub), and carries each ticket's own offer and
+`google_flights_url`. Say that a missed connection between tickets is not protected
+and bags may need re-checking. A hub connection needs ticket 1's last segment to land
+at the hub and ticket 2's first segment to leave from it (`airport_mismatch`,
+`airport_unproven`), an owned arrival moment (the segment `arrival_date` plus clock, converted to UTC with `local_instant` on the segment timezone, or the airport catalogue when the segment has none; a missing zone or a nonexistent or DST-ambiguous local time is unproven, never a number)
+and an owned departure moment; unproven pairs are rejected (`timing_unproven`), pairs
+under `min_connection_hours` (default 3, a planning default, not provider evidence)
+are rejected (`connection_too_short`). Mixed one-ways pair the cheapest outbound and
+return where the return departs after the outbound lands (`return_before_arrival`);
+one pair per currency, cheapest within it. Without an owned arrival date the pair says
+`timing_proven: false` with a `timing_note` and is used only when no proven pair exists
+in its currency (counted in `rejected.timing_unproven` and
+`coverage.scope.timing_unproven_kept`). `total` is summed only when every part has the same owned
+currency, else `null`, and rounded to the currency's minor unit. Ranking and `top`
+work within one currency at a time (requested currency first, unknown totals last);
+raw sums of different currencies never compare. Other-currency groups and the
+unknown-total group keep at most 3 rows each (`omitted_other_currency` counts the rest). `vs_packaged` compares only against
+the cheapest packaged offer in the same currency and carries a non-negative `savings`
+or `extra_cost`. Hubs are named or the layover airports in the packaged segments.
+Extra searches are capped (`MAX_SPLIT_HUBS` = 5, `via` names at most 5 airports (`MAX_VIA`; field-specific errors for unknown codes and the limit), 2 queries per hub, 3 with overnight,
+2 for mixed), sequential under the one-search lock, and stop at a recorded Google
+cooldown (the CLI then exits non-zero). Hub splits do not apply to multi-city;
+`--price-cap` drops splits whose total is unknown, in another currency, or above the cap. Ticket queries carry occupancy, cabin, bags and
+carrier filters; clock, layover, via, and overnight filters do not apply per ticket.
+
+The MCP result carries the envelope from `stamp_split` (`envelope.py`), which reads
+`itineraries`, `legs` and `packaged_report`, not query rows. Any itinerary is `ok`
+(`partial` when a fetch failed). With none, a failed fetch or a recorded cooldown wins:
+its status (`rate_limited`, `blocked`, `timeout`, `failed`), `not_loaded`, `blocked`
+completeness (`partial` when another fetch answered), and the per-error retry fields.
+Answered legs whose pairings were all rejected are `no_results` / `filtered_out`; when
+legs were searched, `provider_empty` (error code `no_results`) needs every leg to be
+provider-empty, whatever the packaged baseline returned. `observed_at` is `searched_at`
+with basis `fetch`, and both are null when nothing reached the provider (every counted
+failure was a recorded cooldown and nothing answered), as in `stamp_search`. A new split-shaped payload must be readable by `stamp_split`, or the tool fails.
 
 ## Trip-planning search strategy
 

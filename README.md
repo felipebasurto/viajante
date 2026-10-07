@@ -92,6 +92,12 @@ npx still needs `uvx` (and Python 3.10+) on PATH. If you use an existing
 Python environment instead, install `pip install 'viajante[mcp]'` and configure
 the client to run that environment's `viajante-mcp` executable.
 
+For a client that only connects to a URL, run the server on loopback with
+`viajante-mcp --transport streamable-http` and point the client at
+`http://127.0.0.1:8000/mcp`. This has no authentication; every client shares
+this machine's IP and the provider cooldown, so do not expose it. Details are in
+[usage](docs/usage.md#mcp-client-compatibility).
+
 Once connected, you can ask:
 
 > Find a seven-night round trip from BOS to LHR, departing between November 1
@@ -100,7 +106,9 @@ Once connected, you can ask:
 > Search for hotels in Tokyo from November 12 to November 16, 2026, for two
 > adults. Use JPY and require free cancellation.
 
-The server exposes twelve tools:
+Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
+
+The server exposes twenty-two tools:
 
 | Tool | Use it to |
 | --- | --- |
@@ -109,13 +117,23 @@ The server exposes twelve tools:
 | `search_flex` | Check dates around a target departure, then fetch flights for the cheapest day. |
 | `search_explore` | Discover destinations from an origin airport and price a shortlist. |
 | `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
+| `search_hotel_rooms` | Read Skiplagged room rates for one named hotel. |
+| `get_hotel_details` | Read a hotel offer this process returned, with an optional separate room quote. |
 | `search_trip` | Search flights and hotels together and sum compatible results. |
-| `lookup_airports` | Look up airport codes offline. |
+| `search_split_tickets` | Opt-in separately ticketed itineraries (a self-transfer via a hub, or mixed one-ways for a round trip) built from real one-way quotes. Connections between tickets are not protected. |
+| `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, not found, multiple matches, incomplete identity, or check failed (the check could not complete, which never means the offer is gone). |
+| `lookup_airports` | Look up airport or metro codes offline. |
 | `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
 | `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
 | `lookup_transfers` | Local points transfer-partner table. |
 | `validate_itinerary` | Check a proposed itinerary against the searches' own evidence. |
+| `plan_stay_blocks` | Group consecutive nights that have the same people. |
+| `split_stay_costs` | Split named stay totals among the people who sleep there. |
 | `verify_answer` | Flag amounts, codes, dates, or links in a draft reply that no search returned. |
+| `price_history` | Read the prices this machine recorded for a query (opt-in, local, one currency). |
+| `watch_price` | Re-run a saved flight or hotel search once and report the change since its last observation. |
+| `get_runtime_info` | Read the executing package version offline. |
+| `get_guide` | Read the long operational guide (also the `viajante://guide` resource). |
 
 ## Use the command line
 
@@ -124,16 +142,19 @@ Each search command accepts `--save FILE` to write a JSON report. Run
 
 | Command | Purpose |
 | --- | --- |
-| `viajante flights` | Search specific routes and dates. |
+| `viajante flights` | Search specific routes and dates. `--split-tickets` opts in to separately ticketed alternatives (not protected if a connection is missed). |
 | `viajante dates` | Compare departure dates across a window of up to 31 days. |
 | `viajante flex` | Search a few days either side of a target date. |
 | `viajante explore` | Find destinations from an origin airport. |
 | `viajante hotels` | Search Google Hotels or Booking.com. |
 | `viajante trip` | Search flights and a hotel stay in one request. |
+| `viajante recheck-offer` | Re-check a saved flight offer against a fresh search; exit 2 means the check could not complete (not a booking guarantee). |
 | `viajante airports` | Find airport codes by city or code. |
 | `viajante hidden-city` | Opt-in Skiplagged hidden-city search. |
 | `viajante awards` | Cents-per-point value of a named award offer. |
 | `viajante points` | Points transfer-partner lookup. |
+| `viajante history` | Prices this machine recorded for a query (opt-in recording; `--clear` deletes it). |
+| `viajante watch` | Re-run a saved flight or hotel query now and report the change. |
 
 For example, compare dates for a seven-night round trip:
 
@@ -202,6 +223,12 @@ a browser.
 - **Hotels:** Prices cover the requested stay. Free cancellation is required
   by default, but an applied search filter and a property's stated terms are
   recorded separately. Google ratings use a 0–5 scale; Booking.com uses 0–10.
+- **Recommendation:** A successful flights query may carry a `recommendation`
+  block (none when the provider returned nothing): a pick that respects the requirements you named (and reports any it
+  had to relax), plus up to three genuinely different options with factual
+  `highlights` and `tradeoffs`. The score weights are published, unknown
+  fields are labelled unknown, and prices in different currencies are never
+  compared. It adds to the offer list; it does not replace it.
 - **Price comparisons:** When present, `typical` is a median from the same
   route's date calendar. It is not a historical market average.
 - **Trip totals:** A combined total is shown only when both searches return

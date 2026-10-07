@@ -32,15 +32,21 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Stay only | `search_hotels` (`location`, `check_in`, `check_out`, `currency`; default source google) | `viajante hotels` (CLI default source Booking) |
 | Room rates for one finalist (Skiplagged, USD) | `search_hotel_rooms` (`check_in`, `check_out`, then `hotel_id` or `hotel_name` + `city`) | `viajante hotel-rooms` |
 | Flights then hotel | `search_trip` (`routes`, `location`) | `viajante trip` |
+| Split tickets, opt-in (hub self-transfer or mixed one-ways) | `search_split_tickets` (`route`, optional `via`, `trip="rt"`) | `viajante flights --split-tickets` |
 | Hidden-city / Skiplagged | `search_hidden_city` (`route`, `departure`) | `viajante hidden-city` |
 | Named award vs cash (local) | `compare_awards` (`offer`) | `viajante awards` |
 | Transfer table (local) | `lookup_transfers` (`program`, `points`) | `viajante points` |
+| Re-check a finalist offer is still available (fresh search, never cached) | `recheck_offer` (`offer`; hand-built also `query`, `currency`; opt-ins `allow_loose_match`, `allow_substitute`) | `viajante recheck-offer --offer FILE` |
 | Validate selected flight offers (local) | `validate_itinerary` (`legs`, `constraints`) | — |
 | Per-night roster into check-in/check-out blocks (local) | `plan_stay_blocks` (`roster`) | — |
 | Split stay totals by nights per person (local) | `split_stay_costs` (`stays`, `roster`, `currency`) | — |
 | Check a draft reply against this process's search evidence (local) | `verify_answer` (`answer`) | — |
 
 Do not brute-force a date matrix when dates/flex/explore exist. `search_trip` rejects children/infants (hotel occupancy is adults-only). Omit `trip_total` if either side misses, dates miss, or currencies differ.
+
+## Split tickets
+
+Only when the user asks for cheaper or more flexible options, or the packaged fare looks poor. It costs extra searches (capped), so run it after `search_flights`, not instead of it. One-way: `search_split_tickets` pairs origin-hub and hub-destination tickets; `via` names up to 5 IATA connection airports, otherwise hubs are the layover airports in the packaged results. `trip="rt"` pairs the cheapest outbound one-way with the cheapest return one-way and compares them with the packaged round-trip. `min_connection_hours` defaults to 3 and is a planning default, not provider evidence; raise it for border control or a terminal change. `allow_overnight` also searches the next day. Always tell the user: these are separate tickets (`split_ticket: true`, `connection_protected: false`); a missed connection is not rebooked by either airline, bags may need collecting and checking in again, and each ticket is confirmed on its own `google_flights_url`. `total` is null when the parts are in different currencies: report the parts, never convert. quote `vs_packaged` only as returned. `rate_limited: true`: stop and tell the user to wait. `vs_packaged` carries a non-negative `savings` or `extra_cost`: say which. Results rank within one currency; a row with `timing_proven: false` carries a `timing_note`: its arrival or departure lacks an owned date, clock, or unambiguous airport-local time (missing timezone or a DST change), so confirm the return still works. Rows in other currencies are capped at 3 per group (`omitted_other_currency`); never compare them with the requested-currency rows. Never derive a leg price from a round-trip price or estimate a missing ticket.
 
 ## Hidden-city
 
@@ -72,7 +78,7 @@ Hotel evidence rules:
 - **Links:** `link_context` and `applied.url_context` are `stay`, `property`, `location`, or `none`. Google entity URLs carry the stay context when owned; never reuse `/travel/clk/hi` trackers. Say when context is missing. A stay URL preserves dates/adults/rooms, not guaranteed current price or availability. `verify_answer` proves provenance only; it does not open links.
 - **Existing reservations:** obtain replacement quotes and terms before recommending cancellation. Do not assume changed dates keep prices or cancellation terms, or that reducing dorm beds keeps exclusive occupancy. Respect maximum capacity and rejected requests; surface contradictory bed/bathroom evidence. Copy exact cancellation deadlines in property-local time; missing deadlines stay unknown. Label proportional cost estimates as arithmetic, not new quotes. Airport transfers need route time and an arrival margin; check-out alone does not prove feasibility. Retain caveats and unallocated roster nights in the final answer.
 - **Skiplagged is an opt-in second source** (`source="skiplagged"`, CLI `--source skiplagged`). USD only, so omit `currency` or pass USD and do the FX yourself. Up to 10 adults and 9 rooms per search; no `entire_home`. It matches the city loosely: read `resolved_place` and say when it is not the place asked for. Its search rows carry no cancellation. For 1-3 finalists call `search_hotel_rooms` with the offer's `provider_id`, or with `hotel_name` + `city` for a Google finalist (exact normalized name only; no match or several matches come back as `no_results`, never a guess). CLI uses `--hotel-id` or `--name` plus `--city`. Room rates support up to 5 rooms and come in provider order: read `occupancy_limit`, `refundable`, `free_cancellation`, and `taxes_and_fees` as listed. `occupancy_limit` is per provider room type, not proof a party fits across several rooms. Never mix its rows with Google or Booking prices or compare them as one list.
-- **No background work.** Every MCP call is synchronous. Never say you are still looking or will report back. Call the tool now, or name the next step and wait. Do not offer an action no tool performs (cancelling a booking).
+- **No background work.** Every MCP call is synchronous (progress is streamed when the client asks; cancelling the call stops the search). Never say you are still looking or will report back. A `deadline_seconds` result with `stopping_reason: "deadline"` is partial: unfinished queries are not loaded, not proven empty. Call the tool now, or name the next step and wait. Do not offer an action no tool performs (cancelling a booking).
 - A changed constraint (hotels, then house, then hotels) is restated in one line before the next search.
 
 ## Fetch
@@ -96,7 +102,7 @@ No implied home hub. Use the origin the user named. If unnamed, ask.
 
 ## Report
 
-Copy owned numbers. Print `typical_deal` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
+Copy owned numbers. Print `typical_deal` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. When a flights query carries `recommendation`, read `relaxed_requirements` first and say which named requirements the pick relaxed; quote `highlights` / `tradeoffs` as returned, keep "unknown" wording, and do not compare prices across currencies. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
 
 Only values returned by a Viajante payload are search evidence. Do not use a manually operated Google Flights tab to continue an MCP failure or present its price as a Viajante result.
 
@@ -114,6 +120,24 @@ empty `segments` array makes segment count, connection airports, per-segment clo
 operators, and overnight checks **UNKNOWN**. A comparative rule such as “unless it
 saves N” is **UNKNOWN** without two owned comparison candidates.
 
+Call `recheck_offer` on each finalist before presenting it as current. It runs one
+fresh search (never the 5-minute replay) and returns exactly one of `same_price`,
+`price_changed`, `not_found`, `multiple_matches`, `incomplete_identity`, `check_failed`, with
+`checked_at` (and `substituted` only when you pass `allow_substitute`). Quote the outcome
+as found. `multiple_matches` gives no verdict: show the candidates and do not pick one.
+`incomplete_identity` sent nothing: add the `missing` fields from the original offer, or
+pass `allow_loose_match` and call the result loose. A `closest_candidate` on a `not_found`
+is a different itinerary listed for information; name what differs and do not call it the
+original. Report `filter_violations` (for example `price_cap`) beside the price.
+`check_failed` (`check_completed: false`: blocked, rate limited, incomplete offers, any
+provider error) means the check did not run; never say the offer is gone, do not retry a
+rate limit, and report the cooldown. `not_found` is a completed check: read the envelope
+first. `empty_reason` `provider_empty` is the only "Google returned nothing"; `filtered_out`
+means filters removed what Google returned; `not_among_offers` is `ok` (flights came back,
+none was the offer). `check_failed` is `not_loaded`. Pass the offer's own
+currency only; a different one is refused. A re-check is still not
+a booking guarantee: the price is confirmed only on the provider's own page.
+
 Call `validate_itinerary` before saying an assembled itinerary is compliant:
 
 - **PASS**: the validator has owned evidence for the named constraint and it satisfies it.
@@ -127,14 +151,33 @@ scope whose `coverage.complete` is true. Otherwise say “not found in the teste
 Relaxed dates or constraints are a separate scenario and never make the original
 scenario compliant.
 
+## Read the envelope first
+
+Every MCP result (except `lookup_airports`) opens with `status`, `completeness`,
+`empty_reason`, `retry_after`, `observed_at`. Check them before reading rows.
+
+| `empty_reason` | Say to the traveller |
+|----------------|----------------------|
+| `provider_empty` | The only case that may be called "no flights/hotels found" (for this search). |
+| `filtered_out` | The provider returned results; the filters removed them all. Not "none available". |
+| `not_loaded` | The search did not complete. Availability is unknown. |
+
+`completeness` `partial` or `blocked` means do not summarise as a full answer.
+In `search_dates` / `search_flex`, a day with no calendar price is `not_loaded`:
+never say "no flights that day". An explore destination with `price: null` is `not_loaded` too. An `ok` or `partial`
+result may carry the worst failure's `error_code`; read `empty_reason` for emptiness.
+`verify_answer` `status: failed` means the draft
+has claims no search owns (see `error_code`), not that a search failed.
+`retry_after` is a known cooldown; wait for it instead of retrying.
+
 ## Recovery
 
 | Situation | Action |
 |-----------|--------|
 | Browser access denied | Report the client access limitation, not a provider failure or broken URL. Use permitted read-only alternatives; do not bypass denial or re-request already authorized access. |
 | Missing local screenshot | Say the image could not be read; do not claim visual inspection. Continue from available text/evidence. |
-| `no_results` | Stop. Do not retry. |
-| `rate_limited: true` | Stop provider searches. Wait 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
+| `no_results` | Stop. Do not retry. Read `empty_reason` before wording it: only `provider_empty` is "none found". |
+| `rate_limited: true` | Stop provider searches. Wait until `retry_after` (UTC; `retry_after_seconds`) when the error has it, else 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
 | `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |

@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
+from viajante.control import check_cancelled, checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
     HIDDEN_CITY_SOURCE,
@@ -26,6 +27,7 @@ from viajante.models import (
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
     SKIPLAGGED_RATE_LIMIT_FILE,
+    cooldown_until,
     note_rate_limited,
     rate_limit_advice,
     rate_limit_status,
@@ -75,11 +77,12 @@ def _pace(rpc: RpcPost) -> None:
     with _PACE_LOCK:
         wait = _LAST_CALL[0] + MIN_CALL_INTERVAL_SECONDS - time.monotonic()
         if wait > 0:
-            time.sleep(wait)
+            interruptible_sleep(wait)
         _LAST_CALL[0] = time.monotonic()
 
 
 def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str]) -> None:
+    check_cancelled()
     if status != 429:
         return
     try:
@@ -203,6 +206,7 @@ def _call_mcp(
     url: str = SKIPLAGGED_MCP_URL,
     tool: str = SKIPLAGGED_FLIGHTS_TOOL,
 ) -> Any:
+    checkpoint()
     _guard_cooldown(rpc)
     _pace(rpc)
     session_id = _session_id(rpc, url)
@@ -554,7 +558,12 @@ def _offer_from_row(
 
 def _classify(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
-        return SearchError(code=SearchErrorCode.BLOCKED, message=str(exc), rate_limited=True)
+        return SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message=str(exc),
+            rate_limited=True,
+            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+        )
     if isinstance(exc, SkiplaggedError):
         message = str(exc) or "Skiplagged MCP request failed."
         folded = message.casefold()
@@ -565,6 +574,7 @@ def _classify(exc: BaseException) -> SearchError:
         return SearchError(
             code=SearchErrorCode.FETCH_FAILED,
             message="Skiplagged MCP could not be reached.",
+            timeout=isinstance(exc, TimeoutError),
         )
     return SearchError(
         code=SearchErrorCode.FETCH_FAILED,
@@ -584,6 +594,7 @@ def _report_currency(
     return None
 
 
+@controlled
 def search_hidden_city(
     origin: str,
     destination: str,
@@ -594,6 +605,7 @@ def search_hidden_city(
     top: int = 8,
     currency: Optional[str] = None,
     rpc: Optional[RpcPost] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> HiddenCityReport:
     """Search Skiplagged via its public MCP. Opt-in. Does not mix Google results.
 

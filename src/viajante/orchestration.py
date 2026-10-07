@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from viajante.control import SearchDeadline, note_cut
 from viajante.models import SearchError, SearchErrorCode
 
 REQUEST_DELAY_SECONDS = 4.5
@@ -27,6 +28,7 @@ NON_RETRIABLE_CODES = frozenset(
         SearchErrorCode.BLOCKED,
         SearchErrorCode.MARKUP_DRIFT,
         SearchErrorCode.BROWSER_UNAVAILABLE,
+        SearchErrorCode.DEADLINE,
     }
 )
 
@@ -44,7 +46,19 @@ def _clip_error_message(text: str) -> str:
     return text[: ERROR_MESSAGE_MAX_CHARS - 3] + "..."
 
 
+def _is_timeout(exc: BaseException) -> bool:
+    # Playwright and curl_cffi timeouts do not subclass the builtin TimeoutError.
+    return (
+        isinstance(exc, TimeoutError)
+        or getattr(exc, "timeout", False) is True
+        or "timeout" in type(exc).__name__.casefold()
+    )
+
+
 def classify_failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, SearchDeadline):
+        note_cut()
+        return SearchError(code=SearchErrorCode.DEADLINE, message=str(exc), timeout=True)
     text = f"{type(exc).__name__}: {exc}".strip()
     lowered = text.casefold()
     if any(marker in lowered for marker in BROWSER_UNAVAILABLE_MARKERS):
@@ -52,7 +66,11 @@ def classify_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BROWSER_UNAVAILABLE,
             message=BROWSER_INSTALL_HINT,
         )
-    return SearchError(code=SearchErrorCode.FETCH_FAILED, message=_clip_error_message(text))
+    return SearchError(
+        code=SearchErrorCode.FETCH_FAILED,
+        message=_clip_error_message(text),
+        timeout=_is_timeout(exc),
+    )
 
 
 def retry_backoff_seconds(attempt: int, random_gen) -> float:

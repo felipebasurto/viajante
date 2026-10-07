@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Sequence
 from unittest.mock import patch
 
+import _isolate  # noqa: F401
 from viajante.airports import get_airport
 from viajante.flights import (
     _needs_detail_fallback,

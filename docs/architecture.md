@@ -17,7 +17,10 @@ That split explains most design choices:
 
 - **Evidence, not a verdict.** Every offer keeps the raw provider text next to
   the parsed number. Results are ordered, not ranked into advice. There is no
-  "best deal" line to parrot. The agent reads price, duration, stops, layover
+  "best deal" line to parrot. The optional `recommendation` block is a
+  transparent shortlist, not a verdict: its score dimensions and weights are
+  published, and every highlight or trade-off restates a returned field (or
+  says the field is unknown). The agent reads price, duration, stops, layover
   cities, clocks, rating, review count, and coordinates, and says *why*.
 - **Primitives that compose.** `search_dates` (cheapest week), `search_flex`
   (±N days), `search_explore` (where can I go), `search_flights` (shop one
@@ -29,7 +32,9 @@ That split explains most design choices:
 - **Checks the agent can run on itself.** `validate_itinerary` tests chosen
   offers against constraints (pass / fail / unknown, where unknown never
   becomes pass). `verify_answer` flags amounts, codes, dates, and links in a
-  draft reply that no search in this process returned.
+  draft reply that no search in this process returned. `recheck_offer` asks
+  Google once more whether a finalist still exists at its price; a blocked
+  check is `check_failed`, never that the offer is gone.
 
 When something tempts you to pre-digest the payload for the agent (summaries,
 "cheapest is X" lines, recommendation prose), don't. A capable agent already
@@ -41,13 +46,14 @@ One library, three ways in:
 
 | Surface | Entry | Notes |
 | --- | --- | --- |
-| MCP (stdio) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 16 tools. |
+| MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 22 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
 | Library | `viajante.search_*`, `get_flights` | What both of the above call. |
 
 | MCP tool | CLI | What it is |
 | --- | --- | --- |
 | `search_flights` | `flights` | Shop one or more routes (one-way, packaged RT, multi-city). |
+| `get_hotel_details` | — | Stored hotel quote, plus an optional separate Skiplagged room quote. |
 | `search_dates` | `dates` | Cheapest fare per day across a window (≤31 days). |
 | `search_flex` | `flex` | Cheapest day in ±N around a date, then one shop. |
 | `search_explore` | `explore` | Destinations from an origin, shortlist priced. |
@@ -55,7 +61,9 @@ One library, three ways in:
 | `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP, Booking browser, or opt-in Skiplagged). |
 | `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
 | `search_trip` | `trip` | Flights then one hotel, plus a sum when both succeed. |
+| `search_split_tickets` | `flights --split-tickets` | Opt-in split tickets from real one-way quotes: a hub self-transfer or mixed one-ways (`split.py`). |
 | `search_hidden_city` | `hidden-city` | Skiplagged, opt-in, never mixed with Google evidence. |
+| `recheck_offer` | `recheck-offer` | One fresh Google Flights search matching an earlier offer by flight numbers and departure times: same price, price changed, not found, multiple matches, incomplete identity, or check failed (substituted only on request). |
 | `lookup_airports` | `airports` | Offline IATA lookup. |
 | `compare_awards` | `awards` | Award offer vs cash: cents per point, transfer paths. |
 | `lookup_transfers` | `points` | Local card-to-program transfer table. |
@@ -63,14 +71,37 @@ One library, three ways in:
 | `plan_stay_blocks` | — | Local roster-to-stay blocks for consecutive nights with the same people. |
 | `split_stay_costs` | — | Local cost split per stay and person-night, with exact allocated cents. |
 | `verify_answer` | — | Local check of a draft reply against the search ledger. |
+| `price_history` | `history` | Local read of the opt-in observation log: per-query, per-currency facts. |
+| `watch_price` | `watch` | Re-run one saved flight/hotel search on demand; change vs the last observation. |
+| `get_guide` | — | The long operational guide (also the `viajante://guide` resource). |
 
 The room-rate helper is in `viajante.skiplagged_hotels`; local stay arithmetic
 is in `viajante.stays`. These helpers are not re-exported from `viajante`.
 
 The MCP process holds one search lock: a second concurrent search fails
-immediately instead of queueing. Lookups, local stay arithmetic, and the two
+immediately instead of queueing. Lookups, local stay arithmetic, `price_history`, and the two
 verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
+
+MCP client compatibility lives at the adapter edge. `mcp_server.py` registers each
+tool with a title and read-only annotations (`openWorldHint` only for tools that go
+through the search runner). `mcp_errors.py` turns a handler `ValueError` into the
+JSON error body (`invalid_parameter` with an inferred `field`, or
+`search_in_progress`) without touching the handlers. `mcp_guide.py` holds the short
+server instructions and the guide. `SearchError.retry_until` carries the end of a
+recorded cooldown from the classifier that saw the 429 to `to_dict`, which emits
+`retry_after` / `retry_after_seconds`.
+
+`control.py` holds the cooperative stop: a thread-local `SearchControl` carries a
+`threading.Event` (cancel), an optional deadline, and the progress callback.
+Search loops call `checkpoint()` between queries and attempts, sleeps use
+`interruptible_sleep`, and sweep futures are polled, so a cancel or deadline
+takes effect within about 50 ms of the next boundary. Cancel raises
+`SearchCancelled` (a `BaseException`, so no retry or `except Exception` swallows
+it); a deadline raises `SearchDeadline`, classified as error code `deadline`,
+which is terminal and never retried or cached. `mcp_server.run_mcp_tool` wires
+the MCP request to that control and forwards progress as
+`notifications/progress` when the request has a `progressToken`.
 
 ## How a flight search travels
 
@@ -149,6 +180,10 @@ clock; keep the top N. Then it stamps:
   selected outbound slices.
 - `evidence` / `completeness`: when and how each offer was fetched, and what
   is still unknown.
+- `recommendation` (`recommend.py`): see "Recommendation and shortlist" in
+  [usage](usage.md). It is built from the same parsed cards before the
+  requirement filters, so a relaxation can be reported; it never changes
+  `offers`.
 
 ### 6. Failures are typed
 
@@ -167,6 +202,41 @@ Only failures that can succeed on a second try are retried:
   Google Hotels also stamps `rate_limited: true`. This status is treated as
   throttling evidence, though it can have another cause. The browser path detects
   `google.com/sorry` right away instead of waiting for result cards.
+
+### 7. One MCP envelope
+
+Every MCP tool except `lookup_airports` returns the same top-level fields,
+stamped in `envelope.py` from the report the handler already built (no second
+code path): `status`, `completeness`, `empty_reason`, `empty_note`, `error_code`,
+`retry_after` / `retry_after_seconds`, `observed_at`, `observed_at_basis`.
+
+The envelope tallies the report's own units (query rows, date rows, explore
+destinations, rooms, hidden-city offers) using their `empty_reason`, error code,
+`rate_limited` and `timeout` flags, so it agrees with the existing counters and
+does not re-derive them. `retry_after` is the latest per-error `retry_after` of the rate-limited errors, so a proxied 429 never borrows a direct cooldown. Offline
+tools stamp `ok` / `complete` with the rest null.
+
+Contract: `provider_empty` (the provider answered with nothing) is the only empty
+that may be called "no flights/hotels found". `filtered_out` (the provider returned
+rows, viajante's filters removed them all) must say filters removed results.
+`not_loaded` (no usable response) must say the search did not complete.
+`completeness` is `partial` when only some units answered, some came back
+unproven, or the search is scope-bound, `blocked` when none did. A calendar day
+that is missing or unpriced is `not_loaded`: the calendar cannot prove there are
+no flights, so only a shop that answered empty is `provider_empty`. `error_code`
+only accompanies the `empty_reason` it supports; an `ok` / `partial` result may
+carry the worst failure's code with `empty_reason` null. An explore destination
+without a price is `not_loaded`, never a usable row. `observed_at` is null when a
+recorded cooldown answered every request (nothing was sent). `stamp_search`
+raises on a payload shape it does not recognise instead of defaulting to
+`no_results`. `verify_answer` is local: its `status` follows its verdict.
+
+Machine-readable schema: the mcp SDK (the supported floor is 1.14.1; earlier
+releases crash at startup on this module's postponed annotations) derives `outputSchema` and
+`structuredContent` from a tool's return annotation. The envelope is a pydantic
+model with `extra="allow"`, so tool-specific keys stay in the structured result.
+`lookup_airports` keeps its bare list return and has no output schema (a list
+cannot carry top-level fields without breaking its shape).
 
 ## Dates, flex, explore
 
@@ -291,3 +361,50 @@ improvement loops.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.
+
+## Temporal evidence and hotel finalists
+
+`RawSegment` retains the provider departure and arrival dates. The compact
+parser reads arrival slot 21, already used for layover arithmetic; airport
+zones come from the offline catalogue. Detail DOM cards can lack these
+facts. `completeness.segment_dates` and `segment_timezones` expose those gaps.
+`temporal.py` round-trips both folds of an IANA civil time through UTC. A
+missing zone, nonexistent spring-forward time or ambiguous fall-back time
+has no provable instant. `validate.py` compares UTC instants for chronology.
+Pass selected legs in travel order. `arrival_deadline` and `chronological` read
+that order. An `arrival_deadline` with an explicit offset is that UTC instant, including
+when the arrival airport's civil offset is different. A naive deadline is
+local civil time at the arrival airport. Stay bounds use local date differences
+between journey arrival and the following departure at the same airport.
+Fewer than two journeys is unknown. No stay is inferred after the final flight. Existing travel-window and clock
+constraints retain their previous meanings. Ordering does not prove connection
+protection, immigration eligibility or sufficient transfer margins.
+
+`details.py` reads a stored hotel quote without a provider request.
+`room_rates=true` calls the existing Skiplagged room helper. `room_rates`
+must be a boolean. `evidence.py` attaches `selection_id` only to hotel offers
+this process can open again. Flight, calendar, explore, and hidden-city rows
+are left alone; hidden-city `evidence` is the string `confirmed`. A detail
+read does not call `record`, so it does not consume a ledger slot or evict a
+search. Unknown ids fail before provider contact. Hotel searches still share
+the 20-group retention of the ledger. The MCP cache retains at most 20
+successful calls for five minutes and replays their original hotel references.
+
+Google and Booking provider ids are never passed as Skiplagged hotel ids.
+External room lookup requires the exact normalized title and one catalogue
+place: airports within 100 km, or the same metro, are one place. A city that
+matches several places is inconclusive and sends nothing, unless the offer's
+coordinates fall within 100 km of exactly one place. The returned quote must
+then lie within 2 km of that hotel; otherwise the rates are not presented.
+A single place whose provider-resolved name disagrees with the named city is
+an input error. Skiplagged finalists use their own ids. Dates, adults, and
+rooms are sent as requested. When the provider echoes different adults, rooms,
+or dates, the result is `occupancy_mismatch` or `dates_mismatch` and the rates
+are omitted. A missing echo stays unknown. When `room_rates` is true and the
+provider does not echo adults, rooms, and dates, a returned quote is partial. A contradictory Skiplagged city
+echo stops exact-name lookup before requesting room details. Original quotes
+and ordered room rates carry their own provider, currency, timestamp, and
+occupancy. A missing provider label stays unknown. USD room conditions cannot
+prove terms of the original fare. Missing cancellation deadlines, contradictory
+units, and unknown occupancy remain unverified. Room rates do not establish
+combined capacity across rooms.
