@@ -85,11 +85,11 @@ Hotel evidence rules:
 
 Check `get_runtime_info` or `viajante --version` before relying on new flags/tools. Hotel reports stamp `viajante_version`. An npm MCP and a separate uv tool may be different versions; unpinned `uvx` can reuse an installed old tool. Explicitly upgrade or refresh the version and check again. Run batches sequentially and inspect every error. In zsh use a flags array expanded as `"${flags[@]}"`; a space-separated scalar is one argument.
 
-`--fetch auto`: sweep for 3+ flight queries or packaged RT/multi; detail for other 1–2 when Playwright is installed. Sweep empty or `blocked` may fall back to detail once unless `rate_limited` is true. `markup_drift` does not. Sweep needs no Chromium. Detail and Booking sleep ~4.5–6s between queries. Never shorten that or parallelize. One MCP search at a time. A second search while one is running raises `a viajante search is already running in this process` immediately. That is not `MCP error -32001: Request timed out`; do not treat timeouts as lock-busy or retry them in a long wait loop. `lookup_airports` may run during a search.
+`--fetch auto`: public-page sweep. Explicit detail needs Playwright. A provider block (including RPC 13) never switches backends; it stops pending work. `markup_drift` does not fall back. Sweep needs no Chromium. Detail and Booking sleep ~4.5–6s between queries. Never shorten that or parallelize. One MCP search at a time. A second search while one is running raises `a viajante search is already running in this process` immediately. That is not `MCP error -32001: Request timed out`; do not treat timeouts as lock-busy or retry them in a long wait loop. `lookup_airports` may run during a search.
 
 `search_dates` is an HTTP calendar and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment. Optional MCP `country` is Google `gl` (origin market). Omit when unset. Do not pass a destination ISO.
 
-Unnamed `baggage_buffer` is 0. Prefer `bags` / `carry_on` on the request. Do not invent a bag fee.
+Unnamed `baggage_buffer` is 0. The 1.4.6 public-page transport refuses named `bags` / `carry_on` and carrier/alliance filters, multi-city, and Explore catalogs before network work. Do not remove requested filters silently; a base-fare search is a separate scenario. Round-trip results complete up to eight owned outbound selections and remain scope-bound/partial. Automatic typical-price fanout is disabled. `VIAJANTE_SWEEP_MODE=conservative` caps HTTP/2 dispatch at two instead of eight. Do not invent a bag fee.
 
 ## Destination triage
 

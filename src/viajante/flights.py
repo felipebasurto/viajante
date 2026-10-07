@@ -25,7 +25,6 @@ from viajante.control import (
 )
 from viajante.google_flights import (
     GoogleFlightsBlocked,
-    GoogleFlightsHttpSource,
     GoogleFlightsMarkupError,
     GoogleFlightsRejected,
     GoogleFlightsSource,
@@ -33,6 +32,12 @@ from viajante.google_flights import (
     RawFlightCard,
     SweepTransportError,
     google_flights_url,
+)
+from viajante.google_flights_public import (
+    GoogleFlightsUnsupported,
+)
+from viajante.google_flights_public import (
+    PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource,
 )
 from viajante.history import recorded_flights
 from viajante.models import (
@@ -175,10 +180,7 @@ def resolve_fetch_mode(
     packaged: bool = False,
 ) -> Literal["sweep", "detail"]:
     if fetch == "auto":
-        # Only sweep can shop the next packaged leg; detail leaves the return unknown.
-        if not browser_available or packaged or query_count >= SWEEP_BATCH_THRESHOLD:
-            return "sweep"
-        return "detail"
+        return "sweep"
     if fetch in ("sweep", "detail"):
         return fetch
     raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
@@ -192,7 +194,7 @@ def _needs_detail_fallback(result: QueryResult) -> bool:
     if result.error.code == SearchErrorCode.NO_RESULTS:
         return True
     if result.error.code == SearchErrorCode.BLOCKED:
-        return True
+        return False
     if result.error.code == SearchErrorCode.FETCH_FAILED:
         return True
     return False
@@ -203,6 +205,19 @@ def classify_failure(exc: BaseException) -> SearchError:
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
             message=NO_RESULTS_MESSAGE,
+        )
+    if isinstance(exc, GoogleFlightsUnsupported):
+        return SearchError(
+            code=SearchErrorCode.REJECTED,
+            message=str(exc),
+            diagnostics={
+                "request_sent": False,
+                "attempts": 0,
+                "http_status": None,
+                "rpc_status": None,
+                "endpoint": "www.google.com/travel/flights",
+                "cooldown_basis": None,
+            },
         )
     if isinstance(exc, GoogleFlightsRejected):
         return SearchError(
@@ -215,6 +230,7 @@ def classify_failure(exc: BaseException) -> SearchError:
             message=str(exc) or "Google Flights blocked the request.",
             rate_limited=exc.status == 429,
             retry_until=cooldown_until(str(exc)) if exc.status == 429 else None,
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsMarkupError):
         return SearchError(
@@ -1556,6 +1572,8 @@ def _calendar_summary_from_source(
     trip: TypicalTrip,
     cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]],
 ) -> Optional[DateCalendarSummary]:
+    if getattr(source, "automatic_typical", True) is False:
+        return None
     fetch_calendar = getattr(source, "fetch_calendar", None)
     if not callable(fetch_calendar):
         return None
@@ -1933,6 +1951,11 @@ def _run_search(
         if recommendation is not None:
             stamped = dict(zip(ranked, shown, strict=True))
             recommendation = recommendation.map_offers(lambda offer: stamped.get(offer, offer))
+        page_error, scope_bound = (
+            source.metadata_for(trip)
+            if getattr(source, "transport", None) == "public_page"
+            else (None, False)
+        )
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),
@@ -1940,6 +1963,8 @@ def _run_search(
             offers=shown,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
             recommendation=recommendation,
+            page_errors=(classify_failure(page_error),) if page_error is not None else (),
+            scope_bound=scope_bound,
         )
 
     def _stamp(result: QueryResult) -> QueryResult:
@@ -2419,7 +2444,11 @@ def search_flights(
         retry_backoff=backoff,
     )
     backend: FetchBackend = planned
-    if planned == "sweep" and playwright_available():
+    if (
+        planned == "sweep"
+        and getattr(source, "transport", None) != "public_page"
+        and playwright_available()
+    ):
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
         ]

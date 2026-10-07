@@ -5,7 +5,16 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping, Sequence
 
-from viajante.models import FlightCabin, FlightLeg, FlightQuery, MultiCity, RoundTrip, Trip
+from viajante.models import (
+    FlightCabin,
+    FlightLeg,
+    FlightQuery,
+    MultiCity,
+    RawJourneyLeg,
+    RawSegment,
+    RoundTrip,
+    Trip,
+)
 
 _VARINT = 0
 _LEN = 2
@@ -41,6 +50,45 @@ def encode_tfs(trip: Trip) -> str:
     """Encode a Google Flights `tfs` query parameter from owned trip fields."""
     return _encode_legs(
         trip.legs,
+        adults=trip.adults,
+        children=trip.children,
+        infants_in_seat=trip.infants_in_seat,
+        infants_on_lap=trip.infants_on_lap,
+        cabin=trip.cabin,
+        trip_kind=trip_kind_code(trip),
+    )
+
+
+def encode_tfs_selected_outbound(trip: RoundTrip, outbound: RawJourneyLeg) -> str:
+    """Encode round-trip TFS with owned physical segments selected outbound."""
+    if not isinstance(trip, RoundTrip):
+        raise ValueError("selected outbound TFS requires a round-trip query")
+    segments = outbound.segments
+    if not segments:
+        raise ValueError("selected outbound has no physical segments")
+    selected: list[bytes] = []
+    previous_destination: str | None = None
+    previous_date = None
+    for index, segment in enumerate(segments):
+        if not segment.origin or not segment.destination or segment.departure_date is None:
+            raise ValueError("selected outbound segment lacks route or departure date")
+        if index == 0 and segment.origin != trip.legs[0].origin:
+            raise ValueError("selected outbound does not start at the requested origin")
+        if index == 0 and segment.departure_date != trip.legs[0].departure_date:
+            raise ValueError("selected outbound first segment date differs from the query")
+        if previous_destination is not None and segment.origin != previous_destination:
+            raise ValueError("selected outbound physical segments are not contiguous")
+        if previous_date is not None and segment.departure_date < previous_date:
+            raise ValueError("selected outbound segment dates go backwards")
+        previous_destination = segment.destination
+        previous_date = segment.departure_date
+        selected.append(_len_delim(4, _selected_flight_data(segment)))
+    if previous_destination != trip.legs[0].destination:
+        raise ValueError("selected outbound does not reach the requested destination")
+
+    outbound_data = _flight_data(trip.legs[0]) + b"".join(selected)
+    return _encode_route_messages(
+        [outbound_data, _flight_data(trip.legs[1])],
         adults=trip.adults,
         children=trip.children,
         infants_in_seat=trip.infants_in_seat,
@@ -106,8 +154,46 @@ def _flight_data(leg: FlightLeg) -> bytes:
     )
 
 
+def _selected_flight_data(segment: RawSegment) -> bytes:
+    carrier = segment.carrier
+    identity = segment.flight_number
+    if not carrier or not identity or not identity.startswith(carrier):
+        raise ValueError("selected outbound segment lacks a carrier and flight number")
+    number = identity[len(carrier) :]
+    if not number:
+        raise ValueError("selected outbound segment lacks a bare flight number")
+    return (
+        _string(1, segment.origin or "")
+        + _string(2, segment.departure_date.isoformat())  # validated by caller
+        + _string(3, segment.destination or "")
+        + _string(5, carrier)
+        + _string(6, number)
+    )
+
+
 def _encode_legs(
     legs: Sequence[FlightLeg],
+    *,
+    adults: int,
+    cabin: FlightCabin,
+    trip_kind: int,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+) -> str:
+    return _encode_route_messages(
+        [_flight_data(leg) for leg in legs],
+        adults=adults,
+        cabin=cabin,
+        trip_kind=trip_kind,
+        children=children,
+        infants_in_seat=infants_in_seat,
+        infants_on_lap=infants_on_lap,
+    )
+
+
+def _encode_route_messages(
+    route_messages: Sequence[bytes],
     *,
     adults: int,
     cabin: FlightCabin,
@@ -122,7 +208,7 @@ def _encode_legs(
         + (_PASSENGER_INFANT_IN_SEAT,) * infants_in_seat
         + (_PASSENGER_INFANT_ON_LAP,) * infants_on_lap
     )
-    flights = b"".join(_len_delim(_INFO_DATA, _flight_data(leg)) for leg in legs)
+    flights = b"".join(_len_delim(_INFO_DATA, route) for route in route_messages)
     payload = (
         flights
         + _packed_enums(_INFO_PASSENGERS, passengers)

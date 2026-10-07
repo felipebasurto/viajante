@@ -18,8 +18,8 @@ Evidence: before replying, pass the draft to verify_answer; it flags amounts, cu
 codes, dates and links no search in this process returned. Never invent a fare, bag fee,
 currency, IATA code or exchange rate. Viajante does not convert; you do the FX.
 Currency: pass currency, or name an origin airport so it is proven. Hotels require currency.
-If country, destination or currency is not proven, ask. Unnamed baggage_buffer is 0; pass
-bags / carry_on so Google prices the bag.
+If country, destination or currency is not proven, ask. Unnamed baggage_buffer is 0.
+bags / carry_on are unsupported in 1.4.6; read get_guide for transport limits.
 Empty is not absent: no_results, blocked, markup_drift or an empty shortlist is not proof
 that nothing exists. Say what was searched; do not claim availability either way.
 Rate limits: if an error has rate_limited true, wait until retry_after (UTC) and tell the
@@ -152,11 +152,25 @@ recommendation. Fare rules (refund, change) are never in the rows. requirements
 lists max_stops even when it is only the default, so its presence does not mean the
 caller named a stop limit.
 
+## Public-page transport in 1.4.6
+
+Flights auto uses sweep public HTML bootstrap data, not unsigned shopping RPC.
+Round trips pin up to eight owned outbound journeys and read the provider package
+price from each return page; the result is scope-bound/partial and never a sum of
+two one-way prices. Automatic typical-price calendar fanout is disabled. Dates and
+flex request each named day (at most 31); flex then fetches the selected day freshly.
+VIAJANTE_SWEEP_MODE=conservative caps HTTP/2 dispatch at two requests instead of
+the standard eight. get_runtime_info reports the active mode and concurrency.
+RPC status 13 has an unknown cause; it alone does not establish throttling or an IP
+block. A 429 or status 13 stops unsent work and is not replayed or switched to detail.
+Error diagnostics distinguish real HTTP status from RPC status and unsent requests;
+cooldown_basis distinguishes provider Retry-After from a heuristic pause.
+
 ## Choosing a search tool
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
-search_dates is HTTP-calendar only and has no fetch parameter. If it returns
+search_dates uses bounded per-day public-page GETs and has no fetch parameter. If it returns
 blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
@@ -314,7 +328,9 @@ Europe, unnamed origin, two possible currencies), do not pick: ask or
 error. Unknown cannot prove include. Do not invent IATA, gl, or ISO 4217
 from vibe. Optional country is Google gl (origin market); omit when unset;
 do not pass a destination ISO. Unnamed baggage_buffer is 0. Prefer bags /
-carry_on on the shopping request so Google prices the bag. Do not invent a
-bag fee. Fetch locale is English. User prompts may be any language.
+carry_on only in a supported transport. The 1.4.6 public-page transport refuses
+named bags/carry_on and carrier/alliance filters, multi-city and Explore catalogs before
+network work. Do not remove a requested filter without an explicitly separate scenario.
+Do not invent a bag fee. Fetch locale is English. User prompts may be any language.
 Compute ISO dates from today; do not send a past start.
 """

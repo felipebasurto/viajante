@@ -281,6 +281,7 @@ def run_gate(root: Path) -> tuple[bool, str, Optional[int]]:
     env[BENCH_RUNNING_ENV] = "1"
     env.pop(LIVE_ENV, None)
     env.pop(ENV_RECORD, None)
+    env.pop("VIAJANTE_SWEEP_MODE", None)
     python = sys.executable
     checks = (
         ([python, "-m", "ruff", "check", "src", "tests"], "ruff check"),

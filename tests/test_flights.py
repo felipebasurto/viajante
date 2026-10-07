@@ -1024,7 +1024,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
     def test_search_closes_source(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource({("JFK", "LHR", "2026-09-01", 1): (card(airline="Air One"),)})
-        with patch("viajante.flights.GoogleFlightsSource", return_value=source):
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
             search_flights((query,), top=1)
         self.assertTrue(source.closed)
 
@@ -1141,7 +1141,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsInstance(report.queries[0], QueryFailure)
         self.assertEqual(report.queries[0].error.code, SearchErrorCode.BLOCKED)
         self.assertIn("short unknown shell", report.queries[0].error.message)
-        self.assertTrue(any("Detail is optional" in line for line in lines))
+        self.assertFalse(any("falling back to detail" in line for line in lines))
 
     def test_priced_return_leg_attaches_only_a_unique_match(self) -> None:
         trip = RoundTrip("JFK", "LHR", date(2026, 12, 3), date(2026, 12, 9))
@@ -1345,9 +1345,9 @@ class FlightsOrchestrationTests(unittest.TestCase):
 
 
 class FetchModeTests(unittest.TestCase):
-    def test_auto_is_detail_for_one_or_two_queries(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 1), "detail")
-        self.assertEqual(resolve_fetch_mode("auto", 2), "detail")
+    def test_auto_is_public_sweep_for_one_or_two_queries(self) -> None:
+        self.assertEqual(resolve_fetch_mode("auto", 1), "sweep")
+        self.assertEqual(resolve_fetch_mode("auto", 2), "sweep")
         self.assertEqual(resolve_fetch_mode("auto", 1, packaged=True), "sweep")
         self.assertEqual(resolve_fetch_mode("detail", 1, packaged=True), "detail")
 

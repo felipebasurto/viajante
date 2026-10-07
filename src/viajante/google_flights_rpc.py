@@ -389,6 +389,13 @@ def parse_shopping_body(text: str, *, currency: str) -> tuple[RawFlightCard, ...
     data = _wrb_json(text, kind="shopping")
     if not isinstance(data, list):
         raise CompactParseMiss("wrb.fr data is not a list")
+    return parse_shopping_data(data, currency=currency)
+
+
+def parse_shopping_data(data: object, *, currency: str) -> tuple[RawFlightCard, ...]:
+    """Parse Google Flights' decoded shopping-data array from any owned transport."""
+    if not isinstance(data, list):
+        raise CompactParseMiss("shopping data is not a list")
     items = _collect_itineraries(data)
     if not items:
         if _has_itinerary_slots(data):
@@ -470,6 +477,17 @@ def _wrb_error_status(obj: object) -> Optional[int]:
 def rpc_error_status(text: str) -> Optional[int]:
     """Status code of a data-less wrb.fr error envelope (e.g. 13), else None."""
     if not text.lstrip().startswith(_ANTI_XSSI) or _is_shopping_rejected(text):
+        return None
+    return first_wrb_data(text, _wrb_error_status)
+
+
+def raw_rpc_error_status(text: str) -> Optional[int]:
+    """Return any data-less RPC status, including status 13 in ErrorResponse bodies.
+
+    ``rpc_error_status`` keeps its historical shopping-rejection precedence; callers
+    that need transport diagnostics can inspect this raw value separately.
+    """
+    if not text.lstrip().startswith(_ANTI_XSSI):
         return None
     return first_wrb_data(text, _wrb_error_status)
 

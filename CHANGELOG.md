@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The [1.4.6 candidate record](docs/release-1.4.6.md) describes the public-page
+Google Flights transport. Local validation passed; PR CI and publication are
+separate release gates.
+
+### Changed
+
+- Flight `auto` and `sweep` read Google's public results page. `auto` no longer
+  selects Playwright based on query count or installation. Browser detail is
+  explicit; a public-page failure does not fall back to detail.
+- Packaged round trips inspect at most eight outbound candidates on selected
+  return pages and retain the provider's package total. Dates/flex use public
+  page GETs for their explicit windows; ordinary flight searches do not launch
+  a hidden 31-day typical lookup.
+
+### Added
+
+- `VIAJANTE_SWEEP_MODE=standard|conservative` controls public GET concurrency
+  (8 or 2); invalid values fail before provider access.
+- Provider-block diagnostics expose endpoint host and path, HTTP/RPC status, sent state,
+  attempt count, and cooldown basis. Status 13 alone does not identify its cause.
+
+### Known limitations
+
+- Public-page sweep refuses named bags, carry-on, airline/alliance filters, and
+  multi-city before networking. Explore catalog recovery is unavailable and
+  fails closed. Round-trip results are scope-bound to at most eight outbound
+  candidates. See the candidate record for details and pending validation.
+
 ## [1.4.5] - 2026-10-07
 
 See the [release record](docs/release-1.4.5.md) for the complete integrated PR

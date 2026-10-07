@@ -2241,7 +2241,7 @@ class SweepRateLimitSessionTests(unittest.TestCase):
             FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, n + 1)
         )
 
-    def test_fetch_many_continues_remaining_after_429_on_a_fresh_session(self) -> None:
+    def test_fetch_many_preserves_successes_and_does_not_replay_after_429(self) -> None:
         shop = _compact_body(_itinerary(price=41, airline="Vueling"))
         sleeps: list[float] = []
         client = _ScriptedMuxClient(
@@ -2251,19 +2251,19 @@ class SweepRateLimitSessionTests(unittest.TestCase):
                     SweepHttpResponse(200, shop),
                     SweepHttpResponse(429, "slow down"),
                 ),
-                (SweepHttpResponse(200, shop),),
             )
         )
         source = _TrackingHttpSource(client=client, sleep=sleeps.append)
         results = source.fetch_many(self._trips(3))
         self.assertEqual(len(results), 3)
-        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
-        self.assertEqual(results[2][0].airline, "Vueling")
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(len(client.posts), 4)
-        self.assertEqual(source.reset_calls, 1)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-        self.assertLess(sleeps[0], 0.2)
+        self.assertFalse(isinstance(results[0], BaseException))
+        self.assertFalse(isinstance(results[1], BaseException))
+        self.assertIsInstance(results[2], GoogleFlightsBlocked)
+        self.assertEqual(results[2].status, 429)
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(len(client.posts), 3)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
 
     def test_fetch_many_happy_path_does_not_sleep_or_reset(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
@@ -2322,23 +2322,20 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         self.assertEqual(source.reset_calls, 0)
         self.assertEqual(sleeps, [])
 
-    def test_fetch_many_second_429_stays_blocked(self) -> None:
+    def test_fetch_many_429_stays_blocked_without_retry(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
         sleeps: list[float] = []
         client = _ScriptedMuxClient(
-            (
-                (SweepHttpResponse(429, "slow"), SweepHttpResponse(200, shop)),
-                (SweepHttpResponse(429, "still slow"),),
-            )
+            ((SweepHttpResponse(429, "slow"), SweepHttpResponse(200, shop)),)
         )
         source = _TrackingHttpSource(client=client, sleep=sleeps.append)
         results = source.fetch_many(self._trips(2))
         self.assertIsInstance(results[0], GoogleFlightsBlocked)
         self.assertEqual(results[0].status, 429)
         self.assertFalse(isinstance(results[1], BaseException))
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(source.reset_calls, 1)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
 
     def test_fetch_many_transport_failure_replays_on_a_fresh_session(self) -> None:
         shop = _compact_body(_itinerary(price=45, airline="Vueling"))
@@ -2443,7 +2440,7 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         self.assertEqual(source.reset_calls, 0)
         self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
 
-    def test_fetch_many_with_calendar_continues_remaining_after_429(self) -> None:
+    def test_fetch_many_with_calendar_preserves_successes_without_429_replay(self) -> None:
         shop = _compact_body(_itinerary(price=88, airline="Iberia"))
         calendar = _calendar_rpc_body(
             [
@@ -2463,10 +2460,6 @@ class SweepRateLimitSessionTests(unittest.TestCase):
                     SweepHttpResponse(200, shop),
                     SweepHttpResponse(200, calendar),
                 ),
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(200, calendar),
-                ),
             )
         )
         source = _TrackingHttpSource(client=client, sleep=sleeps.append)
@@ -2480,13 +2473,41 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         )
         results = source.fetch_many_with_calendar(jobs)
         self.assertEqual(len(results), 3)
-        for cards, days in results:
-            self.assertFalse(isinstance(cards, BaseException))
-            self.assertEqual(cards[0].airline, "Iberia")
-            self.assertEqual(len(days), 3)
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(source.reset_calls, 1)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
+        self.assertFalse(isinstance(results[0][0], BaseException))
+        self.assertEqual(results[0][0][0].airline, "Iberia")
+        self.assertEqual(len(results[0][1]), 3)
+        self.assertIsInstance(results[1][0], GoogleFlightsBlocked)
+        self.assertEqual(results[1][0].status, 429)
+        self.assertFalse(isinstance(results[2][0], BaseException))
+        self.assertEqual(results[2][0][0].airline, "Iberia")
+        self.assertEqual(len(results[2][1]), 3)
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
+
+    def test_fetch_many_blocked_and_drift_mixed_batch_does_not_replay(self) -> None:
+        shop = _compact_body(_itinerary(price=88, airline="Iberia"))
+        sleeps: list[float] = []
+        client = _ScriptedMuxClient(
+            (
+                (
+                    SweepHttpResponse(200, shop),
+                    SweepHttpResponse(429, "slow down"),
+                    SweepHttpResponse(200, "not a compact response"),
+                ),
+            )
+        )
+        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
+        results = source.fetch_many(self._trips(3))
+        self.assertFalse(isinstance(results[0], BaseException))
+        self.assertIsInstance(results[1], GoogleFlightsBlocked)
+        self.assertIsInstance(results[2], GoogleFlightsBlocked)
+        self.assertIsNone(results[2].status)
+        self.assertEqual(client.post_many_calls, 1)
+        self.assertEqual(len(client.posts), 3)
+        self.assertEqual(len(client.gets), 1)
+        self.assertEqual(source.reset_calls, 0)
+        self.assertEqual(sleeps, [])
 
 
 class SweepClientShapeTests(unittest.TestCase):

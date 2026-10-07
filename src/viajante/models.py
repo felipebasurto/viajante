@@ -947,6 +947,7 @@ class SearchError:
     # Epoch seconds a recorded cooldown ends; None unless a cooldown file named one.
     retry_until: Optional[float] = None
     timeout: bool = False
+    diagnostics: Optional[Mapping[str, object]] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {"code": self.code.value, "message": self.message}
@@ -963,6 +964,8 @@ class SearchError:
                 payload["retry_after_seconds"] = max(1, math.ceil(end - now))
         if self.timeout:
             payload["timeout"] = True
+        if self.diagnostics is not None:
+            payload["diagnostics"] = dict(self.diagnostics)
         return payload
 
 
@@ -976,6 +979,8 @@ class QuerySuccess:
     stops_compare: Optional[StopsCompare] = None
     empty_reason: Optional[EmptyReason] = None
     recommendation: Optional["Recommendation"] = None
+    page_errors: Tuple[SearchError, ...] = ()
+    scope_bound: bool = False
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -997,6 +1002,10 @@ class QuerySuccess:
             "eligible_count": self.eligible_count,
             "offers": [offer.to_dict(currency) for offer in self.offers],
         }
+        if self.page_errors:
+            payload["page_errors"] = [error.to_dict() for error in self.page_errors]
+        if self.scope_bound:
+            payload["scope_bound"] = True
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.recommendation is not None:
@@ -1044,6 +1053,14 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
     cut = _deadline_stop(
         [result.error.code if isinstance(result, QueryFailure) else None for result in results]
     )
+    scope_bound = any(isinstance(result, QuerySuccess) and result.scope_bound for result in results)
+    page_cut = any(
+        isinstance(result, QuerySuccess)
+        and any(error.code == SearchErrorCode.DEADLINE for error in result.page_errors)
+        for result in results
+    )
+    if page_cut and cut is None:
+        cut = "optional package expansion did not finish before deadline_seconds"
     succeeded = sum(isinstance(result, QuerySuccess) for result in results)
     empty = sum(
         isinstance(result, QueryFailure) and result.error.code == SearchErrorCode.NO_RESULTS
@@ -1051,13 +1068,22 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
     )
     failed = len(results) - succeeded - empty
     return SearchCoverage(
-        scope={"kind": "submitted_queries", "size": len(results)},
+        scope={
+            "kind": "submitted_queries",
+            "size": len(results),
+            **({"public_page_outbound_limit": 8} if scope_bound else {}),
+        },
         attempted=len(results),
         succeeded=succeeded,
         empty=empty,
         failed=failed,
-        complete=cut is None,
-        stopping_reason="completed_scope" if cut is None else "deadline",
+        complete=cut is None and not scope_bound,
+        strategy="heuristic" if scope_bound else "finite",
+        stopping_reason="deadline"
+        if cut is not None
+        else "bounded_outbound_board"
+        if scope_bound
+        else "completed_scope",
         unsearched=(
             "queries outside the submitted finite scope"
             if cut is None
