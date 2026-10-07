@@ -60,6 +60,10 @@ EMPTY_NOTES = {
 }
 
 _FAILURE_PRIORITY = ("rate_limited", "blocked", "timeout", "failed")
+_SHAPE_MESSAGE = (
+    "viajante could not read the shape of this search result, so it was not "
+    "returned. This is a viajante bug, not a provider answer; no search outcome is implied."
+)
 
 
 @dataclass
@@ -76,6 +80,13 @@ class _Tally:
     # per-error (retry_after epoch seconds, retry_after_seconds as the error stated it)
     retry_ends: list[tuple[float, Optional[int]]] = field(default_factory=list)
     shapes: int = 0  # recognised payload shapes; zero means stamp_search was misused
+
+
+def _count_empty(tally: _Tally, reason: object) -> None:
+    """Count one no-evidence unit under its empty reason; unknown reasons are not readable."""
+    if reason not in EMPTY_REASONS:
+        raise EnvelopeShapeError(_SHAPE_MESSAGE)
+    setattr(tally, reason, getattr(tally, reason) + 1)
 
 
 def _failure_status(error: Mapping[str, object]) -> str:
@@ -141,7 +152,7 @@ def _query_row(row: dict, tally: _Tally, provider: str) -> None:
         tally.usable += 1
     else:
         reason = row.get("empty_reason") or empty_reason_for_rows(row.get("raw_count") or 0)
-        setattr(tally, reason, getattr(tally, reason) + 1)
+        _count_empty(tally, reason)
         row["empty_reason"] = reason
 
 
@@ -161,7 +172,7 @@ def _date_row(row: dict, tally: _Tally, provider: str) -> None:
         # A row without its own reason came from outside viajante's constructors: it is
         # unproven, never "no flights".
         reason = row.get("empty_reason") or "not_loaded"
-        setattr(tally, reason, getattr(tally, reason) + 1)
+        _count_empty(tally, reason)
 
 
 def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
@@ -205,8 +216,7 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
         tally.usable += priced
         tally.not_loaded += len(node["destinations"]) - priced
         if not node["destinations"] and not node.get("error") and not node.get("pricing_errors"):
-            reason = node.get("empty_reason") or "filtered_out"
-            setattr(tally, reason, getattr(tally, reason) + 1)
+            _count_empty(tally, node.get("empty_reason") or "filtered_out")
         for row in node.get("pricing_errors") or ():
             if isinstance(row, Mapping) and isinstance(row.get("error"), Mapping):
                 _error(row["error"], tally, provider)
@@ -274,10 +284,7 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     if not tally.shapes:
         # Developer hint: a new provider-backed payload needs its shape in `_walk`; an
         # offline one uses `stamp_local`. The client only learns the result is unusable.
-        raise EnvelopeShapeError(
-            "viajante could not read the shape of this search result, so it was not "
-            "returned. This is a viajante bug, not a provider answer; no search outcome is implied."
-        )
+        raise EnvelopeShapeError(_SHAPE_MESSAGE)
     failures = tally.failures
     answered = tally.usable + tally.provider_empty + tally.filtered_out
     worst = min((f[0] for f in failures), key=_FAILURE_PRIORITY.index, default=None)
@@ -333,10 +340,7 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
     """
     legs, itineraries = payload.get("legs"), payload.get("itineraries")
     if not isinstance(legs, list) or not isinstance(itineraries, list):
-        raise EnvelopeShapeError(
-            "viajante could not read the shape of this split-ticket result, so it was not "
-            "returned. This is a viajante bug, not a provider answer; no search outcome is implied."
-        )
+        raise EnvelopeShapeError(_SHAPE_MESSAGE)
     tally = _Tally()
     seen: set[tuple[object, object]] = set()
 

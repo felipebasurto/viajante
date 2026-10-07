@@ -848,6 +848,19 @@ class UnknownShapeTests(unittest.TestCase):
         payload = stamp_search({"error": {"code": "blocked", "message": "wall"}}, now=NOW)
         self.assertEqual((payload["status"], payload["empty_reason"]), ("blocked", "not_loaded"))
 
+    def test_a_row_empty_reason_the_envelope_does_not_know_is_refused(self) -> None:
+        # A foreign empty_reason must not count toward (or corrupt) a tally field:
+        # before, "shapes" incremented the shape counter and stamped filtered_out.
+        for payload in (
+            {"queries": [{"query": {}, "empty_reason": "shapes"}]},
+            {"queries": [{"query": {}, "empty_reason": "bogus"}]},
+            {"days": [{"status": "ok", "empty_reason": "bogus"}]},
+            {"destinations": [], "empty_reason": "bogus"},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(EnvelopeShapeError):
+                    stamp_search(dict(payload))
+
 
 class VerifyAnswerEnvelopeTests(unittest.TestCase):
     def setUp(self) -> None:
