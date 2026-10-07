@@ -74,6 +74,8 @@ Add this entry to your assistant's MCP configuration:
 }
 ```
 
+That entry runs `uvx --from viajante[mcp,browser]==<version> viajante-mcp`, with `<version>` pinned to the npm package. `search_explore` needs the browser extra. Chromium itself is still `playwright install chromium` in that environment.
+
 Native Python (no Node):
 
 ```json
@@ -87,7 +89,7 @@ Native Python (no Node):
 }
 ```
 
-This configuration supports Google Flights and Google Hotels without Chromium.
+The native configuration supports Google Flights and Google Hotels without Chromium.
 npx still needs `uvx` (and Python 3.10+) on PATH. If you use an existing
 Python environment instead, install `pip install 'viajante[mcp]'` and configure
 the client to run that environment's `viajante-mcp` executable.

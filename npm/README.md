@@ -23,4 +23,6 @@ CLI:
 npx -y -p @viajante/mcp viajante airports JFK
 ```
 
+The `mcp` and `viajante-mcp` bins run `uvx --from viajante[mcp,browser]==<this package's version> viajante-mcp`. The `viajante` bin stays `viajante==<version>`.
+
 Native Python install stays `pip install viajante` / `uvx --from viajante[mcp] viajante-mcp`.
