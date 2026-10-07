@@ -431,6 +431,91 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(report.days[0].price, 45.0)
         self.assertEqual(report.days[1].price, 38.0)
 
+    def test_progress_follows_each_completed_day(self) -> None:
+        events: list[tuple[str, object]] = []
+        card = _card(price="€410")
+
+        class Transport:
+            automatic_typical = False
+
+            def fetch(self, trip):
+                events.append(("complete", trip.departure_date))
+                return (card,)
+
+            def fetch_many(self, trips):
+                raise AssertionError("round-trip days are not one multiplexed batch")
+
+            def close(self) -> None:
+                return None
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                events.append(("progress", line))
+
+        report = search_dates(
+            "BOS",
+            "LHR",
+            date(2026, 11, 1),
+            date(2026, 11, 3),
+            nights=5,
+            source=Transport(),
+            progress=progress,
+            currency="USD",
+        )
+        self.assertEqual([row.return_date for row in report.days][0], date(2026, 11, 6))
+        self.assertEqual(
+            [kind for kind, _value in events],
+            ["complete", "progress", "complete", "progress", "complete", "progress"],
+        )
+        self.assertEqual(
+            [value for kind, value in events if kind == "progress"],
+            [
+                "[1/3] BOS -> LHR 2026-11-01",
+                "[2/3] BOS -> LHR 2026-11-02",
+                "[3/3] BOS -> LHR 2026-11-03",
+            ],
+        )
+
+    def test_one_way_batch_reports_progress_after_the_provider_call(self) -> None:
+        events: list[tuple[str, object]] = []
+        card = _card()
+
+        class Transport:
+            automatic_typical = False
+
+            def fetch_many(self, trips):
+                events.append(("fetch_many", len(trips)))
+                return [(card,)] * len(trips)
+
+            def fetch(self, trip):
+                raise AssertionError("one-way batch does not fetch a day at a time")
+
+            def close(self) -> None:
+                return None
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                events.append(("progress", line))
+
+        search_dates(
+            "JFK",
+            "LHR",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            source=Transport(),
+            progress=progress,
+            currency="USD",
+        )
+        self.assertEqual(
+            events,
+            [
+                ("fetch_many", 3),
+                ("progress", "[1/3] JFK -> LHR 2026-09-01"),
+                ("progress", "[2/3] JFK -> LHR 2026-09-02"),
+                ("progress", "[3/3] JFK -> LHR 2026-09-03"),
+            ],
+        )
+
     def test_unnamed_sort_stays_date_order(self) -> None:
         source = FakeCalendarSource(
             (
