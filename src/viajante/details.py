@@ -279,6 +279,8 @@ def get_hotel_details(
         raise ValueError("check-in date is in the past")
     owned_id = offer.get("provider_id") if payload.get("fetch_backend") == "skiplagged" else None
     anchor = None
+    expected_city = None
+    expected_country = None
     if owned_id is not None:
         try:
             hotel_id = int(owned_id)
@@ -293,6 +295,10 @@ def get_hotel_details(
             detail["reason"] = anchor
             return stamp_local(detail, partial=True, error_code="ambiguous_city")
         named = {"hotel_name": offer["title"], "city": location}
+        location_parts = location.split(",", 1)
+        expected_city = location_parts[0].strip()
+        if len(location_parts) == 2 and len(location_parts[1].strip()) == 2:
+            expected_country = location_parts[1].strip().upper()
     rooms = search_hotel_rooms(
         hotel_id,
         date.fromisoformat(query["check_in"]),
@@ -317,6 +323,25 @@ def get_hotel_details(
         detail["room_rates_status"] = "inconclusive"
         detail["reason"] = "room quote name differs from the selected hotel"
         return _filtered(detail, "property_mismatch")
+    if expected_city is not None:
+        if rooms.city is not None:
+            city_parts = rooms.city.split(",", 1)
+            quoted_city = city_parts[0].strip()
+            quoted_country = (
+                city_parts[1].strip().upper()
+                if len(city_parts) == 2 and len(city_parts[1].strip()) == 2
+                else None
+            )
+            city_mismatch = _normalized_name(canonical_city_name(quoted_city)) != _normalized_name(
+                canonical_city_name(expected_city)
+            )
+            country_mismatch = bool(
+                expected_country and quoted_country and expected_country != quoted_country
+            )
+            if city_mismatch or country_mismatch:
+                detail["room_rates_status"] = "inconclusive"
+                detail["reason"] = "room quote city differs from the selected hotel's searched city"
+                return _filtered(detail, "property_mismatch")
     if anchor is not None:
         quoted = _point(quotes)
         if quoted is None or _raw_distance_km(anchor, quoted[0], quoted[1]) > _PROPERTY_KM:

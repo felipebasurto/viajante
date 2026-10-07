@@ -1012,7 +1012,7 @@ class PartialBatchTests(unittest.TestCase):
         self.addCleanup(thread.join, 2)
         self.addCleanup(client._loop.call_soon_threadsafe, client._loop.stop)
 
-        async def apost(url, data, headers, timeout):
+        async def apost(url, data, headers, timeout, cancel_event=None):
             if url.endswith("slow"):
                 await asyncio.sleep(30)
             return SweepHttpResponse(200, "arrived", url)

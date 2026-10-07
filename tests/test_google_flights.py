@@ -2417,7 +2417,7 @@ class SweepRateLimitSessionTests(unittest.TestCase):
         client = shared_chrome_sweep_client()
         self.addCleanup(reset_shared_chrome_sweep_client)
 
-        async def boom(url, data, headers, timeout):
+        async def boom(url, data, headers, timeout, cancel_event=None):
             raise TimeoutError("read timed out")
 
         client._apost = boom

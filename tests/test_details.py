@@ -75,10 +75,12 @@ class HotelDetailsTests(unittest.TestCase):
                     original = hotel(location=location)
                     original["queries"][0]["resolved_place"] = resolved
                     with patch(
-                        "viajante.details.search_hotel_rooms", return_value=_rooms()
+                        "viajante.details.search_hotel_rooms",
+                        return_value=_rooms(city=canonical),
                     ) as rooms:
-                        get_hotel_details(original, 0, 0, room_rates=True)
+                        detail = get_hotel_details(original, 0, 0, room_rates=True)
                     self.assertEqual(rooms.call_args.kwargs["city"], expected)
+                    self.assertEqual((detail["status"], detail["completeness"]), ("ok", "complete"))
 
     def test_distinct_unicode_property_does_not_resolve_or_fetch_rooms(self):
         search = _search_result()
@@ -101,6 +103,38 @@ class HotelDetailsTests(unittest.TestCase):
             detail = get_hotel_details(hotel(title="東京ホテル"), 0, 0, room_rates=True)
         self.assertEqual(detail["error_code"], "property_mismatch")
         self.assertIsNone(detail["room_quotes"])
+
+    def test_room_detail_city_cannot_contradict_the_selected_city(self):
+        original = hotel(location="San Jose, US", title="Holiday Inn Express")
+        for city in ("San Jose del Cabo", "San Jose, MX"):
+            with (
+                self.subTest(city=city),
+                patch(
+                    "viajante.details.search_hotel_rooms",
+                    return_value=_rooms(name="Holiday Inn Express", city=city),
+                ),
+            ):
+                detail = get_hotel_details(original, 0, 0, room_rates=True)
+            self.assertEqual(detail["error_code"], "property_mismatch")
+            self.assertIsNone(detail["room_quotes"])
+            self.assertIn("city differs", detail["reason"])
+
+    def test_city_prefix_slug_cannot_supply_same_chain_rates_from_wrong_city(self):
+        wrong_city = _search_result(
+            url=(
+                "https://skiplagged.com/hotels/1/"
+                "san-jose-del-cabo-mexico-hotels/2099-07-01/2099-07-04"
+            )
+        )
+        wrong_city["content"][0]["text"] = wrong_city["content"][0]["text"].replace(
+            "# Hotels in Prague", "# Hotels in San Jose"
+        )
+        result, calls = self._rates(
+            hotel(location="San Jose, US", title="Czech Inn"), search_result=wrong_city
+        )
+        self.assertEqual(result["room_quotes"]["error"]["code"], "no_results")
+        self.assertIn("different city", result["room_quotes"]["error"]["message"])
+        self.assertEqual([call["name"] for call in calls], ["sk_hotels_search"])
 
     def test_unambiguous_city_keeps_property_coordinates(self):
         original = hotel(latitude=50.07, longitude=14.44)
@@ -236,12 +270,17 @@ class HotelDetailsTests(unittest.TestCase):
                 "https://skiplagged.com/hotels/1/springfield-missouri-hotels/2099-07-01/2099-07-04"
             )
         )
+        page["content"][0]["text"] = page["content"][0]["text"].replace(
+            "# Hotels in Prague", "# Hotels in Springfield"
+        )
         near = _details_result()
+        near["structuredContent"]["cityName"] = "Springfield"
         near["structuredContent"]["location"] = {"lat": 37.201, "lng": -93.301}
         result, calls = self._rates(original, search_result=page, details_result=near)
         self.assertGreaterEqual(len(calls), 1)
         self.assertEqual(result["room_quotes"]["currency"], "USD")
         far = _details_result()
+        far["structuredContent"]["cityName"] = "Springfield"
         far["structuredContent"]["location"] = {"lat": 50.07, "lng": 14.44}
         missed, _calls = self._rates(original, search_result=page, details_result=far)
         self.assertEqual(missed["room_rates_status"], "inconclusive")
@@ -376,6 +415,7 @@ def _rooms(**overrides):
         rooms=2,
         currency="USD",
         name="Czech Inn",
+        city="Prague",
         rates=(rate,),
         answered_adults=5,
         answered_rooms=2,

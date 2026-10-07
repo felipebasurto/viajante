@@ -197,6 +197,16 @@ the history opt-in so fixture fares never enter personal history.
 
 ## Validation and release handoff
 
+The final review also corrected Unicode hotel-name matching, owned city aliases,
+contradictory provider city/name echoes, re-check query route/date binding,
+cancellation during the final fetch and before cooldown writes, three-decimal
+history changes, and malformed history rows. Each correction has an offline
+regression. On 2026-10-07, the corrected checkout passed all 1,634 offline tests
+(two explicit macOS skips), Ruff lint/format, `viajante bench` (`gate: ok`),
+and real stdio smoke. Rebuilt wheel/sdist passed strict Twine checks, and the
+wheel's package code/data matched the corrected checkout. Publication still
+requires green CI on the exact final head and the merge commit.
+
 The 1.4.5 candidate passed these pre-publication checks:
 
 - Locked Python 3.13.7 / MCP 1.29.0: all 1,610 offline tests passed, with two

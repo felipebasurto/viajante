@@ -112,7 +112,13 @@ def _valid(line: bytes) -> Optional[dict]:
     cheapest = row.get("cheapest")
     if isinstance(cheapest, bool) or not isinstance(cheapest, (int, float)):
         return None
-    if not math.isfinite(cheapest) or cheapest <= 0:
+    try:
+        finite = math.isfinite(cheapest)
+    except OverflowError:
+        # JSON integers are arbitrary precision; malformed local history must
+        # not make a reader or the next append fail while coercing one to float.
+        return None
+    if not finite or cheapest <= 0:
         return None
     if not isinstance(row.get("query"), dict) or not isinstance(row.get("filters"), dict):
         return None

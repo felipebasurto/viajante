@@ -16,7 +16,13 @@ from urllib.parse import urlencode, urljoin
 from selectolax.lexbor import LexborHTMLParser
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
-from viajante.control import SearchDeadline, checkpoint, wait_for_future
+from viajante.control import (
+    SearchCancelled,
+    SearchDeadline,
+    checkpoint,
+    current_control,
+    wait_for_future,
+)
 from viajante.google_flights_rpc import (
     SHOPPING_POST_HEADERS,
     CompactCalendarDay,
@@ -456,6 +462,12 @@ def _as_sweep_response(response: Any) -> SweepHttpResponse:
     )
 
 
+def _raise_if_cancelled(cancel_event: Optional[threading.Event]) -> None:
+    """Carry the caller's cancellation across the sweep client's event-loop thread."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise SearchCancelled()
+
+
 @dataclass(frozen=True)
 class SweepPost:
     url: str
@@ -534,8 +546,14 @@ class ChromeSweepClient:
         future = self._asyncio.run_coroutine_threadsafe(coro, self._loop)
         return wait_for_future(future, max(timeout + 5.0, 10.0))
 
-    async def _dismiss_consent(self, response: Any, timeout: float) -> bool:
+    async def _dismiss_consent(
+        self,
+        response: Any,
+        timeout: float,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> bool:
         async with self._consent_lock:
+            _raise_if_cancelled(cancel_event)
             if self._consent_ok:
                 return True
             parsed = _consent_reject_form(response.text, str(response.url))
@@ -545,20 +563,31 @@ class ChromeSweepClient:
             save = await self._session.post(
                 action, data=fields, timeout=timeout, allow_redirects=True
             )
+            _raise_if_cancelled(cancel_event)
             # ponytail: SOCS is process-lifetime; 429 reset builds a new client.
             self._consent_ok = not _is_consent_interstitial(str(save.url))
             return self._consent_ok
 
-    async def _exchange(self, send: Any, timeout: float) -> SweepHttpResponse:
+    async def _exchange(
+        self,
+        send: Any,
+        timeout: float,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> SweepHttpResponse:
+        _raise_if_cancelled(cancel_event)
         response = await send()
+        _raise_if_cancelled(cancel_event)
         if _is_consent_interstitial(str(response.url)) and await self._dismiss_consent(
-            response, timeout
+            response, timeout, cancel_event
         ):
+            _raise_if_cancelled(cancel_event)
             response = await send()
+            _raise_if_cancelled(cancel_event)
         out = _as_sweep_response(response)
         # ponytail: a proxy is another egress IP, so its limit does not pause direct searches.
         if self._proxied:
             return out
+        _raise_if_cancelled(cancel_event)
         if out.status == 429:
             state = note_rate_limited(_retry_after_seconds(response))
             out = replace(out, rate_limit=rate_limit_advice(state))
@@ -569,10 +598,16 @@ class ChromeSweepClient:
             )
         return out
 
-    async def _aget(self, url: str, timeout: float) -> SweepHttpResponse:
+    async def _aget(
+        self,
+        url: str,
+        timeout: float,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> SweepHttpResponse:
         return await self._exchange(
             lambda: self._session.get(url, timeout=timeout, allow_redirects=True),
             timeout,
+            cancel_event,
         )
 
     async def _apost(
@@ -581,6 +616,7 @@ class ChromeSweepClient:
         data: str,
         headers: Mapping[str, str],
         timeout: float,
+        cancel_event: Optional[threading.Event] = None,
     ) -> SweepHttpResponse:
         return await self._exchange(
             lambda: self._session.post(
@@ -591,10 +627,13 @@ class ChromeSweepClient:
                 allow_redirects=True,
             ),
             timeout,
+            cancel_event,
         )
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-        return self._submit(self._aget(url, timeout), timeout=timeout)
+        control = current_control()
+        cancel_event = control.cancel if control is not None else None
+        return self._submit(self._aget(url, timeout, cancel_event), timeout=timeout)
 
     def post(
         self,
@@ -604,7 +643,9 @@ class ChromeSweepClient:
         headers: Mapping[str, str],
         timeout: float,
     ) -> SweepHttpResponse:
-        return self._submit(self._apost(url, data, headers, timeout), timeout=timeout)
+        control = current_control()
+        cancel_event = control.cancel if control is not None else None
+        return self._submit(self._apost(url, data, headers, timeout, cancel_event), timeout=timeout)
 
     def post_many(
         self,
@@ -618,8 +659,12 @@ class ChromeSweepClient:
             job = jobs[0]
             return [self.post(job.url, data=job.data, headers=job.headers, timeout=timeout)]
         out: list[SweepHttpResponse | None] = [None] * len(jobs)
+        control = current_control()
+        cancel_event = control.cancel if control is not None else None
         try:
-            return list(self._submit(self._apost_many(jobs, timeout, out), timeout=timeout))
+            return list(
+                self._submit(self._apost_many(jobs, timeout, out, cancel_event), timeout=timeout)
+            )
         except SearchDeadline:
             # Responses that already arrived are real; only the rest were not loaded.
             return [
@@ -632,6 +677,7 @@ class ChromeSweepClient:
         jobs: Sequence[SweepPost],
         timeout: float,
         out: list[SweepHttpResponse | None],
+        cancel_event: Optional[threading.Event] = None,
     ) -> list[SweepHttpResponse]:
         # Keep HTTP/2 multiplex on the happy path. After HTTP 429 or a transport
         # failure, stop feeding this TLS session; unsent jobs carry the same status
@@ -648,7 +694,9 @@ class ChromeSweepClient:
                 if stop.is_set():
                     return
                 try:
-                    response = await self._apost(job.url, job.data, job.headers, timeout)
+                    response = await self._apost(
+                        job.url, job.data, job.headers, timeout, cancel_event
+                    )
                 except Exception as exc:
                     if not stop.is_set():
                         stop_status = SWEEP_TRANSPORT_STATUS

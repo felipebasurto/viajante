@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
-from viajante.control import checkpoint, controlled, interruptible_sleep
+from viajante.control import check_cancelled, checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
     HIDDEN_CITY_SOURCE,
@@ -82,6 +82,7 @@ def _pace(rpc: RpcPost) -> None:
 
 
 def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str]) -> None:
+    check_cancelled()
     if status != 429:
         return
     try:

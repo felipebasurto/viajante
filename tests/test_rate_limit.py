@@ -4,12 +4,14 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
 import unittest
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import _isolate  # noqa: F401
 from viajante import mcp_handlers, skiplagged
+from viajante.control import SearchCancelled, SearchControl, active
 from viajante.flights import _needs_detail_fallback, classify_failure
 from viajante.google_flights import (
     RATE_LIMIT_COOLDOWN_SECONDS,
@@ -18,6 +20,7 @@ from viajante.google_flights import (
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
     SweepHttpResponse,
+    SweepPost,
     _raise_if_blocked,
     note_rate_limited,
     rate_limit_status,
@@ -154,6 +157,63 @@ class StatusThirteenTests(_StateDir):
         self.assertEqual(str(ctx.exception), advice)
 
 
+class CancelledSweepCooldownTests(_StateDir):
+    class CancellingSession:
+        def __init__(self, cancel_event: threading.Event, status: int, text: str) -> None:
+            self.cancel_event = cancel_event
+            self.response = _FakeHttpResponse(text, status)
+
+        async def post(self, *args, **kwargs):
+            self.cancel_event.set()
+            return self.response
+
+    def test_cancelled_http_429_does_not_write_cooldown_across_loop_thread(self) -> None:
+        self._assert_cancelled_rate_response(429, "slow down")
+
+    def test_cancelled_status_13_does_not_write_cooldown_across_loop_thread(self) -> None:
+        self._assert_cancelled_rate_response(200, STATUS_13_BODY)
+
+    def test_cancelled_multiplexed_429_does_not_write_cooldown(self) -> None:
+        self._assert_cancelled_rate_response(429, "slow down", multiplexed=True)
+
+    def _assert_cancelled_rate_response(
+        self, status: int, text: str, *, multiplexed: bool = False
+    ) -> None:
+        control = SearchControl()
+        loop = asyncio.new_event_loop()
+
+        def run_loop() -> None:
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+            loop.close()
+
+        thread = threading.Thread(target=run_loop, name="fake-sweep-loop", daemon=True)
+        thread.start()
+        client = ChromeSweepClient.__new__(ChromeSweepClient)
+        client._asyncio = asyncio
+        client._loop = loop
+        client._thread = thread
+        client._proxied = False
+        client._session = self.CancellingSession(control.cancel, status, text)
+        client._consent_ok = True
+        try:
+            with active(control), self.assertRaises(SearchCancelled):
+                if multiplexed:
+                    client.post_many(
+                        [
+                            SweepPost(CALENDAR_URL, "{}", {}),
+                            SweepPost(CALENDAR_URL, "{}", {}),
+                        ],
+                        timeout=1.0,
+                    )
+                else:
+                    client.post(CALENDAR_URL, data="{}", headers={}, timeout=1.0)
+        finally:
+            client.close()
+        self.assertTrue(control.cancel.is_set())
+        self.assertIsNone(rate_limit_status())
+
+
 class SkiplaggedCooldownTests(_StateDir):
     def _live_rpc(self, calls: list):
         def rpc(url, payload, headers):
@@ -183,6 +243,22 @@ class SkiplaggedCooldownTests(_StateDir):
         calls: list = []
         with self.assertRaises(skiplagged.SkiplaggedRateLimited):
             skiplagged._call_mcp({}, rpc=self._live_rpc(calls), tool="sk_hotels_search")
+        self.assertIsNone(rate_limit_status(file="skiplagged-rate-limit.json"))
+
+    def test_cancelled_live_429_does_not_write_cooldown(self) -> None:
+        control = SearchControl()
+
+        def cancel_then_429(url, payload, headers):
+            control.cancel.set()
+            return 429, {"retry-after": "90"}, ""
+
+        with (
+            active(control),
+            patch("viajante.skiplagged._is_live", return_value=True),
+            patch("viajante.skiplagged._pace"),
+            self.assertRaises(SearchCancelled),
+        ):
+            skiplagged._call_mcp({}, rpc=cancel_then_429, tool="sk_hotels_search")
         self.assertIsNone(rate_limit_status(file="skiplagged-rate-limit.json"))
 
     def test_live_calls_are_paced(self) -> None:

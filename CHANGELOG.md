@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.4.5] - 2026-10-06
+## [1.4.5] - 2026-10-07
 
 See the [release record](docs/release-1.4.5.md) for the complete integrated PR
 inventory, compatibility changes, candidate validation and publication handoff.
@@ -71,6 +71,10 @@ inventory, compatibility changes, candidate validation and publication handoff.
 
 ### Fixed
 
+- Re-check queries must match the original offer's route and departure dates before provider contact, including every packaged journey.
+- Cancelled Google and Skiplagged responses cannot write cooldown state, including direct HTTP 429 and Google RPC status 13 responses arriving on the sweep thread.
+- Hotel room lookup rejects a different provider city, including localities whose names share a prefix, and contradictory room-detail cities.
+- Price history skips out-of-range JSON integer prices without losing readable observations or changing invalid rows during append.
 - Hotel finalist matching preserves non-Latin names and meaningful Unicode marks, rejects empty-name matches and contradictory room-detail names, and resolves owned city aliases such as Lisboa and Ciudad de México before room lookup.
 - Cancellation during the final provider fetch is checked before writing price history, recording MCP evidence or caching the result; a cancelled cache replay does not record another search. Deadline-completed evidence is preserved.
 - Price history retains three-decimal quote changes in JSON and CLI output. Malformed nested query rows are skipped when reading and preserved byte-for-byte when appending.

@@ -325,6 +325,7 @@ class ImmutabilityAndBoundsTests(_State):
             {**good, "cheapest": -5},
             {**good, "cheapest": True},
             {**good, "cheapest": float("nan")},
+            {**good, "cheapest": 10**400},
             {**good, "query": "JFK-LHR"},
             {**good, "filters": []},
             {**good, "currency": None},
