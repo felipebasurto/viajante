@@ -438,14 +438,11 @@ def _satisfies_no_overnight(
 ) -> bool:
     for code in codes:
         for city, overnight in events:
-            match = _overnight_city_match(city, code)
-            if match is False:
-                continue
-            if match is None:
-                return False
             if overnight is False:
+                # Provably not a night, so it cannot be one at the named city.
                 continue
-            return False
+            if _overnight_city_match(city, code) is not False:
+                return False
     return True
 
 
