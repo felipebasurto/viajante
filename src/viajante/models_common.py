@@ -139,7 +139,7 @@ def _require_occupancy(
 
 
 def _require_positive_amount(value: float, *, role: str) -> None:
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{role} must be positive")
 
 
