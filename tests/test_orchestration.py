@@ -32,6 +32,8 @@ class ClassifyFailureTests(unittest.TestCase):
                     "uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium",
                     error.message,
                 )
+                self.assertIn("viajante[browser]", error.message)
+                self.assertNotIn("Sweep does not need a browser", error.message)
 
     def test_hotels_do_not_treat_empty_pages_as_no_results_by_default(self) -> None:
         error = classify_failure(
