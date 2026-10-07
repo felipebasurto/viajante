@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Sequence
@@ -63,7 +64,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             key
             for key in (
                 "bags",
-                "carry_on",
                 "airlines",
                 "exclude_airlines",
                 "alliances",
@@ -71,6 +71,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
             if getattr(trip, key, None) is not None
         ]
+        # A positive carry-on rides the tfs BaggageFilter and is verified by the
+        # page's Bags chip echo. Checked bags produce no provider echo on this
+        # transport, and a named 0 is the unselected state (no echo either);
+        # both stay refused like an unverifiable filter.
+        if trip.carry_on == 0:
+            unsupported.append("carry_on")
         if isinstance(trip, MultiCity):
             unsupported.append("multi_city")
         if unsupported:
@@ -157,6 +163,23 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         }[trip.cabin]
         if cabin not in {node.text(strip=True) for node in root.css('[role="combobox"]')}:
             raise GoogleFlightsMarkupError("Public page did not echo the requested cabin.")
+        if trip.bags is not None or trip.carry_on is not None:
+            labels = [
+                node.attributes.get("aria-label") or "" for node in root.css("button[aria-label]")
+            ]
+            for count, kind in (
+                (trip.carry_on, "carry-on"),
+                (trip.bags, "checked"),
+            ):
+                if not count:
+                    continue
+                chip = rf"(?<!\d){count} {kind} bags?"
+                if not any(
+                    re.search(chip, label) and "Bags, Selected" in label for label in labels
+                ):
+                    raise GoogleFlightsMarkupError(
+                        "Public page did not echo the requested baggage filter."
+                    )
 
     @staticmethod
     def _matches_leg(card: RawFlightCard, query) -> bool:

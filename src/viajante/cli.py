@@ -1505,8 +1505,7 @@ def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
 def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -> None:
     help_text = (
         "Ranking add-on in the quote currency. Unnamed is 0. Named value is used "
-        "as-is. Named --bags / --carry-on are unsupported in 1.4.6. Viajante does "
-        "not invent a bag fee."
+        "as-is. Viajante does not invent a bag fee."
     )
     if extra:
         help_text = f"{help_text} {extra}"
@@ -1544,13 +1543,13 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="N",
-        help="Checked bags requested; unsupported in 1.4.6 (omit to leave unset)",
+        help="Checked bags requested; unverifiable on public-page transport (omit to leave unset)",
     )
     parser.add_argument(
         "--carry-on",
         action="store_true",
         dest="carry_on",
-        help="Request one carry-on; unsupported in 1.4.6 (omit to leave unset)",
+        help="Request one carry-on (omit to leave unset)",
     )
     parser.add_argument(
         "--price-cap",

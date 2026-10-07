@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import unittest
 from datetime import date, timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
@@ -58,6 +60,15 @@ def _context(*, adults=2, currency="EUR", cabin="Economy"):
             for label, count in controls.items()
         )
     )
+
+
+def _bags_chip(count: int, *, kind: str = "carry-on", selected: bool = True) -> str:
+    label = (
+        f"{count} {kind} bag{'s' if count != 1 else ''}, Bags, Selected"
+        if selected
+        else "Bags, Not selected"
+    )
+    return f'<button aria-label="{label}"></button>'
 
 
 def _source() -> PublicGoogleFlightsHttpSource:
@@ -116,15 +127,17 @@ class PublicFlightsSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "did not prove the requested route"):
                 source.fetch(query)
 
-    def test_bags_carriers_and_multi_city_fail_before_any_get(self) -> None:
+    def test_checked_bags_carriers_and_multi_city_fail_before_any_get(self) -> None:
         class NoNetwork:
             def get(self, *args, **kwargs):
                 raise AssertionError("unsupported query must not send a request")
 
         source = PublicGoogleFlightsHttpSource(currency="EUR", client=NoNetwork())
         for query in (
+            # Checked bags have no provable echo on the public page.
             FlightQuery("HAN", "SIN", OUT, adults=2, bags=1),
-            FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=1),
+            FlightQuery("HAN", "SIN", OUT, adults=2, bags=1, carry_on=1),
+            FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=0),
             FlightQuery("HAN", "SIN", OUT, adults=2, airlines=("TA",)),
             FlightQuery("HAN", "SIN", OUT, adults=2, exclude_airlines=("TA",)),
             FlightQuery("HAN", "SIN", OUT, adults=2, alliances=("star",)),
@@ -138,6 +151,49 @@ class PublicFlightsSourceTests(unittest.TestCase):
         ):
             with self.subTest(query=query), self.assertRaises(GoogleFlightsUnsupported):
                 source.fetch(query)
+
+    def test_bag_count_encodes_into_tfs_and_requires_the_chip_echo(self) -> None:
+        class GetOnly:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, *, timeout):
+                self.urls.append(url)
+                return SweepHttpResponse(200, _context() + _bags_chip(1), url)
+
+        client = GetOnly()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        query = FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=1, max_stops=0)
+        card = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
+        with patch("viajante.google_flights_public.parse_shopping_page", return_value=(card,)):
+            cards = source.fetch(query)
+        self.assertEqual(cards, (card,))
+        self.assertEqual(len(client.urls), 1)
+        tfs = parse_qs(urlparse(client.urls[0]).query)["tfs"][0]
+        payload = base64.b64decode(tfs)
+        # Field 13 BaggageFilter: carry_on=1 at field 2, checked=0 at field 3.
+        self.assertIn(b"\x6a\x04\x10\x01\x18\x00", payload)
+
+    def test_missing_or_mismatched_bag_echo_fails_closed(self) -> None:
+        for html, query in (
+            (_context(), FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=1)),
+            (
+                _context() + _bags_chip(0, selected=False),
+                FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=1),
+            ),
+            (
+                _context() + _bags_chip(2),
+                FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=1),
+            ),
+            (
+                _context() + _bags_chip(1, kind="checked"),
+                FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=1),
+            ),
+        ):
+            source = _source()
+            with self.subTest(html=html):
+                with self.assertRaisesRegex(Exception, "baggage filter"):
+                    source._verify_context(html, query)
 
     def test_round_trip_replaces_outbound_package_reference_with_provider_total(self) -> None:
         source = _source()

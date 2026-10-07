@@ -25,6 +25,7 @@ def get_runtime_info() -> dict[str, object]:
             "round_trip": "bounded",
             "public_outbound_limit": 8,
             "bags": False,
+            "carry_on": True,
             "carrier_filters": False,
             "multi_city": False,
             "explore_catalog": False,

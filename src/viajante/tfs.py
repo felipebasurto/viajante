@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping, Sequence
+from typing import Optional
 
 from viajante.models import (
     FlightCabin,
@@ -22,7 +23,14 @@ _LEN = 2
 _INFO_DATA = 3
 _INFO_PASSENGERS = 8
 _INFO_SEAT = 9
+_INFO_BAGGAGE = 13
 _INFO_TRIP = 19
+
+# BaggageFilter fields, matching the provider's own encoder byte-for-byte:
+# field 2 is the carry-on count. Field 3 produced no filter echo in probes, so
+# only the observed zero is ever written for it.
+_BAGGAGE_CARRY_ON = 2
+_BAGGAGE_CHECKED = 3
 
 _FLIGHT_DATE = 2
 _FLIGHT_MAX_STOPS = 5
@@ -55,6 +63,7 @@ def encode_tfs(trip: Trip) -> str:
         infants_in_seat=trip.infants_in_seat,
         infants_on_lap=trip.infants_on_lap,
         cabin=trip.cabin,
+        carry_on=trip.carry_on,
         trip_kind=trip_kind_code(trip),
     )
 
@@ -94,6 +103,7 @@ def encode_tfs_selected_outbound(trip: RoundTrip, outbound: RawJourneyLeg) -> st
         infants_in_seat=trip.infants_in_seat,
         infants_on_lap=trip.infants_on_lap,
         cabin=trip.cabin,
+        carry_on=trip.carry_on,
         trip_kind=trip_kind_code(trip),
     )
 
@@ -177,6 +187,7 @@ def _encode_legs(
     adults: int,
     cabin: FlightCabin,
     trip_kind: int,
+    carry_on: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -186,6 +197,7 @@ def _encode_legs(
         adults=adults,
         cabin=cabin,
         trip_kind=trip_kind,
+        carry_on=carry_on,
         children=children,
         infants_in_seat=infants_in_seat,
         infants_on_lap=infants_on_lap,
@@ -198,6 +210,7 @@ def _encode_route_messages(
     adults: int,
     cabin: FlightCabin,
     trip_kind: int,
+    carry_on: Optional[int] = None,
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
@@ -213,6 +226,14 @@ def _encode_route_messages(
         flights
         + _packed_enums(_INFO_PASSENGERS, passengers)
         + _varint_field(_INFO_SEAT, CABIN_SEAT[cabin])
+        + _baggage_filter(carry_on)
         + _varint_field(_INFO_TRIP, trip_kind)
     )
     return base64.b64encode(payload).decode("ascii")
+
+
+def _baggage_filter(carry_on: Optional[int]) -> bytes:
+    if not carry_on:
+        return b""
+    inner = _varint_field(_BAGGAGE_CARRY_ON, carry_on) + _varint_field(_BAGGAGE_CHECKED, 0)
+    return _len_delim(_INFO_BAGGAGE, inner)

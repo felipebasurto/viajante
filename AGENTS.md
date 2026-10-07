@@ -248,10 +248,11 @@ occupancy (hotel occupancy is adults-only). Nearby alternatives take the
 cheapest owned fare in that city group, not a sum.
 
 `--baggage-buffer` / MCP `baggage_buffer` is a ranking add-on in the same quote
-currency. **Unnamed is 0.** Named `N` is used as-is (not FX-converted). The
-public-page sweep rejects `--bags N` / `--carry-on` because it cannot prove the
-requested baggage terms; explicit detail can send those constraints. Do not
-invent a bag fee. Dates per-day rows pick a day's winner by fare+buffer.
+currency. **Unnamed is 0.** Named `N` is used as-is (not FX-converted). A
+positive `--carry-on` rides the tfs `BaggageFilter` on the public page and must
+be echoed by the Bags filter chip (`N carry-on bag(s), Bags, Selected`) or the
+page read fails; `--bags N` (checked) and a named zero keep the preflight
+refusal (no provable echo). Do not invent a bag fee. Dates per-day rows pick a day's winner by fare+buffer.
 Explore catalog recovery is unsupported and must fail closed.
 
 ## Invariants
