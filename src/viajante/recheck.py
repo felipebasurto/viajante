@@ -40,7 +40,7 @@ from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import normalize_clock, parse_stops_count
 from viajante.ratelimit import NOT_SENT
 from viajante.storage import write_json_atomic
-from viajante.temporal import local_instant
+from viajante.temporal import _zone_instants
 from viajante.validate import _mapping
 
 SCHEMA_VERSION = 1
@@ -333,14 +333,18 @@ def _unwrap(offer: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _departed(day: date, clock: Optional[str], origin: str, now: datetime) -> bool:
-    """True when the journey has left. Uses the origin's owned timezone when it has one."""
+    """True when the journey has left. Uses the origin's owned timezone when it has one.
+
+    An ambiguous civil time has left only when every fold has. One fold still
+    ahead, or a wall time that does not exist, is not proof that it has left.
+    """
     minutes = _clock_minutes(clock)
     geo = airport_geo(origin)
     if minutes is not None and geo is not None:
         civil = datetime.combine(day, time(minutes // 60, minutes % 60))
-        instant = local_instant(civil, geo[0])
-        if instant is not None:
-            return instant <= now
+        instants = _zone_instants(civil, geo[0])
+        if instants:
+            return all(instant <= now for instant in instants)
     return day < now.astimezone().date()
 
 

@@ -1016,6 +1016,32 @@ class MalformedInputTests(unittest.TestCase):
             recheck_offer(_previous(OUTBOUND), search=stub, now=after)
         self.assertEqual(len(stub.calls), 1)
 
+    def test_ambiguous_departure_is_past_only_after_both_folds(self) -> None:
+        # JFK 01:30 on 2026-11-01 is 05:30Z and again at 06:30Z. 02:30 on
+        # 2026-03-08 does not exist (the clock jumps 02:00 to 03:00).
+        def at(day: date, clock: str, moment: datetime) -> dict:
+            segment = _segment("JFK", "LHR", clock, "12:00", "BA178", day=day)
+            return recheck_offer(
+                _previous(segment), search=_Stub(_report(_offer(500.0, (segment,)))), now=moment
+            )
+
+        fold = date(2026, 11, 1)
+        with self.assertRaisesRegex(ValueError, "in the past"):
+            at(fold, "01:30", datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc))
+        self.assertEqual(
+            at(fold, "01:30", datetime(2026, 11, 1, 6, 0, tzinfo=timezone.utc))["outcome"],
+            "same_price",
+        )
+        self.assertEqual(
+            at(fold, "01:30", datetime(2026, 11, 1, 5, 0, tzinfo=timezone.utc))["outcome"],
+            "same_price",
+        )
+        gap = date(2026, 3, 8)
+        self.assertEqual(
+            at(gap, "02:30", datetime(2026, 3, 8, 12, 0, tzinfo=timezone.utc))["outcome"],
+            "same_price",
+        )
+
     def test_country_not_reapplied_is_noted(self) -> None:
         stub = _Stub(_report(_offer(500.0, (OUTBOUND,))))
         bare = recheck_offer(_previous(OUTBOUND), search=stub)
