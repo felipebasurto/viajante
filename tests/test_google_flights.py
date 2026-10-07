@@ -303,6 +303,25 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertEqual(encode_tfs(trip), GOLDEN_TFS_ROUND_TRIP)
         self.assertEqual(build_search_params(trip, currency="EUR")["tfs"], GOLDEN_TFS_ROUND_TRIP)
 
+    def test_carrier_filters_encode_per_leg_fields_six_and_seven(self) -> None:
+        trip = FlightQuery(
+            "MAD",
+            "BCN",
+            date(2026, 12, 4),
+            max_stops=1,
+            airlines=("IB", "VY"),
+            exclude_airlines=("FR",),
+            alliances=("oneworld",),
+            exclude_alliances=("star",),
+        )
+        fields = _proto_fields(base64.b64decode(encode_tfs(trip)))
+        (leg,) = [payload for field, payload in fields if field == 3]
+        leg_fields = _proto_fields(leg)
+        include = [value.decode("ascii") for field, value in leg_fields if field == 6]
+        exclude = [value.decode("ascii") for field, value in leg_fields if field == 7]
+        self.assertEqual(include, ["IB", "VY", "ONEWORLD"])
+        self.assertEqual(exclude, ["FR", "STAR_ALLIANCE"])
+
     def test_multi_city_tfs_repeats_legs_and_sets_trip_kind(self) -> None:
         trip = MultiCity(
             (
@@ -1927,6 +1946,48 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertEqual(offer.layover_hours, 18.0)
         self.assertEqual(offer.flight_numbers, ("TP1013", "TP1922"))
         self.assertEqual(offer.booking_token, "tok")
+
+    def test_codeshare_marketing_codes_feed_airline_codes(self) -> None:
+        day = [2026, 10, 9]
+        leg = _live_leg(
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
+            dest="LHR",
+            dest_name="Heathrow Airport",
+            dep=[23, 10],
+            arr=[11, 10],
+            minutes=420,
+            dep_date=day,
+            arr_date=day,
+            code="AA",
+            number="100",
+            airline="American",
+        )
+        # Codeshare rows live at leg slot 15: [code, number, _, carrier name].
+        leg[15] = [["BA", "1511", None, "British Airways"]]
+        card = parse_shopping_body(
+            _compact_body(
+                _priced(
+                    _live_flight(
+                        code="AA",
+                        airline="American",
+                        legs=[leg],
+                        origin="JFK",
+                        dest="LHR",
+                        dep_date=day,
+                        dep=[23, 10],
+                        arr_date=day,
+                        arr=[11, 10],
+                        minutes=420,
+                        stops=0,
+                    ),
+                    60000,
+                )
+            ),
+            currency="USD",
+        )[0]
+        self.assertEqual(card.flight_numbers, ("AA100",))
+        self.assertEqual(card.airline_codes, ("AA", "BA"))
 
     def test_digit_carrier_and_integer_flight_number_stay_owned(self) -> None:
         day = [2026, 10, 9]

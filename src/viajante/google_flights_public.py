@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from selectolax.lexbor import LexborHTMLParser
 
+from viajante.carriers import ALLIANCE_TFS_CODE, _airline_filter_hit
 from viajante.control import SearchDeadline, checkpoint
 from viajante.google_flights import (
     SEARCH_URL,
@@ -25,7 +26,7 @@ from viajante.google_flights import (
     looks_blocked,
     raise_for_sweep_response,
 )
-from viajante.google_flights_page import parse_shopping_page
+from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactParseMiss,
@@ -43,6 +44,24 @@ MAX_PUBLIC_OUTBOUNDS = 8
 
 class GoogleFlightsUnsupported(GoogleFlightsRejected):
     """A requested capability cannot be represented by this transport."""
+
+
+def _carrier_catalog_tokens(data: object) -> set[str] | None:
+    """Tokens listed in the page's airline filter catalog (ds:1 ``data[7][1][1]``).
+
+    The public page injects each applied carrier filter token (airline code or
+    alliance enum) as an extra ``[code, name]`` row in this list; that is the
+    provider-owned echo proving the filter was registered.
+    """
+    if not isinstance(data, list) or len(data) <= 7:
+        return None
+    try:
+        rows = data[7][1][1]
+    except (TypeError, IndexError, KeyError):
+        return None
+    if not isinstance(rows, list):
+        return None
+    return {row[0] for row in rows if isinstance(row, list) and row and isinstance(row[0], str)}
 
 
 class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
@@ -64,9 +83,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             key
             for key in (
                 "bags",
-                "airlines",
-                "exclude_airlines",
-                "alliances",
                 "exclude_alliances",
             )
             if getattr(trip, key, None) is not None
@@ -80,17 +96,23 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         if isinstance(trip, MultiCity):
             unsupported.append("multi_city")
         if unsupported:
-            raise GoogleFlightsUnsupported(
-                (
-                    "Not sent. Google Flights public-page transport cannot verify "
-                    "these requested capabilities: "
+            reasons = []
+            if "bags" in unsupported or "carry_on" in unsupported:
+                reasons.append("baggage-inclusive fares remain unknown")
+            if "exclude_alliances" in unsupported:
+                reasons.append(
+                    "alliance exclusion is not verifiable: the public page "
+                    "registers the filter but does not remove every "
+                    "alliance-marketed itinerary"
                 )
-                + ", ".join(unsupported)
-                + (
-                    ". Remove them only for an explicitly separate scenario; "
-                    "baggage-inclusive fares remain unknown."
-                )
-            )
+            message = (
+                "Not sent. Google Flights public-page transport cannot verify "
+                "these requested capabilities: "
+            ) + ", ".join(unsupported)
+            message += ". Remove them only for an explicitly separate scenario"
+            if reasons:
+                message += "; " + "; ".join(reasons)
+            raise GoogleFlightsUnsupported(message + ".")
 
     def _url(self, trip: Trip, outbound: RawJourneyLeg | None = None) -> str:
         params = build_search_params(
@@ -131,12 +153,15 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         if trip is not None:
             self._verify_context(response.text, trip)
         try:
-            return parse_shopping_page(response.text, currency=self._currency)
+            cards = parse_shopping_page(response.text, currency=self._currency)
         except EmptyShoppingResults as exc:
             raise NoFlightsFound() from exc
         except CompactParseMiss as exc:
             # Missing bootstrap data cannot prove the provider returned no flights.
             raise GoogleFlightsMarkupError(str(exc)) from exc
+        if trip is not None:
+            self._verify_carrier_filters(response.text, cards, trip)
+        return cards
 
     def _verify_context(self, html: str, trip: Trip) -> None:
         root = LexborHTMLParser(html)
@@ -163,23 +188,47 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         }[trip.cabin]
         if cabin not in {node.text(strip=True) for node in root.css('[role="combobox"]')}:
             raise GoogleFlightsMarkupError("Public page did not echo the requested cabin.")
-        if trip.bags is not None or trip.carry_on is not None:
-            labels = [
-                node.attributes.get("aria-label") or "" for node in root.css("button[aria-label]")
-            ]
-            for count, kind in (
-                (trip.carry_on, "carry-on"),
-                (trip.bags, "checked"),
+        for count, kind in ((trip.carry_on, "carry-on"), (trip.bags, "checked")):
+            if not count:
+                continue
+            chip = rf"(?<!\d){count} {kind} bags?"
+            if not any(
+                label and re.search(chip, label) and "Bags, Selected" in label for label in labels
             ):
-                if not count:
-                    continue
-                chip = rf"(?<!\d){count} {kind} bags?"
-                if not any(
-                    re.search(chip, label) and "Bags, Selected" in label for label in labels
-                ):
+                raise GoogleFlightsMarkupError(
+                    "Public page did not echo the requested baggage filter."
+                )
+        if (
+            trip.airlines or trip.exclude_airlines or trip.alliances or trip.exclude_alliances
+        ) and "Airlines, Selected" not in labels:
+            raise GoogleFlightsMarkupError("Public page did not echo the requested airline filter.")
+
+    def _verify_carrier_filters(
+        self, html: str, cards: tuple[RawFlightCard, ...], trip: Trip
+    ) -> None:
+        # A unioned include (airlines + alliances) can qualify through members
+        # we cannot check; a pure airline include must hold on every card.
+        if trip.airlines and not trip.alliances:
+            for card in cards:
+                if not any(_airline_filter_hit(card, token) for token in trip.airlines):
                     raise GoogleFlightsMarkupError(
-                        "Public page did not echo the requested baggage filter."
+                        "Public page results do not satisfy the requested airline filter."
                     )
+        # The page echoes each selected alliance as an extra row in the airline
+        # filter catalog; a missing row means the filter was not registered.
+        if trip.alliances:
+            try:
+                data = extract_ds1_data(html)
+            except CompactParseMiss:
+                data = None
+            catalog = _carrier_catalog_tokens(data)
+            tokens = {
+                ALLIANCE_TFS_CODE[name] for name in trip.alliances if name in ALLIANCE_TFS_CODE
+            }
+            if catalog is None or not tokens <= catalog:
+                raise GoogleFlightsMarkupError(
+                    "Public page did not echo the requested alliance filter."
+                )
 
     @staticmethod
     def _matches_leg(card: RawFlightCard, query) -> bool:

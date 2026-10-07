@@ -10,6 +10,7 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 from viajante.airports import get_airport
 from viajante.flights import (
+    NO_OFFER_FILTERS,
     _needs_detail_fallback,
     _normalize_offer,
     _overnight_from_owned_clocks,
@@ -25,6 +26,7 @@ from viajante.flights import (
     keep_included_dest_trips,
     nearby_notes,
     normalize_trip_kind,
+    offers_from_cards,
     parse_depart_window,
     parse_flight_plan,
     parse_named_clock,
@@ -1519,6 +1521,31 @@ class OfferFilterTests(unittest.TestCase):
         iberia = card(airline="Iberia", airline_codes=("IB",), price="100 €")
         self.assertIsNone(_normalize_offer(air_europa, 1, exclude_airlines=("UX",)))
         self.assertIsNotNone(_normalize_offer(iberia, 1, exclude_airlines=("UX",)))
+
+    def test_exclude_airlines_drops_a_card_without_carrier_evidence(self) -> None:
+        silent = card(airline="", airline_codes=(), price="90 €")
+        self.assertIsNone(_normalize_offer(silent, 1, exclude_airlines=("UX",)))
+        self.assertIsNotNone(_normalize_offer(silent, 1))
+
+    def test_exclude_wins_over_include_on_same_carrier(self) -> None:
+        mixed = card(airline="American", airline_codes=("AA", "BA"), price="100 €")
+        self.assertIsNone(_normalize_offer(mixed, 1, airlines=("AA",), exclude_airlines=("BA",)))
+
+    def test_codeshare_codes_satisfy_include_and_exclude(self) -> None:
+        codeshared = card(airline="American", airline_codes=("AA", "BA"), price="100 €")
+        other = card(airline="Delta", airline_codes=("DL",), price="100 €")
+        self.assertIsNotNone(_normalize_offer(codeshared, 1, airlines=("BA",)))
+        self.assertIsNone(_normalize_offer(codeshared, 1, exclude_airlines=("BA",)))
+        self.assertIsNotNone(_normalize_offer(other, 1, exclude_airlines=("BA",)))
+
+    def test_alliance_include_keeps_member_cards_locally(self) -> None:
+        # An alliance include qualifies cards through member marketing carriers
+        # we cannot enumerate; the local airline-only check must not drop them.
+        lufthansa = card(airline="Lufthansa", airline_codes=("LH",), price="100 €")
+        union = FlightQuery("JFK", "LHR", date(2026, 9, 1), airlines=("BA",), alliances=("star",))
+        self.assertEqual(len(offers_from_cards([lufthansa], union, NO_OFFER_FILTERS)), 1)
+        airline_only = FlightQuery("JFK", "LHR", date(2026, 9, 1), airlines=("BA",))
+        self.assertEqual(offers_from_cards([lufthansa], airline_only, NO_OFFER_FILTERS), [])
 
     def test_depart_window_keeps_local_hours(self) -> None:
         early = card(departure="06:45", price="80 €")

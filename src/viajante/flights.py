@@ -14,7 +14,7 @@ from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, 
 
 from viajante.airports import get_airport, is_known_iata, metro_members, metro_of, same_city_iata
 from viajante.browser import chromium_installed, playwright_available
-from viajante.carriers import AIRLINE_CODE_ALIASES
+from viajante.carriers import _normalize_airline, _passes_airline_filters
 from viajante.control import (
     SearchDeadline,
     checkpoint,
@@ -672,13 +672,6 @@ def _parse_multi_city_plan(specs: Sequence[str], *, max_stops: int, **shop: Any)
     return MultiCity(tuple(legs), **shop)
 
 
-_AIRLINE_STRIP = re.compile(r"[^a-z0-9 ]+")
-
-
-def _normalize_airline(airline_text: Optional[str]) -> str:
-    return _AIRLINE_STRIP.sub("", (airline_text or "").casefold())
-
-
 _LOW_COST_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(_normalize_airline(name)) for name in LOW_COST_NAMES) + r")\b"
 )
@@ -1220,30 +1213,6 @@ def _overlay_carrier_filters(
     return tuple(replace(trip, **overlay) for trip in trips)
 
 
-def _airline_filter_hit(raw: RawFlightCard, token: str) -> bool:
-    needle = token.strip().upper()
-    codes = {code.upper() for code in (raw.airline_codes or ())}
-    if needle in codes:
-        return True
-    name = _normalize_airline(raw.airline)
-    if needle.casefold() in name:
-        return True
-    return any(alias in name for alias in AIRLINE_CODE_ALIASES.get(needle, ()))
-
-
-def _passes_airline_filters(
-    raw: RawFlightCard,
-    *,
-    airlines: Optional[Sequence[str]],
-    exclude_airlines: Optional[Sequence[str]],
-) -> bool:
-    if airlines and not any(_airline_filter_hit(raw, token) for token in airlines):
-        return False
-    if exclude_airlines and any(_airline_filter_hit(raw, token) for token in exclude_airlines):
-        return False
-    return True
-
-
 def owned_clock(text: Optional[str]) -> Optional[str]:
     return text if _clock_minutes(text) is not None else None
 
@@ -1430,6 +1399,9 @@ def offers_from_cards(
     """Owned offers that pass the trip's shop fields and the named post-filters."""
     max_stops = _trip_max_stops(trip)
     named = vars(filters)
+    # With alliances on the request the provider applied a unioned include;
+    # a card may qualify through an alliance member we cannot verify locally.
+    airlines = trip.airlines if not trip.alliances else None
     return [
         offer
         for raw in cards
@@ -1438,7 +1410,7 @@ def offers_from_cards(
                 raw,
                 max_stops,
                 baggage_buffer=baggage_buffer,
-                airlines=trip.airlines,
+                airlines=airlines,
                 exclude_airlines=trip.exclude_airlines,
                 bags=trip.bags,
                 carry_on=trip.carry_on,

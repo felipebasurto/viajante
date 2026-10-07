@@ -1433,6 +1433,16 @@ class GoogleFlightsHttpSource:
         return response
 
 
+_DETAIL_UNPROVEN = (
+    "bags",
+    "carry_on",
+    "airlines",
+    "exclude_airlines",
+    "alliances",
+    "exclude_alliances",
+)
+
+
 class GoogleFlightsSource:
     automatic_typical = False
 
@@ -1461,9 +1471,19 @@ class GoogleFlightsSource:
         return self._config
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        # Detail URLs share the same unsupported-filter boundary as public sweep.
-        from viajante.google_flights_public import PublicGoogleFlightsHttpSource
+        from viajante.google_flights_public import (
+            GoogleFlightsUnsupported,
+            PublicGoogleFlightsHttpSource,
+        )
 
+        # Detail reads no page echo, so a bag or carrier filter it sends stays unproven.
+        unproven = [key for key in _DETAIL_UNPROVEN if getattr(trip, key, None) is not None]
+        if unproven:
+            raise GoogleFlightsUnsupported(
+                "Not sent. Browser detail cannot verify these requested capabilities: "
+                + ", ".join(unproven)
+                + ". The public-page sweep verifies carry-on and airline or alliance includes."
+            )
         PublicGoogleFlightsHttpSource._validate_capabilities(self, trip)
         return parse_flight_cards(
             self._fetch_html(

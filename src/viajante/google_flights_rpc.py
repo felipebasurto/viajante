@@ -1031,6 +1031,15 @@ def _airline_codes(flight: list[Any]) -> Optional[tuple[str, ...]]:
             ident = _leg_ident(leg)
             if ident is not None:
                 codes.append(ident[0])
+            # leg[15] rows are codeshare marketing idents [code, number, ?, name];
+            # the provider's airline filter qualifies a card on any of them.
+            codeshares = leg[15] if isinstance(leg, list) and len(leg) > 15 else None
+            if isinstance(codeshares, list):
+                for entry in codeshares:
+                    if isinstance(entry, list) and entry:
+                        code = _carrier_code(entry[0])
+                        if code is not None:
+                            codes.append(code)
     unique: list[str] = []
     seen: set[str] = set()
     for code in codes:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import unittest
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -46,7 +47,7 @@ def _card(origin: str, dest: str, day: date, clock: str, flight: str, price: str
     )
 
 
-def _context(*, adults=2, currency="EUR", cabin="Economy"):
+def _context(*, adults=2, currency="EUR", cabin="Economy", airlines_chip=None):
     controls = {
         "adult passengers": adults,
         "children aged 2 to 11": 0,
@@ -59,6 +60,15 @@ def _context(*, adults=2, currency="EUR", cabin="Economy"):
             f'<div aria-label="Number of {label}"><span aria-live="polite">{count}</span></div>'
             for label, count in controls.items()
         )
+        + (f'<button aria-label="{airlines_chip}"></button>' if airlines_chip else "")
+    )
+
+
+def _ds1(catalog):
+    data = [None] * 7 + [[None, [[], catalog]]]
+    return (
+        '<script class="ds:1">AF_initDataCallback('
+        f"{{key:'ds:1',data:{json.dumps(data)}}});</script>"
     )
 
 
@@ -127,7 +137,7 @@ class PublicFlightsSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "did not prove the requested route"):
                 source.fetch(query)
 
-    def test_checked_bags_carriers_and_multi_city_fail_before_any_get(self) -> None:
+    def test_checked_bags_alliance_exclusion_and_multi_city_fail_before_any_get(self) -> None:
         class NoNetwork:
             def get(self, *args, **kwargs):
                 raise AssertionError("unsupported query must not send a request")
@@ -138,9 +148,7 @@ class PublicFlightsSourceTests(unittest.TestCase):
             FlightQuery("HAN", "SIN", OUT, adults=2, bags=1),
             FlightQuery("HAN", "SIN", OUT, adults=2, bags=1, carry_on=1),
             FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=0),
-            FlightQuery("HAN", "SIN", OUT, adults=2, airlines=("TA",)),
-            FlightQuery("HAN", "SIN", OUT, adults=2, exclude_airlines=("TA",)),
-            FlightQuery("HAN", "SIN", OUT, adults=2, alliances=("star",)),
+            FlightQuery("HAN", "SIN", OUT, adults=2, exclude_alliances=("star",)),
             MultiCity(
                 (
                     FlightQuery("HAN", "SIN", OUT, adults=2).legs[0],
@@ -194,6 +202,20 @@ class PublicFlightsSourceTests(unittest.TestCase):
             with self.subTest(html=html):
                 with self.assertRaisesRegex(Exception, "baggage filter"):
                     source._verify_context(html, query)
+
+    def test_airline_and_alliance_filters_pass_capability_preflight(self) -> None:
+        class NoNetwork:
+            def get(self, *args, **kwargs):
+                raise AssertionError("preflight only")
+
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=NoNetwork())
+        for query in (
+            FlightQuery("HAN", "SIN", OUT, airlines=("BA",)),
+            FlightQuery("HAN", "SIN", OUT, exclude_airlines=("BA",)),
+            FlightQuery("HAN", "SIN", OUT, alliances=("star",)),
+        ):
+            with self.subTest(query=query):
+                source._validate_capabilities(query)
 
     def test_round_trip_replaces_outbound_package_reference_with_provider_total(self) -> None:
         source = _source()
@@ -313,6 +335,90 @@ class PublicContextTests(unittest.TestCase):
         ):
             with self.subTest(html=html), self.assertRaisesRegex(Exception, "did not echo"):
                 source._verify_context(html, query)
+
+    def test_carrier_request_requires_airlines_chip_echo(self):
+        source = _source()
+        html = _context(airlines_chip="Airlines, Selected")
+        for query in (
+            FlightQuery("HAN", "SIN", OUT, adults=2, airlines=("BA",)),
+            FlightQuery("HAN", "SIN", OUT, adults=2, exclude_airlines=("BA",)),
+            FlightQuery("HAN", "SIN", OUT, adults=2, alliances=("star",)),
+        ):
+            with self.subTest(query=query):
+                source._verify_context(html, query)
+        missing = _context() + '<button aria-label="Airlines, Not selected"></button>'
+        for query in (
+            FlightQuery("HAN", "SIN", OUT, adults=2, airlines=("BA",)),
+            FlightQuery("HAN", "SIN", OUT, adults=2, exclude_airlines=("BA",)),
+            FlightQuery("HAN", "SIN", OUT, adults=2, alliances=("star",)),
+        ):
+            with (
+                self.subTest(query=query),
+                self.assertRaisesRegex(
+                    GoogleFlightsMarkupError, "did not echo the requested airline filter"
+                ),
+            ):
+                source._verify_context(missing, query)
+        # No carrier filters: the chip state is not asserted.
+        source._verify_context(missing, FlightQuery("HAN", "SIN", OUT, adults=2))
+
+    def test_alliance_include_requires_catalog_token_echo(self):
+        source = _source()
+        query = FlightQuery("HAN", "SIN", OUT, alliances=("star",))
+        # data[7][1][1] gains ["STAR_ALLIANCE", "Star Alliance"] when applied.
+        source._verify_carrier_filters(
+            _ds1([["LH", "Lufthansa"], ["STAR_ALLIANCE", "Star Alliance"]]),
+            (),
+            query,
+        )
+        with self.assertRaisesRegex(GoogleFlightsMarkupError, "alliance filter"):
+            source._verify_carrier_filters(_ds1([["LH", "Lufthansa"], ["UA", "United"]]), (), query)
+        with self.assertRaisesRegex(GoogleFlightsMarkupError, "alliance filter"):
+            source._verify_carrier_filters("<html></html>", (), query)
+
+    def test_airline_include_must_hold_on_every_card(self):
+        source = _source()
+        query = FlightQuery("HAN", "SIN", OUT, airlines=("BA",))
+        matching = RawFlightCard(
+            "British Airways",
+            "08:00",
+            "20:00",
+            "10 hr",
+            "nonstop",
+            "€100",
+            airline_codes=("BA", "AA"),
+        )
+        violating = RawFlightCard(
+            "Test Air",
+            "08:00",
+            "20:00",
+            "10 hr",
+            "nonstop",
+            "€100",
+            airline_codes=("TA",),
+        )
+        source._verify_carrier_filters("", (matching,), query)
+        with self.assertRaisesRegex(GoogleFlightsMarkupError, "airline filter"):
+            source._verify_carrier_filters("", (matching, violating), query)
+        # Codeshare marketing codes count: BA may sit in codeshares only.
+        codeshare_only = RawFlightCard(
+            "American",
+            "08:00",
+            "20:00",
+            "10 hr",
+            "nonstop",
+            "€100",
+            airline_codes=("AA", "BA"),
+        )
+        source._verify_carrier_filters("", (codeshare_only,), query)
+        # Unknown carrier data cannot prove an include.
+        unknown = RawFlightCard("American", "08:00", "20:00", "10 hr", "nonstop", "€100")
+        with self.assertRaisesRegex(GoogleFlightsMarkupError, "airline filter"):
+            source._verify_carrier_filters("", (unknown,), query)
+        # Unioned include skips the per-card airline check.
+        union = FlightQuery("HAN", "SIN", OUT, airlines=("BA",), alliances=("star",))
+        html = _ds1([["STAR_ALLIANCE", "Star Alliance"], ["LH", "Lufthansa"]])
+        source._verify_carrier_filters(html, (violating,), union)
 
     def test_selected_echo_normalizes_provider_unicode_spaces(self):
         outbound = _leg("HAN", "SIN", OUT, "09:35", "TA101")

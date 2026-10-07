@@ -26,7 +26,7 @@ def get_runtime_info() -> dict[str, object]:
             "public_outbound_limit": 8,
             "bags": False,
             "carry_on": True,
-            "carrier_filters": False,
+            "carrier_filters": "except exclude_alliances",
             "multi_city": False,
             "explore_catalog": False,
         },

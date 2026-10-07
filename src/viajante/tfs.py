@@ -6,6 +6,7 @@ import base64
 from collections.abc import Mapping, Sequence
 from typing import Optional
 
+from viajante.carriers import tfs_carrier_codes
 from viajante.models import (
     FlightCabin,
     FlightLeg,
@@ -34,6 +35,8 @@ _BAGGAGE_CHECKED = 3
 
 _FLIGHT_DATE = 2
 _FLIGHT_MAX_STOPS = 5
+_FLIGHT_INCLUDE_CARRIERS = 6
+_FLIGHT_EXCLUDE_CARRIERS = 7
 _FLIGHT_FROM = 13
 _FLIGHT_TO = 14
 
@@ -56,6 +59,7 @@ _PASSENGER_INFANT_ON_LAP = 4
 
 def encode_tfs(trip: Trip) -> str:
     """Encode a Google Flights `tfs` query parameter from owned trip fields."""
+    include, exclude = tfs_carrier_codes(trip)
     return _encode_legs(
         trip.legs,
         adults=trip.adults,
@@ -65,6 +69,8 @@ def encode_tfs(trip: Trip) -> str:
         cabin=trip.cabin,
         carry_on=trip.carry_on,
         trip_kind=trip_kind_code(trip),
+        include_carriers=include,
+        exclude_carriers=exclude,
     )
 
 
@@ -95,9 +101,15 @@ def encode_tfs_selected_outbound(trip: RoundTrip, outbound: RawJourneyLeg) -> st
     if previous_destination != trip.legs[0].destination:
         raise ValueError("selected outbound does not reach the requested destination")
 
-    outbound_data = _flight_data(trip.legs[0]) + b"".join(selected)
+    include, exclude = tfs_carrier_codes(trip)
+    outbound_data = _flight_data(trip.legs[0], include=include, exclude=exclude) + b"".join(
+        selected
+    )
     return _encode_route_messages(
-        [outbound_data, _flight_data(trip.legs[1])],
+        [
+            outbound_data,
+            _flight_data(trip.legs[1], include=include, exclude=exclude),
+        ],
         adults=trip.adults,
         children=trip.children,
         infants_in_seat=trip.infants_in_seat,
@@ -155,10 +167,17 @@ def _airport(code: str) -> bytes:
     return _string(_AIRPORT_CODE, code)
 
 
-def _flight_data(leg: FlightLeg) -> bytes:
+def _flight_data(
+    leg: FlightLeg,
+    *,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+) -> bytes:
     return (
         _string(_FLIGHT_DATE, leg.departure_date.isoformat())
         + _varint_field(_FLIGHT_MAX_STOPS, leg.max_stops)
+        + b"".join(_string(_FLIGHT_INCLUDE_CARRIERS, code) for code in include)
+        + b"".join(_string(_FLIGHT_EXCLUDE_CARRIERS, code) for code in exclude)
         + _len_delim(_FLIGHT_FROM, _airport(leg.origin))
         + _len_delim(_FLIGHT_TO, _airport(leg.destination))
     )
@@ -191,9 +210,11 @@ def _encode_legs(
     children: int = 0,
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
+    include_carriers: Sequence[str] = (),
+    exclude_carriers: Sequence[str] = (),
 ) -> str:
     return _encode_route_messages(
-        [_flight_data(leg) for leg in legs],
+        [_flight_data(leg, include=include_carriers, exclude=exclude_carriers) for leg in legs],
         adults=adults,
         cabin=cabin,
         trip_kind=trip_kind,
