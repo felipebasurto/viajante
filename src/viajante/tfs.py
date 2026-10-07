@@ -41,6 +41,11 @@ _FLIGHT_FROM = 13
 _FLIGHT_TO = 14
 
 _AIRPORT_CODE = 2
+_ENTITY_KIND = 1
+_ENTITY_AIRPORT = 1
+
+_EXPLORE_SURFACE = 28
+_EXPLORE_CHANNEL = 3
 
 CABIN_SEAT: Mapping[FlightCabin, int] = {
     "economy": 1,
@@ -258,3 +263,20 @@ def _baggage_filter(carry_on: Optional[int]) -> bytes:
         return b""
     inner = _varint_field(_BAGGAGE_CARRY_ON, carry_on) + _varint_field(_BAGGAGE_CHECKED, 0)
     return _len_delim(_INFO_BAGGAGE, inner)
+
+
+def encode_explore_tfs(origin: str, departure_date) -> str:
+    """Encode a public Google Explore ``tfs``: a one-way journey from ``origin``.
+
+    The Explore page reads airport entities (``{kind: 1, code: IATA}``) inside
+    the journey's ``f13`` slot, mirrored by the page's own committed URLs. The
+    message carries no occupancy/cabin: the page applies its own defaults.
+    """
+    entity = _varint_field(_ENTITY_KIND, _ENTITY_AIRPORT) + _string(_AIRPORT_CODE, origin)
+    journey = _string(_FLIGHT_DATE, departure_date.isoformat()) + _len_delim(_FLIGHT_FROM, entity)
+    payload = (
+        _varint_field(1, _EXPLORE_SURFACE)
+        + _varint_field(2, _EXPLORE_CHANNEL)
+        + _len_delim(_INFO_DATA, journey)
+    )
+    return base64.b64encode(payload).decode("ascii")

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Callable, Optional, TypeVar
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode
 
 from viajante.airports import airport_geo
 from viajante.carriers import carrier_filter_payload, shopping_carrier_codes
@@ -423,10 +425,8 @@ def _wrb_data_string(obj: object) -> Optional[str]:
     return None
 
 
-def first_wrb_data(
-    text: str, extract: Callable[[object], Optional[_T]] = _wrb_data_string
-) -> Optional[_T]:
-    """First wrb.fr envelope ``extract`` accepts, across length-prefixed or bare JSON chunks."""
+def _wrb_chunk_objects(text: str):
+    """Yield each decoded JSON chunk of an ``)]}'``-framed wrb response body."""
     body = text.lstrip()
     if body.startswith(_ANTI_XSSI):
         body = body[len(_ANTI_XSSI) :].lstrip()
@@ -450,17 +450,48 @@ def first_wrb_data(
                 except json.JSONDecodeError:
                     idx = newline + 1
                     continue
-                found = extract(obj)
-                if found is not None:
-                    return found
+                yield obj
                 idx = newline + 1 + size
                 continue
         try:
             obj, _ = decoder.raw_decode(body, idx)
         except json.JSONDecodeError:
             break
-        return extract(obj)
+        yield obj
+        return
+
+
+def first_wrb_data(
+    text: str, extract: Callable[[object], Optional[_T]] = _wrb_data_string
+) -> Optional[_T]:
+    """First wrb.fr envelope ``extract`` accepts, across length-prefixed or bare JSON chunks."""
+    for obj in _wrb_chunk_objects(text):
+        found = extract(obj)
+        if found is not None:
+            return found
     return None
+
+
+def wrb_data_strings(text: str) -> tuple[str, ...]:
+    """Every string payload on every ``wrb.fr`` row in a response body, in order."""
+    found: list[str] = []
+    for obj in _wrb_chunk_objects(text):
+        rows = (
+            obj
+            if (
+                isinstance(obj, list)
+                and obj
+                and isinstance(obj[0], list)
+                and obj[0]
+                and obj[0][0] == "wrb.fr"
+            )
+            else [obj]
+        )
+        for row in rows:
+            data = _wrb_data_string(row)
+            if data is not None:
+                found.append(data)
+    return tuple(found)
 
 
 def _wrb_error_status(obj: object) -> Optional[int]:
@@ -1004,6 +1035,194 @@ def _explore_place(item: object) -> Optional[CompactExplorePlace]:
     if city is None or iata is None or len(iata) != 3 or not iata.isalpha():
         return None
     return CompactExplorePlace(iata=iata.upper(), city=city, country=country)
+
+
+@dataclass(frozen=True)
+class ExploreCatalogPage:
+    """Owned evidence parsed from the page-issued GetExploreDestinations body.
+
+    ``places`` are priced rows joined to city cards; ``origin_echo`` is the
+    provider-stamped origin code; ``currencies`` are the stamps inside priced
+    offer tokens. ``unreadable_priced`` counts priced rows whose token could
+    not prove the requested origin.
+    """
+
+    places: tuple[CompactExplorePlace, ...]
+    origin_echo: Optional[str]
+    currencies: frozenset[str]
+    cards: int
+    priced: int
+    unreadable_priced: int
+
+
+@dataclass(frozen=True)
+class ExploreRequestEcho:
+    """What the page's own GetExploreDestinations request says it sent."""
+
+    origins: frozenset[str]
+    dates: frozenset[str]
+    cabin: object
+    occupancy: object
+
+
+_EXPLORE_TOKEN_PAIR = re.compile(rb"([A-Z]{3})-([A-Z]{3}):([0-9]{4}-[0-9]{2}-[0-9]{2})")
+_EXPLORE_TOKEN_CURRENCY = re.compile(rb"\x1a\x03([A-Z]{3})")
+
+
+def explore_request_constraints(post_data: Optional[str]) -> Optional[list[Any]]:
+    """Decode a page-issued GetExploreDestinations ``f.req`` into the constraints list."""
+    if not post_data:
+        return None
+    try:
+        inner = json.loads(json.loads(parse_qs(post_data)["f.req"][0])[1])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    constraints = inner[3] if isinstance(inner, list) and len(inner) > 3 else None
+    return constraints if isinstance(constraints, list) else None
+
+
+def explore_request_echo(constraints: Optional[list[Any]]) -> Optional[ExploreRequestEcho]:
+    """Extract origin codes, journey dates, cabin, and occupancy the request carried."""
+    if not isinstance(constraints, list) or len(constraints) <= 13:
+        return None
+    journeys = constraints[13]
+    if not isinstance(journeys, list):
+        return None
+    origins: set[str] = set()
+    dates: set[str] = set()
+    for journey in journeys:
+        if not isinstance(journey, list):
+            continue
+        try:
+            entity = journey[0][0][0]
+        except (IndexError, TypeError):
+            entity = None
+        if isinstance(entity, list) and entity and isinstance(entity[0], str):
+            origins.add(entity[0])
+        if len(journey) > 6 and isinstance(journey[6], str):
+            dates.add(journey[6])
+    return ExploreRequestEcho(
+        origins=frozenset(origins),
+        dates=frozenset(dates),
+        cabin=constraints[5] if len(constraints) > 5 else None,
+        occupancy=constraints[6],
+    )
+
+
+def _explore_token_fields(token: object) -> Optional[tuple[str, str, Optional[str]]]:
+    """Decode an offer token's ``ORIGIN-DEST`` pair and quote-currency stamp."""
+    if not isinstance(token, str) or not token:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    except ValueError:
+        return None
+    pair = _EXPLORE_TOKEN_PAIR.search(raw)
+    if pair is None:
+        return None
+    currency = _EXPLORE_TOKEN_CURRENCY.search(raw)
+    return (
+        pair.group(1).decode("ascii"),
+        pair.group(2).decode("ascii"),
+        currency.group(1).decode("ascii") if currency else None,
+    )
+
+
+def _explore_priced_entries(payload: object) -> list[Any]:
+    if (
+        isinstance(payload, list)
+        and len(payload) > 4
+        and isinstance(payload[4], list)
+        and payload[4]
+        and isinstance(payload[4][0], list)
+    ):
+        return payload[4][0]
+    return []
+
+
+def parse_explore_catalog(text: str, *, origins: frozenset[str]) -> ExploreCatalogPage:
+    """Decode the page-issued Explore catalog (every ``wrb.fr`` chunk, in order).
+
+    The first payload carries city cards keyed by place id and the origin echo;
+    later payloads carry priced flight rows whose offer tokens stamp the
+    ``ORIGIN-DEST`` pair and quote currency. A row joins only when its token
+    proves it was priced from an accepted origin code.
+    """
+    payloads: list[Any] = []
+    for raw in wrb_data_strings(text):
+        try:
+            payloads.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+    if not payloads:
+        raise CompactParseMiss("explore catalog has no wrb.fr payload")
+    main = payloads[0]
+    if (
+        not isinstance(main, list)
+        or len(main) <= 6
+        or not isinstance(main[3], list)
+        or not main[3]
+        or not isinstance(main[3][0], list)
+    ):
+        raise CompactParseMiss("explore catalog is missing destination cards")
+    cards: dict[str, tuple[str, Optional[str]]] = {}
+    for row in main[3][0]:
+        if (
+            isinstance(row, list)
+            and len(row) > 4
+            and isinstance(row[0], str)
+            and isinstance(row[2], str)
+            and row[2]
+        ):
+            cards[row[0]] = (row[2], row[4] if isinstance(row[4], str) else None)
+    origin_echo: Optional[str] = None
+    echo = main[6]
+    if isinstance(echo, list) and echo and isinstance(echo[0], list) and len(echo[0]) > 3:
+        code = echo[0][3]
+        if isinstance(code, str) and len(code) == 3 and code.isalpha():
+            origin_echo = code.upper()
+
+    places: list[CompactExplorePlace] = []
+    seen: set[str] = set()
+    currencies: set[str] = set()
+    priced = 0
+    unreadable = 0
+    for payload in payloads[1:]:
+        for entry in _explore_priced_entries(payload):
+            if not isinstance(entry, list) or len(entry) <= 6:
+                continue
+            priced += 1
+            flight = entry[6]
+            iata = flight[5] if isinstance(flight, list) and len(flight) > 5 else None
+            if not (isinstance(iata, str) and len(iata) == 3 and iata.isalpha()):
+                unreadable += 1
+                continue
+            iata = iata.upper()
+            price = entry[1]
+            token = price[1] if isinstance(price, list) and len(price) > 1 else None
+            fields = _explore_token_fields(token)
+            if fields is None:
+                unreadable += 1
+                continue
+            token_origin, token_dest, currency_tag = fields
+            if currency_tag:
+                currencies.add(currency_tag)
+            if token_origin not in origins or token_dest != iata:
+                unreadable += 1
+                continue
+            card = cards.get(entry[0])
+            if card is None or iata in seen:
+                continue
+            seen.add(iata)
+            places.append(CompactExplorePlace(iata=iata, city=card[0], country=card[1]))
+    return ExploreCatalogPage(
+        places=tuple(places),
+        origin_echo=origin_echo,
+        currencies=frozenset(currencies),
+        cards=len(cards),
+        priced=priced,
+        unreadable_priced=unreadable,
+    )
 
 
 def _flight_numbers(flight: list[Any]) -> Optional[tuple[str, ...]]:

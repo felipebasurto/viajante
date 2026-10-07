@@ -19,13 +19,21 @@ from viajante.flights import (
     parse_named_clock,
 )
 from viajante.google_flights import NoFlightsFound, RawFlightCard, google_flights_url
+from viajante.google_flights_public import (
+    GoogleFlightsMarkupError,
+    GoogleFlightsUnsupported,
+    PublicGoogleFlightsHttpSource,
+)
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactExplorePlace,
     CompactParseMiss,
     build_explore_inner,
     build_shopping_inner,
+    explore_request_constraints,
+    explore_request_echo,
     parse_explore_body,
+    parse_explore_catalog,
 )
 from viajante.models import (
     ExploreDestination,
@@ -35,6 +43,7 @@ from viajante.models import (
     RawLayover,
     RawSegment,
 )
+from viajante.tfs import encode_explore_tfs
 from viajante.typical import (
     typical_from_daily_prices,
     vs_typical,
@@ -2070,6 +2079,177 @@ class ExploreBaggageBufferTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["baggage_buffer"], 0)
         self.assertEqual(search.call_args.kwargs["sort"], "ranked")
+
+
+def _explore_token(origin: str = "JFK", dest: str = "YQB", day: str = "2026-11-14") -> str:
+    import base64
+
+    raw = b"hdr" + f"\x12\x15{origin}-{dest}:{day}_".encode() + b"\x1a\x03USD"
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _explore_card(kgmid: str, city: str, country: str) -> list[object]:
+    row: list[object] = [None] * 29
+    row[0] = kgmid
+    row[1] = [45.5, -73.6]
+    row[2] = city
+    row[4] = country
+    return row
+
+
+def _explore_priced(kgmid: str, iata: str, origin: str = "JFK") -> list[object]:
+    row: list[object] = [None] * 7
+    row[0] = kgmid
+    row[1] = [[None, 208], _explore_token(origin, iata)]
+    row[6] = ["DL", "Delta", 1, 300, None, iata, "/m/02_286", None, 0]
+    return row
+
+
+def _explore_catalog_body(*priced_rows: list[object], origin_echo: str = "JFK") -> str:
+    cards = [
+        _explore_card("/m/0pmp2", "Quebec City", "Canada"),
+        _explore_card("/m/043bv", "Card Only", "Nowhere"),
+    ]
+    main: list[object] = [None] * 9
+    main[3] = [cards]
+    main[6] = [["New York", [40.7, -74.0], "/m/02_286", origin_echo, "x"]]
+    priced_chunk: list[object] = [None] * 5
+    priced_chunk[4] = [list(priced_rows)]
+
+    def _chunk(payload: object) -> str:
+        row = json.dumps(
+            [["wrb.fr", None, json.dumps(payload, separators=(",", ":"))]],
+            separators=(",", ":"),
+        )
+        return f"{len(row)}\n{row}"
+
+    return ")]}'\n\n" + "\n".join(_chunk(x) for x in (main, priced_chunk))
+
+
+def _explore_post(
+    origin: str = "JFK",
+    day: str = "2026-11-14",
+    occupancy: list[int] | None = None,
+    cabin: object = 1,
+) -> str:
+    from urllib.parse import quote
+
+    journey: list[object] = [
+        [[[origin, 0]]],
+        [],
+        None,
+        0,
+        None,
+        None,
+        day,
+    ]
+    constraints: list[object] = [None] * 14
+    constraints[2] = 2
+    constraints[5] = cabin
+    constraints[6] = occupancy if occupancy is not None else [1, 0, 0, 0]
+    constraints[13] = [journey]
+    inner = json.dumps([[], None, None, constraints], separators=(",", ":"))
+    return "f.req=" + quote(json.dumps([None, inner], separators=(",", ":")), safe="")
+
+
+class PublicExploreCatalogTests(unittest.TestCase):
+    def test_encode_explore_tfs_is_the_page_verified_shape(self):
+        import base64
+
+        raw = base64.b64decode(encode_explore_tfs("JFK", date(2026, 11, 14)))
+        self.assertEqual(
+            raw,
+            b"\x08\x1c\x10\x03\x1a\x15\x12\n2026-11-14j\x07\x08\x01\x12\x03JFK",
+        )
+
+    def test_request_echo_reads_page_issued_constraints(self):
+        echo = explore_request_echo(explore_request_constraints(_explore_post()))
+        self.assertIsNotNone(echo)
+        self.assertEqual(echo.origins, frozenset({"JFK"}))
+        self.assertEqual(echo.dates, frozenset({"2026-11-14"}))
+        self.assertEqual(echo.cabin, 1)
+        self.assertEqual(echo.occupancy, [1, 0, 0, 0])
+
+    def test_request_constraints_reject_foreign_post(self):
+        self.assertIsNone(explore_request_constraints(None))
+        self.assertIsNone(explore_request_constraints("f.req=not-json"))
+        self.assertIsNone(explore_request_constraints("other=1"))
+
+    def test_catalog_joins_priced_rows_to_cards(self):
+        body = _explore_catalog_body(
+            _explore_priced("/m/0pmp2", "YQB"),
+            _explore_priced("/m/noc", "ZZZ"),  # no card row for this kgmid
+        )
+        page = parse_explore_catalog(body, origins=frozenset({"JFK"}))
+        self.assertEqual(page.origin_echo, "JFK")
+        self.assertEqual(page.currencies, frozenset({"USD"}))
+        self.assertEqual(page.priced, 2)
+        self.assertEqual(page.cards, 2)
+        self.assertEqual(
+            page.places,
+            (CompactExplorePlace(iata="YQB", city="Quebec City", country="Canada"),),
+        )
+
+    def test_catalog_drops_rows_that_do_not_prove_the_origin(self):
+        body = _explore_catalog_body(_explore_priced("/m/0pmp2", "YQB", origin="LAX"))
+        page = parse_explore_catalog(body, origins=frozenset({"JFK"}))
+        self.assertEqual(page.places, ())
+        self.assertEqual(page.priced, 1)
+        self.assertEqual(page.unreadable_priced, 1)
+
+    def test_catalog_without_cards_is_a_parse_miss(self):
+        with self.assertRaises(CompactParseMiss):
+            parse_explore_catalog(")]}'\n\n14\n[[13]]", origins=frozenset({"JFK"}))
+
+    def test_fetch_explore_refuses_non_default_occupancy_before_network(self):
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        source._explore_page = lambda url: self.fail("no request may run")
+        with self.assertRaises(GoogleFlightsUnsupported):
+            source.fetch_explore("JFK", date(2026, 11, 14), adults=2)
+        with self.assertRaises(GoogleFlightsUnsupported):
+            source.fetch_explore("JFK", date(2026, 11, 14), cabin="business")
+
+    def test_fetch_explore_returns_only_proven_places(self):
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        body = _explore_catalog_body(
+            _explore_priced("/m/0pmp2", "YQB"),
+            _explore_priced("/m/0yyc", "LAX", origin="LAX"),
+        )
+        source._explore_page = lambda url: [(_explore_post(), body)]
+        places = source.fetch_explore("JFK", date(2026, 11, 14))
+        self.assertEqual(
+            places,
+            (CompactExplorePlace(iata="YQB", city="Quebec City", country="Canada"),),
+        )
+
+    def test_fetch_explore_fails_when_request_echo_is_foreign(self):
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        body = _explore_catalog_body(_explore_priced("/m/0pmp2", "YQB"))
+        source._explore_page = lambda url: [(_explore_post(origin="LAX"), body)]
+        with self.assertRaises(GoogleFlightsMarkupError):
+            source.fetch_explore("JFK", date(2026, 11, 14))
+
+    def test_fetch_explore_status_13_stops_and_records_the_shared_cooldown(self):
+        from viajante.google_flights import GoogleFlightsBlocked
+        from viajante.ratelimit import GOOGLE_RATE_LIMIT_FILE, rate_limit_status
+        from viajante.storage import default_state_dir
+
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        clean = _explore_catalog_body(_explore_priced("/m/0pmp2", "YQB"))
+        throttled = ")]}'\n\n60\n" + json.dumps([["wrb.fr", None, None, None, None, [13]]])
+        source._explore_page = lambda url: [(_explore_post(), clean), (_explore_post(), throttled)]
+        self.addCleanup((default_state_dir() / GOOGLE_RATE_LIMIT_FILE).unlink, missing_ok=True)
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            source.fetch_explore("JFK", date(2026, 11, 14))
+        self.assertEqual(caught.exception.status, 429)
+        self.assertEqual(rate_limit_status()["basis"], "heuristic_rpc_13")
+
+    def test_fetch_explore_fails_on_currency_mismatch(self):
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=object())
+        body = _explore_catalog_body(_explore_priced("/m/0pmp2", "YQB"))
+        source._explore_page = lambda url: [(_explore_post(), body)]
+        with self.assertRaises(GoogleFlightsMarkupError):
+            source.fetch_explore("JFK", date(2026, 11, 14))
 
 
 if __name__ == "__main__":

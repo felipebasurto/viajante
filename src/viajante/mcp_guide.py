@@ -333,7 +333,8 @@ passenger) and airline, exclude-airline and alliance filters, and every page
 must echo each one or the read fails. Google registers an airline exclusion
 without applying it, so viajante drops excluded or carrier-unknown cards
 itself. It refuses named checked bags, carry_on 0, exclude_alliances,
-multi-city (use fetch=detail) and Explore catalogs before network work. Detail
+and multi-city (use fetch=detail) before network work. search_explore needs the
+browser extra and accepts only one adult in economy. Detail
 refuses every bag and carrier filter because it reads no page echo. Offer bag
 allowances stay unknown. Do not remove a requested filter without an
 explicitly separate scenario.

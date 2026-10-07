@@ -52,8 +52,12 @@ alliance exclusion have no provable echo and are refused before networking
 instead of silently losing constraints. The public page bootstraps no
 multi-city results: sweep refuses it, and an explicit `--fetch detail` drives
 the browser through each leg. Detail reads no filter echo and refuses bag and
-carrier filters. Public Explore catalog recovery
-is not implemented; `explore` fails closed and asks for named destinations.
+carrier filters. Explore reads the catalog request the public Explore page
+issues inside Chromium (`viajante[browser]`), never a request Viajante sends
+itself. The request must echo the origin and date, priced rows must prove
+their origin and destination, and only the default one-adult economy state is
+accepted. A status 13 on that request stops the search and records the shared
+cooldown; during validation it appeared on most catalog loads.
 
 HTTP 429 and raw RPC status 13 stop pending sweep work without replay or
 browser fallback. Error diagnostics add only the endpoint host and path, HTTP and raw

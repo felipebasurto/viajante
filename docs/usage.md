@@ -335,10 +335,18 @@ omitted when fewer than three days are priced or the query is multi-city.
 
 ## Explore destinations
 
-The public-page transport does not currently support Google's Explore
-destination catalog. `explore` fails closed before networking. Name destinations
-and search those routes with `flights`, then use `dates` or `flex` for a named
-route's dates; no destinations or prices are inferred from a catalog.
+`explore` needs the browser extra and Chromium. It opens Google's public
+Explore page once and reads the catalog request the page itself issues; it
+never sends that request directly. The request must echo the named origin (or
+a same-city airport) and date, and each priced catalog row must prove its
+origin and destination, otherwise the read fails or the row is dropped. Only
+the page's default one-adult economy state can be proven, so a non-default
+party or cabin is refused before networking. Owned destinations are then
+shopped over the public page as ordinary one-way searches. A raw RPC status 13
+on the catalog stops the search and records the shared Google cooldown. In
+1.4.6 that status was frequent on the catalog request, so an empty or blocked
+explore proves nothing about destinations; name routes and use `flights`,
+`dates`, or `flex` instead.
 
 ## Hotels
 

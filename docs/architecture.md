@@ -56,7 +56,7 @@ One library, three ways in:
 | `get_hotel_details` | — | Stored hotel quote, plus an optional separate Skiplagged room quote. |
 | `search_dates` | `dates` | Cheapest fare per day across a window (≤31 days). |
 | `search_flex` | `flex` | Cheapest day in ±N around a date, then one shop. |
-| `search_explore` | `explore` | Public-page catalog recovery is unsupported and fails closed; name destination routes instead. |
+| `search_explore` | `explore` | Public Explore page catalog via the page's own browser-issued request; default occupancy/cabin only, refuses non-default before networking. |
 | `get_runtime_info` | `--version` | Executing package/Python and hotel schema versions, offline. |
 | `search_hotels` | `hotels` | Total-stay hotel prices (Google HTTP, Booking browser, or opt-in Skiplagged). |
 | `search_hotel_rooms` | `hotel-rooms` | Skiplagged room rates for one named finalist, in USD. |
@@ -179,9 +179,12 @@ echo is `markup_drift`, never a silently unfiltered result. Checked bags, a
 zero carry-on, and alliance exclusion have no provable echo and are refused
 before sending; remove one only for a separately described scenario. The
 public page bootstraps no multi-city results, so sweep refuses multi-city and
-names `--fetch detail`. The Explore destination catalog is not
-supported on this path, so `explore` fails closed and directs callers to name a
-destination route. It does not substitute destinations or infer prices.
+names `--fetch detail`. The Explore destination catalog is not in any public
+page bootstrap: `explore` loads the Explore page in Chromium and captures the
+catalog request the page issues, checks its origin, date, cabin and occupancy
+echo, and keeps only priced rows whose token proves origin and destination.
+A status 13 there records the shared cooldown like any other. It does not
+substitute destinations or infer prices.
 
 ### 4. Detail mode (the browser)
 
@@ -290,9 +293,9 @@ cannot carry top-level fields without breaking its shape).
 - **Flex** uses the same bounded per-day GETs for its named window, chooses the
   cheapest returned day, then makes one fresh public-page shop for that date.
   It does not guess a winner from failed or unpriced days.
-- **Explore** cannot recover the provider's destination catalog from public
-  pages yet. It fails before network access and asks the caller to use named
-  destinations instead.
+- **Explore** reads the catalog request the Explore page issues in Chromium
+  (one adult, economy), then shops each owned destination over the public
+  page. A status 13 on the catalog stops it and records the shared cooldown.
 
 ## Hotels
 

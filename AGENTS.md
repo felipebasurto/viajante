@@ -140,8 +140,10 @@ priced rows come from the caller's explicit window; a flex report stamps it at
 report level. Stamp rules live with the loops (`flights.py`, `dates.py`,
 `typical.py`). Compact date rows are not offers: they may carry a query URL but
 do not grow a token, buffer stamp, overnight/via filter, or `stops_compare`.
-Explore catalog recovery is unsupported by the public-page transport and must
-fail closed; do not infer catalog prices or substitute a destination.
+Explore catalog recovery uses the public Explore page's own browser-issued
+catalog request (no unsigned RPC); a non-default party or cabin refuses before
+networking, and priced rows must prove the requested origin. Do not infer
+catalog prices or substitute a destination.
 
 Hotel `selection_id` values belong to this process. Only a hotel search adds
 them, and only on offers `get_hotel_details` can open. A detail read does not
@@ -258,7 +260,6 @@ and need the `Airlines` chip echo (alliances also a catalog row); Google does
 not apply an exclusion, so the loop drops excluded and carrier-unknown cards.
 `--exclude-alliance` stays refused. Multi-city runs only with explicit
 `--fetch detail`; detail refuses every bag and carrier filter. Do not invent a bag fee. Dates per-day rows pick a day's winner by fare+buffer.
-Explore catalog recovery is unsupported and must fail closed.
 
 ## Invariants
 
@@ -282,8 +283,9 @@ Explore catalog recovery is unsupported and must fail closed.
   the outbound route and clock. Its returned amount is the complete provider
   package total; never add separate one-way fares. This search is scope-bound
   and keeps partial page errors. The public path refuses checked bags, a zero
-  carry-on, alliance exclusion, and multi-city before networking. Explore catalog
-  search is unsupported and fails closed; ask the caller for named destinations.
+  carry-on, alliance exclusion, and multi-city before networking. Explore needs
+  Chromium (`viajante[browser]`) for the catalog, one-adult economy only; a
+  status 13 on the page's catalog request records the shared cooldown.
 - `VIAJANTE_SWEEP_MODE` accepts only `standard` (8 concurrent GETs) and
   `conservative` (2). Invalid values fail before network work. This is a local
   concurrency choice, not a provider quota guarantee. No Chromium is required

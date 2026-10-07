@@ -28,7 +28,7 @@ def get_runtime_info() -> dict[str, object]:
             "carry_on": True,
             "carrier_filters": "except exclude_alliances",
             "multi_city": "detail_only",
-            "explore_catalog": False,
+            "explore_catalog": "bounded",
         },
         "sweep_mode": sweep.mode,
         "sweep_concurrency": sweep.concurrency,

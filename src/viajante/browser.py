@@ -8,6 +8,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
+from urllib.parse import unquote, urlsplit
 
 BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
 
@@ -54,12 +55,27 @@ class BrowserSessionConfig:
     country: Optional[str] = None
     viewport: Optional[Mapping[str, int]] = None
     user_agent: Optional[str] = None
+    proxy: Optional[str] = None
     blocked_resource_types: Optional[frozenset[str]] = None
 
     def blocked_types(self) -> frozenset[str]:
         if self.blocked_resource_types is None:
             return BLOCKED_RESOURCE_TYPES
         return frozenset(self.blocked_resource_types)
+
+
+def _playwright_proxy(proxy: str) -> dict[str, str]:
+    """Split a ``scheme://[user:pass@]host:port`` proxy URL for Chromium launch."""
+    parts = urlsplit(proxy if "://" in proxy else f"http://{proxy}")
+    server = f"{parts.scheme}://{parts.hostname or proxy}"
+    if parts.port:
+        server = f"{server}:{parts.port}"
+    out = {"server": server}
+    if parts.username:
+        out["username"] = unquote(parts.username)
+    if parts.password:
+        out["password"] = unquote(parts.password)
+    return out
 
 
 class ChromiumSession:
@@ -89,7 +105,10 @@ class ChromiumSession:
         if self._context is None:
             self._state_dir.mkdir(parents=True, exist_ok=True)
             self._pw = _sync_playwright().start()
-            self._browser = self._pw.chromium.launch(headless=True)
+            launch_options: dict[str, object] = {"headless": True}
+            if self._config.proxy:
+                launch_options["proxy"] = _playwright_proxy(self._config.proxy)
+            self._browser = self._pw.chromium.launch(**launch_options)
             options: dict[str, object] = {
                 "locale": self._config.locale,
                 "storage_state": str(self._state_path) if self._state_path.exists() else None,

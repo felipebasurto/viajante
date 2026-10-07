@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
+import time
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Sequence
@@ -10,10 +12,15 @@ from urllib.parse import urlencode
 
 from selectolax.lexbor import LexborHTMLParser
 
+from viajante.airports import same_city_iata
 from viajante.carriers import ALLIANCE_TFS_CODE, _airline_filter_hit
 from viajante.control import SearchDeadline, checkpoint
 from viajante.google_flights import (
+    CONSENT_SETTLE_MS,
+    PAGE_TIMEOUT_MS,
+    RPC_THROTTLE_STATUS,
     SEARCH_URL,
+    STATE_FILENAME,
     SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
@@ -29,17 +36,28 @@ from viajante.google_flights import (
 from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
+    CompactExplorePlace,
     CompactParseMiss,
     EmptyShoppingResults,
     RawFlightCard,
+    explore_request_constraints,
+    explore_request_echo,
+    parse_explore_catalog,
     raw_rpc_error_status,
 )
-from viajante.models import FlightQuery, MultiCity, RawJourneyLeg, RoundTrip, Trip
+from viajante.models import FlightCabin, FlightQuery, MultiCity, RawJourneyLeg, RoundTrip, Trip
 from viajante.parsers import parse_price
+from viajante.ratelimit import note_rate_limited, rate_limit_advice, rate_limit_status
+from viajante.storage import default_state_dir
 from viajante.sweep_config import get_sweep_config
-from viajante.tfs import encode_tfs_selected_outbound
+from viajante.tfs import CABIN_SEAT, encode_explore_tfs, encode_tfs_selected_outbound
 
 MAX_PUBLIC_OUTBOUNDS = 8
+
+EXPLORE_URL = "https://www.google.com/travel/explore"
+_EXPLORE_CATALOG_SERVICE = "GetExploreDestinations"
+_EXPLORE_CATALOG_WAIT_MS = 45_000
+_EXPLORE_OCCUPANCY = [1, 0, 0, 0]
 
 
 class GoogleFlightsUnsupported(GoogleFlightsRejected):
@@ -77,6 +95,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self.scope_bound = False
         self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
         self._stopped_error: GoogleFlightsBlocked | None = None
+        self._explore_browser = None
 
     def _validate_capabilities(self, trip: Trip, *, allow_multi_city: bool = False) -> None:
         unsupported = [
@@ -515,10 +534,175 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
         return tuple(days)
 
-    def fetch_explore(self, *args, **kwargs):
-        raise GoogleFlightsUnsupported(
-            (
-                "Not sent. Public-page Explore catalog recovery is not yet supported; "
-                "availability is unknown. Search named destinations instead."
+    def fetch_explore(
+        self,
+        origin: str,
+        departure_date: date,
+        *,
+        adults: int = 1,
+        cabin: FlightCabin = "economy",
+        children: int = 0,
+        infants_in_seat: int = 0,
+        infants_on_lap: int = 0,
+    ) -> tuple[CompactExplorePlace, ...]:
+        """Catalog via the public Explore page's own browser-issued request.
+
+        The page applies its fixed one-adult economy state; a non-default party
+        or cabin cannot be proven applied and is refused before any request.
+        """
+        occupancy = [adults, children, infants_in_seat, infants_on_lap]
+        if occupancy != _EXPLORE_OCCUPANCY or cabin != "economy":
+            raise GoogleFlightsUnsupported(
+                "Not sent. The public Google Explore catalog prices under the page's "
+                "one-adult economy state; requested "
+                f"adults={adults}, children={children}, "
+                f"infants_in_seat={infants_in_seat}, "
+                f"infants_on_lap={infants_on_lap}, cabin={cabin!r} "
+                "cannot be proven applied."
             )
-        )
+        params = {
+            "tfs": encode_explore_tfs(origin, departure_date),
+            "hl": self._html_lang,
+            "curr": self._currency,
+        }
+        if self._country:
+            params["gl"] = self._country
+        pairs = self._explore_page(f"{EXPLORE_URL}?{urlencode(params)}")
+        for _post, body in pairs:
+            self._raise_explore_failure(body)
+        accepted = frozenset({origin, *same_city_iata(origin)})
+        chosen = None
+        for post, body in pairs:
+            echo = explore_request_echo(explore_request_constraints(post))
+            if (
+                echo is not None
+                and echo.origins
+                and echo.origins <= accepted
+                and departure_date.isoformat() in echo.dates
+            ):
+                chosen = (body, echo)
+                break
+        if chosen is None:
+            raise GoogleFlightsMarkupError(
+                "Google Explore did not issue a catalog request for the requested "
+                "origin and date; the page state was not applied."
+            )
+        body, echo = chosen
+        if echo.cabin != CABIN_SEAT["economy"] or echo.occupancy != _EXPLORE_OCCUPANCY:
+            raise GoogleFlightsMarkupError(
+                "Google Explore catalog request did not echo the default occupancy."
+            )
+        catalog = parse_explore_catalog(body, origins=accepted)
+        if catalog.origin_echo is not None and catalog.origin_echo not in accepted:
+            raise GoogleFlightsMarkupError(
+                f"Google Explore catalog echoed origin {catalog.origin_echo}, "
+                f"not requested {origin}."
+            )
+        if catalog.currencies and catalog.currencies != {self._currency}:
+            raise GoogleFlightsMarkupError(
+                f"Google Explore catalog was not priced in the requested currency {self._currency}."
+            )
+        if catalog.priced and not catalog.places:
+            raise GoogleFlightsMarkupError(
+                "Google Explore priced rows did not prove the requested origin."
+            )
+        return catalog.places
+
+    def _explore_page(self, url: str) -> list[tuple[object, str]]:
+        """Load the Explore page in Chromium; return its catalog request/response pairs."""
+        state = rate_limit_status()
+        if state is not None:
+            raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+        page = self._explore_session().new_page()
+        captured: list[tuple[object, str]] = []
+
+        def _capture(response) -> None:
+            if _EXPLORE_CATALOG_SERVICE not in response.url:
+                return
+            try:
+                body = response.text()
+            except Exception:
+                body = ""
+            post = None
+            try:
+                post = response.request.post_data
+            except Exception:
+                post = None
+            captured.append((post, body))
+
+        page.on("response", _capture)
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            if "consent.google" in page.url:
+                self._dismiss_consent(page)
+            if looks_blocked("", page.url):
+                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
+            deadline = time.monotonic() + _EXPLORE_CATALOG_WAIT_MS / 1000
+            while not captured and time.monotonic() < deadline:
+                page.wait_for_timeout(250)
+            page.wait_for_timeout(CONSENT_SETTLE_MS)
+        finally:
+            with contextlib.suppress(Exception):
+                page.close()
+        if not captured:
+            raise SweepTransportError(
+                "Google Explore issued no catalog request before the wait expired.",
+                timeout=True,
+            )
+        return captured
+
+    def _explore_session(self):
+        if self._explore_browser is None:
+            from viajante.browser import BrowserSessionConfig, ChromiumSession
+            from viajante.models import FETCH_LOCALE
+
+            self._explore_browser = ChromiumSession(
+                default_state_dir(),
+                BrowserSessionConfig(
+                    state_filename=STATE_FILENAME,
+                    locale=FETCH_LOCALE,
+                    html_lang=self._html_lang,
+                    currency=self._currency,
+                    country=self._country,
+                    proxy=self._proxy,
+                ),
+            )
+        return self._explore_browser
+
+    @staticmethod
+    def _dismiss_consent(page) -> None:
+        from viajante.google_flights import GoogleFlightsSource
+
+        GoogleFlightsSource._dismiss_consent(page)
+
+    def _raise_explore_failure(self, body: str) -> None:
+        if raw_rpc_error_status(body) == RPC_THROTTLE_STATUS:
+            reason = f"Google Explore catalog returned RPC status {RPC_THROTTLE_STATUS}."
+            basis = None
+            if self._proxy is None:
+                state = note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+                reason = rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}")
+                basis = state.get("basis", "unknown")
+            raise GoogleFlightsBlocked(
+                reason,
+                status=429,
+                diagnostics={
+                    "http_status": 200,
+                    "rpc_status": RPC_THROTTLE_STATUS,
+                    "request_sent": True,
+                    "attempts": 1,
+                    "endpoint": "www.google.com/travel/explore",
+                    "cooldown_basis": basis,
+                },
+            )
+        if "travel.frontend.flights.ErrorResponse" in body:
+            raise GoogleFlightsRejected(
+                "Google Explore rejected the catalog request without an owned cause."
+            )
+
+    def close(self) -> None:
+        browser = self._explore_browser
+        self._explore_browser = None
+        if browser is not None:
+            browser.close()
+        super().close()

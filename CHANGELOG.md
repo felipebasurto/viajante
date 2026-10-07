@@ -35,6 +35,8 @@ separate release gates.
   dropped under an exclusion.
 - `--trip multi --fetch detail` searches multi-city packages in the browser.
   Not yet verified against the live provider.
+- `explore` reads destinations from the catalog request Google's public Explore
+  page issues in Chromium, checking its origin and date echo.
 - Provider-block diagnostics distinguish queued requests from dispatched ones.
 
 ### Known limitations
@@ -42,8 +44,8 @@ separate release gates.
 - Public-page sweep refuses checked bags, a zero carry-on, alliance exclusion,
   and multi-city before networking. Browser detail refuses every bag and
   carrier filter. Airline exclusion cannot prove the operating carrier of each
-  segment. Explore catalog recovery is unavailable and
-  fails closed. Round-trip results are scope-bound to at most eight outbound
+  segment. Explore needs Chromium, accepts only one adult in economy, and its
+  catalog request often returned status 13 during validation. Round-trip results are scope-bound to at most eight outbound
   candidates. See the candidate record for details and pending validation.
 
 ## [1.4.5] - 2026-10-07
