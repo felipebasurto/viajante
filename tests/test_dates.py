@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.cli import main
+from viajante.control import SearchDeadline
 from viajante.dates import (
     EMPTY_DAY_MARK,
     MAX_DATE_WINDOW_DAYS,
@@ -515,6 +516,41 @@ class DateSearchTests(unittest.TestCase):
                 ("progress", "[3/3] JFK -> LHR 2026-09-03"),
             ],
         )
+
+    def test_one_way_deadline_days_do_not_emit_progress(self) -> None:
+        events: list[str] = []
+        card = _card()
+
+        class Transport:
+            automatic_typical = False
+
+            def fetch_many(self, trips):
+                return [(card,), SearchDeadline(), SearchDeadline()]
+
+            def fetch(self, trip):
+                raise AssertionError("one-way batch does not fetch a day at a time")
+
+            def close(self) -> None:
+                return None
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                events.append(line)
+
+        report = search_dates(
+            "JFK",
+            "LHR",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            source=Transport(),
+            progress=progress,
+            currency="USD",
+        )
+        self.assertEqual([row.status for row in report.days], ["ok", "error", "error"])
+        self.assertEqual(report.days[0].price, 90.0)
+        self.assertEqual(report.days[1].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(report.days[2].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(events, ["[1/3] JFK -> LHR 2026-09-01"])
 
     def test_unnamed_sort_stays_date_order(self) -> None:
         source = FakeCalendarSource(

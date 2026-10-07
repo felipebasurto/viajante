@@ -74,7 +74,7 @@ Add this entry to your assistant's MCP configuration:
 }
 ```
 
-That entry runs `uvx --from viajante[mcp,browser]==<version> viajante-mcp`, with `<version>` pinned to the npm package. `search_explore` needs the browser extra. Chromium itself is still `playwright install chromium` in that environment.
+That entry runs `uvx --from viajante[mcp,browser]==<version> viajante-mcp`, with `<version>` pinned to the npm package. `search_explore` needs the browser extra. Install Chromium once (Playwright's browser cache is shared per user): `uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium`.
 
 Native Python (no Node):
 

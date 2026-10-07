@@ -1102,7 +1102,8 @@ def _sweep_per_day(
             zip(day_queries, results, strict=True), start=1
         ):
             rows.append(row_for(day, day_query, result))
-            note(index, day)
+            if not isinstance(result, SearchDeadline):
+                note(index, day)
         return tuple(rows)
 
     for index, (day, day_query) in enumerate(day_queries, start=1):
@@ -1116,13 +1117,13 @@ def _sweep_per_day(
             return tuple(rows)
         result = _fetch_or_exception(source, day_query)
         rows.append(row_for(day, day_query, result))
-        note(index, day)
         if isinstance(result, SearchDeadline):
             rows.extend(
                 row_for(rest_day, rest_query, result)
                 for rest_day, rest_query in day_queries[index:]
             )
             return tuple(rows)
+        note(index, day)
     return tuple(rows)
 
 
