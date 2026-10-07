@@ -837,23 +837,30 @@ class _NoBrowser:
 
 
 class DetailCapabilityTests(unittest.TestCase):
-    def test_detail_fetch_shares_the_public_capability_refusal(self) -> None:
+    def test_detail_refuses_bag_and_carrier_filters_it_cannot_verify(self) -> None:
         source = GoogleFlightsSource(Path("unused"), session=_NoBrowser(), currency="EUR")
         for trip in (
             FlightQuery("HAN", "SIN", OUT, adults=2, bags=1),
             FlightQuery("HAN", "SIN", OUT, adults=2, carry_on=1),
             FlightQuery("HAN", "SIN", OUT, adults=2, airlines=("TA",)),
+            FlightQuery("HAN", "SIN", OUT, adults=2, exclude_airlines=("TA",)),
             FlightQuery("HAN", "SIN", OUT, adults=2, alliances=("star",)),
-            MultiCity(
-                (
-                    FlightQuery("HAN", "SIN", OUT, adults=2).legs[0],
-                    FlightQuery("SIN", "HAN", BACK, adults=2).legs[0],
-                ),
-                adults=2,
-            ),
         ):
             with self.subTest(trip=trip), self.assertRaises(GoogleFlightsUnsupported):
                 source.fetch(trip)
+
+    def test_sweep_refuses_multi_city_and_names_the_detail_path(self) -> None:
+        trip = MultiCity(
+            (
+                FlightQuery("HAN", "SIN", OUT, adults=2).legs[0],
+                FlightQuery("SIN", "HAN", BACK, adults=2).legs[0],
+            ),
+            adults=2,
+        )
+        with self.assertRaisesRegex(GoogleFlightsUnsupported, "--fetch detail"):
+            PublicGoogleFlightsHttpSource._validate_capabilities(
+                PublicGoogleFlightsHttpSource(currency="EUR", client=object()), trip
+            )
 
 
 if __name__ == "__main__":

@@ -44,11 +44,14 @@ from viajante.models import (
     FETCH_LANGUAGE,
     FETCH_LOCALE,
     FlightCabin,
+    FlightLeg,
+    MultiCity,
     RawJourneyLeg,
     RawLayover,
     RawSegment,
     Trip,
 )
+from viajante.parsers import parse_price
 from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tests
     NOT_SENT,
     RATE_LIMIT_COOLDOWN_SECONDS,
@@ -92,6 +95,9 @@ _SHORT_SHELL_MARK = "short unknown shell"
 RESULTS_SELECTOR = ".eQ35Ce"
 EMPTY_STATE_SELECTOR = "div.QEk4oc.BgYkof"
 READY_SELECTOR = f"{RESULTS_SELECTOR}, {EMPTY_STATE_SELECTOR}"
+# Multi-city clicks through one board per extra journey; the budget keeps total
+# selections on the round-trip scale (~8) regardless of leg count.
+_MULTI_CLICK_BUDGET = 8
 EMPTY_STATE_TEXT = "No options matching your search"
 
 SECTION_SELECTOR = 'div[jsname="IWWDBc"], div[jsname="YdtKid"]'
@@ -995,6 +1001,15 @@ def parse_http_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     return parse_flight_cards(extract_main_html(html))
 
 
+def _multi_row_index(board: Sequence[tuple[int, RawFlightCard]], wanted: RawFlightCard) -> int:
+    """DOM index of the board row matching ``wanted`` by owned identity."""
+    numbers = wanted.flight_numbers or ()
+    for index, card in board:
+        if (card.flight_numbers or ()) == numbers and card.departure == wanted.departure:
+            return index
+    raise GoogleFlightsMarkupError("The selected journey no longer appears on the reloaded board.")
+
+
 def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     parser = LexborHTMLParser(html)
     cards: list[RawFlightCard] = []
@@ -1465,6 +1480,9 @@ class GoogleFlightsSource:
         self._session = session or ChromiumSession(state_dir, self._config)
         self._http: Optional[GoogleFlightsHttpSource] = None
         self._started = False
+        self.partial_error: Optional[BaseException] = None
+        self.scope_bound = False
+        self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
 
     @property
     def config(self) -> BrowserSessionConfig:
@@ -1484,7 +1502,10 @@ class GoogleFlightsSource:
                 + ", ".join(unproven)
                 + ". The public-page sweep verifies carry-on and airline or alliance includes."
             )
-        PublicGoogleFlightsHttpSource._validate_capabilities(self, trip)
+        # The public page bootstraps no multi-city results; the browser UI renders them.
+        PublicGoogleFlightsHttpSource._validate_capabilities(self, trip, allow_multi_city=True)
+        if isinstance(trip, MultiCity):
+            return self._fetch_multi(trip)
         return parse_flight_cards(
             self._fetch_html(
                 build_search_url(
@@ -1495,6 +1516,177 @@ class GoogleFlightsSource:
                 )
             )
         )
+
+    def _fetch_multi(self, trip: MultiCity) -> tuple[RawFlightCard, ...]:
+        """Complete multi-city packages by clicking through the real board UI.
+
+        The public results page returns a shell for multi-city searches; the
+        browser renders each journey's board after the previous selection. Each
+        emitted card is a complete provider package: every journey leg comes
+        from an owned board row echoed against the request, priced by the
+        provider's own package total on the last board (never a sum of one-way
+        fares). Coverage is bounded to a few first-journey candidates; middle
+        journeys take their cheapest displayed continuation. Completed packages
+        survive a failed follow-up.
+        """
+        if not self._started:
+            state = rate_limit_status()
+            if state is not None:
+                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+            self._started = True
+        self.partial_error = None
+        self.scope_bound = True  # Bounded first-journey coverage, like the RT cap.
+        url = build_search_url(
+            trip,
+            html_lang=self._config.html_lang,
+            currency=self._config.currency,
+            country=self._config.country,
+        )
+        page = self._session.new_page()
+        complete: list[RawFlightCard] = []
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            if "consent.google" in page.url:
+                self._dismiss_consent(page)
+            if looks_blocked("", page.url):
+                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
+            leaders = sorted(
+                self._multi_board(page, trip.legs[0]),
+                key=lambda ic: parse_price(ic[1].price) or float("inf"),
+            )
+            budget = max(2, _MULTI_CLICK_BUDGET // (len(trip.legs) - 1))
+            for index, (_first_index, leader) in enumerate(leaders[:budget]):
+                checkpoint()
+                try:
+                    if index:
+                        self._multi_reset(page, url)
+                    # Re-locate the candidate on the (re)loaded board by owned
+                    # identity; row order is not guaranteed across reloads.
+                    board = self._multi_board(page, trip.legs[0])
+                    dom_index = _multi_row_index(board, leader)
+                    path = [leader.legs[0]]
+                    self._multi_click(page, dom_index)
+                    for leg in trip.legs[1:-1]:
+                        checkpoint()
+                        continuations = sorted(
+                            self._multi_board(page, leg),
+                            key=lambda ic: parse_price(ic[1].price) or float("inf"),
+                        )
+                        next_index, next_card = continuations[0]
+                        path.append(next_card.legs[0])
+                        self._multi_click(page, next_index)
+                    finals = self._multi_board(page, trip.legs[-1])
+                except SearchDeadline:
+                    if not complete:
+                        raise
+                    self.partial_error = SearchDeadline()
+                    break
+                except Exception as exc:
+                    self.partial_error = exc
+                    if isinstance(exc, GoogleFlightsBlocked):
+                        break
+                else:
+                    for _last_index, last in finals:
+                        selected = tuple(path) + (last.legs[0],)
+                        complete.append(
+                            replace(
+                                leader,
+                                price=last.price,
+                                booking_token=last.booking_token,
+                                legs=selected,
+                                flight_numbers=tuple(
+                                    segment.flight_number
+                                    for journey in selected
+                                    for segment in journey.segments
+                                    if segment.flight_number
+                                ),
+                            )
+                        )
+            if not complete:
+                if self.partial_error is not None and not isinstance(
+                    self.partial_error, NoFlightsFound
+                ):
+                    raise self.partial_error
+                raise GoogleFlightsMarkupError(
+                    "No complete multi-city package was proved by the browser pages."
+                )
+        finally:
+            with contextlib.suppress(Exception):
+                page.close()
+        self._query_meta[trip] = (self.partial_error, self.scope_bound)
+        return tuple(complete)
+
+    def _multi_board(self, page: object, leg: FlightLeg) -> list[tuple[int, RawFlightCard]]:
+        """(DOM row index, card) pairs echoing the requested journey leg.
+
+        The index counts every ``ul.Rk10dc li`` in document order so the row can
+        be clicked back with ``locator(CARD_SELECTOR).nth(index)``.
+        """
+        from viajante.google_flights_public import PublicGoogleFlightsHttpSource
+
+        page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+        checkpoint()
+        html = page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
+        matches_leg = PublicGoogleFlightsHttpSource._matches_leg
+        matched: list[tuple[int, RawFlightCard]] = []
+        parser = LexborHTMLParser(html)
+        for position, item in enumerate(parser.css(CARD_SELECTOR)):
+            card = _extract_card(item)
+            if card is not None and matches_leg(card, leg):
+                matched.append((position, card))
+        if not matched:
+            raise GoogleFlightsMarkupError(
+                "Browser board rows did not prove the requested journey."
+            )
+        return matched
+
+    def metadata_for(self, trip: Trip):
+        return self._query_meta.get(trip, (None, False))
+
+    @staticmethod
+    def _multi_sig(page: object) -> str:
+        return page.evaluate(
+            "() => {"
+            "const m = document.querySelector('[role=\"main\"]');"
+            "if (!m) return '';"
+            "const h = m.querySelector('h3');"
+            "const r = m.querySelector('ul.Rk10dc li');"
+            "return (h ? h.textContent : '') + '|' + (r ? r.textContent : '');}"
+        )
+
+    def _multi_click(self, page: object, dom_index: int) -> None:
+        """Click one board row and wait for the board to advance."""
+        prev_sig = self._multi_sig(page)
+        page.locator(CARD_SELECTOR).nth(dom_index).click(timeout=CONSENT_CLICK_TIMEOUT_MS)
+        try:
+            page.wait_for_function(
+                "(prev) => {"
+                "const m = document.querySelector('[role=\"main\"]');"
+                "if (!m) return false;"
+                "const h = m.querySelector('h3');"
+                "const r = m.querySelector('ul.Rk10dc li');"
+                "const sig = (h ? h.textContent : '') + '|' + (r ? r.textContent : '');"
+                "return r !== null && sig !== prev;}",
+                arg=prev_sig,
+                timeout=PAGE_TIMEOUT_MS,
+            )
+        except Exception as exc:
+            raise GoogleFlightsMarkupError(
+                "The clicked board did not advance to the next journey."
+            ) from exc
+
+    def _multi_reset(self, page: object, url: str) -> None:
+        """Return to the first journey's board for the next candidate."""
+        checkpoint()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            if looks_blocked("", page.url):
+                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
+            page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+        except (SearchDeadline, GoogleFlightsBlocked):
+            raise
+        except Exception as exc:
+            raise GoogleFlightsMarkupError("Could not reload the first journey board.") from exc
 
     def fetch_calendar(
         self,

@@ -78,7 +78,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
         self._stopped_error: GoogleFlightsBlocked | None = None
 
-    def _validate_capabilities(self, trip: Trip) -> None:
+    def _validate_capabilities(self, trip: Trip, *, allow_multi_city: bool = False) -> None:
         unsupported = [
             key
             for key in (
@@ -93,7 +93,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         # both stay refused like an unverifiable filter.
         if trip.carry_on == 0:
             unsupported.append("carry_on")
-        if isinstance(trip, MultiCity):
+        if isinstance(trip, MultiCity) and not allow_multi_city:
             unsupported.append("multi_city")
         if unsupported:
             reasons = []
@@ -104,6 +104,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     "alliance exclusion is not verifiable: the public page "
                     "registers the filter but does not remove every "
                     "alliance-marketed itinerary"
+                )
+            if "multi_city" in unsupported:
+                reasons.append(
+                    "the public page returns no multi-city results; request an explicit "
+                    "browser detail search (--fetch detail) for multi-city packages"
                 )
             message = (
                 "Not sent. Google Flights public-page transport cannot verify "

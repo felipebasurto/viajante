@@ -1923,11 +1923,8 @@ def _run_search(
         if recommendation is not None:
             stamped = dict(zip(ranked, shown, strict=True))
             recommendation = recommendation.map_offers(lambda offer: stamped.get(offer, offer))
-        page_error, scope_bound = (
-            source.metadata_for(trip)
-            if getattr(source, "transport", None) == "public_page"
-            else (None, False)
-        )
+        metadata_for = getattr(source, "metadata_for", None)
+        page_error, scope_bound = metadata_for(trip) if callable(metadata_for) else (None, False)
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),
@@ -2355,11 +2352,6 @@ def search_flights(
         for trip in trips
     ):
         planned = "sweep"
-    if any(isinstance(trip, MultiCity) for trip in trips) and planned == "detail":
-        if fetch == "auto":
-            planned = "sweep"
-        else:
-            raise ValueError("--trip multi does not support --fetch detail yet")
     report_progress = progress or (lambda _: None)
     started = time.perf_counter()
 

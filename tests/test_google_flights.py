@@ -41,6 +41,7 @@ from viajante.google_flights import (
     reset_shared_chrome_sweep_client,
     shared_chrome_sweep_client,
 )
+from viajante.google_flights_public import GoogleFlightsUnsupported
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
@@ -2765,6 +2766,350 @@ class SweepClientShapeTests(unittest.TestCase):
             self.assertIsNone(created[1].proxy)
             self.assertEqual(len(closed), 1)
             reset_shared_chrome_sweep_client()
+
+
+def _multi_board_html(rows) -> str:
+    """Synthetic results board a card parser can read like the real DOM."""
+    items = "".join(
+        f'<li><div class="YMlIz FpEdX">{price}</div>'
+        f'<span class="mv1WYe"><div>{dep}</div></span>'
+        f'<span class="mv1WYe"><div>arr</div></span>'
+        f'<div class="Ak5kof"><div>1 hr</div></div>'
+        f'<div class="BbR8Ec"><span class="ogfYpf">Nonstop</span></div>'
+        f'<div class="sSHqwe tPgKwe ogfYpf"><span>Carrier</span></div>'
+        f'<div data-travelimpactmodelwebsiteurl="https://x/{org}-{dst}-{cc}-{num}-{day}">'
+        f"</div></li>"
+        for org, dst, cc, num, day, dep, price in rows
+    )
+    return f'<div jsname="IWWDBc"><ul class="Rk10dc">{items}</ul></div>'
+
+
+class _MultiRow:
+    """One locator chain: ``.first`` waits, ``.nth(i).click()`` advances a board."""
+
+    def __init__(self, page) -> None:
+        self._page = page
+        self._index = 0
+
+    @property
+    def first(self):
+        return self
+
+    def nth(self, index):
+        self._index = index
+        return self
+
+    def wait_for(self, **_):
+        return None
+
+    def click(self, **_):
+        self._page.row_indexes.append(self._index)
+        self._page.clicks += 1
+        self._page.step = min(self._page.step + 1, len(self._page._boards) - 1)
+
+
+class _MultiPage:
+    """Fake detail page serving one board innerHTML per click step."""
+
+    def __init__(self, boards, *, fail_after_clicks=()) -> None:
+        self._boards = list(boards)
+        self._fail = set(fail_after_clicks)
+        self.step = 0
+        self.clicks = 0
+        self.row_indexes: list[int] = []
+        self.url = "https://www.google.com/travel/flights?tfs=x"
+
+    def goto(self, url, **_):
+        self.url = url
+        self.step = 0
+
+    def locator(self, _selector):
+        return _MultiRow(self)
+
+    def evaluate(self, script):
+        if "querySelector('h3')" in script:
+            return f"step:{self.step}"
+        return self._boards[self.step]
+
+    def wait_for_function(self, _script, **_):
+        if self.clicks in self._fail:
+            raise TimeoutError("board never advanced")
+
+    def close(self):
+        return None
+
+
+class _MultiSession:
+    def __init__(self, page) -> None:
+        self._page = page
+
+    def new_page(self):
+        return self._page
+
+
+class MultiCityDetailTests(unittest.TestCase):
+    """The detail source completes multi-city packages by clicking boards."""
+
+    @staticmethod
+    def _source(page) -> GoogleFlightsSource:
+        return GoogleFlightsSource(Path("."), session=_MultiSession(page), currency="GBP")  # type: ignore[arg-type]
+
+    def test_two_leg_package_uses_last_board_total(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+                (
+                    "LHR",
+                    "JFK",
+                    "BA",
+                    "113",
+                    "20261110",
+                    "4:40 PM on Tue, Nov 10",
+                    "£400",
+                ),
+            ]
+        )
+        board2 = _multi_board_html(
+            [
+                (
+                    "JFK",
+                    "LAX",
+                    "AA",
+                    "201",
+                    "20261114",
+                    "9:00 AM on Sat, Nov 14",
+                    "£1,200",
+                ),
+                (
+                    "JFK",
+                    "LAX",
+                    "DL",
+                    "55",
+                    "20261114",
+                    "1:00 PM on Sat, Nov 14",
+                    "£1,300",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        source = self._source(_MultiPage([board1, board2]))
+        cards = source.fetch(trip)
+        self.assertEqual(len(cards), 4)  # 2 first-leg candidates x 2 last-board rows
+        for card in cards:
+            self.assertEqual(len(card.legs), 2)
+            self.assertEqual(card.legs[0].segments[0].origin, "LHR")
+            self.assertEqual(card.legs[0].segments[0].destination, "JFK")
+            self.assertEqual(card.legs[1].segments[0].origin, "JFK")
+            self.assertEqual(card.legs[1].segments[0].destination, "LAX")
+            self.assertIn(card.price, {"£1,200", "£1,300"})
+            self.assertEqual(len(card.flight_numbers or ()), 2)
+        self.assertEqual(source.metadata_for(trip), (None, True))
+
+    def test_three_leg_package_picks_cheapest_middle_board_row(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+            ]
+        )
+        board2 = _multi_board_html(
+            [
+                (
+                    "JFK",
+                    "LAX",
+                    "AA",
+                    "201",
+                    "20261114",
+                    "9:00 AM on Sat, Nov 14",
+                    "£900",
+                ),
+                (
+                    "JFK",
+                    "LAX",
+                    "DL",
+                    "55",
+                    "20261114",
+                    "1:00 PM on Sat, Nov 14",
+                    "£700",
+                ),
+            ]
+        )
+        board3 = _multi_board_html(
+            [
+                (
+                    "LAX",
+                    "LHR",
+                    "BA",
+                    "282",
+                    "20261118",
+                    "8:00 PM on Wed, Nov 18",
+                    "£2,400",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+                FlightLeg("LAX", "LHR", date(2026, 11, 18)),
+            )
+        )
+        page = _MultiPage([board1, board2, board3])
+        cards = self._source(page).fetch(trip)
+        self.assertEqual(len(cards), 1)
+        card = cards[0]
+        self.assertEqual(len(card.legs), 3)
+        self.assertEqual(card.price, "£2,400")  # Provider package total, never a sum.
+        # The cheapest middle-board row (DL55 £700) was the chosen continuation.
+        self.assertEqual(card.flight_numbers, ("AA103", "DL55", "BA282"))
+
+    def test_board_echo_mismatch_is_not_a_package(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+            ]
+        )
+        wrong_leg = _multi_board_html(
+            [
+                (
+                    "LAX",
+                    "LHR",
+                    "BA",
+                    "282",
+                    "20261118",
+                    "8:00 PM on Wed, Nov 18",
+                    "£900",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        source = self._source(_MultiPage([board1, wrong_leg]))
+        with self.assertRaisesRegex(
+            GoogleFlightsMarkupError, "did not prove the requested journey"
+        ):
+            source.fetch(trip)
+
+    def test_failed_follow_up_preserves_completed_packages(self) -> None:
+        board1 = _multi_board_html(
+            [
+                (
+                    "LHR",
+                    "JFK",
+                    "AA",
+                    "103",
+                    "20261110",
+                    "10:15 AM on Tue, Nov 10",
+                    "£500",
+                ),
+                (
+                    "LHR",
+                    "JFK",
+                    "BA",
+                    "113",
+                    "20261110",
+                    "4:40 PM on Tue, Nov 10",
+                    "£400",
+                ),
+            ]
+        )
+        board2 = _multi_board_html(
+            [
+                (
+                    "JFK",
+                    "LAX",
+                    "AA",
+                    "201",
+                    "20261114",
+                    "9:00 AM on Sat, Nov 14",
+                    "£1,200",
+                ),
+            ]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        # The second candidate's click never advances its board.
+        page = _MultiPage([board1, board2], fail_after_clicks={2})
+        source = self._source(page)
+        cards = source.fetch(trip)
+        self.assertEqual(len(cards), 1)
+        error, scope_bound = source.metadata_for(trip)
+        self.assertIsInstance(error, GoogleFlightsMarkupError)
+        self.assertTrue(scope_bound)
+
+    def test_multi_city_with_bags_still_fails_before_the_browser(self) -> None:
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            ),
+            bags=1,
+        )
+
+        class NoBrowser:
+            def new_page(self):
+                raise AssertionError("unsupported filter must not open the browser")
+
+        source = GoogleFlightsSource(Path("."), session=NoBrowser(), currency="GBP")  # type: ignore[arg-type]
+        with self.assertRaises(GoogleFlightsUnsupported):
+            source.fetch(trip)
+
+    def test_multi_row_index_matches_owned_identity(self) -> None:
+        from viajante.google_flights import _multi_row_index
+        from viajante.google_flights_rpc import RawFlightCard
+
+        board = [
+            (
+                0,
+                RawFlightCard(None, "10:15 AM", None, None, None, "£1", flight_numbers=("AA103",)),
+            ),
+            (
+                2,
+                RawFlightCard(None, "4:40 PM", None, None, None, "£2", flight_numbers=("BA113",)),
+            ),
+        ]
+        self.assertEqual(_multi_row_index(board, board[1][1]), 2)
+        different_clock = RawFlightCard(
+            None, "5:40 PM", None, None, None, "£3", flight_numbers=("BA113",)
+        )
+        with self.assertRaises(GoogleFlightsMarkupError):
+            _multi_row_index(board, different_clock)
 
 
 class DetailSorryPageTests(unittest.TestCase):

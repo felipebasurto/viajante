@@ -1054,6 +1054,16 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
         [result.error.code if isinstance(result, QueryFailure) else None for result in results]
     )
     scope_bound = any(isinstance(result, QuerySuccess) and result.scope_bound for result in results)
+    multi_bound = next(
+        (
+            result.query
+            for result in results
+            if isinstance(result, QuerySuccess)
+            and result.scope_bound
+            and isinstance(result.query, MultiCity)
+        ),
+        None,
+    )
     page_cut = any(
         isinstance(result, QuerySuccess)
         and any(error.code == SearchErrorCode.DEADLINE for error in result.page_errors)
@@ -1071,7 +1081,14 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
         scope={
             "kind": "submitted_queries",
             "size": len(results),
-            **({"public_page_outbound_limit": 8} if scope_bound else {}),
+            # Same ~8-selection budget as the transport's click cap.
+            **(
+                {"multi_city_leader_limit": max(2, 8 // (len(multi_bound.legs) - 1))}
+                if multi_bound is not None
+                else {"public_page_outbound_limit": 8}
+                if scope_bound
+                else {}
+            ),
         },
         attempted=len(results),
         succeeded=succeeded,
@@ -1081,6 +1098,8 @@ def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:
         strategy="heuristic" if scope_bound else "finite",
         stopping_reason="deadline"
         if cut is not None
+        else "bounded_multi_city_leaders"
+        if multi_bound is not None
         else "bounded_outbound_board"
         if scope_bound
         else "completed_scope",
