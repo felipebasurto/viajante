@@ -204,13 +204,15 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 raise GoogleFlightsMarkupError(
                     "Public page did not echo the requested passenger occupancy."
                 )
-        cabin = {
-            "economy": "Economy",
-            "premium-economy": "Premium economy",
-            "business": "Business",
-            "first": "First",
+        # Some markets label the default economy cabin "Economy (include Basic)";
+        # "exclude Basic" is a fare filter nobody asked for, so it does not match.
+        cabins = {
+            "economy": {"Economy", "Economy (include Basic)"},
+            "premium-economy": {"Premium economy"},
+            "business": {"Business"},
+            "first": {"First"},
         }[trip.cabin]
-        if cabin not in {node.text(strip=True) for node in root.css('[role="combobox"]')}:
+        if not cabins & {node.text(strip=True) for node in root.css('[role="combobox"]')}:
             raise GoogleFlightsMarkupError("Public page did not echo the requested cabin.")
         for count, kind in ((trip.carry_on, "carry-on"), (trip.bags, "checked")):
             if not count:

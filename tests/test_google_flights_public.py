@@ -327,10 +327,12 @@ class PublicContextTests(unittest.TestCase):
         source = _source()
         query = FlightQuery("HAN", "SIN", OUT, adults=2, max_stops=0)
         source._verify_context(_context(), query)
+        source._verify_context(_context(cabin="Economy (include Basic)"), query)
         for html in (
             _context(currency="USD"),
             _context(adults=1),
             _context(cabin="Business"),
+            _context(cabin="Economy (exclude Basic)"),
             "<html></html>",
         ):
             with self.subTest(html=html), self.assertRaisesRegex(Exception, "did not echo"):
