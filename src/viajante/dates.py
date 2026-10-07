@@ -1085,9 +1085,15 @@ def _sweep_per_day(
         if isinstance(result, BaseException):
             rows.append(_row_from_day_error(cursor, result, returning))
         else:
-            rows.append(
-                _row_from_day_cards(cursor, day_query, result, returning, filters, baggage_buffer)
-            )
+            row = _row_from_day_cards(cursor, day_query, result, returning, filters, baggage_buffer)
+            if getattr(source, "transport", None) == "public_page":
+                page_error, scope_bound = source.metadata_for(day_query)
+                row = replace(
+                    row,
+                    scope_bound=scope_bound,
+                    page_errors=(classify_failure(page_error),) if page_error is not None else (),
+                )
+            rows.append(row)
     return tuple(rows)
 
 

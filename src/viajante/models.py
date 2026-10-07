@@ -1209,6 +1209,8 @@ class DatePriceRow:
     departure: Optional[str] = None
     arrival: Optional[str] = None
     empty_reason: Optional[EmptyReason] = None
+    page_errors: Tuple[SearchError, ...] = ()
+    scope_bound: bool = False
 
     def __post_init__(self) -> None:
         if self.empty_reason is not None and self.status != "empty":
@@ -1240,6 +1242,10 @@ class DatePriceRow:
             payload["return_date"] = self.return_date.isoformat()
         if self.error is not None:
             payload["error"] = self.error.to_dict()
+        if self.page_errors:
+            payload["page_errors"] = [error.to_dict() for error in self.page_errors]
+        if self.scope_bound:
+            payload["scope_bound"] = True
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.google_flights_url:
@@ -1296,10 +1302,16 @@ class DateCalendarReport:
             succeeded = sum(row.status == "ok" and row.price is not None for row in self.days)
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
+            scope_bound = any(row.scope_bound for row in self.days)
             expected = (self.end_date - self.start_date).days + 1
-            cut = _deadline_stop([row.error.code if row.error else None for row in self.days])
+            cut = _deadline_stop(
+                [row.error.code if row.error else None for row in self.days]
+                + [error.code for row in self.days for error in row.page_errors]
+            )
             coverage_complete = (
-                cut is None and len({row.departure_date for row in self.days}) == expected
+                cut is None
+                and not scope_bound
+                and len({row.departure_date for row in self.days}) == expected
             )
             object.__setattr__(
                 self,
@@ -1307,6 +1319,7 @@ class DateCalendarReport:
                 SearchCoverage(
                     scope={
                         "kind": "date_window",
+                        **({"public_page_outbound_limit": 8} if scope_bound else {}),
                         "from": self.start_date.isoformat(),
                         "to": self.end_date.isoformat(),
                     },
@@ -1315,17 +1328,25 @@ class DateCalendarReport:
                     empty=empty,
                     failed=failed,
                     complete=coverage_complete,
+                    strategy="heuristic" if scope_bound else "finite",
                     stopping_reason=(
                         "completed_scope"
                         if coverage_complete
                         else "deadline"
                         if cut
+                        else "bounded_outbound_board"
+                        if scope_bound
                         else "partial_results"
                     ),
                     unsearched=(
                         None
                         if coverage_complete
-                        else cut or "dates missing from the requested window"
+                        else cut
+                        or (
+                            "outbound candidates outside the first eight returned"
+                            if scope_bound
+                            else "dates missing from the requested window"
+                        )
                     ),
                 ),
             )
@@ -1403,13 +1424,18 @@ class FlexSearchReport:
             succeeded = sum(row.status == "ok" and row.price is not None for row in self.days)
             empty = sum(row.status == "empty" for row in self.days)
             failed = len(self.days) - succeeded - empty
+            scope_bound = any(row.scope_bound for row in self.days)
             expected = (self.end_date - self.start_date).days + 1
-            codes = [row.error.code if row.error else None for row in self.days]
+            codes = [row.error.code if row.error else None for row in self.days] + [
+                error.code for row in self.days for error in row.page_errors
+            ]
             cut = _deadline_stop(codes + [self.error.code if self.error else None])
             # A shop cut by the deadline is one more unit that was attempted and failed.
             shop_cut = self.error is not None and self.error.code == SearchErrorCode.DEADLINE
             coverage_complete = (
-                cut is None and len({row.departure_date for row in self.days}) == expected
+                cut is None
+                and not scope_bound
+                and len({row.departure_date for row in self.days}) == expected
             )
             object.__setattr__(
                 self,
@@ -1417,6 +1443,7 @@ class FlexSearchReport:
                 SearchCoverage(
                     scope={
                         "kind": "flex_window",
+                        **({"public_page_outbound_limit": 8} if scope_bound else {}),
                         "around": self.around.isoformat(),
                         "from": self.start_date.isoformat(),
                         "to": self.end_date.isoformat(),
@@ -1426,17 +1453,25 @@ class FlexSearchReport:
                     empty=empty,
                     failed=failed + shop_cut,
                     complete=coverage_complete,
+                    strategy="heuristic" if scope_bound else "finite",
                     stopping_reason=(
                         "completed_scope"
                         if coverage_complete
                         else "deadline"
                         if cut
+                        else "bounded_outbound_board"
+                        if scope_bound
                         else "partial_results"
                     ),
                     unsearched=(
                         None
                         if coverage_complete
-                        else cut or "dates missing from the requested flex window"
+                        else cut
+                        or (
+                            "outbound candidates outside the first eight returned"
+                            if scope_bound
+                            else "dates missing from the requested flex window"
+                        )
                     ),
                 ),
             )

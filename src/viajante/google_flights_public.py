@@ -258,7 +258,9 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 if isinstance(exc, GoogleFlightsBlocked):
                     break
         if not complete:
-            if self.partial_error is not None:
+            if self.partial_error is not None and not isinstance(
+                self.partial_error, NoFlightsFound
+            ):
                 raise self.partial_error
             raise GoogleFlightsMarkupError(
                 "No complete round-trip package was proved by the public pages."

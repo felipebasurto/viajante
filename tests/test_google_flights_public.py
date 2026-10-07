@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
+from viajante.envelope import stamp_search
 from viajante.google_flights import SweepHttpResponse
 from viajante.google_flights_public import (
+    GoogleFlightsMarkupError,
     GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
 )
@@ -60,6 +62,22 @@ def _context(*, adults=2, currency="EUR", cabin="Economy"):
 
 def _source() -> PublicGoogleFlightsHttpSource:
     return PublicGoogleFlightsHttpSource(currency="EUR", client=object())
+
+
+def _round_trip_card(day: date, nights: int, price: str = "€340") -> RawFlightCard:
+    return RawFlightCard(
+        "Test Air",
+        "08:00",
+        "19:00",
+        "10 hr",
+        "nonstop",
+        price,
+        flight_numbers=("TA101", "TA202"),
+        legs=(
+            _leg("HAN", "SIN", day, "08:00", "TA101"),
+            _leg("SIN", "HAN", date.fromordinal(day.toordinal() + nights), "09:00", "TA202"),
+        ),
+    )
 
 
 class PublicFlightsSourceTests(unittest.TestCase):
@@ -438,3 +456,94 @@ class PublicPartialRoundTripTests(unittest.TestCase):
         ):
             source.fetch(query)
         self.assertEqual(client.calls, 0)
+
+
+class PublicRoundTripCoverageTests(unittest.TestCase):
+    def test_rt_date_and_flex_reports_keep_bounded_scope_and_additive_page_error(self):
+        start = date(2026, 11, 14)
+        nights = 11
+        source = _source()
+        page_error = GoogleFlightsMarkupError("one outbound return page was not readable")
+
+        def fetch_package(trip):
+            source._query_meta[trip] = (page_error, True)
+            return (_round_trip_card(trip.departure_date, nights),)
+
+        with patch.object(source, "fetch", side_effect=fetch_package):
+            dated = search_dates(
+                "HAN",
+                "SIN",
+                start,
+                start,
+                trip="rt",
+                nights=nights,
+                adults=2,
+                max_stops=0,
+                currency="EUR",
+                source=source,
+            )
+            flexed = search_flex(
+                "HAN",
+                "SIN",
+                start + timedelta(days=1),
+                1,
+                trip="rt",
+                nights=nights,
+                adults=2,
+                max_stops=0,
+                currency="EUR",
+                source=source,
+            )
+
+        for report in (dated, flexed):
+            self.assertTrue(report.days)
+            self.assertTrue(all(row.scope_bound for row in report.days))
+            self.assertTrue(
+                all(
+                    len(row.page_errors) == 1 and row.page_errors[0].code.value == "markup_drift"
+                    for row in report.days
+                )
+            )
+            self.assertEqual(report.coverage.strategy, "heuristic")
+            self.assertFalse(report.coverage.complete)
+            self.assertEqual(report.coverage.scope["public_page_outbound_limit"], 8)
+            envelope = stamp_search(report.to_dict())
+            self.assertEqual(envelope["completeness"], "partial")
+            self.assertEqual(envelope["status"], "ok")
+
+        self.assertEqual(dated.days[0].price, 340)
+        self.assertEqual(flexed.days[0].page_errors[0].code.value, "markup_drift")
+        self.assertTrue(flexed.offers)
+
+    def test_one_way_calendar_coverage_remains_finite_and_unbounded(self):
+        start = date(2026, 11, 14)
+        source = _source()
+        card = _card("HAN", "SIN", start, "08:00", "TA101", "€100")
+
+        with patch.object(source, "fetch_many", return_value=[(card,)]):
+            report = search_dates(
+                "HAN",
+                "SIN",
+                start,
+                start,
+                adults=2,
+                max_stops=0,
+                currency="EUR",
+                source=source,
+            )
+        self.assertFalse(report.days[0].scope_bound)
+        self.assertEqual(report.coverage.strategy, "finite")
+        self.assertTrue(report.coverage.complete)
+        self.assertNotIn("public_page_outbound_limit", report.coverage.scope)
+
+
+class PublicPackageEmptyTests(unittest.TestCase):
+    def test_empty_selected_returns_do_not_prove_no_round_trip_flights(self):
+        from viajante.google_flights import GoogleFlightsMarkupError, NoFlightsFound
+
+        source = _source()
+        query = RoundTrip("HAN", "SIN", OUT, BACK, adults=2, max_stops=0)
+        outbound = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
+        with patch.object(source, "_read_page", side_effect=[((outbound,), ""), NoFlightsFound()]):
+            with self.assertRaises(GoogleFlightsMarkupError):
+                source.fetch(query)

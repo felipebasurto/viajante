@@ -29,7 +29,9 @@ for the request and parse flow.
   outbound route and clock. The returned amount is the provider's package
   total; outbound and return amounts are never added. The eight-candidate cap
   is explicitly scope-bound, and follow-up failures remain visible as partial
-  page errors when any packages were completed.
+  page errors when any packages were completed. Dates and flex retain this
+  scope bound and those errors; empty selected return pages alone do not prove
+  that the entire round-trip query has no flights.
 - Dates and flex use explicit per-day public-page GETs for their named window,
   capped at 31 days. Successful rows remain present if other days fail. Flex
   then makes one additional fresh shop for the selected day. Ordinary flight
@@ -76,7 +78,7 @@ outside this flight transport change.
 
 ## Validation and release handoff
 
-The full offline test suite passed (1,668 tests, 2 skipped). A live stdio MCP
+The full offline test suite passed (1,671 tests, 2 skipped). A live stdio MCP
 check on runtime 1.4.6 verified the public flight path in conservative mode:
 an unsupported baggage-constrained query failed preflight with no request and
 zero attempts; the corresponding unconstrained one-way search returned three
