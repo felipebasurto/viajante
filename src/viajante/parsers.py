@@ -195,7 +195,8 @@ def parse_rating(rating_text: str | None) -> float | None:
     return None
 
 
-_FREE_CANCEL = re.compile(r"(?<!\bno\s)free\s+cancell?ation")
+_FREE_CANCEL = re.compile(r"free\s+cancell?ation")
+_NEGATED_FREE_CANCEL = re.compile(r"\b(?:no|not|non|without)[\s-]+free\s+cancell?ation")
 _NON_REFUNDABLE = re.compile(
     r"non[\s-]?refundable|"
     r"no\s+cancell?ation(?!\s+(?:fees?|charges?|costs?))"
@@ -208,6 +209,8 @@ def parse_cancellation_evidence(card_text: str | None) -> CancellationEvidence:
     text = card_text.replace("\xa0", " ").lower()
     if _NON_REFUNDABLE.search(text):
         return CancellationEvidence.NON_REFUNDABLE
+    if _NEGATED_FREE_CANCEL.search(text):
+        return CancellationEvidence.UNKNOWN
     if _FREE_CANCEL.search(text):
         return CancellationEvidence.FREE
     return CancellationEvidence.UNKNOWN
