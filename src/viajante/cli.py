@@ -82,6 +82,7 @@ from viajante.models import (
     Trip,
     format_money,
     normalize_country,
+    normalize_currency,
 )
 from viajante.points import (
     compare_award,
@@ -1260,6 +1261,8 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
         if args.adults < 1:
             raise ValueError("--adults must be at least 1")
         origin, dest, departure, back = _hidden_city_route(args)
+        if args.currency is not None:
+            args.currency = normalize_currency(args.currency)
         today = date.today()
         if departure < today:
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")

@@ -438,6 +438,15 @@ class CliTests(unittest.TestCase):
             self.assertEqual(main(["flights", ROUTE, "--max-duration", "inf"]), 1)
             search.assert_not_called()
 
+    def test_hidden_city_rejects_bad_currency_before_search(self) -> None:
+        with patch("viajante.cli.search_hidden_city") as search:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = main(["hidden-city", ROUTE, "--currency", "XX"])
+            self.assertEqual(code, 1)
+            self.assertIn("error:", err.getvalue())
+            search.assert_not_called()
+
 
 class ReportRenderingTests(unittest.TestCase):
     def test_missing_fields_never_render_as_none(self) -> None:
