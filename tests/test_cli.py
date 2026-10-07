@@ -497,6 +497,23 @@ class CliTests(unittest.TestCase):
             self.assertIn("error:", err.getvalue())
             search.assert_not_called()
 
+    def test_hotels_past_check_in_is_rejected_before_search(self) -> None:
+        with patch("viajante.cli.search_hotels") as search:
+            self.assertEqual(
+                main(
+                    [
+                        "hotels",
+                        "Paris",
+                        PAST_DATE.isoformat(),
+                        FUTURE_DATE.isoformat(),
+                        "--currency",
+                        "EUR",
+                    ]
+                ),
+                1,
+            )
+            search.assert_not_called()
+
 
 class ReportRenderingTests(unittest.TestCase):
     def test_missing_fields_never_render_as_none(self) -> None:

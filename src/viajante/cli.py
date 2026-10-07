@@ -266,6 +266,8 @@ def _parse_iso_date(value: str, label: str) -> date:
 def _build_hotel_queries(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
     check_in = _parse_iso_date(args.check_in, "check-in")
     check_out = _parse_iso_date(args.check_out, "check-out")
+    if check_in < date.today():
+        raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
     if args.compare_cancellation and args.allow_non_refundable:
         raise ValueError("--compare-cancellation cannot be combined with --allow-non-refundable")
     source = getattr(args, "source", "booking")
