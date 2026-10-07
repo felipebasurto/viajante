@@ -78,8 +78,13 @@ def _cached_return_reader(
 
 
 def _response_halts(response: SweepHttpResponse) -> bool:
-    """A provider block: do not retry this batch or start another one."""
-    if response.deadline:
+    """A provider block: do not retry this batch or start another one.
+
+    Status 599 is a transport failure, including pages the client never sent
+    because an earlier request in the same batch raised. Those are replayed
+    once. A 429, 403, or unsent page after a real block is not.
+    """
+    if response.deadline or response.status == SWEEP_TRANSPORT_STATUS:
         return False
     if response.stopped and not response.request_sent:
         return True
@@ -91,11 +96,17 @@ def _response_halts(response: SweepHttpResponse) -> bool:
 
 
 def _response_retriable(response: SweepHttpResponse) -> bool:
-    """Once-retry, matching ``_read_page_retry``: transport failures and HTTP 5xx only."""
-    if response.deadline or response.stopped or not response.request_sent:
+    """Once-retry, matching ``_read_page_retry``: transport failures and HTTP 5xx only.
+
+    A transport failure is retriable even when this page was not sent: the
+    client stopped the rest of the batch after the first one raised.
+    """
+    if response.deadline:
         return False
     if response.status == SWEEP_TRANSPORT_STATUS:
         return True
+    if response.stopped or not response.request_sent:
+        return False
     return response.status >= 500
 
 
@@ -504,7 +515,10 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
         out = list(first)
         for slot, response in zip(retry, retried, strict=True):
-            out[slot] = replace(response, attempts=2) if response.request_sent else response
+            # An unsent sibling's replay is its first send. Only a page that
+            # was sent, failed, and was sent again is attempt 2.
+            already_sent = first[slot].request_sent and response.request_sent
+            out[slot] = replace(response, attempts=2) if already_sent else response
         return out, client
 
     @staticmethod
@@ -519,6 +533,23 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 "attempts": 0,
                 "endpoint": "www.google.com/travel/flights",
                 "cooldown_basis": (halt.diagnostics or {}).get("cooldown_basis"),
+            },
+        )
+
+    @staticmethod
+    def _stopped_after_outbound(halt: GoogleFlightsBlocked) -> GoogleFlightsBlocked:
+        """The outbound page was sent; its return pages were not."""
+        diagnostics = halt.diagnostics or {}
+        return GoogleFlightsBlocked(
+            "Outbound page arrived. Return pages were not sent after a provider block.",
+            status=halt.status,
+            diagnostics={
+                "http_status": halt.status,
+                "rpc_status": diagnostics.get("rpc_status"),
+                "request_sent": True,
+                "attempts": 1,
+                "endpoint": "www.google.com/travel/flights",
+                "cooldown_basis": diagnostics.get("cooldown_basis"),
             },
         )
 
@@ -555,27 +586,38 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             on_day(index, result)
 
     def _fill_round_trip_batch(self, client, trips: Sequence[RoundTrip], results: list, on_day):
-        # ponytail: one outbound get_many, then one get_many per day for that day's
-        # selected returns (at most 8). A 31-day window at 8 streams is
-        # ceil(31/8) + 31 = 35 waves. A day with fewer returns does not share a
-        # wave with the next day. Upgrade: pack later days' returns into a wave
-        # that still has room, and report the day when its own pages are back.
-        pending: list[int] = []
+        # ponytail: chunks of sweep-concurrency days — one outbound get_many, then
+        # one get_many per day for that day's returns (at most 8). A 31-day window
+        # at 8 streams is ceil(31/8) + 31 = 35 waves. A short day does not share a
+        # return wave, and a 429 keeps only chunks that already finished.
+        # Upgrade: pack a short day's returns into a wave that still has room.
+        chunk_size = get_sweep_config().concurrency
         for index, trip in enumerate(trips):
             try:
                 self._validate_capabilities(trip)
             except Exception as exc:
                 results[index] = exc
-            else:
-                pending.append(index)
         halt: GoogleFlightsBlocked | None = None
-        boards: dict[int, tuple[RawFlightCard, ...]] = {}
-        if pending:
-            urls = [self._url(trips[index]) for index in pending]
+        for start in range(0, len(trips), chunk_size):
+            chunk = list(range(start, min(len(trips), start + chunk_size)))
+            if halt is not None:
+                for index in chunk:
+                    if results[index] is None:
+                        results[index] = self._not_sent_block(halt)
+                    if on_day is not None:
+                        on_day(index, results[index])
+                continue
+            boards: dict[int, tuple[RawFlightCard, ...]] = {}
+            outbound = [index for index in chunk if results[index] is None]
+            urls = [self._url(trips[index]) for index in outbound]
             responses, client = self._get_pages(client, urls)
-            for index, url, response in zip(pending, urls, responses, strict=True):
+            for index, url, response in zip(outbound, urls, responses, strict=True):
                 if halt is not None:
-                    results[index] = self._not_sent_block(halt)
+                    results[index] = (
+                        self._stopped_after_outbound(halt)
+                        if response.request_sent
+                        else self._not_sent_block(halt)
+                    )
                     continue
                 try:
                     cards = self._parse_response(response, url, trips[index])
@@ -594,35 +636,41 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     if isinstance(exc, GoogleFlightsBlocked) and exc.status in {None, 403, 429}:
                         halt = exc
             if halt is not None:
-                for index in pending:
+                for index in chunk:
                     if results[index] is None:
-                        results[index] = self._not_sent_block(halt)
-        for index in range(len(trips)):
-            if results[index] is not None:
+                        arrived = index in boards
+                        results[index] = (
+                            self._stopped_after_outbound(halt)
+                            if arrived
+                            else self._not_sent_block(halt)
+                        )
+                    if on_day is not None:
+                        on_day(index, results[index])
+                continue
+            for index in chunk:
+                if results[index] is not None:
+                    if on_day is not None:
+                        on_day(index, results[index])
+                    continue
+                if halt is not None:
+                    results[index] = self._stopped_after_outbound(halt)
+                    if on_day is not None:
+                        on_day(index, results[index])
+                    continue
+                matched = boards[index]
+                slots, day_halt, client = self._return_slots(client, trips[index], matched)
+                try:
+                    results[index] = self._round_trip_packages(
+                        trips[index], matched, _cached_return_reader(slots)
+                    )
+                except SearchDeadline as exc:
+                    results[index] = exc
+                except Exception as exc:
+                    results[index] = exc
                 if on_day is not None:
                     on_day(index, results[index])
-                continue
-            if halt is not None:
-                results[index] = self._not_sent_block(halt)
-                if on_day is not None:
-                    on_day(index, results[index])
-                continue
-            matched = boards.get(index)
-            if matched is None:
-                continue
-            slots, day_halt, client = self._return_slots(client, trips[index], matched)
-            try:
-                results[index] = self._round_trip_packages(
-                    trips[index], matched, _cached_return_reader(slots)
-                )
-            except SearchDeadline as exc:
-                results[index] = exc
-            except Exception as exc:
-                results[index] = exc
-            if on_day is not None:
-                on_day(index, results[index])
-            if day_halt is not None:
-                halt = day_halt
+                if day_halt is not None:
+                    halt = day_halt
 
     def _return_slots(self, client, trip: RoundTrip, matched: Sequence[RawFlightCard]):
         slots: list = []

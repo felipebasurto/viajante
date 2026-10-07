@@ -126,7 +126,8 @@ class ProgressRelay:
     value by a small step, so the value only ever increases and never passes the total
     (a line that cannot advance within the total is dropped). A per-day sweep sends
     ``[i/n]`` after that day finishes, not for a day the deadline cut. A round-trip date
-    window batches its page reads and still sends ``[i/n]`` only after that day finishes;
+    window reads groups of at most the sweep concurrency (that group's outbound boards,
+    then those days' return pages) and still sends ``[i/n]`` only after that day finishes;
     other searches send it as the query starts. At most
     one notification per interval; the newest held line is flushed when the interval ends
     and when the search finishes. A notification that cannot be sent never breaks the search.

@@ -95,10 +95,11 @@ unknown, never "no results". The error carries no retry_after. A partial result 
 cached; ask again with a larger deadline_seconds or none.
 In search_explore, `not_loaded` under a deadline means the prices weren't loaded,
 even if destinations are listed.
-Long round-trip date sweeps (search_dates or search_flex with a stay) read every
-day's outbound board together, then that day's return pages, at the sweep
-concurrency (at most eight per day). A day is reported only after it finishes;
-a day the deadline cut is not. Pass deadline_seconds on those calls so finished
+Long round-trip date sweeps (search_dates or search_flex with a stay) read the
+window in groups of at most the sweep concurrency: that group's outbound
+boards, then those days' return pages (at most eight per day), then the next
+group. A day is reported only after it finishes; a day the deadline cut is not.
+Pass deadline_seconds on those calls so finished
 days come back early
 instead of waiting out the whole window. Unfinished days carry error code deadline
 and empty_reason not_loaded; finished days keep the prices that arrived.
@@ -171,9 +172,10 @@ the standard eight. get_runtime_info reports the active mode and concurrency.
 RPC status 13 has an unknown cause; it alone does not establish throttling or an IP
 block. A 429 or status 13 stops unsent work and is not replayed or switched to detail.
 A round-trip date or flex window reads its pages in bounded batches at that same
-sweep concurrency: every day's outbound board, then each day's selected return
-pages (still at most eight). A day is reported only after it finishes. A 429
-stops the unsent pages and does not start the next day's batch.
+sweep concurrency, in groups of at most that many days: the group's outbound
+boards, then those days' selected return pages (still at most eight), then the
+next group. A day is reported only after it finishes. A 429 stops the unsent
+pages and does not start another group's batch.
 Error diagnostics distinguish real HTTP status from RPC status and unsent requests;
 cooldown_basis distinguishes provider Retry-After from a heuristic pause.
 
