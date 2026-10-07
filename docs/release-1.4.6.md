@@ -89,7 +89,7 @@ outside this flight transport change.
 
 ## Validation and release handoff
 
-The full offline test suite passed (1,725 tests, 2 skipped). Live checks ran
+The pre-review candidate passed the offline suite (1,725 tests, 2 skipped). Live checks ran
 serially through the real stdio MCP server in conservative mode, at least 45
 seconds apart, with no provider block or cooldown recorded:
 
@@ -112,14 +112,41 @@ The first domestic United States checks failed closed as `markup_drift`
 because the page labelled the cabin `Economy (include Basic)`; that label is
 now accepted for economy, and `Economy (exclude Basic)` is not.
 
-The offline bench reports `gate: ok`; Ruff lint and formatting pass. Wheel and
-sdist builds passed. The installed wheel reports 1.4.6 and passes the stdio smoke
+The offline bench reports `gate: ok`; Ruff lint and formatting pass. Pre-review
+wheel and sdist builds passed. The installed wheel reports 1.4.6 and passes the stdio smoke
 with the declared minimum MCP SDK 1.14.1 (22 tools). Its page decoder and
 currency/party/cabin/selected-outbound checks also passed against the private
 archived provider pages. The npm tarball contains only its three intended files;
 an installed tarball passed CLI version and stdio checks through a private bridge
 to the installed candidate wheel. This checks the shim and pin, not public PyPI
 resolution of the unpublished candidate.
+
+## PR review corrections
+
+The reviewed candidate's eight findings are corrected:
+
+- Explore keeps the real HTTP status, endpoint and numeric `Retry-After`, stops
+  on HTTP 429 or RPC status 13, and records cooldowns only for direct responses.
+  A blocked proxied search also stops its remaining jobs without a global cooldown.
+- RPC failure scanning checks every row and chunk; status 13 takes precedence
+  over another error or a usable data row.
+- Explore checks cancellation and deadlines between browser waits and before
+  recording a cooldown. An expired search remains `not_loaded`, never provider-empty.
+- Airline matching uses exact owned codes, including returned codeshares. Name
+  aliases are a fallback only when codes are absent, with word boundaries.
+- Multi-city reselection requires a unique owned segment identity and departure
+  clock and uses the current selected row's evidence. The final amount still
+  comes from the provider's last board, never a sum of journey prices.
+- An empty flight page must still echo a requested alliance in its catalog.
+- Runtime carrier, multi-city and Explore capability flags remain booleans;
+  `exclude_alliances`, `multi_city_fetch` and `explore_catalog_scope` add limits.
+- The contradictory public-filter refusal paragraph in `AGENTS.md` is updated.
+
+After these corrections the offline suite passes (1,741 tests, 2 skipped),
+including 16 new regression tests. Ruff lint/format and the offline bench pass.
+These corrections made no new live provider requests; the live and installed
+artifact checks above describe the pre-review candidate. Multi-city remains
+unverified live.
 
 Supported-Python PR CI and public registry verification remain separate release
 gates. Review the final diff and PR before merge. No tag or publication has been

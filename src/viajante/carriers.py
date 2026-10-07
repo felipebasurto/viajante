@@ -159,12 +159,11 @@ def _normalize_airline(airline_text: Optional[str]) -> str:
 def _airline_filter_hit(raw: Any, token: str) -> bool:
     needle = token.strip().upper()
     codes = {code.upper() for code in (raw.airline_codes or ())}
-    if needle in codes:
-        return True
+    if codes:
+        return needle in codes
     name = _normalize_airline(raw.airline)
-    if needle.casefold() in name:
-        return True
-    return any(alias in name for alias in AIRLINE_CODE_ALIASES.get(needle, ()))
+    names = (needle.casefold(), *AIRLINE_CODE_ALIASES.get(needle, ()))
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", name) for alias in names)
 
 
 def _passes_airline_filters(

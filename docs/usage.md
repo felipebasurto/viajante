@@ -80,6 +80,9 @@ page request, and every page read must echo it (the `Bags` or `Airlines`
 filter chip, and for alliances the airline catalog) or the read fails as
 `markup_drift`. Google registers an airline exclusion without applying it, so
 Viajante also drops cards that show an excluded airline or no carrier at all.
+Owned airline codes, including returned codeshare marketing codes, match
+exactly. When codes are absent, standalone code tokens and known name aliases
+are the fallback; fragments of another airline's name never establish a match.
 Excluded airlines' codeshare rows disappear from the page, and operating-carrier
 evidence on a card is limited, so an exclusion is not proof about who operates
 each segment. Checked bags, a zero carry-on, and alliance exclusion are refused

@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -3092,22 +3093,18 @@ class MultiCityDetailTests(unittest.TestCase):
 
     def test_multi_row_index_matches_owned_identity(self) -> None:
         from viajante.google_flights import _multi_row_index
-        from viajante.google_flights_rpc import RawFlightCard
 
-        board = [
-            (
-                0,
-                RawFlightCard(None, "10:15 AM", None, None, None, "£1", flight_numbers=("AA103",)),
-            ),
-            (
-                2,
-                RawFlightCard(None, "4:40 PM", None, None, None, "£2", flight_numbers=("BA113",)),
-            ),
-        ]
-        self.assertEqual(_multi_row_index(board, board[1][1]), 2)
-        different_clock = RawFlightCard(
-            None, "5:40 PM", None, None, None, "£3", flight_numbers=("BA113",)
+        cards = parse_flight_cards(
+            _multi_board_html(
+                [
+                    ("LHR", "JFK", "AA", "103", "20261110", "10:15 AM", "£1"),
+                    ("LHR", "JFK", "BA", "113", "20261110", "4:40 PM", "£2"),
+                ]
+            )
         )
+        board = [(0, cards[0]), (2, cards[1])]
+        self.assertEqual(_multi_row_index(board, board[1][1]), 2)
+        different_clock = replace(cards[1], departure="5:40 PM")
         with self.assertRaises(GoogleFlightsMarkupError):
             _multi_row_index(board, different_clock)
 

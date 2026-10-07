@@ -496,7 +496,8 @@ def wrb_data_strings(text: str) -> tuple[str, ...]:
 
 def _wrb_error_status(obj: object) -> Optional[int]:
     if isinstance(obj, list) and obj and isinstance(obj[0], list):
-        obj = obj[0]
+        statuses = [_wrb_error_status(row) for row in obj]
+        return 13 if 13 in statuses else next((s for s in statuses if s is not None), None)
     if not (isinstance(obj, list) and len(obj) >= 6 and obj[0] == "wrb.fr" and obj[2] is None):
         return None
     status = obj[5]
@@ -509,7 +510,7 @@ def rpc_error_status(text: str) -> Optional[int]:
     """Status code of a data-less wrb.fr error envelope (e.g. 13), else None."""
     if not text.lstrip().startswith(_ANTI_XSSI) or _is_shopping_rejected(text):
         return None
-    return first_wrb_data(text, _wrb_error_status)
+    return raw_rpc_error_status(text)
 
 
 def raw_rpc_error_status(text: str) -> Optional[int]:
@@ -520,7 +521,8 @@ def raw_rpc_error_status(text: str) -> Optional[int]:
     """
     if not text.lstrip().startswith(_ANTI_XSSI):
         return None
-    return first_wrb_data(text, _wrb_error_status)
+    statuses = [_wrb_error_status(obj) for obj in _wrb_chunk_objects(text)]
+    return 13 if 13 in statuses else next((s for s in statuses if s is not None), None)
 
 
 def _has_itinerary_slots(data: list[Any]) -> bool:

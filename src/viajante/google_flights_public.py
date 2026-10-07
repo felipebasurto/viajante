@@ -29,9 +29,11 @@ from viajante.google_flights import (
     NoFlightsFound,
     SweepHttpResponse,
     SweepTransportError,
+    _retry_after_seconds,
     build_search_params,
     looks_blocked,
     raise_for_sweep_response,
+    response_diagnostics,
 )
 from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
 from viajante.google_flights_rpc import (
@@ -148,7 +150,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             params["tfs"] = encode_tfs_selected_outbound(trip, outbound)
         return SEARCH_URL + "?" + urlencode(params)
 
-    def _ensure_client(self):
+    def _check_stopped(self, endpoint: str) -> None:
         if self._stopped_error is not None:
             error = self._stopped_error
             raise GoogleFlightsBlocked(
@@ -159,10 +161,13 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     "rpc_status": None,
                     "request_sent": False,
                     "attempts": 0,
-                    "endpoint": "www.google.com/travel/flights",
+                    "endpoint": endpoint,
                     "cooldown_basis": (error.diagnostics or {}).get("cooldown_basis"),
                 },
             )
+
+    def _ensure_client(self):
+        self._check_stopped("www.google.com/travel/flights")
         return super()._ensure_client()
 
     def _parse_response(
@@ -179,6 +184,8 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         try:
             cards = parse_shopping_page(response.text, currency=self._currency)
         except EmptyShoppingResults as exc:
+            if trip is not None:
+                self._verify_carrier_filters(response.text, (), trip)
             raise NoFlightsFound() from exc
         except CompactParseMiss as exc:
             # Missing bootstrap data cannot prove the provider returned no flights.
@@ -570,6 +577,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         if self._country:
             params["gl"] = self._country
         pairs = self._explore_page(f"{EXPLORE_URL}?{urlencode(params)}")
+        checkpoint()
         for _post, body in pairs:
             self._raise_explore_failure(body)
         accepted = frozenset({origin, *same_city_iata(origin)})
@@ -612,37 +620,70 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
 
     def _explore_page(self, url: str) -> list[tuple[object, str]]:
         """Load the Explore page in Chromium; return its catalog request/response pairs."""
+        checkpoint()
+        self._check_stopped("www.google.com/travel/explore")
         state = rate_limit_status()
         if state is not None:
             raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
         page = self._explore_session().new_page()
-        captured: list[tuple[object, str]] = []
+        captured: list[tuple[object, SweepHttpResponse, float | None]] = []
 
         def _capture(response) -> None:
             if _EXPLORE_CATALOG_SERVICE not in response.url:
                 return
             try:
                 body = response.text()
+            except SearchDeadline:
+                raise
             except Exception:
                 body = ""
             post = None
             try:
                 post = response.request.post_data
+            except SearchDeadline:
+                raise
             except Exception:
                 post = None
-            captured.append((post, body))
+            captured.append(
+                (
+                    post,
+                    SweepHttpResponse(response.status, body, response.url),
+                    _retry_after_seconds(response),
+                )
+            )
 
         page.on("response", _capture)
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            navigation = page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            checkpoint()
+            if navigation is not None and navigation.status >= 400:
+                self._raise_explore_failure(
+                    navigation.text(),
+                    response=SweepHttpResponse(navigation.status, "", navigation.url),
+                    retry_after_seconds=_retry_after_seconds(navigation),
+                )
             if "consent.google" in page.url:
                 self._dismiss_consent(page)
             if looks_blocked("", page.url):
                 raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
             deadline = time.monotonic() + _EXPLORE_CATALOG_WAIT_MS / 1000
             while not captured and time.monotonic() < deadline:
+                checkpoint()
                 page.wait_for_timeout(250)
-            page.wait_for_timeout(CONSENT_SETTLE_MS)
+            checkpoint()
+            for _post, response, retry_after in captured:
+                self._raise_explore_failure(
+                    response.text, response=response, retry_after_seconds=retry_after
+                )
+            # Keep Playwright pumping response events while checking control between sleeps.
+            for elapsed in range(0, CONSENT_SETTLE_MS, 250):
+                checkpoint()
+                page.wait_for_timeout(min(250, CONSENT_SETTLE_MS - elapsed))
+                checkpoint()
+                for _post, response, retry_after in captured:
+                    self._raise_explore_failure(
+                        response.text, response=response, retry_after_seconds=retry_after
+                    )
         finally:
             with contextlib.suppress(Exception):
                 page.close()
@@ -651,7 +692,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 "Google Explore issued no catalog request before the wait expired.",
                 timeout=True,
             )
-        return captured
+        return [(post, response.text) for post, response, _retry_after in captured]
 
     def _explore_session(self):
         if self._explore_browser is None:
@@ -677,26 +718,46 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
 
         GoogleFlightsSource._dismiss_consent(page)
 
-    def _raise_explore_failure(self, body: str) -> None:
-        if raw_rpc_error_status(body) == RPC_THROTTLE_STATUS:
-            reason = f"Google Explore catalog returned RPC status {RPC_THROTTLE_STATUS}."
+    def _raise_explore_failure(
+        self,
+        body: str,
+        *,
+        response: SweepHttpResponse | None = None,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        checkpoint()
+        response = (
+            replace(response, text=body)
+            if response is not None
+            else SweepHttpResponse(200, body, EXPLORE_URL)
+        )
+        rpc_status = raw_rpc_error_status(body)
+        if response.status == 429 or rpc_status == RPC_THROTTLE_STATUS:
+            cause = "HTTP 429" if response.status == 429 else f"RPC status {RPC_THROTTLE_STATUS}"
+            reason = f"Google Explore catalog returned {cause}."
             basis = None
             if self._proxy is None:
-                state = note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
-                reason = rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}")
+                checkpoint()
+                state = (
+                    note_rate_limited(retry_after_seconds)
+                    if response.status == 429
+                    else note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+                )
+                reason = rate_limit_advice(state, reason=cause)
                 basis = state.get("basis", "unknown")
-            raise GoogleFlightsBlocked(
+            self._stopped_error = GoogleFlightsBlocked(
                 reason,
                 status=429,
-                diagnostics={
-                    "http_status": 200,
-                    "rpc_status": RPC_THROTTLE_STATUS,
-                    "request_sent": True,
-                    "attempts": 1,
-                    "endpoint": "www.google.com/travel/explore",
-                    "cooldown_basis": basis,
-                },
+                diagnostics=response_diagnostics(
+                    replace(response, cooldown_basis=basis), response.url
+                ),
             )
+            raise self._stopped_error
+        try:
+            raise_for_sweep_response(response, response.url)
+        except GoogleFlightsBlocked as exc:
+            self._stopped_error = exc
+            raise
         if "travel.frontend.flights.ErrorResponse" in body:
             raise GoogleFlightsRejected(
                 "Google Explore rejected the catalog request without an owned cause."

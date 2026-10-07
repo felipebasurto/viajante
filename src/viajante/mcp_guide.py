@@ -332,7 +332,9 @@ public-page transport sends a positive carry_on (a party total, not per
 passenger) and airline, exclude-airline and alliance filters, and every page
 must echo each one or the read fails. Google registers an airline exclusion
 without applying it, so viajante drops excluded or carrier-unknown cards
-itself. It refuses named checked bags, carry_on 0, exclude_alliances,
+itself. Owned carrier codes match exactly (returned codeshares count); name
+aliases are a fallback only when codes are absent. It refuses named checked
+bags, carry_on 0, exclude_alliances,
 and multi-city (use fetch=detail) before network work. search_explore needs the
 browser extra and accepts only one adult in economy. Detail
 refuses every bag and carrier filter because it reads no page echo. Offer bag

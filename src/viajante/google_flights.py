@@ -51,7 +51,7 @@ from viajante.models import (
     RawSegment,
     Trip,
 )
-from viajante.parsers import parse_price
+from viajante.parsers import normalize_clock, parse_price
 from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tests
     NOT_SENT,
     RATE_LIMIT_COOLDOWN_SECONDS,
@@ -1001,13 +1001,38 @@ def parse_http_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     return parse_flight_cards(extract_main_html(html))
 
 
+def _multi_identity(card: RawFlightCard) -> tuple[object, ...]:
+    """Owned segment routes/numbers/dates and the board's departure clock."""
+    departure = normalize_clock(card.departure)
+    if departure is None or len(card.legs) != 1 or not card.legs[0].segments:
+        raise GoogleFlightsMarkupError("The selected journey has an incomplete identity.")
+    segments = card.legs[0].segments
+    identity = tuple(
+        (s.origin, s.destination, s.departure_date, s.carrier, s.flight_number) for s in segments
+    )
+    if any(value is None or value == "" for row in identity for value in row):
+        raise GoogleFlightsMarkupError("The selected journey has an incomplete identity.")
+    return departure, identity
+
+
 def _multi_row_index(board: Sequence[tuple[int, RawFlightCard]], wanted: RawFlightCard) -> int:
-    """DOM index of the board row matching ``wanted`` by owned identity."""
-    numbers = wanted.flight_numbers or ()
+    """DOM index of the unique board row matching the complete owned identity."""
+    identity = _multi_identity(wanted)
+    matches = []
     for index, card in board:
-        if (card.flight_numbers or ()) == numbers and card.departure == wanted.departure:
-            return index
-    raise GoogleFlightsMarkupError("The selected journey no longer appears on the reloaded board.")
+        try:
+            same = _multi_identity(card) == identity
+        except GoogleFlightsMarkupError:
+            continue
+        if same:
+            matches.append(index)
+    if len(matches) > 1:
+        raise GoogleFlightsMarkupError("The selected journey is ambiguous on the reloaded board.")
+    if not matches:
+        raise GoogleFlightsMarkupError(
+            "The selected journey no longer appears on the reloaded board."
+        )
+    return matches[0]
 
 
 def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
@@ -1564,7 +1589,8 @@ class GoogleFlightsSource:
                     # identity; row order is not guaranteed across reloads.
                     board = self._multi_board(page, trip.legs[0])
                     dom_index = _multi_row_index(board, leader)
-                    path = [leader.legs[0]]
+                    selected_leader = next(card for row, card in board if row == dom_index)
+                    path = [selected_leader.legs[0]]
                     self._multi_click(page, dom_index)
                     for leg in trip.legs[1:-1]:
                         checkpoint()
@@ -1590,7 +1616,7 @@ class GoogleFlightsSource:
                         selected = tuple(path) + (last.legs[0],)
                         complete.append(
                             replace(
-                                leader,
+                                selected_leader,
                                 price=last.price,
                                 booking_token=last.booking_token,
                                 legs=selected,
@@ -1670,6 +1696,8 @@ class GoogleFlightsSource:
                 arg=prev_sig,
                 timeout=PAGE_TIMEOUT_MS,
             )
+        except SearchDeadline:
+            raise
         except Exception as exc:
             raise GoogleFlightsMarkupError(
                 "The clicked board did not advance to the next journey."

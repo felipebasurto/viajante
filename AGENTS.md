@@ -352,8 +352,10 @@ not apply an exclusion, so the loop drops excluded and carrier-unknown cards.
   English IATA and English fetch locale.
 - Occupancy and cabin are query fields. Retained RPC shopping constraints index 6
   is `[adults, children, infants_in_seat, infants_on_lap]`. The default public
-  page cannot prove named bags, carry-on, airline, or alliance filters, so it
-  must reject those requests before sending them; never silently drop a filter.
+  page verifies positive carry-on, airline include/exclude, and alliance include
+  through the page echo. Checked bags, carry_on 0, and alliance exclusion remain
+  refused before sending; detail refuses every bag and carrier filter.
+  Never silently drop a filter.
   A non-zero buffer implies `needs_bag_verify` while bag counts are unknown.
   Never invent a bag fee or bag count. Callers must verify baggage on Google
   Flights before booking.
