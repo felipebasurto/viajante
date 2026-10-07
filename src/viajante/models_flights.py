@@ -113,6 +113,8 @@ class FlightQuery:
     def __post_init__(self) -> None:
         origin = _normalize_iata(self.origin, role="origin")
         destination = _normalize_iata(self.destination, role="destination")
+        if origin == destination:
+            raise ValueError("origin and destination must differ")
         if self.max_stops not in (0, 1, 2):
             raise ValueError("max_stops must be 0, 1, or 2")
         _require_shop_fields(self)

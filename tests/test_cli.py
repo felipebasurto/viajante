@@ -447,6 +447,15 @@ class CliTests(unittest.TestCase):
             self.assertIn("error:", err.getvalue())
             search.assert_not_called()
 
+    def test_hidden_city_rejects_same_airport_pair_before_search(self) -> None:
+        with patch("viajante.cli.search_hidden_city") as search:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = main(["hidden-city", f"AAA-AAA:{FUTURE_DATE.isoformat()}"])
+            self.assertEqual(code, 1)
+            self.assertIn("must differ", err.getvalue())
+            search.assert_not_called()
+
 
 class ReportRenderingTests(unittest.TestCase):
     def test_missing_fields_never_render_as_none(self) -> None:

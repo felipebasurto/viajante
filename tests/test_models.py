@@ -57,6 +57,8 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             FlightQuery("JFK", "LHR", date(2026, 9, 1), cabin="space")  # type: ignore[arg-type]
         with self.assertRaises(ValueError):
+            FlightQuery("JFK", "JFK", date(2026, 9, 1))
+        with self.assertRaises(ValueError):
             FlightQuery("XXX", "LHR", date(2026, 9, 1))
         with self.assertRaises(ValueError):
             FlightQuery("JFK", "XXX", date(2026, 9, 1))
