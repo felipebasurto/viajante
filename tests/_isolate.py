@@ -14,6 +14,7 @@ import tempfile
 _MARK = "viajante-tests-"
 
 os.environ.pop("VIAJANTE_PRICE_HISTORY", None)
+os.environ.pop("VIAJANTE_SWEEP_MODE", None)
 if _MARK not in os.environ.get("VIAJANTE_STATE_DIR", ""):
     _STATE = tempfile.mkdtemp(prefix=_MARK)
     os.environ["VIAJANTE_STATE_DIR"] = _STATE

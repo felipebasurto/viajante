@@ -10,6 +10,7 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 from viajante.airports import get_airport
 from viajante.flights import (
+    NO_OFFER_FILTERS,
     _needs_detail_fallback,
     _normalize_offer,
     _overnight_from_owned_clocks,
@@ -25,6 +26,7 @@ from viajante.flights import (
     keep_included_dest_trips,
     nearby_notes,
     normalize_trip_kind,
+    offers_from_cards,
     parse_depart_window,
     parse_flight_plan,
     parse_named_clock,
@@ -1024,7 +1026,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
     def test_search_closes_source(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource({("JFK", "LHR", "2026-09-01", 1): (card(airline="Air One"),)})
-        with patch("viajante.flights.GoogleFlightsSource", return_value=source):
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
             search_flights((query,), top=1)
         self.assertTrue(source.closed)
 
@@ -1141,7 +1143,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsInstance(report.queries[0], QueryFailure)
         self.assertEqual(report.queries[0].error.code, SearchErrorCode.BLOCKED)
         self.assertIn("short unknown shell", report.queries[0].error.message)
-        self.assertTrue(any("Detail is optional" in line for line in lines))
+        self.assertFalse(any("falling back to detail" in line for line in lines))
 
     def test_priced_return_leg_attaches_only_a_unique_match(self) -> None:
         trip = RoundTrip("JFK", "LHR", date(2026, 12, 3), date(2026, 12, 9))
@@ -1345,9 +1347,9 @@ class FlightsOrchestrationTests(unittest.TestCase):
 
 
 class FetchModeTests(unittest.TestCase):
-    def test_auto_is_detail_for_one_or_two_queries(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 1), "detail")
-        self.assertEqual(resolve_fetch_mode("auto", 2), "detail")
+    def test_auto_is_public_sweep_for_one_or_two_queries(self) -> None:
+        self.assertEqual(resolve_fetch_mode("auto", 1), "sweep")
+        self.assertEqual(resolve_fetch_mode("auto", 2), "sweep")
         self.assertEqual(resolve_fetch_mode("auto", 1, packaged=True), "sweep")
         self.assertEqual(resolve_fetch_mode("detail", 1, packaged=True), "detail")
 
@@ -1519,6 +1521,31 @@ class OfferFilterTests(unittest.TestCase):
         iberia = card(airline="Iberia", airline_codes=("IB",), price="100 €")
         self.assertIsNone(_normalize_offer(air_europa, 1, exclude_airlines=("UX",)))
         self.assertIsNotNone(_normalize_offer(iberia, 1, exclude_airlines=("UX",)))
+
+    def test_exclude_airlines_drops_a_card_without_carrier_evidence(self) -> None:
+        silent = card(airline="", airline_codes=(), price="90 €")
+        self.assertIsNone(_normalize_offer(silent, 1, exclude_airlines=("UX",)))
+        self.assertIsNotNone(_normalize_offer(silent, 1))
+
+    def test_exclude_wins_over_include_on_same_carrier(self) -> None:
+        mixed = card(airline="American", airline_codes=("AA", "BA"), price="100 €")
+        self.assertIsNone(_normalize_offer(mixed, 1, airlines=("AA",), exclude_airlines=("BA",)))
+
+    def test_codeshare_codes_satisfy_include_and_exclude(self) -> None:
+        codeshared = card(airline="American", airline_codes=("AA", "BA"), price="100 €")
+        other = card(airline="Delta", airline_codes=("DL",), price="100 €")
+        self.assertIsNotNone(_normalize_offer(codeshared, 1, airlines=("BA",)))
+        self.assertIsNone(_normalize_offer(codeshared, 1, exclude_airlines=("BA",)))
+        self.assertIsNotNone(_normalize_offer(other, 1, exclude_airlines=("BA",)))
+
+    def test_alliance_include_keeps_member_cards_locally(self) -> None:
+        # An alliance include qualifies cards through member marketing carriers
+        # we cannot enumerate; the local airline-only check must not drop them.
+        lufthansa = card(airline="Lufthansa", airline_codes=("LH",), price="100 €")
+        union = FlightQuery("JFK", "LHR", date(2026, 9, 1), airlines=("BA",), alliances=("star",))
+        self.assertEqual(len(offers_from_cards([lufthansa], union, NO_OFFER_FILTERS)), 1)
+        airline_only = FlightQuery("JFK", "LHR", date(2026, 9, 1), airlines=("BA",))
+        self.assertEqual(offers_from_cards([lufthansa], airline_only, NO_OFFER_FILTERS), [])
 
     def test_depart_window_keeps_local_hours(self) -> None:
         early = card(departure="06:45", price="80 €")

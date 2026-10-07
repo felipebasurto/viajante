@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-10-07
+
+See the [release record](docs/release-1.4.6.md) for transport behavior,
+compatibility changes, validation, and publication verification.
+
+### Changed
+
+- Flight `auto` and `sweep` read Google's public results page. `auto` no longer
+  selects Playwright based on query count or installation. Browser detail is
+  explicit; a public-page failure does not fall back to detail.
+- Packaged round trips inspect at most eight outbound candidates on selected
+  return pages and retain the provider's package total. Dates/flex use public
+  page GETs for their explicit windows; ordinary flight searches do not launch
+  a hidden 31-day typical lookup.
+
+### Added
+
+- `VIAJANTE_SWEEP_MODE=standard|conservative` controls public GET concurrency
+  (8 or 2); invalid values fail before provider access.
+- Provider-block diagnostics expose endpoint host and path, HTTP/RPC status, sent state,
+  attempt count, and cooldown basis. Status 13 alone does not identify its cause.
+
+- Public-page sweep sends `--carry-on` (one bag for the whole party),
+  `--airlines`, `--exclude-airlines`, and `--alliance`, and fails the page read
+  unless the page echoes each filter. Airline exclusion is also enforced
+  locally because Google does not apply it; cards with no carrier evidence are
+  dropped under an exclusion.
+- `--trip multi --fetch detail` searches multi-city packages in the browser.
+  Not yet verified against the live provider.
+- `explore` reads destinations from the catalog request Google's public Explore
+  page issues in Chromium, checking its origin and date echo.
+- Provider-block diagnostics distinguish queued requests from dispatched ones.
+
+### Fixed
+
+- Explore preserves HTTP 429 and `Retry-After`, detects status 13 in every RPC
+  row/chunk, and stops pending searches after a block, including proxied calls.
+- Explore checks cancellation and deadlines during browser waits; cancelled
+  responses do not write cooldowns, and a deadline never becomes provider-empty.
+- Airline filters match owned codes exactly, including returned codeshares;
+  name aliases are a fallback only when codes are absent, with word boundaries.
+- Multi-city reselection rejects ambiguous or incomplete identities and uses
+  the current selected row's evidence with the provider's final package total.
+- Empty flight pages still require the requested alliance's catalog echo.
+- Runtime capability flags retain boolean types, with additive transport and
+  scope limits. Agent guidance matches the supported public-page filters.
+
+### Known limitations
+
+- Public-page sweep refuses checked bags, a zero carry-on, alliance exclusion,
+  and multi-city before networking. Browser detail refuses every bag and
+  carrier filter. Airline exclusion cannot prove the operating carrier of each
+  segment. Explore needs Chromium, accepts only one adult in economy, and its
+  catalog request often returned status 13 during validation. Round-trip results are scope-bound to at most eight outbound
+  candidates. See the release record for validation boundaries.
+
 ## [1.4.5] - 2026-10-07
 
 See the [release record](docs/release-1.4.5.md) for the complete integrated PR
@@ -216,7 +272,9 @@ inventory, compatibility changes, candidate validation and publication handoff.
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.3.1...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.4.6...develop
+[1.4.6]: https://github.com/felipebasurto/viajante/compare/v1.4.5...v1.4.6
+[1.4.5]: https://github.com/felipebasurto/viajante/compare/v1.4.1...v1.4.5
 [1.3.1]: https://github.com/felipebasurto/viajante/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/felipebasurto/viajante/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/felipebasurto/viajante/compare/v1.2.0...v1.2.1

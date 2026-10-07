@@ -1096,7 +1096,10 @@ class McpServerImportTests(unittest.TestCase):
         self.assertIn("search_dates is the cheapest week", server.instructions)
         self.assertIn("viajante://guide", server.instructions)
         self.assertIn("viajante://guide", server.resources)
-        self.assertIn("search_dates is HTTP-calendar only", server.resources["viajante://guide"]())
+        self.assertIn(
+            "search_dates uses bounded per-day public-page GETs",
+            server.resources["viajante://guide"](),
+        )
         self.assertEqual(
             server.tools,
             [

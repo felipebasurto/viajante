@@ -14,7 +14,7 @@ from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, 
 
 from viajante.airports import get_airport, is_known_iata, metro_members, metro_of, same_city_iata
 from viajante.browser import chromium_installed, playwright_available
-from viajante.carriers import AIRLINE_CODE_ALIASES
+from viajante.carriers import _normalize_airline, _passes_airline_filters
 from viajante.control import (
     SearchDeadline,
     checkpoint,
@@ -25,7 +25,6 @@ from viajante.control import (
 )
 from viajante.google_flights import (
     GoogleFlightsBlocked,
-    GoogleFlightsHttpSource,
     GoogleFlightsMarkupError,
     GoogleFlightsRejected,
     GoogleFlightsSource,
@@ -33,6 +32,12 @@ from viajante.google_flights import (
     RawFlightCard,
     SweepTransportError,
     google_flights_url,
+)
+from viajante.google_flights_public import (
+    GoogleFlightsUnsupported,
+)
+from viajante.google_flights_public import (
+    PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource,
 )
 from viajante.history import recorded_flights
 from viajante.models import (
@@ -175,10 +180,7 @@ def resolve_fetch_mode(
     packaged: bool = False,
 ) -> Literal["sweep", "detail"]:
     if fetch == "auto":
-        # Only sweep can shop the next packaged leg; detail leaves the return unknown.
-        if not browser_available or packaged or query_count >= SWEEP_BATCH_THRESHOLD:
-            return "sweep"
-        return "detail"
+        return "sweep"
     if fetch in ("sweep", "detail"):
         return fetch
     raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
@@ -192,7 +194,7 @@ def _needs_detail_fallback(result: QueryResult) -> bool:
     if result.error.code == SearchErrorCode.NO_RESULTS:
         return True
     if result.error.code == SearchErrorCode.BLOCKED:
-        return True
+        return False
     if result.error.code == SearchErrorCode.FETCH_FAILED:
         return True
     return False
@@ -203,6 +205,19 @@ def classify_failure(exc: BaseException) -> SearchError:
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
             message=NO_RESULTS_MESSAGE,
+        )
+    if isinstance(exc, GoogleFlightsUnsupported):
+        return SearchError(
+            code=SearchErrorCode.REJECTED,
+            message=str(exc),
+            diagnostics={
+                "request_sent": False,
+                "attempts": 0,
+                "http_status": None,
+                "rpc_status": None,
+                "endpoint": "www.google.com/travel/flights",
+                "cooldown_basis": None,
+            },
         )
     if isinstance(exc, GoogleFlightsRejected):
         return SearchError(
@@ -215,6 +230,7 @@ def classify_failure(exc: BaseException) -> SearchError:
             message=str(exc) or "Google Flights blocked the request.",
             rate_limited=exc.status == 429,
             retry_until=cooldown_until(str(exc)) if exc.status == 429 else None,
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsMarkupError):
         return SearchError(
@@ -654,13 +670,6 @@ def _parse_multi_city_plan(specs: Sequence[str], *, max_stops: int, **shop: Any)
             FlightLeg(origin, destination, date.fromisoformat(dates_part), max_stops=max_stops)
         )
     return MultiCity(tuple(legs), **shop)
-
-
-_AIRLINE_STRIP = re.compile(r"[^a-z0-9 ]+")
-
-
-def _normalize_airline(airline_text: Optional[str]) -> str:
-    return _AIRLINE_STRIP.sub("", (airline_text or "").casefold())
 
 
 _LOW_COST_PATTERN = re.compile(
@@ -1204,30 +1213,6 @@ def _overlay_carrier_filters(
     return tuple(replace(trip, **overlay) for trip in trips)
 
 
-def _airline_filter_hit(raw: RawFlightCard, token: str) -> bool:
-    needle = token.strip().upper()
-    codes = {code.upper() for code in (raw.airline_codes or ())}
-    if needle in codes:
-        return True
-    name = _normalize_airline(raw.airline)
-    if needle.casefold() in name:
-        return True
-    return any(alias in name for alias in AIRLINE_CODE_ALIASES.get(needle, ()))
-
-
-def _passes_airline_filters(
-    raw: RawFlightCard,
-    *,
-    airlines: Optional[Sequence[str]],
-    exclude_airlines: Optional[Sequence[str]],
-) -> bool:
-    if airlines and not any(_airline_filter_hit(raw, token) for token in airlines):
-        return False
-    if exclude_airlines and any(_airline_filter_hit(raw, token) for token in exclude_airlines):
-        return False
-    return True
-
-
 def owned_clock(text: Optional[str]) -> Optional[str]:
     return text if _clock_minutes(text) is not None else None
 
@@ -1414,6 +1399,9 @@ def offers_from_cards(
     """Owned offers that pass the trip's shop fields and the named post-filters."""
     max_stops = _trip_max_stops(trip)
     named = vars(filters)
+    # With alliances on the request the provider applied a unioned include;
+    # a card may qualify through an alliance member we cannot verify locally.
+    airlines = trip.airlines if not trip.alliances else None
     return [
         offer
         for raw in cards
@@ -1422,7 +1410,7 @@ def offers_from_cards(
                 raw,
                 max_stops,
                 baggage_buffer=baggage_buffer,
-                airlines=trip.airlines,
+                airlines=airlines,
                 exclude_airlines=trip.exclude_airlines,
                 bags=trip.bags,
                 carry_on=trip.carry_on,
@@ -1556,6 +1544,8 @@ def _calendar_summary_from_source(
     trip: TypicalTrip,
     cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]],
 ) -> Optional[DateCalendarSummary]:
+    if getattr(source, "automatic_typical", True) is False:
+        return None
     fetch_calendar = getattr(source, "fetch_calendar", None)
     if not callable(fetch_calendar):
         return None
@@ -1933,6 +1923,8 @@ def _run_search(
         if recommendation is not None:
             stamped = dict(zip(ranked, shown, strict=True))
             recommendation = recommendation.map_offers(lambda offer: stamped.get(offer, offer))
+        metadata_for = getattr(source, "metadata_for", None)
+        page_error, scope_bound = metadata_for(trip) if callable(metadata_for) else (None, False)
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),
@@ -1940,6 +1932,8 @@ def _run_search(
             offers=shown,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
             recommendation=recommendation,
+            page_errors=(classify_failure(page_error),) if page_error is not None else (),
+            scope_bound=scope_bound,
         )
 
     def _stamp(result: QueryResult) -> QueryResult:
@@ -2358,11 +2352,6 @@ def search_flights(
         for trip in trips
     ):
         planned = "sweep"
-    if any(isinstance(trip, MultiCity) for trip in trips) and planned == "detail":
-        if fetch == "auto":
-            planned = "sweep"
-        else:
-            raise ValueError("--trip multi does not support --fetch detail yet")
     report_progress = progress or (lambda _: None)
     started = time.perf_counter()
 
@@ -2419,7 +2408,11 @@ def search_flights(
         retry_backoff=backoff,
     )
     backend: FetchBackend = planned
-    if planned == "sweep" and playwright_available():
+    if (
+        planned == "sweep"
+        and getattr(source, "transport", None) != "public_page"
+        and playwright_available()
+    ):
         retry_indexes = [
             index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
         ]

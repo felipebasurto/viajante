@@ -6,6 +6,7 @@ member lists. Airline names come from AIRLINE_CODE_ALIASES only.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional, Sequence, Tuple
 
 AIRLINE_CODE_ALIASES = {
@@ -29,6 +30,14 @@ ALLIANCE_SHOPPING_CODE = {
     "oneworld": "*O",
     "skyteam": "*S",
     "star": "*A",
+}
+
+# Enum names the Google Flights public page writes into a `tfs` leg when an
+# alliance checkbox is ticked in the UI (captured from live page traffic).
+ALLIANCE_TFS_CODE = {
+    "oneworld": "ONEWORLD",
+    "skyteam": "SKYTEAM",
+    "star": "STAR_ALLIANCE",
 }
 
 ALLIANCE_ALIASES = {
@@ -99,20 +108,30 @@ def parse_alliances(text: Optional[str]) -> Optional[Tuple[str, ...]]:
     return _unique(names)
 
 
-def shopping_carrier_codes(trip: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _carrier_codes(
+    trip: Any, alliance_codes: dict[str, str]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     include = list(getattr(trip, "airlines", None) or ())
     include.extend(
-        ALLIANCE_SHOPPING_CODE[name]
+        alliance_codes[name]
         for name in (getattr(trip, "alliances", None) or ())
-        if name in ALLIANCE_SHOPPING_CODE
+        if name in alliance_codes
     )
     exclude = list(getattr(trip, "exclude_airlines", None) or ())
     exclude.extend(
-        ALLIANCE_SHOPPING_CODE[name]
+        alliance_codes[name]
         for name in (getattr(trip, "exclude_alliances", None) or ())
-        if name in ALLIANCE_SHOPPING_CODE
+        if name in alliance_codes
     )
     return _unique(include), _unique(exclude)
+
+
+def shopping_carrier_codes(trip: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return _carrier_codes(trip, ALLIANCE_SHOPPING_CODE)
+
+
+def tfs_carrier_codes(trip: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return _carrier_codes(trip, ALLIANCE_TFS_CODE)
 
 
 def carrier_filter_payload(
@@ -128,3 +147,35 @@ def carrier_filter_payload(
     if include:
         return [None, include_codes]
     return [1, exclude_codes]
+
+
+_AIRLINE_STRIP = re.compile(r"[^a-z0-9 ]+")
+
+
+def _normalize_airline(airline_text: Optional[str]) -> str:
+    return _AIRLINE_STRIP.sub("", (airline_text or "").casefold())
+
+
+def _airline_filter_hit(raw: Any, token: str) -> bool:
+    needle = token.strip().upper()
+    codes = {code.upper() for code in (raw.airline_codes or ())}
+    if codes:
+        return needle in codes
+    name = _normalize_airline(raw.airline)
+    names = (needle.casefold(), *AIRLINE_CODE_ALIASES.get(needle, ()))
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", name) for alias in names)
+
+
+def _passes_airline_filters(
+    raw: Any,
+    *,
+    airlines: Optional[Sequence[str]],
+    exclude_airlines: Optional[Sequence[str]],
+) -> bool:
+    if airlines and not any(_airline_filter_hit(raw, token) for token in airlines):
+        return False
+    if exclude_airlines and not (raw.airline_codes or _normalize_airline(raw.airline)):
+        return False
+    if exclude_airlines and any(_airline_filter_hit(raw, token) for token in exclude_airlines):
+        return False
+    return True

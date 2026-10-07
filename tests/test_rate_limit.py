@@ -56,7 +56,33 @@ class CooldownStateTests(_StateDir):
         self.assertEqual(state["cooldown_s"], RATE_LIMIT_MAX_COOLDOWN_SECONDS)
 
     def test_named_retry_after_wins(self) -> None:
-        self.assertEqual(note_rate_limited(retry_after=42, now=T0)["cooldown_s"], 42)
+        state = note_rate_limited(retry_after=42, now=T0)
+        self.assertEqual(state["cooldown_s"], 42)
+        self.assertEqual(state["basis"], "provider_retry_after")
+        self.assertEqual(state["cause"], "http_429")
+
+    def test_heuristic_http_429_is_the_backward_compatible_default(self) -> None:
+        state = note_rate_limited(now=T0)
+        self.assertEqual(state["basis"], "heuristic_http_429")
+        self.assertEqual(state["cause"], "http_429")
+
+    def test_rpc_13_basis_and_cause_are_persisted(self) -> None:
+        state = note_rate_limited(now=T0, basis="heuristic_rpc_13", cause="rpc_13")
+        self.assertEqual(state["basis"], "heuristic_rpc_13")
+        self.assertEqual(state["cause"], "rpc_13")
+        path = os.path.join(os.environ["VIAJANTE_STATE_DIR"], "google-rate-limit.json")
+        with open(path, encoding="utf-8") as stream:
+            persisted = json.load(stream)
+        self.assertEqual(persisted["basis"], "heuristic_rpc_13")
+        self.assertEqual(persisted["cause"], "rpc_13")
+
+    def test_old_state_reads_with_unknown_provenance(self) -> None:
+        path = os.path.join(os.environ["VIAJANTE_STATE_DIR"], "google-rate-limit.json")
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump({"at": T0, "until": T0 + 60, "cooldown_s": 60}, stream)
+        state = rate_limit_status(now=T0 + 1)
+        self.assertEqual(state["basis"], "unknown")
+        self.assertEqual(state["cause"], "unknown")
 
 
 class CooldownGateTests(_StateDir):
@@ -100,19 +126,25 @@ CALENDAR_URL = "https://www.google.com/_/FlightsFrontendUi/data/GetCalendarGrid"
 
 class _FakeHttpResponse:
     url = CALENDAR_URL
-    headers: dict = {}
 
-    def __init__(self, text: str, status_code: int = 200) -> None:
+    def __init__(self, text: str, status_code: int = 200, headers: dict | None = None) -> None:
         self.text = text
         self.status_code = status_code
+        self.headers = {} if headers is None else headers
 
 
-def _exchange(text: str, *, proxied: bool, status_code: int = 200) -> SweepHttpResponse:
+def _exchange(
+    text: str,
+    *,
+    proxied: bool,
+    status_code: int = 200,
+    headers: dict | None = None,
+) -> SweepHttpResponse:
     client = ChromeSweepClient.__new__(ChromeSweepClient)
     client._proxied = proxied
 
     async def send() -> _FakeHttpResponse:
-        return _FakeHttpResponse(text, status_code)
+        return _FakeHttpResponse(text, status_code, headers)
 
     return asyncio.run(client._exchange(send, 1.0))
 
@@ -121,13 +153,40 @@ class StatusThirteenTests(_StateDir):
     def test_direct_status_13_records_a_cooldown_and_says_why(self) -> None:
         out = _exchange(STATUS_13_BODY, proxied=False)
         self.assertEqual(out.status, 200)
+        self.assertTrue(out.request_sent)
+        self.assertEqual(out.attempts, 1)
+        self.assertFalse(out.stopped)
         self.assertIn("RPC status 13", out.rate_limit or "")
-        self.assertIsNotNone(rate_limit_status())
+        self.assertEqual(out.cooldown_basis, "heuristic_rpc_13")
+        state = rate_limit_status()
+        self.assertIsNotNone(state)
+        self.assertEqual(state["basis"], "heuristic_rpc_13")
+        self.assertEqual(state["cause"], "rpc_13")
 
     def test_proxied_status_13_does_not_pause_direct_searches(self) -> None:
         out = _exchange(STATUS_13_BODY, proxied=True)
+        self.assertTrue(out.request_sent)
+        self.assertEqual(out.attempts, 1)
         self.assertIsNone(out.rate_limit)
+        self.assertIsNone(out.cooldown_basis)
         self.assertIsNone(rate_limit_status())
+
+    def test_direct_http_429_without_retry_after_has_heuristic_basis(self) -> None:
+        out = _exchange("slow down", proxied=False, status_code=429)
+        self.assertEqual(out.cooldown_basis, "heuristic_http_429")
+        state = rate_limit_status()
+        self.assertIsNotNone(state)
+        self.assertEqual(state["basis"], "heuristic_http_429")
+        self.assertEqual(state["cause"], "http_429")
+
+    def test_direct_http_429_with_retry_after_reports_provider_basis(self) -> None:
+        out = _exchange("slow down", proxied=False, status_code=429, headers={"retry-after": "42"})
+        self.assertEqual(out.cooldown_basis, "provider_retry_after")
+        state = rate_limit_status()
+        self.assertIsNotNone(state)
+        self.assertEqual(state["cooldown_s"], 42)
+        self.assertEqual(state["basis"], "provider_retry_after")
+        self.assertEqual(state["cause"], "http_429")
 
     def test_ordinary_answers_leave_no_cooldown(self) -> None:
         out = _exchange(")]}'\n\n[]", proxied=False)

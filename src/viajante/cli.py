@@ -1505,8 +1505,7 @@ def _add_currency_country_flags(parser: argparse.ArgumentParser) -> None:
 def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -> None:
     help_text = (
         "Ranking add-on in the quote currency. Unnamed is 0. Named value is used "
-        "as-is. Prefer --bags / --carry-on so Google prices the bag. Viajante does "
-        "not invent a bag fee."
+        "as-is. Viajante does not invent a bag fee."
     )
     if extra:
         help_text = f"{help_text} {extra}"
@@ -1544,13 +1543,13 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="N",
-        help="Checked bags on the shopping request (omit to leave unset)",
+        help="Checked bags requested; unverifiable on public-page transport (omit to leave unset)",
     )
     parser.add_argument(
         "--carry-on",
         action="store_true",
         dest="carry_on",
-        help="Ask the shopping request for one carry-on (omit to leave unset)",
+        help="Request one carry-on (omit to leave unset)",
     )
     parser.add_argument(
         "--price-cap",
@@ -2276,9 +2275,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         choices=["auto", "sweep", "detail"],
         help=(
-            "sweep is a fast HTTP shortlist (owned shopping RPC, Chrome TLS session); "
-            "detail is the Playwright scrape. "
-            "auto uses sweep for 3+ queries or packaged RT/multi, else detail (default auto)"
+            "sweep reads the public results page over a Chrome-TLS HTTP/2 session; "
+            "detail is the Playwright scrape (required for --trip multi; "
+            "refuses bag and carrier filters). "
+            "auto uses public-page sweep; detail is an explicit browser mode (default auto)"
         ),
     )
     _add_owned_shop_filters(flights)
@@ -2434,7 +2434,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["auto", "sweep", "detail"],
         help=(
             "sweep is a fast HTTP shortlist; detail is the Playwright scrape. "
-            "auto uses sweep for 3+ queries or packaged RT/multi, else detail (default auto)"
+            "auto uses public-page sweep; detail is an explicit browser mode (default auto)"
         ),
     )
     _add_hotel_filter_flags(trip)
