@@ -1757,6 +1757,41 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNone(_normalize_offer(silent_city, 1, no_overnight=("IST",)))
         self.assertIsNone(_normalize_offer(connecting_silent, 1, no_overnight=("IST",)))
 
+    def test_no_overnight_named_city_keeps_a_provably_short_unknown_layover(self) -> None:
+        # One owned short connection whose airport the card does not name. It
+        # provably is not a night, so it cannot violate a named-city constraint.
+        short_unknown = card(
+            stops="1 stop",
+            layover_city="IST",
+            layover_hours=2.0,
+            price="30 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="10:00",
+                    arrival="20:00",
+                    duration="10 hr",
+                    stops="1 stop",
+                    segments=(
+                        RawSegment(
+                            origin="JFK",
+                            destination=None,
+                            departure="10:00",
+                            arrival="12:00",
+                        ),
+                        RawSegment(
+                            origin=None,
+                            destination="BKK",
+                            departure="13:00",
+                            arrival="20:00",
+                        ),
+                    ),
+                    layovers=(RawLayover(city=None, hours=1.0),),
+                ),
+            ),
+        )
+        self.assertIsNotNone(_normalize_offer(short_unknown, 1, no_overnight=("IST",)))
+        self.assertIsNotNone(_normalize_offer(short_unknown, 1, no_overnight=("any",)))
+
     def test_require_overnight_keeps_only_owned_overnight(self) -> None:
         overnight = overnight_card(
             city="IST", inbound_arr="22:00", outbound_dep="08:00", hours=10.0

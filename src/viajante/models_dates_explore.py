@@ -326,6 +326,11 @@ class FlexSearchReport:
             raise ValueError("vs_typical requires typical")
         _store_naive_utc(self)
         _store_nearby_label(self)
+        object.__setattr__(
+            self,
+            "days",
+            tuple(_stamp_date_row_typical(row, self.typical) for row in self.days),
+        )
         if self.coverage is None:
             succeeded = sum(row.status == "ok" and row.price is not None for row in self.days)
             empty = sum(row.status == "empty" for row in self.days)

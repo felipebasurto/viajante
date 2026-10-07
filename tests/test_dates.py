@@ -1474,6 +1474,35 @@ class FlexSearchTests(unittest.TestCase):
         self.assertIsNone(report.vs_typical)
         self.assertIsNone(report.offers[0].typical)
 
+    def test_flex_day_rows_carry_the_typical_triple(self) -> None:
+        source = FakeDaySource(
+            cards={
+                **_shopped(
+                    (date(2026, 9, 9), 45.0),
+                    (date(2026, 9, 10), 410.0),
+                    (date(2026, 9, 11), 90.0),
+                    (date(2026, 9, 12), 388.0),
+                ),
+            },
+        )
+        report = search_flex("JFK", "LHR", date(2026, 9, 12), 3, source=source, baggage_buffer=0)
+        self.assertEqual(report.chosen_date, date(2026, 9, 9))
+        self.assertEqual(report.typical, 239.0)
+        rows = {row.departure_date: row for row in report.days}
+        self.assertEqual(rows[date(2026, 9, 9)].typical, 239.0)
+        self.assertEqual(rows[date(2026, 9, 9)].vs_typical, "below")
+        self.assertEqual(rows[date(2026, 9, 9)].vs_typical_pct, -81)
+        self.assertEqual(rows[date(2026, 9, 12)].vs_typical, "above")
+        self.assertEqual(rows[date(2026, 9, 12)].vs_typical_pct, 62)
+        day = report.to_dict()["days"][0]
+        self.assertEqual(day["typical"], 239.0)
+        self.assertEqual(day["vs_typical"], "below")
+        self.assertEqual(day["vs_typical_pct"], -81)
+        self.assertIn("typical_deal", day)
+        for row in report.days[4:]:
+            self.assertIsNone(row.typical)
+            self.assertNotIn("typical", row.to_dict(currency="EUR"))
+
 
 class ShopFilterTests(unittest.TestCase):
     def test_unnamed_filters_do_not_invent_constraints(self) -> None:
