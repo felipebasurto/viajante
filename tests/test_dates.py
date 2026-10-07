@@ -439,12 +439,17 @@ class DateSearchTests(unittest.TestCase):
         class Transport:
             automatic_typical = False
 
+            def fetch_round_trip_window(self, trips, on_day):
+                events.append(("batch", len(trips)))
+                for index, trip in enumerate(trips):
+                    events.append(("complete", trip.departure_date))
+                    on_day(index, (card,))
+
             def fetch(self, trip):
-                events.append(("complete", trip.departure_date))
-                return (card,)
+                raise AssertionError("a round-trip window is one bounded batch")
 
             def fetch_many(self, trips):
-                raise AssertionError("round-trip days are not one multiplexed batch")
+                raise AssertionError("a round-trip window does not use one-way fetch_many")
 
             def close(self) -> None:
                 return None
@@ -466,7 +471,15 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual([row.return_date for row in report.days][0], date(2026, 11, 6))
         self.assertEqual(
             [kind for kind, _value in events],
-            ["complete", "progress", "complete", "progress", "complete", "progress"],
+            [
+                "batch",
+                "complete",
+                "progress",
+                "complete",
+                "progress",
+                "complete",
+                "progress",
+            ],
         )
         self.assertEqual(
             [value for kind, value in events if kind == "progress"],

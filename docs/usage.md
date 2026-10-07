@@ -678,7 +678,9 @@ search at a time. See the signatures in
 - **Progress.** If the client sends a `progressToken`, the server emits
   `notifications/progress` while a search runs: `[i/n]` lines become
   `progress=i`, `total=n`; other lines carry a message and a still-increasing
-  value. Per-day date sweeps emit `[i/n]` after that day finishes; other searches
+  value. Per-day date sweeps emit `[i/n]` after that day finishes, and a
+  deadline-cut day emits nothing. A round-trip window reads its pages in bounded
+  batches and still emits `[i/n]` only for a finished day; other searches
   emit it as the query starts. At most about one
   notification per 250 ms; the newest held line is flushed when the search
   finishes, and progress never passes the total. A notification that cannot be

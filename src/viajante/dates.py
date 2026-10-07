@@ -1106,6 +1106,24 @@ def _sweep_per_day(
                 note(index, day)
         return tuple(rows)
 
+    # The public source batches a round-trip window. Sources without that method
+    # stay on the day loop below. A deadline day is a row and emits no progress.
+    window = getattr(source, "fetch_round_trip_window", None)
+    if callable(window) and all(isinstance(query, RoundTrip) for _day, query in day_queries):
+
+        def on_day(index: int, result: object) -> None:
+            day, day_query = day_queries[index]
+            rows.append(row_for(day, day_query, result))
+            if not isinstance(result, SearchDeadline):
+                note(index + 1, day)
+
+        try:
+            checkpoint()
+            window([query for _day, query in day_queries], on_day)
+        except SearchDeadline as exc:
+            rows.extend(row_for(day, query, exc) for day, query in day_queries[len(rows) :])
+        return tuple(rows)
+
     for index, (day, day_query) in enumerate(day_queries, start=1):
         try:
             checkpoint()

@@ -467,10 +467,13 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             return None
         return client
 
-    def _get_pages(self, client, urls: Sequence[str]) -> list[SweepHttpResponse]:
-        """One multiplexed GET wave, plus the same once-retry ``_read_page_retry`` uses."""
+    def _get_pages(self, client, urls: Sequence[str]):
+        """One multiplexed GET, plus the same once-retry ``_read_page_retry`` uses.
+
+        The client is returned because a transport retry may have replaced it.
+        """
         if not urls:
-            return []
+            return [], client
         checkpoint()
         getter = client.get_many
         first = list(getter(urls, timeout=self._timeout))
@@ -479,22 +482,22 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 "public-page batch returned the wrong number of responses"
             )
         if any(response.deadline or _response_halts(response) for response in first):
-            return first
+            return first, client
         retry = [index for index, response in enumerate(first) if _response_retriable(response)]
         if not retry:
-            return first
+            return first, client
         if any(first[index].status == SWEEP_TRANSPORT_STATUS for index in retry):
             self.reset()
             client = self._ensure_client()
             getter = getattr(client, "get_many", None)
             if not callable(getter):
-                return first
+                return first, client
         try:
             self._sleep(0.05)
             checkpoint()
             retried = list(getter([urls[index] for index in retry], timeout=self._timeout))
         except SearchDeadline:
-            return first
+            return first, client
         if len(retried) != len(retry):
             raise GoogleFlightsMarkupError(
                 "public-page batch returned the wrong number of responses"
@@ -502,7 +505,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         out = list(first)
         for slot, response in zip(retry, retried, strict=True):
             out[slot] = replace(response, attempts=2) if response.request_sent else response
-        return out
+        return out, client
 
     @staticmethod
     def _not_sent_block(halt: GoogleFlightsBlocked) -> GoogleFlightsBlocked:
@@ -520,19 +523,43 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         )
 
     def _fetch_many_round_trips(self, client, trips: Sequence[RoundTrip]):
-        # ponytail: two get_many calls (every outbound, then every selected return),
-        # not a pipeline. Ceiling is ceil(days/concurrency) + ceil(days*8/concurrency);
-        # a 31-day window at 8 streams is 35 waves. Upgrade: overlap returns with later outbounds.
         results: list = [None] * len(trips)
         try:
-            self._fill_round_trip_batch(client, trips, results)
+            self._fill_round_trip_batch(client, trips, results, None)
         except SearchDeadline as exc:
             for index, item in enumerate(results):
                 if item is None:
                     results[index] = exc
         return results
 
-    def _fill_round_trip_batch(self, client, trips: Sequence[RoundTrip], results: list) -> None:
+    def fetch_round_trip_window(self, trips: Sequence[RoundTrip], on_day) -> None:
+        """Bounded round-trip date window. ``on_day`` runs once a day has a result.
+
+        A deadline raised before a day starts leaves that day and the rest to the caller.
+        """
+        client = self._round_trip_batch_client()
+        if client is None:
+            self._serial_round_trip_window(trips, on_day)
+            return
+        self._fill_round_trip_batch(client, trips, [None] * len(trips), on_day)
+
+    def _serial_round_trip_window(self, trips: Sequence[RoundTrip], on_day) -> None:
+        for index, trip in enumerate(trips):
+            checkpoint()
+            try:
+                result: object = self.fetch(trip)
+            except SearchDeadline:
+                raise
+            except Exception as exc:
+                result = exc
+            on_day(index, result)
+
+    def _fill_round_trip_batch(self, client, trips: Sequence[RoundTrip], results: list, on_day):
+        # ponytail: one outbound get_many, then one get_many per day for that day's
+        # selected returns (at most 8). A 31-day window at 8 streams is
+        # ceil(31/8) + 31 = 35 waves. A day with fewer returns does not share a
+        # wave with the next day. Upgrade: pack later days' returns into a wave
+        # that still has room, and report the day when its own pages are back.
         pending: list[int] = []
         for index, trip in enumerate(trips):
             try:
@@ -541,69 +568,91 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 results[index] = exc
             else:
                 pending.append(index)
-        if not pending:
-            return
-        urls = [self._url(trips[index]) for index in pending]
-        responses = self._get_pages(client, urls)
         halt: GoogleFlightsBlocked | None = None
         boards: dict[int, tuple[RawFlightCard, ...]] = {}
-        for index, url, response in zip(pending, urls, responses, strict=True):
+        if pending:
+            urls = [self._url(trips[index]) for index in pending]
+            responses, client = self._get_pages(client, urls)
+            for index, url, response in zip(pending, urls, responses, strict=True):
+                if halt is not None:
+                    results[index] = self._not_sent_block(halt)
+                    continue
+                try:
+                    cards = self._parse_response(response, url, trips[index])
+                    matched = tuple(
+                        card for card in cards if self._matches_leg(card, trips[index].legs[0])
+                    )
+                    if not matched:
+                        raise GoogleFlightsMarkupError(
+                            "Public-page rows did not prove the requested route, date and stops."
+                        )
+                    boards[index] = matched
+                except SearchDeadline as exc:
+                    results[index] = exc
+                except Exception as exc:
+                    results[index] = exc
+                    if isinstance(exc, GoogleFlightsBlocked) and exc.status in {None, 403, 429}:
+                        halt = exc
+            if halt is not None:
+                for index in pending:
+                    if results[index] is None:
+                        results[index] = self._not_sent_block(halt)
+        for index in range(len(trips)):
+            if results[index] is not None:
+                if on_day is not None:
+                    on_day(index, results[index])
+                continue
             if halt is not None:
                 results[index] = self._not_sent_block(halt)
+                if on_day is not None:
+                    on_day(index, results[index])
                 continue
-            try:
-                cards = self._parse_response(response, url, trips[index])
-                matched = tuple(
-                    card for card in cards if self._matches_leg(card, trips[index].legs[0])
-                )
-                if not matched:
-                    raise GoogleFlightsMarkupError(
-                        "Public-page rows did not prove the requested route, date and stops."
-                    )
-                boards[index] = matched
-            except SearchDeadline as exc:
-                results[index] = exc
-            except Exception as exc:
-                results[index] = exc
-                if isinstance(exc, GoogleFlightsBlocked) and exc.status in {None, 403, 429}:
-                    halt = exc
-        if halt is not None:
-            # The outbound batch already saw a block. Do not open the return batch.
-            for index in pending:
-                if results[index] is None:
-                    results[index] = self._not_sent_block(halt)
-            return
-        jobs: list[tuple[int, int, str]] = []
-        slots: dict[int, list] = {}
-        for index, matched in boards.items():
-            trip_slots: list = []
-            for slot_index, card in enumerate(_ranked_outbounds(matched)):
-                try:
-                    url = self._url(trips[index], card.legs[0])
-                except Exception as exc:
-                    trip_slots.append(exc)
-                else:
-                    trip_slots.append(None)
-                    jobs.append((index, slot_index, url))
-            slots[index] = trip_slots
-        if jobs:
-            returned = self._get_pages(client, [url for _index, _slot, url in jobs])
-            for (index, slot_index, _url), response in zip(jobs, returned, strict=True):
-                try:
-                    cards = self._parse_response(response, _url, trips[index])
-                except Exception as exc:
-                    slots[index][slot_index] = exc
-                else:
-                    slots[index][slot_index] = (cards, response.text)
-        for index, trip_slots in slots.items():
+            matched = boards.get(index)
+            if matched is None:
+                continue
+            slots, day_halt, client = self._return_slots(client, trips[index], matched)
             try:
                 results[index] = self._round_trip_packages(
-                    trips[index], boards[index], _cached_return_reader(trip_slots)
+                    trips[index], matched, _cached_return_reader(slots)
                 )
             except SearchDeadline as exc:
                 results[index] = exc
             except Exception as exc:
                 results[index] = exc
+            if on_day is not None:
+                on_day(index, results[index])
+            if day_halt is not None:
+                halt = day_halt
+
+    def _return_slots(self, client, trip: RoundTrip, matched: Sequence[RawFlightCard]):
+        slots: list = []
+        jobs: list[tuple[int, str]] = []
+        for slot_index, card in enumerate(_ranked_outbounds(matched)):
+            try:
+                url = self._url(trip, card.legs[0])
+            except Exception as exc:
+                slots.append(exc)
+            else:
+                slots.append(None)
+                jobs.append((slot_index, url))
+        halt: GoogleFlightsBlocked | None = None
+        if not jobs:
+            return slots, halt, client
+        returned, client = self._get_pages(client, [url for _slot, url in jobs])
+        for (slot_index, url), response in zip(jobs, returned, strict=True):
+            try:
+                cards = self._parse_response(response, url, trip)
+            except Exception as exc:
+                slots[slot_index] = exc
+                if (
+                    halt is None
+                    and isinstance(exc, GoogleFlightsBlocked)
+                    and exc.status in {None, 403, 429}
+                ):
+                    halt = exc
+            else:
+                slots[slot_index] = (cards, response.text)
+        return slots, halt, client
 
     def fetch_many(self, trips: Sequence[Trip]):
         # The HTTP client multiplexes GETs at the configured concurrency for OWs.

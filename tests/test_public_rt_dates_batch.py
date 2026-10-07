@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from test_google_flights_public import _card, _context
-from viajante.control import SearchCancelled, checkpoint, current_control
+from viajante.control import SearchCancelled, current_control
 from viajante.dates import calendar_trip, search_dates
 from viajante.google_flights import GoogleFlightsBlocked, SweepHttpResponse
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource
@@ -196,8 +196,14 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         pages = _Pages(31, 8)
         serial = _SerialClient(pages)
         batch = _BatchClient(pages)
+        progress_at: list[tuple[str, int]] = []
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                progress_at.append((line, len(batch.urls)))
+
         serial_report, serial_sleeps = _search(serial, pages)
-        batch_report, batch_sleeps = _search(batch, pages)
+        batch_report, batch_sleeps = _search(batch, pages, progress=progress)
 
         self.assertEqual(_view(serial_report), _view(batch_report))
         self.assertEqual(batch_report.days[0].price, 500)
@@ -205,7 +211,12 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         self.assertTrue(all(row.status == "ok" and row.scope_bound for row in batch_report.days))
         self.assertEqual(sorted(serial.urls), sorted(batch.urls))
         self.assertEqual(len(batch.urls), 31 + 31 * 8)
-        self.assertEqual(batch.batches, [pages.outbound_urls, pages.return_urls])
+        self.assertEqual(batch.batches[0], pages.outbound_urls)
+        self.assertEqual(
+            [url for group in batch.batches[1:] for url in group],
+            pages.return_urls,
+        )
+        self.assertEqual(len(batch.batches), 1 + 31)
         self.assertEqual(batch.waves, 35)
         self.assertLessEqual(max(batch.wave_sizes), CONCURRENCY)
         self.assertEqual(batch.timestamps, sorted(batch.timestamps))
@@ -213,6 +224,11 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         self.assertGreater(batch.timestamps[-1], batch.timestamps[0])
         self.assertEqual(serial_sleeps, [])
         self.assertEqual(batch_sleeps, [])
+        self.assertEqual(len(progress_at), 31)
+        for index, (line, sent) in enumerate(progress_at):
+            day = START + timedelta(days=index)
+            self.assertEqual(line, f"[{index + 1}/31] HAN -> SIN {day.isoformat()}")
+            self.assertEqual(sent, 31 + 8 * (index + 1))
 
     def test_batch_keeps_eight_returns_and_matches_serial_cards(self) -> None:
         pages = _Pages(1, 10)
@@ -248,7 +264,7 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         client = _RateLimitClient(pages, concurrency=2, trigger_at=2)
         report, _sleeps = _search(client, pages)
 
-        self.assertEqual(len(client.batches), 2)
+        self.assertEqual(len(client.batches), 3)
         self.assertEqual(client.return_sent, pages.return_urls[:4])
         self.assertEqual(report.days[0].status, "ok")
         self.assertEqual(report.days[0].price, 500)
@@ -275,13 +291,19 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         client = _CancelClient(pages, cancel)
         with self.assertRaises(SearchCancelled):
             _search(client, pages, cancel=cancel)
-        self.assertEqual(client.sent, pages.outbound_urls + pages.return_urls[:2])
+        self.assertEqual(client.sent, pages.outbound_urls + pages.return_urls[:1])
         self.assertLess(len(client.sent), len(pages.outbound_urls) + len(pages.return_urls))
 
     def test_deadline_keeps_finished_days_and_marks_the_rest(self) -> None:
         pages = _Pages(3, 1)
         client = _DeadlineClient(pages)
-        report, _sleeps = _search(client, pages, deadline_seconds=30)
+        lines: list[str] = []
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                lines.append(line)
+
+        report, _sleeps = _search(client, pages, deadline_seconds=30, progress=progress)
         self.assertEqual(client.calls, 2)
         self.assertEqual(client.sent, pages.outbound_urls + pages.return_urls[:1])
         self.assertEqual(report.days[0].status, "ok")
@@ -293,6 +315,7 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         )
         self.assertEqual(report.coverage.stopping_reason, "deadline")
         self.assertFalse(report.coverage.complete)
+        self.assertEqual(lines, [f"[1/3] HAN -> SIN {START.isoformat()}"])
 
 
 class _RateLimitClient(_BatchClient):
@@ -327,9 +350,10 @@ class _RateLimitClient(_BatchClient):
                 break
             chunk = urls[start : start + self.concurrency]
             hit = False
-            for offset, url in enumerate(chunk):
+            for url in chunk:
+                global_index = len(self.return_sent)
                 self.return_sent.append(url)
-                if start + offset == self.trigger_at:
+                if global_index == self.trigger_at:
                     hit = True
                     advice = rate_limit_advice(note_rate_limited())
                     out.append(SweepHttpResponse(429, "slow down", url, rate_limit=advice))
@@ -353,15 +377,9 @@ class _CancelClient:
         if self.calls == 1:
             self.sent.extend(urls)
             return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
-        out = []
-        for start in range(0, len(urls), 2):
-            if start:
-                self.cancel.set()
-                checkpoint()
-            chunk = urls[start : start + 2]
-            self.sent.extend(chunk)
-            out.extend(SweepHttpResponse(200, self.pages.html[url], url) for url in chunk)
-        return out
+        self.sent.extend(urls)
+        self.cancel.set()
+        return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
 
 
 class _DeadlineClient:
@@ -376,12 +394,9 @@ class _DeadlineClient:
         if self.calls == 1:
             self.sent.extend(urls)
             return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
-        done, rest = urls[:1], urls[1:]
-        self.sent.extend(done)
+        self.sent.extend(urls)
         control = current_control()
         if control is not None:
+            control.deadline_at = control.clock()
             control.mark_cut()
-        return [SweepHttpResponse(200, self.pages.html[url], url) for url in done] + [
-            SweepHttpResponse(0, "", url, deadline=True, request_sent=False, attempts=0)
-            for url in rest
-        ]
+        return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
