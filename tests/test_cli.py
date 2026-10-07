@@ -456,6 +456,47 @@ class CliTests(unittest.TestCase):
             self.assertIn("must differ", err.getvalue())
             search.assert_not_called()
 
+    def test_hotels_skiplagged_limits_are_rejected_before_search(self) -> None:
+        out_date = (FUTURE_DATE + timedelta(days=2)).isoformat()
+        with patch("viajante.cli.search_hotels") as search:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(
+                    main(
+                        [
+                            "hotels",
+                            "Paris",
+                            FUTURE_DATE.isoformat(),
+                            out_date,
+                            "--currency",
+                            "EUR",
+                            "--source",
+                            "skiplagged",
+                            "--adults",
+                            "20",
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    main(
+                        [
+                            "hotels",
+                            "Paris",
+                            FUTURE_DATE.isoformat(),
+                            out_date,
+                            "--currency",
+                            "EUR",
+                            "--source",
+                            "skiplagged",
+                            "--entire-home",
+                        ]
+                    ),
+                    1,
+                )
+            self.assertIn("error:", err.getvalue())
+            search.assert_not_called()
+
 
 class ReportRenderingTests(unittest.TestCase):
     def test_missing_fields_never_render_as_none(self) -> None:

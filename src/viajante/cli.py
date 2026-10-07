@@ -71,6 +71,7 @@ from viajante.history_cli import run_history, run_watch
 from viajante.hotels import (
     resolve_hotel_currency,
     search_hotels,
+    validate_hotel_search_args,
     validate_max_distance,
     validate_near,
 )
@@ -306,6 +307,7 @@ def _validate_hotel_args(args: argparse.Namespace) -> Tuple[HotelQuery, ...]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
     queries = _build_hotel_queries(args)
+    validate_hotel_search_args(queries, top=args.top, source=getattr(args, "source", "booking"))
     args.near = validate_near(_parse_near(getattr(args, "near", None)))
     args.max_distance_km = validate_max_distance(getattr(args, "max_distance_km", None), args.near)
     args.currency = resolve_hotel_currency(
