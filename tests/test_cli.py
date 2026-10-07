@@ -429,6 +429,15 @@ class CliTests(unittest.TestCase):
                 main(["flights", f"JFK-LHR:{date.today().isoformat()}"])
             search.assert_called_once()
 
+    def test_non_finite_layover_bounds_are_rejected_before_searching(self) -> None:
+        with patch("viajante.cli.search_flights") as search:
+            for value in ("nan", "inf", "-inf"):
+                with self.subTest(value=value):
+                    self.assertEqual(main(["flights", ROUTE, "--max-layover", value]), 1)
+            self.assertEqual(main(["flights", ROUTE, "--min-layover", "nan"]), 1)
+            self.assertEqual(main(["flights", ROUTE, "--max-duration", "inf"]), 1)
+            search.assert_not_called()
+
 
 class ReportRenderingTests(unittest.TestCase):
     def test_missing_fields_never_render_as_none(self) -> None:

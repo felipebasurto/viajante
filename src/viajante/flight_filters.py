@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
@@ -106,11 +107,18 @@ def validate_layover_hours(
             "min_layover_hours",
             "max_duration_hours",
         )
-    if max_layover_hours is not None and max_layover_hours < 0:
+    # NaN compares False to everything, so "< 0" alone let nan/inf silently disable a bound.
+    if max_layover_hours is not None and (
+        not math.isfinite(max_layover_hours) or max_layover_hours < 0
+    ):
         raise ValueError(f"{max_name} must not be negative")
-    if min_layover_hours is not None and min_layover_hours < 0:
+    if min_layover_hours is not None and (
+        not math.isfinite(min_layover_hours) or min_layover_hours < 0
+    ):
         raise ValueError(f"{min_name} must not be negative")
-    if max_duration_hours is not None and max_duration_hours < 0:
+    if max_duration_hours is not None and (
+        not math.isfinite(max_duration_hours) or max_duration_hours < 0
+    ):
         raise ValueError(f"{duration_name} must not be negative")
     if (
         min_layover_hours is not None
