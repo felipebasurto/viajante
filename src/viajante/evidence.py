@@ -186,6 +186,14 @@ class _Owned:
         )
 
 
+def owns_amounts(amounts: Iterable[float], currency: str) -> bool:
+    """True when a recorded search payload owns every amount in this currency."""
+    with _lock:
+        payloads = list(_ledger)
+    owned = _Owned(payloads)
+    return bool(payloads) and all(owned.owns_amount(value, currency) for value in amounts)
+
+
 def verify_answer(answer: str) -> dict[str, object]:
     """Flag claims in a draft reply that no recorded search payload owns."""
     with _lock:

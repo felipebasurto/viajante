@@ -32,6 +32,7 @@ from viajante.envelope import stamp_local, stamp_recheck, stamp_search, stamp_sp
 from viajante.evidence import (
     failure_codes,
     find_offer,
+    owns_amounts,
     record,
     selected_reference,
     selection_records,
@@ -1051,21 +1052,6 @@ def plan_stay_blocks_tool(roster: Mapping[str, Sequence[str]]) -> Mapping[str, o
     return stamp_local(dict(plan_stay_blocks(roster).to_dict()))
 
 
-def _computed_stay_output(payload: Mapping[str, object]) -> dict:
-    """What the split computed. The caller's stay totals and the echoed grand total are left
-    out, so verify_answer cannot confirm a figure the caller typed in."""
-    computed = {key: value for key, value in payload.items() if key != "total"}
-    stays = computed.get("stays")
-    if isinstance(stays, list):
-        computed["stays"] = [
-            {key: value for key, value in stay.items() if key != "total"}
-            if isinstance(stay, dict)
-            else stay
-            for stay in stays
-        ]
-    return computed
-
-
 def split_stay_costs_tool(
     stays: Sequence[Mapping[str, object]],
     roster: Mapping[str, Sequence[str]],
@@ -1077,10 +1063,10 @@ def split_stay_costs_tool(
     report = split_stay_costs(
         stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
     )
-    payload = dict(report.to_dict())
-    result = stamp_local(payload, partial=bool(payload.get("unallocated_nights")))
-    _owned(_computed_stay_output(result))
-    return result
+    payload = stamp_local(dict(report.to_dict()), partial=bool(report.unallocated_nights))
+    # Shares are arithmetic on caller totals: evidence only when a search owns every input.
+    inputs = [stay.total for stay in report.stays] + [report.fee_per_person_night or 0]
+    return record(payload) if owns_amounts(filter(None, inputs), report.currency) else payload
 
 
 def validate_itinerary_tool(
