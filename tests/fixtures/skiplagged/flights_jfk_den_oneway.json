@@ -1,0 +1,212 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "# Flight search results (JFK → DEN)\n\n- Departure: 2026-11-17\n- Sorted by: Lowest price first\n- Showing 8 of 88 results (more available)\n\n[Open search on Skiplagged](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp)\n\n| Price | Duration | Stops | Type | Airlines | Segments | Booking |\n| --- | --- | --- | --- | --- | --- | --- |\n| $126 | 4h 43m | Nonstop | — | Delta Air Lines | Outbound:<br/>JFK → DEN (2026-11-17 08:30:00-05:00 → 2026-11-17 11:13:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL532) |\n| $126 | 4h 34m | Nonstop | — | JetBlue Airways | Outbound:<br/>JFK → DEN (2026-11-17 12:00:00-05:00 → 2026-11-17 14:34:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=B61497) |\n| $126 | 4h 35m | Nonstop | — | Delta Air Lines | Outbound:<br/>JFK → DEN (2026-11-17 17:50:00-05:00 → 2026-11-17 20:25:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL457) |\n| $126 | 7h 7m | 1 stop | — | JetBlue Airways | Outbound:<br/>JFK → BOS (2026-11-17 06:40:00-05:00 → 2026-11-17 07:50:00-05:00)<br/>Layover in BOS – 1h 9m<br/>BOS → DEN (2026-11-17 08:59:00-05:00 → 2026-11-17 11:47:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=B62718-B6393) |\n| $136 | 7h 17m | 1 stop | — | American Airlines | Outbound:<br/>JFK → DFW (2026-11-17 14:36:00-05:00 → 2026-11-17 17:49:00-06:00)<br/>Layover in DFW – 55m<br/>DFW → DEN (2026-11-17 18:44:00-06:00 → 2026-11-17 19:53:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA860-AA566) |\n| $136 | 6h 37m | 1 stop | — | American Airlines | Outbound:<br/>JFK → CLT (2026-11-17 17:20:00-05:00 → 2026-11-17 19:30:00-05:00)<br/>Layover in CLT – 44m<br/>CLT → DEN (2026-11-17 20:14:00-05:00 → 2026-11-17 21:57:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2634-AA3073) |\n| $136 | 7h 35m | 1 stop | — | American Airlines | Outbound:<br/>JFK → DFW (2026-11-17 06:45:00-05:00 → 2026-11-17 10:00:00-06:00)<br/>Layover in DFW – 1h 11m<br/>DFW → DEN (2026-11-17 11:11:00-06:00 → 2026-11-17 12:20:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA760-AA2579) |\n| $136 | 8h 18m | 1 stop | — | American Airlines | Outbound:<br/>JFK → ORD (2026-11-17 07:29:00-05:00 → 2026-11-17 09:30:00-06:00)<br/>Layover in ORD – 2h 24m<br/>ORD → DEN (2026-11-17 11:54:00-06:00 → 2026-11-17 13:47:00-07:00) | [Book](https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2819-AA1366) |"
+    }
+  ],
+  "structuredContent": {
+    "searchUrl": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp",
+    "flights": [
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=DL532",
+        "airlines": "Delta Air Lines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T08:30:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T11:13:00-07:00"
+        },
+        "duration": "4h 43m",
+        "layovers": 0,
+        "price": {
+          "amount": 126,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL532",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=B61497",
+        "airlines": "JetBlue Airways",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T12:00:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T14:34:00-07:00"
+        },
+        "duration": "4h 34m",
+        "layovers": 0,
+        "price": {
+          "amount": 126,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=B61497",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=DL457",
+        "airlines": "Delta Air Lines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T17:50:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T20:25:00-07:00"
+        },
+        "duration": "4h 35m",
+        "layovers": 0,
+        "price": {
+          "amount": 126,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL457",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=B62718-B6393",
+        "airlines": "JetBlue Airways",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T06:40:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T11:47:00-07:00"
+        },
+        "duration": "7h 7m",
+        "layovers": 1,
+        "price": {
+          "amount": 126,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=B62718-B6393",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=AA860-AA566",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T14:36:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T19:53:00-07:00"
+        },
+        "duration": "7h 17m",
+        "layovers": 1,
+        "price": {
+          "amount": 136,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA860-AA566",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=AA2634-AA3073",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T17:20:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T21:57:00-07:00"
+        },
+        "duration": "6h 37m",
+        "layovers": 1,
+        "price": {
+          "amount": 136,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2634-AA3073",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=AA760-AA2579",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T06:45:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T12:20:00-07:00"
+        },
+        "duration": "7h 35m",
+        "layovers": 1,
+        "price": {
+          "amount": 136,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA760-AA2579",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-DEN-2026-11-17-trip=AA2819-AA1366",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T07:29:00-05:00"
+        },
+        "arrival": {
+          "airport": "DEN",
+          "dateTime": "2026-11-17T13:47:00-07:00"
+        },
+        "duration": "8h 18m",
+        "layovers": 1,
+        "price": {
+          "amount": 136,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/DEN/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2819-AA1366",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      }
+    ],
+    "pagination": {
+      "totalAvailable": 88,
+      "currentlyShowing": 8,
+      "offset": 0,
+      "limit": 8,
+      "hasMoreResults": true
+    }
+  }
+}

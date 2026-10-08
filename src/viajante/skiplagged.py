@@ -1,14 +1,22 @@
-"""Opt-in Skiplagged MCP client. No Google mix-in. Does not book."""
+"""Opt-in Skiplagged MCP client. No Google mix-in. Does not book.
+
+Shape verified against live captures (tests/fixtures/skiplagged, 2026-10-08):
+sk_flights_search returns structuredContent.flights[] cards with price
+{amount, currency}, departure/arrival {airport, dateTime}, layovers (int),
+attributes (hidden-city / standard / nonstop / one-stop) and deepLink.
+Layover airport comes from the markdown table in the same reply.
+"""
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
@@ -21,7 +29,6 @@ from viajante.control import (
 )
 from viajante.models import (
     FETCH_LANGUAGE,
-    HIDDEN_CITY_SOURCE,
     HIDDEN_CITY_WARNINGS,
     FlightQuery,
     HiddenCityOffer,
@@ -30,7 +37,6 @@ from viajante.models import (
     SearchErrorCode,
     normalize_currency,
 )
-from viajante.parsers import parse_price
 from viajante.ratelimit import (
     SKIPLAGGED_RATE_LIMIT_FILE,
     cooldown_until,
@@ -46,7 +52,6 @@ _TIMEOUT_SECONDS = 30
 _SESSION_LOCK = threading.Lock()
 _SESSION_IDS: dict[tuple[object, str], str] = {}
 RpcPost = Callable[[str, dict[str, Any], Mapping[str, str]], tuple[int, Mapping[str, str], str]]
-_PRICE_KEYS = ("price", "fare", "total", "amount", "totalPrice")
 
 
 class SkiplaggedError(RuntimeError):
@@ -55,6 +60,10 @@ class SkiplaggedError(RuntimeError):
 
 class SkiplaggedRateLimited(SkiplaggedError):
     """Skiplagged answered HTTP 429. Retrying right away only extends the block."""
+
+
+class SkiplaggedShapeError(SkiplaggedError):
+    """Skiplagged answered, but not in the shape the captured payloads have."""
 
 
 # ponytail: Skiplagged publishes no quota. A burst of calls got an HTTP 429 on session start;
@@ -246,133 +255,68 @@ def _call_mcp(
     return _rpc_result(_sse_json(body))
 
 
-def _as_mapping(value: Any) -> Optional[dict[str, Any]]:
-    return value if isinstance(value, dict) else None
+def _result_text(result: Any) -> str:
+    """Join the markdown text blocks of a tool result (the table the card list is shown in)."""
+    if not isinstance(result, dict):
+        return ""
+    content = result.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        item["text"]
+        for item in content
+        if isinstance(item, dict) and isinstance(item.get("text"), str)
+    ]
+    return "\n".join(parts)
 
 
-def _as_list(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if isinstance(value, dict):
-        for key in ("flights", "itineraries", "offers", "results", "data"):
-            nested = value.get(key)
-            if isinstance(nested, list):
-                return nested
-    return []
+def _flight_cards(result: Any) -> list[Any]:
+    """The `structuredContent.flights` cards of a successful sk_flights_search call.
+
+    Captured 2026-10-08: every reply carries `structuredContent` with `flights`
+    (a list, possibly empty) and `pagination`. Anything else is a shape change.
+    """
+    if not isinstance(result, dict):
+        raise SkiplaggedShapeError("Skiplagged MCP returned a non-object result.")
+    if result.get("isError") is True:
+        raise SkiplaggedError(_result_text(result) or "Skiplagged MCP tool reported an error.")
+    structured = result.get("structuredContent")
+    flights = structured.get("flights") if isinstance(structured, dict) else None
+    if not isinstance(flights, list):
+        raise SkiplaggedShapeError("Skiplagged flight search returned no flights list.")
+    return flights
 
 
-def _tool_rows(result: Any) -> list[Any]:
-    payload = result
-    if isinstance(result, dict):
-        structured = result.get("structuredContent")
-        if structured is not None:
-            rows = _as_list(structured)
-            if rows:
-                return rows
-            if isinstance(structured, dict):
-                payload = structured
-        content = result.get("content")
-        if isinstance(content, list):
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                text = item.get("text")
-                if not isinstance(text, str) or not text.strip():
-                    continue
-                try:
-                    decoded = json.loads(text)
-                except json.JSONDecodeError:
-                    continue
-                rows = _as_list(decoded)
-                if rows:
-                    return rows
-                if isinstance(decoded, dict):
-                    payload = decoded
-    return _as_list(payload)
+_LAYOVER_CITY = re.compile(r"Layover in ([A-Z]{3})\b")
+_BOOK_TRIP = re.compile(r"\]\([^)\s]*#(trip=[^)\s]+)\)")
 
 
-def _first_str(row: Mapping[str, Any], *keys: str) -> Optional[str]:
-    for key in keys:
-        value = row.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+def _layover_by_trip(text: str) -> dict[str, Optional[str]]:
+    """Layover airport per `#trip=` fragment, read from the markdown table rows.
+
+    The card has no layover field. Each table row's Book link carries the same
+    `#trip=` fragment as the card's `deepLink`. A row with other than exactly one
+    layover, or a fragment that two rows disagree on, maps to None (unknown).
+    """
+    found: dict[str, Optional[str]] = {}
+    for line in text.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        link = _BOOK_TRIP.search(line)
+        if link is None:
+            continue
+        codes = _LAYOVER_CITY.findall(line)
+        code = codes[0] if len(codes) == 1 else None
+        key = link.group(1)
+        if key in found and found[key] != code:
+            found[key] = None
+        else:
+            found.setdefault(key, code)
+    return found
 
 
-def _numberish(value: Any) -> Optional[float]:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        parsed = parse_price(value)
-        if parsed is not None:
-            return parsed
-        text = value.strip().replace(",", "")
-        try:
-            return float(text)
-        except ValueError:
-            return None
-    if isinstance(value, dict):
-        for nested_key in ("amount", "value", "total", "fare"):
-            nested = _numberish(value.get(nested_key))
-            if nested is not None:
-                return nested
-    return None
-
-
-def _iso_currency(value: Any) -> Optional[str]:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        return normalize_currency(value)
-    except ValueError:
-        return None
-
-
-def _owned_currency(row: Mapping[str, Any], price_value: Any) -> Optional[str]:
-    nested = None
-    if isinstance(price_value, dict):
-        nested = price_value.get("currency") or price_value.get("curr")
-    return _iso_currency(_first_str(row, "currency", "curr")) or _iso_currency(nested)
-
-
-def _first_number(row: Mapping[str, Any], *keys: str) -> Optional[float]:
-    for key in keys:
-        parsed = _numberish(row.get(key))
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _nested_iata(row: Mapping[str, Any], *keys: str) -> Optional[str]:
-    for key in keys:
-        nested = row.get(key)
-        if isinstance(nested, dict):
-            code = _iata_or_none(_first_str(nested, "airport", "iata", "code"))
-            if code:
-                return code
-        elif isinstance(nested, str):
-            code = _iata_or_none(nested)
-            if code:
-                return code
-    return None
-
-
-def _hidden_from_attributes(row: Mapping[str, Any]) -> Optional[bool]:
-    attrs = row.get("attributes")
-    if not isinstance(attrs, list):
-        return None
-    tokens = {str(item).strip().casefold() for item in attrs}
-    if tokens & {"hidden-city", "hidden_city", "hidden city", "skiplagging"}:
-        return True
-    if "standard" in tokens:
-        return False
-    return None
-
-
-def _iata_or_none(value: Optional[str]) -> Optional[str]:
-    if value is None:
+def _iata_or_none(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
         return None
     code = value.strip().upper()
     if len(code) == 3 and is_known_iata(code):
@@ -380,67 +324,71 @@ def _iata_or_none(value: Optional[str]) -> Optional[str]:
     return None
 
 
-def _bool_flag(row: Mapping[str, Any], *keys: str) -> Optional[bool]:
-    for key in keys:
-        value = row.get(key)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            folded = value.strip().casefold()
-            if folded in {"1", "true", "yes", "hidden", "hidden_city", "hidden-city"}:
-                return True
-            if folded in {"0", "false", "no"}:
-                return False
+def _leg_airport(leg: Any) -> Optional[str]:
+    if isinstance(leg, dict):
+        return _iata_or_none(leg.get("airport"))
     return None
 
 
-def _stops_count(row: Mapping[str, Any]) -> Optional[int]:
-    value = _first_number(row, "stops_count", "stops", "stopCount", "maxStops", "layovers")
-    if value is None:
-        layover = _first_str(row, "layover", "layover_city", "layoverCity")
-        if layover:
-            return 1
+def _attribute_tokens(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {str(item).strip().casefold() for item in value}
+
+
+def _stops(card: Mapping[str, Any]) -> Optional[int]:
+    count = card.get("layovers")
+    if isinstance(count, bool) or not isinstance(count, (int, float)) or count < 0:
         return None
-    count = int(value)
-    if count < 0:
+    return int(count)
+
+
+def _offer_from_card(
+    card: Any,
+    *,
+    origin: str,
+    destination: str,
+    departure_date: date,
+    return_date: Optional[date],
+    layover_by_trip: Mapping[str, Optional[str]],
+) -> Optional[HiddenCityOffer]:
+    if not isinstance(card, dict):
         return None
-    return count
-
-
-def _leg_arrival_iata(item: Any) -> Optional[str]:
-    if isinstance(item, str):
-        return _iata_or_none(item)
-    mapped = _as_mapping(item)
-    if mapped is None:
+    price_block = card.get("price")
+    if not isinstance(price_block, dict):
         return None
-    return _iata_or_none(
-        _first_str(mapped, "destination", "to", "arrivalAirport", "airport", "iata", "code")
-    ) or _nested_iata(mapped, "arrival", "destination")
-
-
-def _ticketed_from_legs(row: Mapping[str, Any], dest: str) -> Optional[str]:
-    for key in ("segments", "legs", "flights"):
-        items = row.get(key)
-        if not isinstance(items, list) or not items:
-            continue
-        arrivals: list[str] = []
-        for item in items:
-            code = _leg_arrival_iata(item)
-            if code:
-                arrivals.append(code)
-        if arrivals and arrivals[-1] != dest:
-            return arrivals[-1]
-    return None
-
-
-def _trip_hash_is_hidden(url: Optional[str]) -> bool:
-    if not url:
-        return False
-    fragment = unquote(urlparse(url).fragment)
-    for part in fragment.split("&"):
-        if part.casefold().startswith("trip="):
-            return "~" in part.split("=", 1)[1]
-    return False
+    amount = price_block.get("amount")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
+        return None
+    currency = normalize_currency(price_block.get("currency"))
+    row_origin = _leg_airport(card.get("departure")) or origin
+    row_dest = _leg_airport(card.get("arrival")) or destination
+    return_leg = card.get("returnFlight")
+    hidden_tokens = _attribute_tokens(card.get("attributes"))
+    if isinstance(return_leg, dict):
+        hidden_tokens |= _attribute_tokens(return_leg.get("attributes"))
+    deep_link = card.get("deepLink")
+    deep_link = deep_link.strip() if isinstance(deep_link, str) and deep_link.strip() else None
+    fragment = urlparse(deep_link).fragment if deep_link else ""
+    airline = card.get("airlines")
+    duration = card.get("duration")
+    return HiddenCityOffer(
+        origin=row_origin,
+        destination=row_dest,
+        departure_date=departure_date,
+        price=float(amount),
+        currency=currency,
+        evidence="confirmed",
+        airline=airline.strip() if isinstance(airline, str) and airline.strip() else None,
+        duration=duration if isinstance(duration, str) and duration else None,
+        stops_count=_stops(card),
+        layover_city=layover_by_trip.get(fragment),
+        # Not in the captured payload: no field names the beyond city. Stays null.
+        ticketed_destination=None,
+        hidden_city="hidden-city" in hidden_tokens,
+        return_date=return_date,
+        booking_url=deep_link,
+    )
 
 
 def parse_skiplagged_offers(
@@ -452,17 +400,24 @@ def parse_skiplagged_offers(
     currency: Optional[str] = None,
     return_date: Optional[date] = None,
 ) -> tuple[HiddenCityOffer, ...]:
-    """Normalize a Skiplagged MCP tool result. Never invents a fare or FX pairing."""
+    """Normalize a sk_flights_search result. Never invents a fare or an FX pairing.
+
+    A card with no usable price or currency is skipped. Currency is kept as
+    the card's own; a named keep filters on it and nothing converts.
+    """
     wanted = normalize_currency(currency) if currency else None
+    cards = _flight_cards(result)
+    layover_by_trip = _layover_by_trip(_result_text(result))
     offers: list[HiddenCityOffer] = []
-    for row in _tool_rows(result):
+    for card in cards:
         try:
-            offer = _offer_from_row(
-                row,
+            offer = _offer_from_card(
+                card,
                 origin=origin,
                 destination=destination,
                 departure_date=departure_date,
                 return_date=return_date,
+                layover_by_trip=layover_by_trip,
             )
         except (TypeError, ValueError, AttributeError, KeyError):
             continue
@@ -474,101 +429,6 @@ def parse_skiplagged_offers(
     return tuple(offers)
 
 
-def _offer_from_row(
-    row: Any,
-    *,
-    origin: str,
-    destination: str,
-    departure_date: date,
-    return_date: Optional[date],
-) -> Optional[HiddenCityOffer]:
-    mapped = _as_mapping(row)
-    if mapped is None:
-        return None
-    price_value = next((mapped[key] for key in _PRICE_KEYS if key in mapped), None)
-    price = _first_number(mapped, *_PRICE_KEYS)
-    if price is None or price <= 0:
-        return None
-    offer_currency = _owned_currency(mapped, price_value)
-    if offer_currency is None:
-        return None
-    row_origin = (
-        _iata_or_none(_first_str(mapped, "origin", "from", "originAirport"))
-        or _nested_iata(mapped, "departure")
-        or origin
-    )
-    row_dest = (
-        _iata_or_none(_first_str(mapped, "destination", "to", "destinationAirport"))
-        or _nested_iata(mapped, "arrival")
-        or destination
-    )
-    ticketed = (
-        _iata_or_none(
-            _first_str(
-                mapped,
-                "ticketed_destination",
-                "ticketedDestination",
-                "finalDestination",
-                "ticketedTo",
-                "hiddenCityAirport",
-                "overfly",
-            )
-        )
-        or _nested_iata(
-            mapped,
-            "ticketed_destination",
-            "ticketedTo",
-            "hiddenCityAirport",
-            "overfly",
-            "ticketed",
-        )
-        or _ticketed_from_legs(mapped, row_dest)
-    )
-    layover = _first_str(mapped, "layover_city", "layoverCity", "layover", "via")
-    layover_iata = _iata_or_none(layover)
-    url = _first_str(
-        mapped,
-        "booking_url",
-        "bookingUrl",
-        "deepLink",
-        "url",
-        "link",
-        "flightURL",
-    )
-    hidden = _bool_flag(
-        mapped,
-        "hidden_city",
-        "hiddenCity",
-        "is_hidden_city",
-        "isHiddenCity",
-    )
-    if hidden is None:
-        hidden = _hidden_from_attributes(mapped)
-    if hidden is None:
-        hidden = bool(ticketed and ticketed != row_dest)
-    if _trip_hash_is_hidden(url):
-        hidden = True
-    if ticketed and ticketed != row_dest and layover_iata is None and not layover:
-        layover_iata = row_dest
-    return HiddenCityOffer(
-        origin=row_origin,
-        destination=row_dest,
-        departure_date=departure_date,
-        price=price,
-        currency=offer_currency,
-        evidence="confirmed",
-        source=HIDDEN_CITY_SOURCE,
-        airline=_first_str(mapped, "airline", "airlines", "carrier", "airlineName"),
-        duration=_first_str(mapped, "duration", "durationText", "time"),
-        stops_count=_stops_count(mapped),
-        layover_city=layover_iata or layover,
-        ticketed_destination=ticketed,
-        hidden_city=bool(hidden),
-        return_date=return_date,
-        booking_url=url,
-    )
-
-
 def _classify(exc: BaseException) -> SearchError:
     if isinstance(exc, SkiplaggedRateLimited):
         return SearchError(
@@ -576,6 +436,11 @@ def _classify(exc: BaseException) -> SearchError:
             message=str(exc),
             rate_limited=True,
             retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+        )
+    if isinstance(exc, SkiplaggedShapeError):
+        return SearchError(
+            code=SearchErrorCode.MARKUP_DRIFT,
+            message=str(exc) or "Skiplagged MCP reply changed shape.",
         )
     if isinstance(exc, SkiplaggedError):
         message = str(exc) or "Skiplagged MCP request failed."
@@ -652,11 +517,6 @@ def search_hidden_city(
     error: Optional[SearchError] = None
     try:
         result = _call_mcp(arguments, rpc=rpc or _rpc_post)
-    except SearchDeadline:
-        raise
-    except Exception as exc:
-        error = _classify(exc)
-    else:
         owned = parse_skiplagged_offers(
             result,
             origin=origin,
@@ -664,6 +524,11 @@ def search_hidden_city(
             departure_date=departure_date,
             return_date=return_date,
         )
+    except SearchDeadline:
+        raise
+    except Exception as exc:
+        error = _classify(exc)
+    else:
         offers = tuple(
             offer for offer in owned if named_currency is None or offer.currency == named_currency
         )
