@@ -46,9 +46,9 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   `playwright` 1.63.0, `ruff` 0.16.10, `selectolax` 1.0.0, `pydantic` 2.14.0,
   `curl-cffi` 0.16.3, `filelock` 4.0.12 and the rest of the lock. `pyee` stays at
   13.x, the newest that `playwright` 1.63 allows.
-- Known difference: the SDK client's default negotiation (protocol 2026) sends no
-  `progressToken`, so progress notifications reach only clients that send one on the
-  legacy handshake.
+- Progress: the server reports `[i/n]` progress when the request carries a
+  `progressToken` in `_meta`. The SDK client adds one only on the legacy handshake, so
+  a client on the 2026 handshake must pass one in `meta` to see progress.
 
 - `skiplagged.py` parses the shape Skiplagged's MCP actually returns
   (`structuredContent.flights`: `price.amount` / `price.currency`, `deepLink`,

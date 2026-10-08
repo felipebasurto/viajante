@@ -130,7 +130,6 @@ def _args(routes=ROUTES, **extra: object) -> dict:
 async def _session(server, mode="auto"):
     from mcp.client import Client
 
-    # Progress tokens ride the legacy handshake: MCP 2 negotiation does not send one.
     async with Client(server, mode=mode) as client:
         yield client.session
 
@@ -145,10 +144,15 @@ class ProgressTests(McpControlCase):
 
         async def main():
             server = mcp_server.build_server()
+            # On the 2026 handshake the SDK client sends no progressToken by itself, so the
+            # caller names one in `meta`. Without it the server has nothing to report to.
             with patch.object(mcp_server, "_PROGRESS_INTERVAL_SECONDS", 0):
-                async with _session(server, mode="legacy") as session:
+                async with _session(server) as session:
                     return await session.call_tool(
-                        "search_flights", _args(), progress_callback=on_progress
+                        "search_flights",
+                        _args(),
+                        progress_callback=on_progress,
+                        meta={"progress_token": "viajante-progress"},
                     )
 
         result = asyncio.run(main())
@@ -165,7 +169,7 @@ class ProgressTests(McpControlCase):
 
         async def main(**kwargs):
             server = mcp_server.build_server()
-            async with _session(server, mode="legacy") as session:
+            async with _session(server) as session:
                 return await session.call_tool("search_flights", _args(), **kwargs)
 
         with patch("viajante.mcp_server.ProgressRelay") as relay:
@@ -175,7 +179,11 @@ class ProgressTests(McpControlCase):
             async def ignore(progress, total, message):
                 return None
 
+            # A callback alone carries no token on the 2026 handshake, so no relay either.
             asyncio.run(main(progress_callback=ignore))
+            relay.assert_not_called()
+
+            asyncio.run(main(progress_callback=ignore, meta={"progress_token": "t"}))
             relay.assert_called_once()
 
     def test_messages_are_throttled_and_the_newest_is_flushed(self) -> None:
