@@ -7,7 +7,7 @@ const { version } = require("../package.json");
 
 const name = basename(process.argv[1] || "");
 const mcp = name !== "viajante";
-const spec = mcp ? `viajante[mcp]==${version}` : `viajante==${version}`;
+const spec = mcp ? `viajante[mcp,browser]==${version}` : `viajante==${version}`;
 const bin = mcp ? "viajante-mcp" : "viajante";
 const child = spawn("uvx", ["--from", spec, bin, ...process.argv.slice(2)], {
   stdio: "inherit",

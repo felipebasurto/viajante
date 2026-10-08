@@ -558,6 +558,62 @@ class DatesDeadlineCancelTests(unittest.TestCase):
         self.assertTrue(all(row.status == "error" for row in report.days))
         self.assertTrue(all(row.error.code == SearchErrorCode.REJECTED for row in report.days))
 
+    def test_round_trip_deadline_keeps_finished_days_and_marks_the_rest(self) -> None:
+        card = RawFlightCard("Iberia", "08:00", "09:20", "1 hr 20 min", "Nonstop", "€41")
+        fetched: list[date] = []
+        progress_lines: list[str] = []
+
+        class Transport:
+            automatic_typical = False
+
+            def fetch_round_trip_window(self, trips, on_day):
+                for index, trip in enumerate(trips):
+                    if index == 2:
+                        raise SearchDeadline()
+                    fetched.append(trip.departure_date)
+                    on_day(index, (card,))
+
+            def fetch(self, trip):
+                raise AssertionError("a round-trip window is one bounded batch")
+
+            def fetch_many(self, trips):
+                raise AssertionError("a round-trip window does not use one-way fetch_many")
+
+            def close(self) -> None:
+                return None
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                progress_lines.append(line)
+
+        report = search_dates(
+            "JFK",
+            "LHR",
+            OUT,
+            date(2099, 1, 17),
+            nights=5,
+            source=Transport(),
+            currency="EUR",
+            baggage_buffer=0,
+            deadline_seconds=60,
+            progress=progress,
+        )
+        self.assertEqual(fetched, [OUT, date(2099, 1, 15)])
+        self.assertEqual([row.status for row in report.days], ["ok", "ok", "error", "error"])
+        self.assertEqual(report.days[0].price, 41)
+        self.assertEqual(report.days[1].price, 41)
+        self.assertEqual(report.days[2].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(report.days[3].error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(
+            progress_lines,
+            [
+                f"[1/4] JFK -> LHR {OUT.isoformat()}",
+                "[2/4] JFK -> LHR 2099-01-15",
+            ],
+        )
+        self.assertFalse(report.coverage.complete)
+        self.assertEqual(report.coverage.stopping_reason, "deadline")
+
 
 class FlexShopReplayTests(unittest.TestCase):
     def _shop_source(self, *cards: RawFlightCard) -> _CalendarShop:

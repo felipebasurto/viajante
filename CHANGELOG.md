@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-10-08
+
+### Changed
+
+- Round-trip date sweeps (`search_dates`, and `search_flex` with a stay) are
+  much faster on long windows. Days are read in groups the size of the sweep
+  concurrency (eight by default, two with `VIAJANTE_SWEEP_MODE=conservative`):
+  each group's outbound pages go out together, then those days' return pages.
+  With the default mode a 31-day window takes about 35 rounds of requests
+  instead of 279 one after another.
+- A page that fails with a transport error or HTTP 5xx during a round-trip date
+  sweep is retried once instead of stopping the whole window. A 429 from the
+  provider still stops the remaining requests and applies the cooldown; groups
+  that already finished keep their prices.
+- MCP progress for date sweeps now reports a day only after it has finished,
+  so clients no longer see `31/31` before the first result arrives. A day cut
+  off by the deadline is not reported as done.
+- The npm wrapper `@viajante/mcp` now starts the MCP server with the browser
+  extra (`uvx --from viajante[mcp,browser]==<version> viajante-mcp`), so
+  `search_explore` has Playwright available. Install Chromium once with
+  `uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium`.
+  The `viajante` CLI bin is unchanged.
+
+### Added
+
+- The MCP guide tells assistants to pass `deadline_seconds` on long round-trip
+  date or flex sweeps, so finished days come back early and unfinished days are
+  marked with the `deadline` code instead of looking empty.
+- The missing-Chromium hint names the exact `uvx ... playwright install
+  chromium` command for the npm/uvx setup.
+
 ## [1.4.6] - 2026-10-07
 
 See the [release record](docs/release-1.4.6.md) for transport behavior,
@@ -272,7 +303,8 @@ inventory, compatibility changes, candidate validation and publication handoff.
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.4.6...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.4.7...develop
+[1.4.7]: https://github.com/felipebasurto/viajante/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/felipebasurto/viajante/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/felipebasurto/viajante/compare/v1.4.1...v1.4.5
 [1.3.1]: https://github.com/felipebasurto/viajante/compare/v1.3.0...v1.3.1

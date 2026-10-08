@@ -95,6 +95,14 @@ unknown, never "no results". The error carries no retry_after. A partial result 
 cached; ask again with a larger deadline_seconds or none.
 In search_explore, `not_loaded` under a deadline means the prices weren't loaded,
 even if destinations are listed.
+Long round-trip date sweeps (search_dates or search_flex with a stay) read the
+window in groups of at most the sweep concurrency: that group's outbound
+boards, then those days' return pages (at most eight per day), then the next
+group. A day is reported only after it finishes; a day the deadline cut is not.
+Pass deadline_seconds on those calls so finished
+days come back early
+instead of waiting out the whole window. Unfinished days carry error code deadline
+and empty_reason not_loaded; finished days keep the prices that arrived.
 
 ## The result envelope
 
@@ -163,6 +171,11 @@ VIAJANTE_SWEEP_MODE=conservative caps HTTP/2 dispatch at two requests instead of
 the standard eight. get_runtime_info reports the active mode and concurrency.
 RPC status 13 has an unknown cause; it alone does not establish throttling or an IP
 block. A 429 or status 13 stops unsent work and is not replayed or switched to detail.
+A round-trip date or flex window reads its pages in bounded batches at that same
+sweep concurrency, in groups of at most that many days: the group's outbound
+boards, then those days' selected return pages (still at most eight), then the
+next group. A day is reported only after it finishes. A 429 stops the unsent
+pages and does not start another group's batch.
 Error diagnostics distinguish real HTTP status from RPC status and unsent requests;
 cooldown_basis distinguishes provider Retry-After from a heuristic pause.
 
@@ -170,7 +183,9 @@ cooldown_basis distinguishes provider Retry-After from a heuristic pause.
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
 Do not brute-force a date matrix. search_explore is dest triage from an origin.
-search_dates uses bounded per-day public-page GETs and has no fetch parameter. If it returns
+search_dates uses bounded per-day public-page GETs and has no fetch parameter. A long
+round-trip window should pass deadline_seconds so finished days return early and the
+rest are deadline, not empty. If it returns
 blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the

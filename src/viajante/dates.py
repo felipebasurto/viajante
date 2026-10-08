@@ -1062,38 +1062,86 @@ def _sweep_per_day(
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
-    span = date_window_days(start, end)
-    index = 0
     while cursor <= end:
-        index += 1
-        progress(f"[{index}/{span}] {seed.origin} -> {seed.destination} {cursor.isoformat()}")
         day_queries.append((cursor, _day_trip(seed, cursor, nights)))
         cursor = shift_day(cursor, 1)
+    span = len(day_queries)
 
+    def row_for(day: date, day_query: FlightQuery | RoundTrip, result: object) -> DatePriceRow:
+        returning = _return_for(day, nights)
+        if isinstance(result, BaseException):
+            return _row_from_day_error(day, result, returning)
+        row = _row_from_day_cards(day, day_query, result, returning, filters, baggage_buffer)
+        if getattr(source, "transport", None) == "public_page":
+            page_error, scope_bound = source.metadata_for(day_query)
+            row = replace(
+                row,
+                scope_bound=scope_bound,
+                page_errors=(classify_failure(page_error),) if page_error is not None else (),
+            )
+        return row
+
+    def note(index: int, day: date) -> None:
+        progress(f"[{index}/{span}] {seed.origin} -> {seed.destination} {day.isoformat()}")
+
+    # ponytail: one-way days stay one multiplexed fetch_many, so their progress
+    # lines land together after that batch. A per-response callback on the HTTP
+    # client is the upgrade if a client needs a tick per one-way day.
     fetch_many = getattr(source, "fetch_many", None)
-    if callable(fetch_many):
+    one_way_batch = callable(fetch_many) and all(
+        isinstance(day_query, FlightQuery) for _day, day_query in day_queries
+    )
+    rows: list[DatePriceRow] = []
+    if one_way_batch:
         try:
             checkpoint()
-            results = fetch_many([day_query for _cursor, day_query in day_queries])
+            results = fetch_many([day_query for _day, day_query in day_queries])
         except SearchDeadline as exc:
-            results = [exc] * len(day_queries)
-    else:
-        results = [_fetch_or_exception(source, day_query) for _cursor, day_query in day_queries]
-    rows: list[DatePriceRow] = []
-    for (cursor, day_query), result in zip(day_queries, results, strict=True):
-        returning = _return_for(cursor, nights)
-        if isinstance(result, BaseException):
-            rows.append(_row_from_day_error(cursor, result, returning))
-        else:
-            row = _row_from_day_cards(cursor, day_query, result, returning, filters, baggage_buffer)
-            if getattr(source, "transport", None) == "public_page":
-                page_error, scope_bound = source.metadata_for(day_query)
-                row = replace(
-                    row,
-                    scope_bound=scope_bound,
-                    page_errors=(classify_failure(page_error),) if page_error is not None else (),
-                )
-            rows.append(row)
+            return tuple(row_for(day, day_query, exc) for day, day_query in day_queries)
+        for index, ((day, day_query), result) in enumerate(
+            zip(day_queries, results, strict=True), start=1
+        ):
+            rows.append(row_for(day, day_query, result))
+            if not isinstance(result, SearchDeadline):
+                note(index, day)
+        return tuple(rows)
+
+    # The public source batches a round-trip window. Sources without that method
+    # stay on the day loop below. A deadline day is a row and emits no progress.
+    window = getattr(source, "fetch_round_trip_window", None)
+    if callable(window) and all(isinstance(query, RoundTrip) for _day, query in day_queries):
+
+        def on_day(index: int, result: object) -> None:
+            day, day_query = day_queries[index]
+            rows.append(row_for(day, day_query, result))
+            if not isinstance(result, SearchDeadline):
+                note(index + 1, day)
+
+        try:
+            checkpoint()
+            window([query for _day, query in day_queries], on_day)
+        except SearchDeadline as exc:
+            rows.extend(row_for(day, query, exc) for day, query in day_queries[len(rows) :])
+        return tuple(rows)
+
+    for index, (day, day_query) in enumerate(day_queries, start=1):
+        try:
+            checkpoint()
+        except SearchDeadline as exc:
+            rows.extend(
+                row_for(rest_day, rest_query, exc)
+                for rest_day, rest_query in day_queries[index - 1 :]
+            )
+            return tuple(rows)
+        result = _fetch_or_exception(source, day_query)
+        rows.append(row_for(day, day_query, result))
+        if isinstance(result, SearchDeadline):
+            rows.extend(
+                row_for(rest_day, rest_query, result)
+                for rest_day, rest_query in day_queries[index:]
+            )
+            return tuple(rows)
+        note(index, day)
     return tuple(rows)
 
 

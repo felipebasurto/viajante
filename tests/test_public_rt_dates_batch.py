@@ -1,0 +1,667 @@
+"""Bounded batches for public round-trip date sweeps. Offline; no provider calls."""
+
+from __future__ import annotations
+
+import re
+import threading
+import time
+import unittest
+from datetime import date, timedelta
+from unittest.mock import patch
+
+import _isolate  # noqa: F401
+from test_google_flights_public import _card, _context
+from viajante.control import SearchCancelled, SearchControl, SearchDeadline, active, current_control
+from viajante.dates import calendar_trip, search_dates
+from viajante.google_flights import GoogleFlightsBlocked, SweepHttpResponse
+from viajante.google_flights_public import PublicGoogleFlightsHttpSource
+from viajante.models import FlightQuery
+from viajante.parsers import parse_price
+from viajante.ratelimit import (
+    GOOGLE_RATE_LIMIT_FILE,
+    note_rate_limited,
+    rate_limit_advice,
+    rate_limit_status,
+)
+from viajante.storage import default_state_dir
+
+START = date(2099, 6, 1)
+NIGHTS = 7
+CONCURRENCY = 8
+
+
+def _english(clock: str) -> str:
+    hour, minute = (int(part) for part in clock.split(":"))
+    return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
+
+
+def _echo(clock: str) -> str:
+    return f"<div>HAN–SIN {_english(clock)} Choose return round trip</div>"
+
+
+class _Pages:
+    def __init__(
+        self, days: int, outbounds: int, *, bad_echo: set[tuple[int, int]] | None = None
+    ) -> None:
+        self.html: dict[str, str] = {}
+        self.cards: dict[str, tuple] = {}
+        self.trips: list = []
+        self.outbound_urls: list[str] = []
+        self.return_urls: list[str] = []
+        self.dropped_return_urls: list[str] = []
+        bad_echo = bad_echo or set()
+        probe = PublicGoogleFlightsHttpSource(currency="EUR", client=object())
+        for day_index in range(days):
+            day = START + timedelta(days=day_index)
+            trip = calendar_trip("HAN", "SIN", day, max_stops=0, adults=2, nights=NIGHTS)
+            self.trips.append(trip)
+            outs = []
+            for n in range(outbounds):
+                outs.append(
+                    _card(
+                        "HAN",
+                        "SIN",
+                        day,
+                        f"{8 + n:02d}:00",
+                        f"TA{day_index:02d}{n:02d}",
+                        f"€{100 + n}",
+                    )
+                )
+            board_id = f"out-{day_index}"
+            outbound_url = probe._url(trip)
+            self.outbound_urls.append(outbound_url)
+            self.html[outbound_url] = _context() + f'<div data-page="{board_id}"></div>'
+            self.cards[board_id] = tuple(outs)
+            ranked = sorted(outs, key=lambda card: parse_price(card.price) or float("inf"))
+            for n, card in enumerate(ranked):
+                url = probe._url(trip, card.legs[0])
+                if n >= 8:
+                    self.dropped_return_urls.append(url)
+                    continue
+                clock = card.legs[0].segments[0].departure or card.departure or ""
+                back = _card(
+                    "SIN",
+                    "HAN",
+                    trip.return_date,
+                    "09:00",
+                    f"TB{day_index:02d}{n:02d}",
+                    f"€{500 + day_index}",
+                )
+                page_id = f"ret-{day_index}-{n}"
+                echo = "" if (day_index, n) in bad_echo else _echo(clock)
+                self.html[url] = _context() + echo + f'<div data-page="{page_id}"></div>'
+                self.cards[page_id] = (back,)
+                self.return_urls.append(url)
+
+    def parse(self, html: str, currency: str | None = None):
+        match = re.search(r'data-page="([^"]+)"', html)
+        if match is None:
+            raise AssertionError("public page is missing its test marker")
+        return self.cards[match.group(1)]
+
+
+class _SerialClient:
+    def __init__(self, pages: _Pages) -> None:
+        self.pages = pages
+        self.urls: list[str] = []
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        self.urls.append(url)
+        return SweepHttpResponse(200, self.pages.html[url], url)
+
+
+class _BatchClient:
+    def __init__(self, pages: _Pages, *, concurrency: int = CONCURRENCY) -> None:
+        self.pages = pages
+        self.concurrency = concurrency
+        self.batches: list[list[str]] = []
+        self.urls: list[str] = []
+        self.waves = 0
+        self.wave_sizes: list[int] = []
+        self.timestamps: list[float] = []
+
+    def _ok(self, url: str) -> SweepHttpResponse:
+        return SweepHttpResponse(200, self.pages.html[url], url)
+
+    def get_many(self, urls, *, timeout: float) -> list[SweepHttpResponse]:
+        urls = list(urls)
+        self.batches.append(urls)
+        out = []
+        for start in range(0, len(urls), self.concurrency):
+            chunk = urls[start : start + self.concurrency]
+            self.waves += 1
+            self.wave_sizes.append(len(chunk))
+            now = time.monotonic()
+            for url in chunk:
+                self.urls.append(url)
+                self.timestamps.append(now)
+                out.append(self._ok(url))
+        return out
+
+
+def _view(report) -> dict:
+    return {
+        "rows": [
+            (
+                row.departure_date,
+                row.return_date,
+                row.status,
+                row.price,
+                row.airline,
+                row.stops_count,
+                row.departure,
+                row.arrival,
+                row.scope_bound,
+                tuple(error.code.value for error in row.page_errors),
+                None if row.error is None else row.error.code.value,
+                row.stops_compare,
+            )
+            for row in report.days
+        ],
+        "limit": report.coverage.scope.get("public_page_outbound_limit"),
+        "strategy": report.coverage.strategy,
+    }
+
+
+def _search(client, pages: _Pages, **extra):
+    sleeps: list[float] = []
+    source = PublicGoogleFlightsHttpSource(currency="EUR", client=client, sleep=sleeps.append)
+    end = START + timedelta(days=len(pages.trips) - 1)
+    with patch("viajante.google_flights_public.parse_shopping_page", side_effect=pages.parse):
+        report = search_dates(
+            "HAN",
+            "SIN",
+            START,
+            end,
+            adults=2,
+            max_stops=0,
+            nights=NIGHTS,
+            currency="EUR",
+            source=source,
+            **extra,
+        )
+    return report, sleeps
+
+
+class PublicRoundTripDateBatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.addCleanup(self._clear_cooldown)
+
+    def _clear_cooldown(self) -> None:
+        path = default_state_dir() / GOOGLE_RATE_LIMIT_FILE
+        if path.exists():
+            path.unlink()
+
+    def test_31_day_round_trip_is_35_waves_and_matches_serial(self) -> None:
+        pages = _Pages(31, 8)
+        serial = _SerialClient(pages)
+        batch = _BatchClient(pages)
+        progress_at: list[tuple[str, int]] = []
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                progress_at.append((line, len(batch.urls)))
+
+        serial_report, serial_sleeps = _search(serial, pages)
+        batch_report, batch_sleeps = _search(batch, pages, progress=progress)
+
+        self.assertEqual(_view(serial_report), _view(batch_report))
+        self.assertEqual(batch_report.days[0].price, 500)
+        self.assertEqual(batch_report.days[-1].price, 530)
+        self.assertTrue(all(row.status == "ok" and row.scope_bound for row in batch_report.days))
+        self.assertEqual(sorted(serial.urls), sorted(batch.urls))
+        self.assertEqual(len(batch.urls), 31 + 31 * 8)
+        expected_batches: list[list[str]] = []
+        for start in range(0, 31, CONCURRENCY):
+            expected_batches.append(pages.outbound_urls[start : start + CONCURRENCY])
+            for day in range(start, min(start + CONCURRENCY, 31)):
+                expected_batches.append(pages.return_urls[day * 8 : (day + 1) * 8])
+        self.assertEqual(batch.batches, expected_batches)
+        self.assertEqual(batch.batches[0], pages.outbound_urls[:CONCURRENCY])
+        self.assertEqual(len(batch.batches), 4 + 31)
+        self.assertEqual(batch.waves, 35)
+        self.assertLessEqual(max(batch.wave_sizes), CONCURRENCY)
+        self.assertEqual(batch.timestamps, sorted(batch.timestamps))
+        self.assertEqual(batch.timestamps[0], batch.timestamps[CONCURRENCY - 1])
+        self.assertGreater(batch.timestamps[-1], batch.timestamps[0])
+        self.assertEqual(serial_sleeps, [])
+        self.assertEqual(batch_sleeps, [])
+        self.assertEqual(len(progress_at), 31)
+        for index, (line, sent) in enumerate(progress_at):
+            day = START + timedelta(days=index)
+            chunk, pos = divmod(index, CONCURRENCY)
+            chunk_days = min(CONCURRENCY, 31 - chunk * CONCURRENCY)
+            # Each finished chunk is that many outbound pages plus 8 returns a day.
+            expected = chunk * CONCURRENCY * 9 + chunk_days + (pos + 1) * 8
+            self.assertEqual(line, f"[{index + 1}/31] HAN -> SIN {day.isoformat()}")
+            self.assertEqual(sent, expected)
+
+    def test_batch_keeps_eight_returns_and_matches_serial_cards(self) -> None:
+        pages = _Pages(1, 10)
+        serial = _SerialClient(pages)
+        batch = _BatchClient(pages)
+        serial_report, _serial_sleeps = _search(serial, pages)
+        batch_report, _batch_sleeps = _search(batch, pages)
+
+        self.assertEqual(_view(serial_report), _view(batch_report))
+        self.assertEqual(batch.batches[1], pages.return_urls)
+        self.assertEqual(len(pages.return_urls), 8)
+        self.assertEqual(len(pages.dropped_return_urls), 2)
+        self.assertTrue(set(pages.dropped_return_urls).isdisjoint(batch.urls))
+        self.assertEqual(sorted(serial.urls), sorted(batch.urls))
+        self.assertEqual(batch_report.days[0].price, 500)
+        self.assertEqual(batch_report.coverage.scope["public_page_outbound_limit"], 8)
+
+    def test_failed_return_page_matches_the_serial_partial(self) -> None:
+        pages = _Pages(1, 2, bad_echo={(0, 1)})
+        serial_report, _ = _search(_SerialClient(pages), pages)
+        batch_report, _ = _search(_BatchClient(pages), pages)
+        self.assertEqual(_view(serial_report), _view(batch_report))
+        self.assertEqual(batch_report.days[0].status, "ok")
+        self.assertEqual(batch_report.days[0].price, 500)
+        self.assertEqual(
+            [error.code.value for error in batch_report.days[0].page_errors],
+            ["markup_drift"],
+        )
+
+    def test_429_mid_batch_stops_pending_and_records_the_cooldown(self) -> None:
+        self._clear_cooldown()
+        pages = _Pages(4, 2)
+        client = _RateLimitClient(pages, concurrency=2, trigger_at=2)
+        report, _sleeps = _search(client, pages)
+
+        self.assertEqual(len(client.batches), 3)
+        self.assertEqual(client.return_sent, pages.return_urls[:4])
+        self.assertEqual(report.days[0].status, "ok")
+        self.assertEqual(report.days[0].price, 500)
+        self.assertEqual(
+            [row.error.code.value for row in report.days[1:]],
+            ["blocked", "blocked", "blocked"],
+        )
+        self.assertTrue(report.days[1].error.rate_limited)
+        state = rate_limit_status()
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertEqual(state["basis"], "heuristic_http_429")
+        self.assertEqual(state["cooldown_s"], 120)
+
+        with patch("viajante.google_flights.shared_chrome_sweep_client") as shared:
+            follow = PublicGoogleFlightsHttpSource(currency="EUR")
+            with self.assertRaises(GoogleFlightsBlocked):
+                follow.fetch(FlightQuery("HAN", "SIN", START, adults=2, max_stops=0))
+            shared.assert_not_called()
+
+    def test_cancel_during_the_return_batch_sends_no_further_pages(self) -> None:
+        pages = _Pages(3, 1)
+        cancel = threading.Event()
+        client = _CancelClient(pages, cancel)
+        with self.assertRaises(SearchCancelled):
+            _search(client, pages, cancel=cancel)
+        self.assertEqual(client.sent, pages.outbound_urls + pages.return_urls[:1])
+        self.assertLess(len(client.sent), len(pages.outbound_urls) + len(pages.return_urls))
+
+    def test_deadline_keeps_finished_days_and_marks_the_rest(self) -> None:
+        pages = _Pages(3, 1)
+        client = _DeadlineClient(pages)
+        lines: list[str] = []
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                lines.append(line)
+
+        report, _sleeps = _search(client, pages, deadline_seconds=30, progress=progress)
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(client.sent, pages.outbound_urls + pages.return_urls[:1])
+        self.assertEqual(report.days[0].status, "ok")
+        self.assertEqual(report.days[0].price, 500)
+        self.assertTrue(report.days[0].scope_bound)
+        self.assertEqual(
+            [row.error.code.value for row in report.days[1:]],
+            ["deadline", "deadline"],
+        )
+        self.assertEqual(report.coverage.stopping_reason, "deadline")
+        self.assertFalse(report.coverage.complete)
+        self.assertEqual(lines, [f"[1/3] HAN -> SIN {START.isoformat()}"])
+
+    def test_transport_error_on_outbound_and_return_is_retried_once(self) -> None:
+        pages = _Pages(10, 2)
+        fail = {pages.outbound_urls[3], pages.return_urls[10]}
+        serial = _SerialTransport(pages, fail)
+        batch = _TransportFailClient(pages, fail)
+        serial_report, serial_sleeps = _search(serial, pages)
+        batch_report, batch_sleeps = _search(batch, pages)
+
+        self.assertEqual(_view(serial_report), _view(batch_report))
+        self.assertTrue(all(row.status == "ok" for row in batch_report.days))
+        self.assertEqual(sorted(serial.urls), sorted(batch.urls))
+        self.assertEqual(serial.urls.count(pages.outbound_urls[3]), 2)
+        self.assertEqual(batch.urls.count(pages.return_urls[10]), 2)
+        self.assertEqual(serial_sleeps, [0.05, 0.05])
+        self.assertEqual(batch_sleeps, [0.05, 0.05])
+        # The failed outbound's unsent siblings in that chunk are sent on the replay.
+        groups = [group for group in batch.batches if pages.outbound_urls[3] in group]
+        self.assertEqual(len(groups), 2)
+        self.assertNotIn(pages.outbound_urls[0], groups[1])
+        self.assertIn(pages.outbound_urls[7], groups[1])
+
+    def test_429_on_a_later_outbound_keeps_finished_chunks(self) -> None:
+        self._clear_cooldown()
+        pages = _Pages(12, 1)
+        client = _OutboundRateLimitClient(pages, pages.outbound_urls[9])
+        lines: list[str] = []
+
+        def progress(line: str) -> None:
+            if line.startswith("["):
+                lines.append(line)
+
+        report, _sleeps = _search(client, pages, progress=progress)
+
+        self.assertEqual([row.status for row in report.days[:8]], ["ok"] * 8)
+        self.assertEqual(report.days[0].price, 500)
+        self.assertEqual(report.days[7].price, 507)
+        self.assertEqual(client.batches[-1], pages.outbound_urls[8:12])
+        self.assertNotIn(pages.return_urls[8], client.sent)
+        self.assertEqual(
+            [row.error.code.value for row in report.days[8:]],
+            ["blocked", "blocked", "blocked", "blocked"],
+        )
+        self.assertTrue(all(row.error.rate_limited for row in report.days[8:10]))
+        arrived = report.days[8].error
+        self.assertNotIn("Not sent", arrived.message)
+        self.assertEqual(arrived.diagnostics["request_sent"], True)
+        self.assertEqual(arrived.diagnostics["attempts"], 1)
+        blocked = report.days[9].error
+        self.assertTrue(blocked.rate_limited)
+        self.assertEqual(blocked.diagnostics["request_sent"], True)
+        unsent = report.days[10].error
+        self.assertIn("Not sent", unsent.message)
+        self.assertEqual(unsent.diagnostics["request_sent"], False)
+        self.assertEqual(unsent.diagnostics["attempts"], 0)
+        self.assertEqual(
+            lines[:8],
+            [
+                f"[{index + 1}/12] HAN -> SIN {(START + timedelta(days=index)).isoformat()}"
+                for index in range(8)
+            ],
+        )
+        state = rate_limit_status()
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertEqual(state["basis"], "heuristic_http_429")
+        self.assertEqual(state["cooldown_s"], 120)
+        self.assertTrue((default_state_dir() / GOOGLE_RATE_LIMIT_FILE).is_file())
+
+        with patch("viajante.google_flights.shared_chrome_sweep_client") as shared:
+            follow = PublicGoogleFlightsHttpSource(currency="EUR")
+            with self.assertRaises(GoogleFlightsBlocked):
+                follow.fetch(FlightQuery("HAN", "SIN", START, adults=2, max_stops=0))
+            shared.assert_not_called()
+
+    def test_get_pages_retries_transport_once_and_stops_on_429(self) -> None:
+        sleeps: list[float] = []
+        client = _ScriptedClient()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client, sleep=sleeps.append)
+        client.script = [
+            [
+                SweepHttpResponse(599, "TimeoutError: timed out", "a"),
+                SweepHttpResponse(
+                    599,
+                    "not sent after an earlier transport failure",
+                    "b",
+                    request_sent=False,
+                    attempts=0,
+                    stopped=True,
+                ),
+                SweepHttpResponse(503, "unavailable", "c"),
+            ],
+            [
+                SweepHttpResponse(200, "ok-a", "a"),
+                SweepHttpResponse(200, "ok-b", "b"),
+                SweepHttpResponse(200, "ok-c", "c"),
+            ],
+        ]
+        responses, returned = source._get_pages(client, ["a", "b", "c"])
+        self.assertIs(returned, client)
+        self.assertEqual(client.seen, [["a", "b", "c"], ["a", "b", "c"]])
+        self.assertEqual([response.status for response in responses], [200, 200, 200])
+        self.assertEqual([response.attempts for response in responses], [2, 1, 2])
+        self.assertEqual(sleeps, [0.05])
+
+        sleeps.clear()
+        client.script = [
+            [
+                SweepHttpResponse(200, "ok", "a"),
+                SweepHttpResponse(429, "slow down", "b"),
+                SweepHttpResponse(
+                    0,
+                    "Not sent. Remaining batch stopped after a provider block.",
+                    "c",
+                    request_sent=False,
+                    attempts=0,
+                    stopped=True,
+                ),
+                SweepHttpResponse(599, "TimeoutError: timed out", "d"),
+            ]
+        ]
+        halted, _client = source._get_pages(client, ["a", "b", "c", "d"])
+        self.assertEqual(len(client.seen), 3)
+        self.assertEqual(halted[1].status, 429)
+        self.assertEqual(halted[3].status, 599)
+        self.assertEqual(sleeps, [])
+
+    def test_fetch_many_round_trips_matches_serial_and_keeps_a_deadline(self) -> None:
+        pages = _Pages(2, 1)
+        serial = _SerialClient(pages)
+        batch = _BatchClient(pages)
+        with patch("viajante.google_flights_public.parse_shopping_page", side_effect=pages.parse):
+            serial_source = PublicGoogleFlightsHttpSource(currency="EUR", client=serial)
+            batch_source = PublicGoogleFlightsHttpSource(currency="EUR", client=batch)
+            serial_rows = [serial_source.fetch(trip) for trip in pages.trips]
+            batch_rows = batch_source.fetch_many(pages.trips)
+        serial_prices = [row[0].price for row in serial_rows]
+        self.assertEqual(serial_prices, [row[0].price for row in batch_rows])
+        self.assertEqual(batch.batches[0], pages.outbound_urls)
+        self.assertEqual(batch.batches[1:], [[url] for url in pages.return_urls])
+
+        pages = _Pages(2, 1)
+        deadline = _DeadlineClient(pages)
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=deadline)
+        control = SearchControl(deadline_seconds=30)
+        with (
+            active(control),
+            patch("viajante.google_flights_public.parse_shopping_page", side_effect=pages.parse),
+        ):
+            results = source.fetch_many(pages.trips)
+        self.assertEqual(results[0][0].price, "€500")
+        self.assertIsInstance(results[1], SearchDeadline)
+        self.assertEqual(deadline.calls, 2)
+        self.assertEqual(deadline.sent, pages.outbound_urls + pages.return_urls[:1])
+
+
+class _SerialTransport(_SerialClient):
+    def __init__(self, pages: _Pages, fail_urls: set[str]) -> None:
+        super().__init__(pages)
+        self.fail_urls = set(fail_urls)
+        self.failed_once: set[str] = set()
+
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        self.urls.append(url)
+        if url in self.fail_urls and url not in self.failed_once:
+            self.failed_once.add(url)
+            raise TimeoutError("timed out")
+        return SweepHttpResponse(200, self.pages.html[url], url)
+
+
+class _TransportFailClient(_BatchClient):
+    """One transport failure stops the rest of that get_many; the replay succeeds."""
+
+    def __init__(self, pages: _Pages, fail_urls: set[str]) -> None:
+        super().__init__(pages)
+        self.fail_urls = set(fail_urls)
+        self.failed_once: set[str] = set()
+
+    def get_many(self, urls, *, timeout: float) -> list[SweepHttpResponse]:
+        urls = list(urls)
+        self.batches.append(urls)
+        out: list[SweepHttpResponse] = []
+        stopped = False
+        for url in urls:
+            if stopped:
+                out.append(
+                    SweepHttpResponse(
+                        599,
+                        "not sent after an earlier transport failure",
+                        url,
+                        request_sent=False,
+                        attempts=0,
+                        stopped=True,
+                    )
+                )
+                continue
+            if url in self.fail_urls and url not in self.failed_once:
+                self.failed_once.add(url)
+                self.urls.append(url)
+                out.append(SweepHttpResponse(599, "TimeoutError: timed out", url))
+                stopped = True
+                continue
+            self.urls.append(url)
+            out.append(self._ok(url))
+        return out
+
+
+class _OutboundRateLimitClient:
+    """429 on one outbound URL. Nothing in that batch after it, and no later batch."""
+
+    def __init__(self, pages: _Pages, trigger_url: str) -> None:
+        self.pages = pages
+        self.trigger_url = trigger_url
+        self.batches: list[list[str]] = []
+        self.sent: list[str] = []
+        self._stopped = False
+
+    def get_many(self, urls, *, timeout: float) -> list[SweepHttpResponse]:
+        urls = list(urls)
+        if self._stopped:
+            raise AssertionError("request started after the 429")
+        self.batches.append(urls)
+        if self.trigger_url not in urls:
+            self.sent.extend(urls)
+            return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
+        out: list[SweepHttpResponse] = []
+        seen = False
+        for url in urls:
+            if seen:
+                out.append(
+                    SweepHttpResponse(
+                        0,
+                        "Not sent. Remaining batch stopped after a provider block.",
+                        url,
+                        request_sent=False,
+                        attempts=0,
+                        stopped=True,
+                    )
+                )
+                continue
+            self.sent.append(url)
+            if url == self.trigger_url:
+                seen = True
+                advice = rate_limit_advice(note_rate_limited())
+                out.append(SweepHttpResponse(429, "slow down", url, rate_limit=advice))
+            else:
+                out.append(SweepHttpResponse(200, self.pages.html[url], url))
+        self._stopped = True
+        return out
+
+
+class _ScriptedClient:
+    def __init__(self) -> None:
+        self.script: list[list[SweepHttpResponse]] = []
+        self.seen: list[list[str]] = []
+
+    def get_many(self, urls, *, timeout: float) -> list[SweepHttpResponse]:
+        self.seen.append(list(urls))
+        return self.script.pop(0)
+
+
+class _RateLimitClient(_BatchClient):
+    """One return wave returns 429; later waves are not sent. Records the cooldown."""
+
+    def __init__(self, pages: _Pages, *, concurrency: int, trigger_at: int) -> None:
+        super().__init__(pages, concurrency=concurrency)
+        self.trigger_at = trigger_at
+        self.return_sent: list[str] = []
+        self._stopped = False
+
+    def get_many(self, urls, *, timeout: float) -> list[SweepHttpResponse]:
+        urls = list(urls)
+        self.batches.append(urls)
+        if len(self.batches) == 1:
+            return [self._ok(url) for url in urls]
+        out: list[SweepHttpResponse] = []
+        start = 0
+        while start < len(urls):
+            if self._stopped:
+                for url in urls[start:]:
+                    out.append(
+                        SweepHttpResponse(
+                            0,
+                            "Not sent. Remaining batch stopped after a provider block.",
+                            url,
+                            request_sent=False,
+                            attempts=0,
+                            stopped=True,
+                        )
+                    )
+                break
+            chunk = urls[start : start + self.concurrency]
+            hit = False
+            for url in chunk:
+                global_index = len(self.return_sent)
+                self.return_sent.append(url)
+                if global_index == self.trigger_at:
+                    hit = True
+                    advice = rate_limit_advice(note_rate_limited())
+                    out.append(SweepHttpResponse(429, "slow down", url, rate_limit=advice))
+                else:
+                    out.append(self._ok(url))
+            self._stopped = hit
+            start += len(chunk)
+        return out
+
+
+class _CancelClient:
+    def __init__(self, pages: _Pages, cancel: threading.Event) -> None:
+        self.pages = pages
+        self.cancel = cancel
+        self.sent: list[str] = []
+        self.calls = 0
+
+    def get_many(self, urls, *, timeout: float) -> list[SweepHttpResponse]:
+        urls = list(urls)
+        self.calls += 1
+        if self.calls == 1:
+            self.sent.extend(urls)
+            return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
+        self.sent.extend(urls)
+        self.cancel.set()
+        return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
+
+
+class _DeadlineClient:
+    def __init__(self, pages: _Pages) -> None:
+        self.pages = pages
+        self.sent: list[str] = []
+        self.calls = 0
+
+    def get_many(self, urls, *, timeout: float) -> list[SweepHttpResponse]:
+        urls = list(urls)
+        self.calls += 1
+        if self.calls == 1:
+            self.sent.extend(urls)
+            return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
+        self.sent.extend(urls)
+        control = current_control()
+        if control is not None:
+            control.deadline_at = control.clock()
+            control.mark_cut()
+        return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]

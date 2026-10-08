@@ -598,6 +598,15 @@ class GuideTests(_StateDir):
                 self.assertIn(phrase, guide)
         self.assertIn("Also search_split_tickets", INSTRUCTIONS)
 
+    def test_guide_tells_round_trip_date_sweeps_to_pass_a_deadline(self) -> None:
+        guide = self._flat(GUIDE)
+        self.assertIn("Long round-trip date sweeps", guide)
+        self.assertIn(
+            "Pass deadline_seconds on those calls so finished days come back early",
+            guide,
+        )
+        self.assertNotIn("Long round-trip date sweeps", self._flat(INSTRUCTIONS))
+
     def test_guide_lists_get_guide_among_tools_that_may_run_during_a_search(self) -> None:
         text = self._flat(GUIDE)
         self.assertIn("Also get_guide, which returns this guide", text)
