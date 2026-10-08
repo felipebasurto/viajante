@@ -752,8 +752,6 @@ class FlightOffer:
     typical: Optional[float] = None
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
-    cheapest_date: Optional[date] = None
-    cheapest: Optional[float] = None
     checked_bags: Optional[int] = None
     carry_on: Optional[int] = None
     evidence: Optional[OfferEvidence] = None
@@ -766,12 +764,6 @@ class FlightOffer:
         if self.baggage_buffer > 0 and not self.needs_bag_verify:
             raise ValueError("a baggage buffer only applies to a carrier flagged for verification")
         _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
-        if (self.cheapest_date is None) != (self.cheapest is None):
-            raise ValueError("cheapest_date and cheapest must both be set or both omitted")
-        if self.cheapest is not None and self.cheapest <= 0:
-            raise ValueError("cheapest must be positive")
-        if self.cheapest_date is not None and self.typical is None:
-            raise ValueError("cheapest day is omitted unless typical is set")
         _require_bag_count(self.checked_bags, role="checked_bags")
         _require_bag_count(self.carry_on, role="carry_on")
         if not self.legs:
@@ -844,9 +836,6 @@ class FlightOffer:
         _put_truthy(payload, "google_flights_url", self.google_flights_url)
         _put_present(payload, "checked_bags", self.checked_bags)
         _put_present(payload, "carry_on", self.carry_on)
-        if self.cheapest_date is not None and self.cheapest is not None:
-            payload["cheapest_date"] = self.cheapest_date.isoformat()
-            payload["cheapest"] = self.cheapest
         return payload
 
 

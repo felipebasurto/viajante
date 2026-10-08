@@ -183,7 +183,7 @@ has claims no search owns (see `error_code`), not that a search failed.
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
 | `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
 | `search_hidden_city` `blocked` / fetch failed | Stop. Do not treat a Google Flights tab as Skiplagged evidence. Wait 30–60 minutes. |
-| Flex `markup_drift` with empty `days` | Compact calendar miss, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
+| Flex `markup_drift` with empty `days` | A day page could not be parsed, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
 | `markup_drift` (other) | Stop. Do not retry the same parse. |
 | Process busy (`already running`) | Wait for that search to finish. Do not start another search in this process. |
 | MCP timeout `-32001` | Not the process lock. Do not 8×60s-retry it as lock-busy. |

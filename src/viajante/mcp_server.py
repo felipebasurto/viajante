@@ -660,8 +660,8 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         """Flex window of +/-N days around one date, then one shopping search on the cheapest
         day. route is ORIGIN-DEST; around is an ISO date. Use search_dates for a cheapest-week
         calendar; do not brute-force a date matrix. Currency and country as in search_flights.
-        A calendar miss (error markup_drift, empty days) is not no_results: do not invent a
-        cheapest week. A named-date search_flights is allowed.
+        A markup_drift day is not no_results: do not invent a cheapest week.
+        A named-date search_flights is allowed.
         """
         return dict(await run_mcp_tool(search_flex_tool, **locals()))
 

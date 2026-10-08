@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
 
 import _isolate  # noqa: F401
 from viajante.models import (
@@ -134,40 +133,6 @@ class TypicalModelTests(unittest.TestCase):
                 needs_bag_verify=False,
                 typical=120.0,
                 vs_typical="below",
-            )
-        with self.assertRaises(ValueError):
-            FlightOffer(
-                airline="Air",
-                departure="08:00",
-                arrival="10:00",
-                price_text="€100",
-                price=100.0,
-                duration="2 hr",
-                duration_hours=2.0,
-                stops="Nonstop",
-                stops_count=0,
-                baggage_buffer=0,
-                needs_bag_verify=False,
-                cheapest_date=date(2026, 9, 15),
-                cheapest=80.0,
-            )
-        with self.assertRaises(ValueError):
-            FlightOffer(
-                airline="Air",
-                departure="08:00",
-                arrival="10:00",
-                price_text="€100",
-                price=100.0,
-                duration="2 hr",
-                duration_hours=2.0,
-                stops="Nonstop",
-                stops_count=0,
-                baggage_buffer=0,
-                needs_bag_verify=False,
-                typical=120.0,
-                vs_typical="near",
-                vs_typical_pct=0,
-                cheapest_date=date(2026, 9, 15),
             )
 
 

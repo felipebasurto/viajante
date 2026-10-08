@@ -184,12 +184,14 @@ a `recommendation` means the pick is a relaxed one, not an exact match.
 
 **Shortlist.** Up to three entries with different stop counts or departure
 slots (`night` 00:00-05:59, `morning` 06:00-11:59, `afternoon` 12:00-17:59,
-`evening` 18:00-23:59). `recommended` is the best score; `cheapest` and
-`fastest` are the lowest ranking cost (fare plus any named baggage buffer) and
-the shortest known duration. When the cheapest or fastest offer shares its stop
+`evening` 18:00-23:59). `top_score` is the best score; `lowest_price` and
+`shortest` are the lowest ranking cost (fare plus any named baggage buffer) and
+the shortest known duration. When the lowest-price or shortest offer shares its stop
 count and slot with another pick, the entry is the best by that measure among
-different ones, labelled `cheapest_distinct` / `fastest_distinct`, and a note
-says what was not listed. A free third slot is an `alternative`. Offers with the
+different ones, labelled `lowest_price_distinct` / `shortest_distinct`, and a note
+says what was not listed. A free third slot is an `alternative`. Each entry carries the offer's
+`evidence_id` and `google_flights_url`; the full `offer` is embedded only when the
+query's `offers` list does not include it (for example a relaxed pick). Offers with the
 same carrier, clocks, and stop count are one flight; the cheaper fare is kept.
 Connections longer than three times the fastest nonstop (or the shortest known
 offer when no nonstop exists) are left out of the comparison and the `ranked`
@@ -204,9 +206,9 @@ stops 0.15. Ties break by ranking cost, duration, departure, carrier.
 
 **Currency.** Offers whose currencies differ, or whose currency is unproven, are
 not compared on price: `price_comparison` says `skipped_mixed_currency` or
-`skipped_unknown_currency`, the price weight is 0, and there is no `cheapest`.
-The other weights are rescaled (duration 0.7, stops 0.3), as `scoring.weights`
-shows. Viajante does not convert.
+`skipped_unknown_currency`, the price weight is 0, and there is no `lowest_price`.
+The other weights are rescaled (duration 0.7, stops 0.3), as `weights`
+shows (emitted only in that case). Viajante does not convert.
 
 The labels name a pick's role in the shortlist. They describe the offer, not a decision: read the
 fields in `highlights` and `tradeoffs`, and make the choice yourself.

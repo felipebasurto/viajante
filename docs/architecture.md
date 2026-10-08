@@ -146,9 +146,8 @@ slot for them.
   page scripts. Missing or malformed bootstrap data is a parse failure, while
   a recognized empty result shape remains provider-empty.
 - `google_flights_rpc.py` owns compact-provider decoding. The public-page path
-  passes its decoded `data` array to the same `parse_shopping_data` function
-  used by the RPC adapter; it does not invent a `wrb.fr` wrapper. Retained RPC shopping constraints put occupancy at index 6 as
-  `[adults, children, infants_in_seat, infants_on_lap]`.
+  passes its decoded `data` array to `parse_shopping_data`; it does not invent a
+  `wrb.fr` wrapper and sends no unsigned RPC.
 
 ### 3. The public-page sweep
 

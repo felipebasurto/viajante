@@ -1107,8 +1107,6 @@ _DETAIL_UNPROVEN = (
 
 
 class GoogleFlightsSource:
-    automatic_typical = False
-
     def __init__(
         self,
         state_dir: Path,

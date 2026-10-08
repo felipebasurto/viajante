@@ -17,8 +17,9 @@ field the provider returned) or a primitive the agent can compose. Do not add
 summaries, "cheapest is X" lead lines, or recommendation prose to results.
 
 The flight `recommendation` block is an existing shortlist with role labels
-(`recommended`, `cheapest`, `fastest`). Those labels describe a pick's role, not a
-verdict, and every highlight or trade-off must restate a returned field. Do not
+(`top_score`, `lowest_price`, `shortest`, `alternative`). Those labels name a pick's
+role, not a verdict, and every highlight or trade-off must restate a returned field;
+no comparative lead lines. Do not
 add new prose labels to any result.
 
 ## Where to edit
@@ -40,22 +41,22 @@ add new prose labels to any result.
 - Shared provider cooldown state: `src/viajante/ratelimit.py`
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
-- Flags or printed tables: `src/viajante/cli.py`
+- Flags: `src/viajante/cli.py`; printed tables and exit codes: `src/viajante/cli_report.py`
 - Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
 - MCP result envelope: `src/viajante/envelope.py`
 - MCP input-error JSON body: `src/viajante/mcp_errors.py`
 - MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
 - Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
-- Airline aliases and alliance shopping codes: `src/viajante/carriers.py`
+- Airline aliases and alliance tfs carrier codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
 - Domain types or JSON keys: `src/viajante/models.py`
-- Typical vs same-route calendar median: `src/viajante/typical.py`
+- Same-route median from requested priced days: `src/viajante/typical.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
 - Offline IATA lookup and metro groups: `src/viajante/airports.py`
 - Origin-country cash currency for Google `curr` (no FX): `src/viajante/quote.py`
-- Cheapest-per-day calendar and flex window: `src/viajante/dates.py`
+- Cheapest-per-day window and flex window: `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 - Opt-in split tickets: `src/viajante/split.py`
@@ -99,8 +100,9 @@ add new prose labels to any result.
 - Only `provider_empty` may be told to a traveller as "no flights/hotels found".
   `filtered_out` means viajante's filters removed rows the provider returned. `not_loaded`
   means the search did not complete. Never merge the three.
-- An unpriced calendar day is `not_loaded`, and so is an unpriced explore
-  destination. An unpriced cell does not prove there are no flights.
+- An unpriced explore destination is `not_loaded`, and so is a date row that
+  carries no reason of its own. An unpriced cell does not prove there are no flights.
+  A date day shopped on the public page that returns no cards is `provider_empty`.
 - `error_code` rides only with the `empty_reason` it supports. An `ok` or
   `partial` result may still carry the worst failure's code.
 - A new search tool must stamp through `stamp_search` (or `stamp_split`,
@@ -256,8 +258,9 @@ add new prose labels to any result.
   search is never cached, never recorded in the ledger, and never writes a cooldown.
 - `deadline_seconds` returns a partial result. Unfinished queries are `deadline`,
   never `no_results`, and the result is not cached.
-- Never swallow `SearchDeadline` in a broad `except Exception` around a provider
-  call. Cancellation is a `BaseException` and passes through.
+- A `SearchDeadline` is classified as code `deadline` and is never retried; never
+  let it fall into a retry, a `fetch_failed` or a `no_results`. Cancellation is a
+  `BaseException` and passes through.
 - An identical successful search is replayed for 5 minutes (`cached: true`). The
   replay cache holds at most 20 entries.
 - Invalid input is an `isError` result: the SDK's exact `Error executing tool <name>: `

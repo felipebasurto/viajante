@@ -1598,7 +1598,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     dates = sub.add_parser(
         "dates",
-        help="Cheapest fare per day for one route (compact calendar)",
+        help="Cheapest fare per day for one route (public results page per day)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=DATES_EXAMPLES,
     )
@@ -1649,7 +1649,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--fetch",
         default="sweep",
         choices=["auto", "sweep", "detail"],
-        help="Calendar uses the compact date-grid RPC (sweep). detail is accepted and ignored.",
+        help="Days are shopped on the public results page (sweep). detail is accepted and ignored.",
     )
     _add_save_flag(dates)
 
@@ -1706,7 +1706,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--fetch",
         default="sweep",
         choices=["auto", "sweep", "detail"],
-        help="Uses the date-grid RPC plus one HTTP shopping POST. detail is accepted and ignored.",
+        help=(
+            "Shops each day on the public results page, then one fresh shop on the chosen day. "
+            "detail is accepted and ignored."
+        ),
     )
     _add_save_flag(flex)
 

@@ -169,14 +169,7 @@ def _format_typical_deal(row: object, currency: str) -> str:
 
 
 def _format_typical(offer: FlightOffer, currency: str) -> str:
-    text = _format_typical_deal(offer, currency)
-    if not text:
-        return ""
-    if offer.cheapest_date is not None and offer.cheapest is not None:
-        text += (
-            f"  cheapest {offer.cheapest_date.isoformat()} {format_money(offer.cheapest, currency)}"
-        )
-    return text
+    return _format_typical_deal(offer, currency)
 
 
 def _format_parsed_bags(offer: FlightOffer) -> str:
