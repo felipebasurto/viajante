@@ -13,11 +13,8 @@ from viajante.airports import airport_geo
 from viajante.cli import main
 from viajante.cli_report import _print_explore_report
 from viajante.explore import search_explore
-from viajante.flights import (
-    _normalize_offer,
-    parse_depart_window,
-    parse_named_clock,
-)
+from viajante.flight_filters import parse_depart_window, parse_named_clock
+from viajante.flight_offers import _normalize_offer
 from viajante.google_flights import NoFlightsFound, RawFlightCard, google_flights_url
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,

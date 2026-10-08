@@ -28,7 +28,8 @@ from viajante.dates import (
     search_flex,
     validate_date_window,
 )
-from viajante.flights import _normalize_offer, parse_depart_window, parse_named_clock
+from viajante.flight_filters import parse_depart_window, parse_named_clock
+from viajante.flight_offers import _normalize_offer
 from viajante.google_flights import GoogleFlightsRejected, RawFlightCard, google_flights_url
 from viajante.google_flights_rpc import CompactCalendarDay
 from viajante.models import (
