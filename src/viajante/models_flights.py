@@ -142,6 +142,7 @@ class FlightQuery:
             "cabin": self.cabin,
         }
         payload.update(_shop_fields_json(self))
+        _put_truthy(payload, "nearby_label", self.nearby_label)
         return payload
 
 
@@ -192,6 +193,7 @@ class RoundTrip:
             "cabin": self.cabin,
         }
         payload.update(_shop_fields_json(self))
+        _put_truthy(payload, "nearby_label", self.nearby_label)
         return payload
 
     @property

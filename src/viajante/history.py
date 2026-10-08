@@ -233,8 +233,12 @@ def _plain(value: object) -> object:
 
 
 def _query_key(kind: str, query: Mapping[str, object], filters: Mapping[str, object]) -> str:
+    # nearby_label names the expansion, not the shop. Older rows hashed without it.
+    identity = {key: value for key, value in query.items() if key != "nearby_label"}
     blob = json.dumps(
-        {"kind": kind, "query": query, "filters": filters}, sort_keys=True, separators=(",", ":")
+        {"kind": kind, "query": identity, "filters": filters},
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 

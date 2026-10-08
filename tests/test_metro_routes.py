@@ -17,10 +17,13 @@ from viajante.flight_routes import (
     nearby_notes,
     parse_flight_plan,
 )
+from viajante.flights import search_flights
 from viajante.google_flights import RawFlightCard
+from viajante.history import flight_observations
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
+    FlightQuery,
     HotelOffer,
     HotelQuery,
     HotelQuerySuccess,
@@ -251,6 +254,47 @@ class MetroSurfaceTests(unittest.TestCase):
                 )
             flights.assert_not_called()
             locked.assert_not_called()
+
+    def test_metro_label_reaches_query_json_and_not_the_history_key(self) -> None:
+        day = self.FUTURE
+        back = day + timedelta(days=4)
+        expanded = parse_flight_plan([f"LON-MAD:{day.isoformat()}"], max_stops=1)
+        self.assertEqual(expanded[0].to_dict()["nearby_label"], "metro LON")
+        direct = parse_flight_plan([f"LHR-MAD:{day.isoformat()}"], max_stops=1)
+        self.assertNotIn("nearby_label", direct[0].to_dict())
+        blank = FlightQuery("LHR", "MAD", day, nearby_label="   ")
+        self.assertIsNone(blank.nearby_label)
+        self.assertNotIn("nearby_label", blank.to_dict())
+        packaged = parse_flight_plan(
+            [f"MAD-NYC:{day.isoformat()}:{back.isoformat()}"], trip="rt", max_stops=1
+        )
+        self.assertIsInstance(packaged[0], RoundTrip)
+        self.assertEqual(packaged[0].to_dict()["nearby_label"], "metro NYC")
+
+        codes = ("LHR", "LGW", "STN", "LTN", "LCY", "SEN")
+        source = _FaresByOrigin({code: "€100" for code in codes})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights(expanded, fetch="sweep", currency="EUR", baggage_buffer=0)
+        data = report.to_dict()
+        self.assertEqual(
+            {row["query"]["nearby_label"] for row in data["queries"]},
+            {"metro LON"},
+        )
+        row = data["queries"][0]
+        evidence_query = row["offers"][0]["evidence"]["query"]
+        self.assertEqual(evidence_query["nearby_label"], "metro LON")
+        shown = {key: value for key, value in row["query"].items() if key != "google_flights_url"}
+        self.assertEqual(shown, evidence_query)
+
+        labeled = flight_observations(report, {})
+        direct_source = _FaresByOrigin({"LHR": "€100"})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=direct_source):
+            direct_report = search_flights(direct, fetch="sweep", currency="EUR", baggage_buffer=0)
+        plain = flight_observations(direct_report, {})
+        metro_lhr = next(item for item in labeled if item["query"]["origin"] == "LHR")
+        self.assertEqual(metro_lhr["query"]["nearby_label"], "metro LON")
+        self.assertNotIn("nearby_label", plain[0]["query"])
+        self.assertEqual(metro_lhr["query_key"], plain[0]["query_key"])
 
     def test_lon_nyc_alone_sends_18_provider_queries(self) -> None:
         day = self.FUTURE.isoformat()

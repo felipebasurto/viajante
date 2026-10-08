@@ -278,6 +278,7 @@ class DateCalendarReport:
         if self.summary is not None:
             payload["summary"] = self.summary.to_dict()
         _put_truthy(payload, "google_flights_url", self.google_flights_url)
+        _put_truthy(payload, "nearby_label", self.nearby_label)
         return payload
 
 
@@ -411,6 +412,7 @@ class FlexSearchReport:
         _put_truthy(payload, "google_flights_url", self.google_flights_url)
         if self.error is not None:
             payload["error"] = self.error.to_dict()
+        _put_truthy(payload, "nearby_label", self.nearby_label)
         return payload
 
 
@@ -549,4 +551,5 @@ class ExploreReport:
         if self.pricing_errors:
             payload["pricing_errors"] = [row.to_dict() for row in self.pricing_errors]
         _put_present(payload, "empty_reason", self.empty_reason)
+        _put_truthy(payload, "nearby_label", self.nearby_label)
         return payload

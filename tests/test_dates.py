@@ -2441,7 +2441,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertNotIn("BQH", dests)
         self.assertTrue(all(row.origin == "BOS" for row in reports))
         self.assertTrue(all(row.nearby_label for row in reports))
-        self.assertNotIn("nearby_label", reports[0].to_dict())
+        self.assertEqual(reports[0].to_dict()["nearby_label"], reports[0].nearby_label)
         self.assertEqual({query.destination for query in on_source.fetched_queries}, dests)
 
     def test_dates_nearby_unknown_city_does_not_invent_codes(self) -> None:
@@ -2473,7 +2473,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertNotIn("BQH", dests)
         self.assertTrue(all(row.origin == "BOS" for row in reports))
         self.assertTrue(all(row.nearby_label for row in reports))
-        self.assertNotIn("nearby_label", reports[0].to_dict())
+        self.assertEqual(reports[0].to_dict()["nearby_label"], reports[0].nearby_label)
         self.assertEqual(on_source.fetch_calls, len(reports) * 7)  # seven days, no second shop
         self.assertEqual({query.destination for query in on_source.fetched_queries}, dests)
 

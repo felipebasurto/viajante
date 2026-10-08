@@ -124,7 +124,7 @@ class ModelTests(unittest.TestCase):
             nearby_label="nearby London LHR",
         )
         self.assertEqual(labeled.nearby_label, "nearby London LHR")
-        self.assertNotIn("nearby_label", labeled.to_dict())
+        self.assertEqual(labeled.to_dict()["nearby_label"], "nearby London LHR")
         self.assertNotIn("return_date", data)
         self.assertNotIn("legs", data)
         self.assertNotIn("bags", data)
