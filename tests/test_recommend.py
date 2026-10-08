@@ -124,7 +124,7 @@ class RequirementsMetTests(unittest.TestCase):
         )
         self.assertEqual(rec.relaxed_requirements, ())
         top = rec.entries[0]
-        self.assertEqual(top.labels[0], "recommended")
+        self.assertEqual(top.labels[0], "top_score")
         self.assertEqual(
             dict(top.requirements),
             {"depart_window": "met", "max_duration": "met", "max_stops": "met"},
@@ -138,7 +138,7 @@ class RequirementsMetTests(unittest.TestCase):
         rec = recommend(day())
         self.assertEqual(rec.relaxed_requirements, ())
         self.assertEqual(dict(rec.requirements.to_dict()), {})
-        self.assertIn("recommended", rec.entries[0].labels)
+        self.assertIn("top_score", rec.entries[0].labels)
 
     def test_no_offers_no_recommendation(self) -> None:
         self.assertIsNone(recommend([]))
@@ -200,12 +200,12 @@ class DiversityTests(unittest.TestCase):
         sigs = signatures(rec)
         self.assertEqual(len(set(sigs)), 3)
         labels = {label for e in rec.entries for label in e.labels}
-        self.assertIn("recommended", labels)
-        self.assertIn("cheapest", labels)
-        self.assertIn("fastest", labels)
-        cheapest = next(e for e in rec.entries if "cheapest" in e.labels)
+        self.assertIn("top_score", labels)
+        self.assertIn("lowest_price", labels)
+        self.assertIn("shortest", labels)
+        cheapest = next(e for e in rec.entries if "lowest_price" in e.labels)
         self.assertEqual(cheapest.offer.price, 450)
-        fastest = next(e for e in rec.entries if "fastest" in e.labels)
+        fastest = next(e for e in rec.entries if "shortest" in e.labels)
         self.assertEqual(fastest.offer.duration_hours, 7.0)
 
     def test_near_identical_schedule_is_not_listed_twice(self) -> None:
@@ -223,7 +223,7 @@ class DiversityTests(unittest.TestCase):
         rec = recommend(offers)
         self.assertEqual(
             [(e.offer.airline, e.labels) for e in rec.entries],
-            [("B", ("recommended", "cheapest")), ("C", ("fastest_distinct",))],
+            [("B", ("top_score", "lowest_price")), ("C", ("shortest_distinct",))],
         )
         self.assertEqual(len(set(signatures(rec))), len(rec.entries))
         self.assertEqual(len(rec.notes), 1)
@@ -244,7 +244,7 @@ class DiversityTests(unittest.TestCase):
         rec = recommend(offers)
         self.assertEqual(len(rec.entries), 3)
         self.assertEqual(rec.entries[0].offer.airline, "A")
-        self.assertEqual(set(rec.entries[0].labels), {"recommended", "cheapest", "fastest"})
+        self.assertEqual(set(rec.entries[0].labels), {"top_score", "lowest_price", "shortest"})
         self.assertEqual([e.labels for e in rec.entries[1:]], [("alternative",), ("alternative",)])
 
     def test_departure_slot_boundaries(self) -> None:
@@ -334,9 +334,9 @@ class MixedCurrencyTests(unittest.TestCase):
         self.assertEqual(rec.price_comparison, "skipped_mixed_currency")
         self.assertEqual(rec.weights["price"], 0.0)
         self.assertAlmostEqual(sum(rec.weights.values()), 1.0, places=3)
-        self.assertEqual(rec.to_dict()["weights"], rec.weights)
+        self.assertEqual(rec.to_dict(set(), "USD")["weights"], rec.weights)
         labels = {label for e in rec.entries for label in e.labels}
-        self.assertNotIn("cheapest", labels)
+        self.assertNotIn("lowest_price", labels)
         for entry in rec.entries:
             self.assertIsNone(entry.breakdown["price"])
             self.assertFalse(
@@ -378,8 +378,8 @@ class ScoringTests(unittest.TestCase):
         offers = day()
         shuffled = offers[:]
         random.Random(7).shuffle(shuffled)
-        first = recommend(offers, currency="USD").to_dict("USD")
-        second = recommend(shuffled, currency="USD").to_dict("USD")
+        first = recommend(offers, currency="USD").to_dict(set(), "USD")
+        second = recommend(shuffled, currency="USD").to_dict(set(), "USD")
         self.assertEqual(json.dumps(first, sort_keys=True), json.dumps(second, sort_keys=True))
 
     def test_best_in_pool_on_every_dimension_scores_100(self) -> None:
@@ -424,14 +424,12 @@ class ScoringTests(unittest.TestCase):
             make(airline="Iberia", dep="19:00", price=120, hours=5.0, stops=0),
         ]
         rec = recommend(offers, currency="EUR")
-        cheapest = next(e for e in rec.entries if "cheapest" in e.labels)
+        cheapest = next(e for e in rec.entries if "lowest_price" in e.labels)
         self.assertEqual(cheapest.offer.airline, "Iberia")
-        self.assertTrue(
-            any(
-                "ranked cost (fare plus named baggage buffer)" in t
-                for e in rec.entries
-                for t in (*e.highlights, *e.tradeoffs)
-            )
+        buffered = next(e for e in rec.entries if e.offer.airline == "Ryanair")
+        self.assertIn(
+            "Ranked with a caller-named baggage buffer; the bag fee itself is not verified",
+            buffered.tradeoffs,
         )
 
 
@@ -489,7 +487,11 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(shortlist[0]["requirements"], {"max_stops": "unmet"})
         self.assertTrue(shortlist[0]["evidence_id"].startswith("gf_"))
         self.assertTrue(shortlist[0]["google_flights_url"])
-        self.assertNotIn("offer", shortlist[0])
+        # Not among the query's offers, so the full offer rides on the entry.
+        embedded = shortlist[0]["offer"]
+        self.assertEqual(embedded["evidence"]["evidence_id"], shortlist[0]["evidence_id"])
+        self.assertEqual(embedded["legs"][0]["stops"], "1 stop")
+        self.assertEqual(embedded["airline"], "Iberia")
 
     def test_offers_key_and_order_are_unchanged_and_recommendation_is_additive(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
@@ -530,6 +532,26 @@ class PipelineTests(unittest.TestCase):
             if o["evidence"]["evidence_id"] == recommended["evidence_id"]
         )
         self.assertEqual(shown["airline"], "Delta")
+        for entry in with_rec["recommendation"]["shortlist"]:
+            self.assertNotIn("offer", entry)
+
+    def test_embedded_offer_only_when_offers_do_not_list_it(self) -> None:
+        listed = make(airline="Listed", currency="USD")
+        unlisted = make(airline="Unlisted", dep="19:00", price=400, stops=1, currency="USD")
+        rec = recommend([listed, unlisted])
+        listed_id = listed.evidence.evidence_id
+        unlisted_id = unlisted.evidence.evidence_id
+        shortlist = rec.to_dict({listed_id}, "USD")["shortlist"]
+        embedded = {entry["evidence_id"]: "offer" in entry for entry in shortlist}
+        self.assertEqual(embedded, {listed_id: False, unlisted_id: True})
+        full = next(entry for entry in shortlist if entry["evidence_id"] == unlisted_id)
+        self.assertEqual(full["offer"]["airline"], "Unlisted")
+
+    def test_offer_without_evidence_is_embedded(self) -> None:
+        rec = recommend([make(airline="Bare")])
+        entry = rec.to_dict(set(), "USD")["shortlist"][0]
+        self.assertIsNone(entry["evidence_id"])
+        self.assertEqual(entry["offer"]["airline"], "Bare")
 
     def test_clock_requirements_come_from_the_named_filters(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
@@ -577,7 +599,7 @@ class SurfaceTests(unittest.TestCase):
         with patch("viajante.mcp_handlers.search_flights", return_value=report):
             payload = search_flights_tool([f"JFK-LHR:{future}"], currency="USD")
         recommendation = payload["queries"][0]["recommendation"]
-        self.assertEqual(recommendation["shortlist"][0]["labels"][0], "recommended")
+        self.assertEqual(recommendation["shortlist"][0]["labels"][0], "top_score")
         self.assertNotIn("scoring", recommendation)
         self.assertNotIn("relaxation_order", recommendation)
         self.assertNotIn("weights", recommendation)

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from itertools import combinations
-from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Callable, Literal, Mapping, Optional, Sequence, Tuple
 
 from viajante.models import FlightOffer
 from viajante.parsers import clock_minutes
@@ -157,11 +157,15 @@ class ShortlistEntry:
     highlights: Tuple[str, ...]
     tradeoffs: Tuple[str, ...]
 
-    def to_dict(self) -> Mapping[str, object]:
-        evidence = self.offer.evidence
-        return {
+    def to_dict(self, listed_ids: AbstractSet[str], currency: str) -> Mapping[str, object]:
+        """Reference the offer by ``evidence_id``; embed it when ``offers`` does not list it.
+
+        An offer without evidence cannot be matched, so it is embedded too.
+        """
+        evidence_id = self.offer.evidence.evidence_id if self.offer.evidence else None
+        payload: dict[str, object] = {
             "labels": list(self.labels),
-            "evidence_id": evidence.evidence_id if evidence else None,
+            "evidence_id": evidence_id,
             "google_flights_url": self.offer.google_flights_url,
             "score": self.score,
             "breakdown": dict(self.breakdown),
@@ -170,6 +174,9 @@ class ShortlistEntry:
             "highlights": list(self.highlights),
             "tradeoffs": list(self.tradeoffs),
         }
+        if evidence_id is None or evidence_id not in listed_ids:
+            payload["offer"] = self.offer.to_dict(currency)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -190,12 +197,12 @@ class Recommendation:
             self, entries=tuple(replace(entry, offer=fn(entry.offer)) for entry in self.entries)
         )
 
-    def to_dict(self, currency: Optional[str] = None) -> Mapping[str, object]:
-        """Compact payload: offers are referenced by ``evidence_id``, not embedded again.
+    def to_dict(self, listed_ids: AbstractSet[str], currency: str) -> Mapping[str, object]:
+        """Compact payload: an offer in the query's ``offers`` is referenced, not embedded.
 
-        ``currency`` is accepted for the existing caller and is not needed to serialize.
-        Weights are emitted only when price is not compared, since that is the only case
-        where they differ from ``SCORE_WEIGHTS``.
+        ``listed_ids`` holds the ``evidence_id`` of every offer the query serializes; the
+        currency formats an embedded offer. Weights are emitted only when price is not
+        compared, since that is the only case where they differ from ``SCORE_WEIGHTS``.
         """
         payload: dict[str, object] = {
             "schema_version": self.schema_version,
@@ -205,7 +212,7 @@ class Recommendation:
             "compared": self.compared,
             "duplicates_removed": self.duplicates_removed,
             "slow_connections_hidden": self.slow_connections_hidden,
-            "shortlist": [entry.to_dict() for entry in self.entries],
+            "shortlist": [entry.to_dict(listed_ids, currency) for entry in self.entries],
             "notes": list(self.notes),
         }
         if self.price_comparison != "compared":
@@ -256,11 +263,6 @@ def _facts(
     offer: FlightOffer,
     statuses: Mapping[str, Status],
     requirements: Requirements,
-    *,
-    compared: int,
-    cheapest: Optional[FlightOffer],
-    fastest: Optional[FlightOffer],
-    buffered: bool,
 ) -> tuple[Tuple[str, ...], Tuple[str, ...]]:
     good: list[str] = []
     bad: list[str] = []
@@ -285,23 +287,8 @@ def _facts(
     else:
         bad.append("Carrier not shown")
     good.append(f"Fare {offer.price_text}")
-    if cheapest is not None and compared > 1:
-        label = "ranked cost (fare plus named baggage buffer)" if buffered else "fare"
-        if offer is cheapest:
-            good.append(f"Lowest {label} among {compared} compared")
-        else:
-            bad.append(
-                f"Not the lowest {label} among {compared} compared (lowest: {cheapest.price_text})"
-            )
     if offer.baggage_buffer:
         bad.append("Ranked with a caller-named baggage buffer; the bag fee itself is not verified")
-    if fastest is not None and compared > 1 and offer.duration_hours is not None:
-        if offer is fastest:
-            good.append(f"Shortest duration among {compared} compared")
-        elif fastest.duration_hours is not None:
-            gap = offer.duration_hours - fastest.duration_hours
-            if gap > 0:
-                bad.append(f"{_minutes_text(gap)} longer than the shortest compared")
     if offer.checked_bags is None:
         bad.append("Checked bag fee unknown")
     elif offer.checked_bags == 0:
@@ -346,13 +333,14 @@ def recommend_offers(
     relaxed: Tuple[str, ...] = ()
     candidates: list[tuple[FlightOffer, Mapping[str, Status]]] = []
     for size in range(len(stated) + 1 if relax else 1):
-        for relaxed in combinations(stated, size):
+        for dropped in combinations(stated, size):
             candidates = [
                 row
                 for row in rows
-                if all(status != "unmet" or name in relaxed for name, status in row[1].items())
+                if all(status != "unmet" or name in dropped for name, status in row[1].items())
             ]
             if candidates:
+                relaxed = dropped
                 break
         if candidates:
             break
@@ -410,14 +398,14 @@ def recommend_offers(
     fastest = min(known_fast, key=fast_key) if known_fast else None
 
     notes: list[str] = []
-    chosen: list[tuple[FlightOffer, list[str]]] = [(ranked[0], ["recommended"])]
+    chosen: list[tuple[FlightOffer, list[str]]] = [(ranked[0], ["top_score"])]
 
     def signatures() -> set[tuple[Optional[int], Optional[str]]]:
         return {_signature(offer) for offer, _ in chosen}
 
     for label, best, key, noun in (
-        ("cheapest", cheapest, cheap_key, "lowest fare"),
-        ("fastest", fastest, fast_key, "shortest duration"),
+        ("lowest_price", cheapest, cheap_key, "lowest fare"),
+        ("shortest", fastest, fast_key, "shortest duration"),
     ):
         if best is None:
             continue
@@ -448,18 +436,9 @@ def recommend_offers(
             break
         chosen.append((extra, ["alternative"]))
 
-    buffered = any(offer.baggage_buffer for offer in ranked)
     entries = []
     for offer, labels in chosen:
-        good, bad = _facts(
-            offer,
-            statuses[id(offer)],
-            requirements,
-            compared=len(ranked),
-            cheapest=cheapest,
-            fastest=fastest,
-            buffered=buffered,
-        )
+        good, bad = _facts(offer, statuses[id(offer)], requirements)
         score, parts = by_offer[id(offer)]
         entries.append(
             ShortlistEntry(
