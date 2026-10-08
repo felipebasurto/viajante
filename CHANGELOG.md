@@ -5,6 +5,9 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+The per-release record files and smoke notes that used to sit in `docs/` were folded into this
+changelog and removed. Their full text remains in git history up to commit 6ee0fb7.
+
 ## [Unreleased]
 
 ## [1.4.7] - 2026-10-08
@@ -39,9 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chromium` command for the npm/uvx setup.
 
 ## [1.4.6] - 2026-10-07
-
-See the [release record](docs/release-1.4.6.md) for transport behavior,
-compatibility changes, validation, and publication verification.
 
 ### Changed
 
@@ -95,9 +95,6 @@ compatibility changes, validation, and publication verification.
   candidates. See the release record for validation boundaries.
 
 ## [1.4.5] - 2026-10-07
-
-See the [release record](docs/release-1.4.5.md) for the complete integrated PR
-inventory, compatibility changes, candidate validation and publication handoff.
 
 ### Added
 
@@ -252,7 +249,7 @@ inventory, compatibility changes, candidate validation and publication handoff.
 - Skiplagged HTTP 429 is `blocked` with `rate_limited: true`, without retries. Its separate `skiplagged-rate-limit.json` pauses new calls; real calls are paced one second apart.
 - Detail fetch fails fast on `google.com/sorry` instead of waiting minutes for result cards.
 - `viajante hidden-city` and MCP `search_hidden_city`: Skiplagged cards are USD. A named keep that matches no owned card currency is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. Omit currency or pass USD; do not advertise EUR as a Skiplagged quote.
-- MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs. Historical smoke evidence is in `docs/smoke-2026-09-17.md`.
+- MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs.
 - MCP `validate_itinerary`: never reports `feasible=true` without owned provenance; incomplete evidence stays unknown/infeasible.
 
 ### Known limitations
