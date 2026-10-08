@@ -382,7 +382,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
         if not isinstance(trip, RoundTrip):
             return matched
-        return self._round_trip_packages(trip, matched, self._read_selected_return)
+        client = self._round_trip_batch_client()
+        if client is None:
+            return self._round_trip_packages(trip, matched, self._read_selected_return)
+        slots, _halt, _client = self._return_slots(client, trip, matched)
+        return self._round_trip_packages(trip, matched, _cached_return_reader(slots))
 
     def _read_selected_return(
         self, trip: RoundTrip, outbound: RawFlightCard
