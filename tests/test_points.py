@@ -30,6 +30,12 @@ class CentsPerPointTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cents_per_point(100, 0)
 
+    def test_rejects_non_finite_amounts(self) -> None:
+        with self.assertRaises(ValueError):
+            cents_per_point(float("nan"), 100)
+        with self.assertRaises(ValueError):
+            cents_per_point(100, 100, taxes=float("inf"))
+
 
 class AwardOfferTests(unittest.TestCase):
     def test_estimated_stays_estimated(self) -> None:
