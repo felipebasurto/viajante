@@ -136,7 +136,6 @@ TripKind = Literal["one-way", "rt", "multi"]
 FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | Tuple[RoundTrip, ...] | MultiCity
 TypicalTrip = FlightQuery | RoundTrip
 TypicalCacheKey = tuple[str, str, date, Optional[int], int, int, int, int, int, str]
-SWEEP_BATCH_THRESHOLD = 3
 ROUTE_GRAMMAR = "ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK"
 RT_GRAMMAR = "ORIGIN-DESTINATION:OUT:BACK"
 MULTI_GRAMMAR = "ORIGIN-DESTINATION:DATE"
@@ -172,17 +171,11 @@ def normalize_trip_kind(trip: str) -> TripKind:
         raise ValueError("trip must be 'one-way', 'rt', or 'multi'") from None
 
 
-def resolve_fetch_mode(
-    fetch: FetchMode,
-    query_count: int,
-    *,
-    browser_available: bool = True,
-    packaged: bool = False,
-) -> Literal["sweep", "detail"]:
-    if fetch == "auto":
+def resolve_fetch_mode(fetch: FetchMode) -> Literal["sweep", "detail"]:
+    if fetch == "detail":
+        return "detail"
+    if fetch in ("auto", "sweep"):
         return "sweep"
-    if fetch in ("sweep", "detail"):
-        return fetch
     raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
 
 
@@ -491,16 +484,7 @@ def parse_route_specs(
     }
     queries: list[FlightQuery] = []
     for spec in specs:
-        try:
-            pair, dates_part = spec.split(":", 1)
-            origin, destination = pair.split("-", 1)
-        except ValueError as exc:
-            raise ValueError(f"invalid route: {spec!r}. Expected {ROUTE_GRAMMAR}") from exc
-        if not origin or not destination:
-            raise ValueError(f"invalid route: {spec!r}. Expected {ROUTE_GRAMMAR}")
-        stripped = dates_part.strip()
-        if not stripped:
-            raise ValueError(f"invalid route: {spec!r}. Expected {ROUTE_GRAMMAR}")
+        origin, destination, stripped = _split_route(spec, grammar=ROUTE_GRAMMAR)
         if "," in stripped and ":" in stripped:
             raise ValueError(
                 f"invalid route: {spec!r}. Do not mix comma-separated dates with OUT:BACK"
@@ -1273,6 +1257,36 @@ def _bag_evidence(
     return (baggage_buffer if needs_verify else 0), needs_verify
 
 
+def _meets_requirements(
+    raw: RawFlightCard,
+    offer: FlightOffer,
+    max_stops: int,
+    *,
+    depart_window: Optional[Tuple[int, int]],
+    arrive_before: Optional[int],
+    depart_after: Optional[int],
+    max_duration_hours: Optional[float],
+    bags: Optional[int],
+    carry_on: Optional[int],
+) -> bool:
+    """The requirements a recommendation may relax. Unknown clocks or stops cannot prove them."""
+    if not _eligible_stops(raw.stops, max_stops):
+        return False
+    if not _passes_depart_window(raw, depart_window):
+        return False
+    if not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
+        return False
+    if (
+        max_duration_hours is not None
+        and offer.duration_hours is not None
+        and offer.duration_hours > max_duration_hours
+    ):
+        return False
+    if not _passes_clock_bound(offer.arrival, arrive_before, before=True):
+        return False
+    return _passes_clock_bound(offer.departure, depart_after, before=False)
+
+
 def _normalize_offer(
     raw: RawFlightCard,
     max_stops: int,
@@ -1301,13 +1315,7 @@ def _normalize_offer(
     price = parse_price(price_text)
     if price is None or price <= 0:
         return None
-    if enforce_requirements and not _eligible_stops(raw.stops, max_stops):
-        return None
     if not _passes_airline_filters(raw, airlines=airlines, exclude_airlines=exclude_airlines):
-        return None
-    if enforce_requirements and not _passes_depart_window(raw, depart_window):
-        return None
-    if enforce_requirements and not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
         return None
     if price_cap is not None and price > price_cap:
         return None
@@ -1320,13 +1328,6 @@ def _normalize_offer(
     stops_count = parse_stops_count(raw.stops)
     layover_hours = raw.layover_hours
     duration_hours = parse_duration_hours(raw.duration)
-    if (
-        enforce_requirements
-        and max_duration_hours is not None
-        and duration_hours is not None
-        and duration_hours > max_duration_hours
-    ):
-        return None
     if (
         max_layover_hours is not None
         and stops_count
@@ -1379,13 +1380,63 @@ def _normalize_offer(
         checked_bags=raw.checked_bags,
         carry_on=raw.carry_on,
     )
-    if enforce_requirements and not _passes_clock_bound(offer.arrival, arrive_before, before=True):
-        return None
-    if enforce_requirements and not _passes_clock_bound(
-        offer.departure, depart_after, before=False
+    if enforce_requirements and not _meets_requirements(
+        raw,
+        offer,
+        max_stops,
+        depart_window=depart_window,
+        arrive_before=arrive_before,
+        depart_after=depart_after,
+        max_duration_hours=max_duration_hours,
+        bags=bags,
+        carry_on=carry_on,
     ):
         return None
     return offer
+
+
+def _shop_offers(
+    cards: Sequence[RawFlightCard],
+    trip: Trip,
+    filters: OfferFilters,
+    *,
+    baggage_buffer: int = 0,
+) -> tuple[list[FlightOffer], list[FlightOffer]]:
+    """One parse per card: (pool, eligible). Eligible also meets the requirements;
+    the pool keeps the rest so a recommendation can report a relaxation."""
+    max_stops = _trip_max_stops(trip)
+    # With alliances on the request the provider applied a unioned include;
+    # a card may qualify through an alliance member we cannot verify locally.
+    airlines = trip.airlines if not trip.alliances else None
+    shared: dict[str, Any] = {
+        **vars(filters),
+        "baggage_buffer": baggage_buffer,
+        "airlines": airlines,
+        "exclude_airlines": trip.exclude_airlines,
+        "bags": trip.bags,
+        "carry_on": trip.carry_on,
+        "price_cap": trip.price_cap,
+    }
+    pool: list[FlightOffer] = []
+    eligible: list[FlightOffer] = []
+    for raw in cards:
+        offer = _normalize_offer(raw, max_stops, enforce_requirements=False, **shared)
+        if offer is None:
+            continue
+        pool.append(offer)
+        if _meets_requirements(
+            raw,
+            offer,
+            max_stops,
+            depart_window=filters.depart_window,
+            arrive_before=filters.arrive_before,
+            depart_after=filters.depart_after,
+            max_duration_hours=filters.max_duration_hours,
+            bags=trip.bags,
+            carry_on=trip.carry_on,
+        ):
+            eligible.append(offer)
+    return pool, eligible
 
 
 def offers_from_cards(
@@ -1394,33 +1445,9 @@ def offers_from_cards(
     filters: OfferFilters,
     *,
     baggage_buffer: int = 0,
-    enforce_requirements: bool = True,
 ) -> list[FlightOffer]:
     """Owned offers that pass the trip's shop fields and the named post-filters."""
-    max_stops = _trip_max_stops(trip)
-    named = vars(filters)
-    # With alliances on the request the provider applied a unioned include;
-    # a card may qualify through an alliance member we cannot verify locally.
-    airlines = trip.airlines if not trip.alliances else None
-    return [
-        offer
-        for raw in cards
-        if (
-            offer := _normalize_offer(
-                raw,
-                max_stops,
-                baggage_buffer=baggage_buffer,
-                airlines=airlines,
-                exclude_airlines=trip.exclude_airlines,
-                bags=trip.bags,
-                carry_on=trip.carry_on,
-                price_cap=trip.price_cap,
-                enforce_requirements=enforce_requirements,
-                **named,
-            )
-        )
-        is not None
-    ]
+    return _shop_offers(cards, trip, filters, baggage_buffer=baggage_buffer)[1]
 
 
 def _effective_cost(offer: FlightOffer) -> float:
@@ -1478,8 +1505,8 @@ def _rank_offers(
     for offer in rows:
         key = (
             offer.airline,
-            normalize_clock(offer.departure) or offer.departure,
-            normalize_clock(offer.arrival) or offer.arrival,
+            offer.departure,
+            offer.arrival,
             offer.price,
             offer.stops_count,
             offer.duration_hours,
@@ -1896,7 +1923,7 @@ def _run_search(
             if packaged
             else filters
         )
-        eligible = offers_from_cards(cards, trip, initial_filters, baggage_buffer=baggage_buffer)
+        pool, eligible = _shop_offers(cards, trip, initial_filters, baggage_buffer=baggage_buffer)
         if packaged:
             candidates = sorted(eligible, key=lambda offer: _offer_sort_key(offer, sort))
             eligible = []
@@ -1907,19 +1934,10 @@ def _run_search(
                 )
                 if len(_rank_offers(eligible, top=top, sort=sort)) >= top:
                     break
+            pool = eligible
         ranked = _rank_offers(eligible, top=top, sort=sort)
         shown = _stamp_typical(trip, ranked, source, typical_cache)
-        recommendation = _recommend(
-            trip,
-            eligible
-            if packaged
-            else offers_from_cards(
-                cards, trip, filters, baggage_buffer=baggage_buffer, enforce_requirements=False
-            ),
-            filters,
-            currency=currency,
-            packaged=packaged,
-        )
+        recommendation = _recommend(trip, pool, filters, currency=currency, packaged=packaged)
         if recommendation is not None:
             stamped = dict(zip(ranked, shown, strict=True))
             recommendation = recommendation.map_offers(lambda offer: stamped.get(offer, offer))
@@ -2341,17 +2359,7 @@ def search_flights(
         alliances=alliances,
         exclude_alliances=exclude_alliances,
     )
-    planned = resolve_fetch_mode(
-        fetch,
-        len(trips),
-        browser_available=playwright_available(),
-        packaged=any(len(trip.legs) > 1 for trip in trips),
-    )
-    if fetch == "auto" and any(
-        trip.airlines or trip.exclude_airlines or trip.alliances or trip.exclude_alliances
-        for trip in trips
-    ):
-        planned = "sweep"
+    planned = resolve_fetch_mode(fetch)
     report_progress = progress or (lambda _: None)
     started = time.perf_counter()
 
