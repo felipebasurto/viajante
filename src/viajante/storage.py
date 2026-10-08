@@ -1,13 +1,14 @@
-"""External state directory and atomic JSON writes."""
+"""External state directory, locking, and atomic writes shared by the state files."""
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Iterator, Mapping
+from typing import Iterator, Mapping, Optional
 
 try:
     import fcntl
@@ -19,6 +20,17 @@ except ImportError:  # POSIX
     msvcrt = None  # type: ignore[assignment]
 
 
+class UnreadableStateError(OSError):
+    """A state file exists but cannot be read or parsed. Never the same as an empty state.
+
+    ``str()`` is the reason, phrased without paths so it can reach an MCP client.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def default_state_dir() -> Path:
     env = os.environ.get("VIAJANTE_STATE_DIR")
     if env:
@@ -27,6 +39,22 @@ def default_state_dir() -> Path:
     if xdg:
         return Path(xdg) / "viajante"
     return Path.home() / ".local" / "state" / "viajante"
+
+
+def read_optional_bytes(path: Path) -> Optional[bytes]:
+    """The file's bytes, or None when it does not exist. Any other read error raises."""
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def read_failure_reason(exc: OSError, subject: str, *, writing: bool = False) -> str:
+    """Why a state file could not be read or written, phrased for an MCP client."""
+    if exc.errno in (errno.EACCES, errno.EPERM):
+        return f"permission denied {'writing' if writing else 'accessing'} {subject}"
+    verb = "write" if writing else "access"
+    return f"could not {verb} {subject} ({exc.strerror or type(exc).__name__})"
 
 
 def reports_payload(result: object) -> dict:
@@ -69,20 +97,11 @@ def exclusive_lock(data_file: Path) -> Iterator[None]:
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def write_json_atomic(payload: Mapping[str, object], destination: Path) -> None:
-    write_text_atomic(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        destination,
-    )
-
-
 def write_bytes_atomic(data: bytes, destination: Path) -> None:
+    """Write through a temp file beside the target, fsync, then rename over it."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     stream = tempfile.NamedTemporaryFile(
-        mode="wb",
-        dir=destination.parent,
-        prefix=destination.name + ".",
-        delete=False,
+        dir=destination.parent, prefix=destination.name + ".", delete=False
     )
     tmp = Path(stream.name)
     try:
@@ -96,20 +115,8 @@ def write_bytes_atomic(data: bytes, destination: Path) -> None:
 
 
 def write_text_atomic(text: str, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    stream = tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=destination.parent,
-        prefix=destination.name + ".",
-        delete=False,
-    )
-    tmp = Path(stream.name)
-    try:
-        with stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(tmp, destination)
-    finally:
-        tmp.unlink(missing_ok=True)
+    write_bytes_atomic(text.encode("utf-8"), destination)
+
+
+def write_json_atomic(payload: Mapping[str, object], destination: Path) -> None:
+    write_text_atomic(json.dumps(payload, indent=2, ensure_ascii=False), destination)

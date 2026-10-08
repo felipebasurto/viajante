@@ -6,7 +6,7 @@ import os
 import tempfile
 import threading
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import _isolate  # noqa: F401
@@ -28,6 +28,8 @@ from viajante.google_flights_public import PublicGoogleFlightsHttpSource
 from viajante.google_hotels import GoogleHotelsSource
 from viajante.google_hotels_rpc import HotelsBlocked
 from viajante.models import FlightQuery, HotelQuery, QueryFailure
+from viajante.ratelimit import rate_limit_advice
+from viajante.runtime import package_version
 
 T0 = 1_800_000_000.0
 
@@ -360,6 +362,42 @@ class SearchCacheTests(unittest.TestCase):
         tool("JFK-LHR", fail=True)
         tool("JFK-LHR", fail=True)
         self.assertEqual(calls, ["JFK-LHR", "JFK-LHR", "JFK-LHR"])
+
+
+class CooldownProvenanceTests(_StateDir):
+    def test_the_record_names_the_writing_version_and_endpoint_without_a_query(self) -> None:
+        state = note_rate_limited(
+            now=T0,
+            endpoint="https://www.google.com/_/FlightsFrontendUi/data/batchexecute?rpcids=x&secret=1",
+        )
+        self.assertEqual(state["viajante_version"], package_version())
+        self.assertEqual(state["endpoint"], "www.google.com/_/FlightsFrontendUi/data/batchexecute")
+        self.assertNotIn("secret", json.dumps(state))
+
+    def test_advice_names_the_writer_and_says_when_it_is_not_this_install(self) -> None:
+        here = rate_limit_advice(
+            note_rate_limited(now=T0, endpoint="www.google.com/travel"), sent=False
+        )
+        self.assertIn(f"recorded by viajante {package_version()} from www.google.com/travel", here)
+        self.assertNotIn("may have caused it", here)
+        stale = rate_limit_status(now=T0 + 1)
+        stale["viajante_version"] = "1.4.0"
+        advice = rate_limit_advice(stale)
+        self.assertIn("recorded by viajante 1.4.0", advice)
+        self.assertIn("another install on this machine may have caused it", advice)
+
+    def test_an_old_record_without_provenance_is_named_as_such(self) -> None:
+        path = os.path.join(os.environ["VIAJANTE_STATE_DIR"], "google-rate-limit.json")
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump({"at": T0, "until": T0 + 600, "cooldown_s": 600}, stream)
+        state = rate_limit_status(now=T0 + 1)
+        self.assertIsNone(state["viajante_version"])
+        self.assertIsNone(state["endpoint"])
+        advice = rate_limit_advice(state)
+        self.assertIn("recorded by a viajante that does not record its version", advice)
+        self.assertIn(
+            f"until {datetime.fromtimestamp(state['until'], timezone.utc):%H:%M} UTC", advice
+        )
 
 
 if __name__ == "__main__":
