@@ -14,7 +14,8 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante import mcp_handlers
-from viajante.cli import _print_split_report, main
+from viajante.cli import main
+from viajante.cli_report import _print_split_report
 from viajante.evidence import clear, verify_answer
 from viajante.mcp_handlers import search_split_tickets_tool
 from viajante.models import (

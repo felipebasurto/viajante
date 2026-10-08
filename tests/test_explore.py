@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.airports import airport_geo
-from viajante.cli import _print_explore_report, main
+from viajante.cli import main
+from viajante.cli_report import _print_explore_report
 from viajante.explore import search_explore
 from viajante.flights import (
     _calendar_summary_from_source,

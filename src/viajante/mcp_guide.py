@@ -145,20 +145,29 @@ proxied 429); do not invent a wait.
 ## Flight recommendation
 
 A successful search_flights (and the flights half of search_trip) query may carry a
-recommendation block beside its offers: one recommended pick, a shortlist of up to
-three offers that differ in stops or departure slot, per-offer highlights and
-tradeoffs from returned fields only, and published score weights. It is evidence,
-not a verdict; offers and their order are unchanged. Read relaxed_requirements
-first. A relaxed pick failed a requirement you named (listed there, and unmet in the
-entry), so it is not an exact match. When the query row has empty_reason
-filtered_out (envelope status no_results when every query is filtered_out) and a
-recommendation, offers is empty because the named filters removed every row, and
-the recommendation is a relaxed pick, not an exact match: say which requirements it
-relaxed. Offers whose currency
-differs or is unproven are never price-compared. Provider-empty queries carry no
-recommendation. Fare rules (refund, change) are never in the rows. requirements
-lists max_stops even when it is only the default, so its presence does not mean the
-caller named a stop limit.
+`recommendation` block beside its offers. It is additive evidence, not a verdict: `offers`
+and their order do not change, and nothing in the block tells you what to book. It holds:
+
+- `requirements`: each constraint you named (`max_stops`, `depart_window`, `depart_after`,
+  `arrive_before`, `max_duration`, `bags`, `carry_on`), with a per-offer status of `met`,
+  `unmet` or `unknown`. `max_stops` appears even when it is only the default, so its presence
+  does not mean you named a stop limit.
+- `relaxed_requirements`: the named requirements that were dropped so an entry could exist.
+  An entry that relaxed one is not an exact match on that requirement; read this list first.
+  When the query row has empty_reason filtered_out (envelope status no_results when every
+  query is filtered_out) and a recommendation, offers is empty because your named filters
+  removed every row, and the recommendation is a relaxed pick, not an exact match. Say which
+  requirements were relaxed.
+- `shortlist`: up to three offers with a role label, each with its score breakdown under the
+  published `SCORE_WEIGHTS`, its `highlights` and `tradeoffs`. Role labels are `top_score`
+  (highest weighted score), `lowest_price` and `shortest`. An offer can hold more than one
+  label, and a label does not mean "buy this".
+- `highlights` and `tradeoffs` come only from returned fields (price text, duration, stops,
+  layover, clocks, carrier, bag counts). A missing field is reported as unknown, never filled.
+
+Offers whose currency differs or is unproven are never price-compared or price-scored.
+Provider-empty queries carry no recommendation. Round-trip and multi-city packages are never
+relaxed. Fare rules (refund, change) are never in the rows, so the block makes no claim about them.
 
 ## Public-page transport in 1.4.6
 

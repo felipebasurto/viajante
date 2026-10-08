@@ -13,7 +13,8 @@ from urllib.parse import parse_qs, urlparse
 import _isolate  # noqa: F401
 from test_google_hotels import _hotel_record, _search_payload, _wrap_wrb
 from test_hotels import FakeSource, _located, _two_stays, card, offer, query
-from viajante.cli import _print_hotel_offer_details, main
+from viajante.cli import main
+from viajante.cli_report import _print_hotel_offer_details
 from viajante.google_flights import SweepHttpResponse
 from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
 from viajante.google_hotels_rpc import parse_hotels_page
