@@ -25,7 +25,8 @@ from viajante.cli import main
 from viajante.control import SearchCancelled, SearchControl, active
 from viajante.envelope import ENVELOPE_KEYS
 from viajante.evidence import _Owned
-from viajante.flights import DEFAULT_TOP, as_trips, parse_flight_plan, search_flights
+from viajante.flight_routes import as_trips, parse_flight_plan
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.hotels import search_hotels
 from viajante.mcp_errors import structured_error
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS

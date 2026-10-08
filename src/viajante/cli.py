@@ -45,22 +45,23 @@ from viajante.explore import (
     search_explore,
     validate_explore_window,
 )
-from viajante.flights import (
-    DEFAULT_TOP,
-    FLIGHT_SORTS,
+from viajante.flight_filters import (
+    parse_depart_window,
+    parse_named_clock,
+    parse_overnight_airports,
+    parse_via_airports,
+)
+from viajante.flight_offers import FLIGHT_SORTS
+from viajante.flight_routes import (
     FlightPlan,
     as_trips,
     expand_nearby_trips,
     nearby_notes,
     nearby_origin_notes,
     normalize_trip_kind,
-    parse_depart_window,
     parse_flight_plan,
-    parse_named_clock,
-    parse_overnight_airports,
-    parse_via_airports,
-    search_flights,
 )
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.history_cli import add_parsers as add_history_parsers
 from viajante.history_cli import run_history, run_watch
 from viajante.hotels import (

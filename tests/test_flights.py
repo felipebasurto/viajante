@@ -9,33 +9,39 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.airports import get_airport
-from viajante.flights import (
+from viajante.flight_filters import (
     NO_OFFER_FILTERS,
-    _needs_detail_fallback,
-    _normalize_offer,
     _overnight_from_owned_clocks,
-    _rank_offers,
-    _run_search,
-    _shop_offers,
-    as_trips,
-    classify_failure,
-    compare_nonstop_vs_one_stop,
-    drop_excluded_airport_trips,
-    expand_nearby_trips,
-    get_flights,
-    is_low_cost,
-    keep_included_dest_trips,
-    nearby_notes,
-    normalize_trip_kind,
-    offers_from_cards,
     parse_depart_window,
-    parse_flight_plan,
     parse_named_clock,
     parse_offer_filters,
     parse_overnight_airports,
     parse_overnight_lists,
-    parse_route_specs,
     parse_via_airports,
+)
+from viajante.flight_offers import (
+    _normalize_offer,
+    _rank_offers,
+    _shop_offers,
+    compare_nonstop_vs_one_stop,
+    is_low_cost,
+    offers_from_cards,
+)
+from viajante.flight_routes import (
+    as_trips,
+    drop_excluded_airport_trips,
+    expand_nearby_trips,
+    keep_included_dest_trips,
+    nearby_notes,
+    normalize_trip_kind,
+    parse_flight_plan,
+    parse_route_specs,
+)
+from viajante.flights import (
+    _needs_detail_fallback,
+    _run_search,
+    classify_failure,
+    get_flights,
     resolve_fetch_mode,
     search_flights,
 )

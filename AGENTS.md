@@ -30,7 +30,12 @@ add new prose labels to any result.
 - Public sweep GET concurrency: `src/viajante/sweep_config.py`
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
-- Routes, LCC buffer, nearby expand, flight ranking, or `get_flights`: `src/viajante/flights.py`
+- Route specs, metro and nearby expand, trip include/exclude: `src/viajante/flight_routes.py`
+- Flight post-filters (clocks, layover, via, overnight, bag requirements): `src/viajante/flight_filters.py`
+- Offer normalization, LCC buffer, flight ranking, per-query recommendation: `src/viajante/flight_offers.py`
+- Flight evidence stamps (Google Flights URLs, offer evidence): `src/viajante/flight_evidence.py`
+- Round-trip / multi-city next-leg completion and package filters: `src/viajante/flight_packages.py`
+- Search loop, failure classification, `search_flights`, or `get_flights`: `src/viajante/flights.py`
 - Per-query `recommendation` (requirements, relaxation, score, shortlist): `src/viajante/recommend.py`
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
@@ -46,7 +51,7 @@ add new prose labels to any result.
 - MCP result envelope: `src/viajante/envelope.py`
 - MCP input-error JSON body: `src/viajante/mcp_errors.py`
 - MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
-- Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
+- Low-cost carrier list (partial): `src/viajante/flight_offers.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance tfs carrier codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)

@@ -12,13 +12,9 @@ from typing import Callable, Optional, Sequence, Tuple
 
 from viajante.airports import get_airport, metro_of
 from viajante.control import controlled
-from viajante.flights import (
-    DEFAULT_TOP,
-    FlightSort,
-    metro_codes_in_label,
-    overlay_trip_fields,
-    search_flights,
-)
+from viajante.flight_offers import FlightSort
+from viajante.flight_routes import metro_codes_in_label, overlay_trip_fields
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.hotels import HotelSourceName, search_hotels
 from viajante.models import (
     FETCH_LANGUAGE,
