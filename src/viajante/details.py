@@ -7,21 +7,9 @@ from datetime import date, datetime, timezone
 from typing import Mapping, Optional
 
 from viajante.airports import airport_geo, canonical_city_name, lookup_airports, metro_of
-from viajante.envelope import stamp_local, stamp_search
+from viajante.envelope import ENVELOPE_KEYS, stamp_local, stamp_search
 from viajante.hotels import _raw_distance_km
 from viajante.skiplagged_hotels import _normalized_name, search_hotel_rooms
-
-_ENVELOPE = (
-    "status",
-    "completeness",
-    "empty_reason",
-    "empty_note",
-    "error_code",
-    "retry_after",
-    "retry_after_seconds",
-    "observed_at",
-    "observed_at_basis",
-)
 
 # ponytail: airports within 100 km (the metro table's radius) are one place.
 # Homonyms farther apart stay separate. Upgrade: subdivision codes.
@@ -78,15 +66,16 @@ def _age(payload, now):
     except ValueError:
         return None
     current = now or datetime.now(timezone.utc)
-    current = (
-        current.replace(tzinfo=timezone.utc)
-        if current.tzinfo is None
-        else current.astimezone(timezone.utc)
+    return max(0, int((_as_utc(current) - _as_utc(then)).total_seconds()))
+
+
+def _as_utc(value: datetime) -> datetime:
+    """A naive time is UTC, as the search reports are stamped."""
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
     )
-    then = (
-        then.replace(tzinfo=timezone.utc) if then.tzinfo is None else then.astimezone(timezone.utc)
-    )
-    return max(0, int((current - then).total_seconds()))
 
 
 def _point(value) -> Optional[tuple[float, float]]:
@@ -189,7 +178,7 @@ def _require_bool(room_rates) -> None:
 
 
 def _lift(detail: dict, stamped: dict) -> dict:
-    for key in _ENVELOPE:
+    for key in ENVELOPE_KEYS:
         detail[key] = stamped[key]
     return detail
 
