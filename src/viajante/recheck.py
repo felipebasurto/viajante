@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from viajante.airports import airport_geo
-from viajante.carriers import parse_airline_codes, parse_alliances
-from viajante.flights import _clock_minutes, _passes_airline_filters, search_flights
+from viajante.carriers import _passes_airline_filters, parse_airline_codes, parse_alliances
+from viajante.flights import search_flights
 from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
     FlightLeg,
@@ -36,6 +36,7 @@ from viajante.models import (
     Trip,
     normalize_currency,
 )
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import normalize_clock, parse_stops_count
 from viajante.ratelimit import NOT_SENT
 from viajante.storage import write_json_atomic

@@ -50,6 +50,18 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   `progressToken`, so progress notifications reach only clients that send one on the
   legacy handshake.
 
+- `skiplagged.py` parses the shape Skiplagged's MCP actually returns
+  (`structuredContent.flights`: `price.amount` / `price.currency`, `deepLink`,
+  `attributes`, `layovers`, `returnFlight`), checked against captured responses
+  in `tests/fixtures/skiplagged/`. The guessed alias keys are gone. A hidden-city
+  card's `hidden_city` is `null` when Skiplagged sends no `attributes`.
+- MCP tool parameters are declared once, in `mcp_handlers.py`; the client schema
+  is derived from those signatures (`tools/list` is byte-identical).
+- `flights.py` and `models.py` are split into smaller modules (`flight_routes`,
+  `flight_filters`, `flight_offers`, `flight_evidence`, `flight_packages`;
+  `models_common`, `models_flights`, `models_hotels`, ...). `viajante.models`
+  still exports every name; serialized JSON is unchanged.
+
 ### Fixed
 
 - A nonstop (or otherwise narrowed) search that Google answers with a rendered
@@ -58,6 +70,13 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
 - A search deadline is no longer retried as a fetch failure in Skiplagged room
   rates or hidden-city search.
 - Non-finite stay totals and award inputs are rejected instead of leaking `NaN`.
+- Skiplagged hidden-city search refuses more than 9 adults before sending, as
+  the provider's schema allows. A Skiplagged hotel card whose structured price
+  names a currency other than USD is dropped instead of being read as a USD
+  total.
+- A Skiplagged reply without `structuredContent.flights` is `markup_drift`, and
+  a tool error result is `fetch_failed` with its message, instead of being
+  guessed through fallback keys.
 
 ### Removed
 

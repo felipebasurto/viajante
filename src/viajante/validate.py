@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Mapping, Optional, Sequence
 
-from viajante.flights import _clock_minutes, _overnight_from_owned_clocks
+from viajante.flight_filters import _overnight_from_owned_clocks
 from viajante.models import ConstraintCheck, ItineraryValidationReport, normalize_currency
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import parse_stops_count
 from viajante.temporal import local_instant, segment_instant
 

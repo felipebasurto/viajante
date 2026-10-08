@@ -12,7 +12,9 @@ from test_flights import FakeSource, card
 from test_trip import _card as trip_card
 from test_trip import _search_trip_cards
 from viajante.envelope import stamp_search
-from viajante.flights import _recommend, _run_search, parse_offer_filters
+from viajante.flight_filters import parse_offer_filters
+from viajante.flight_offers import _recommend
+from viajante.flights import _run_search
 from viajante.mcp_guide import GUIDE
 from viajante.mcp_handlers import search_flights_tool
 from viajante.models import (

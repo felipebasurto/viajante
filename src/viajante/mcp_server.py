@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections.abc as abc
+import inspect
 import ipaddress
 import json
 import math
@@ -15,12 +17,23 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from functools import partial
-from typing import Annotated, Any, Callable, Literal, NoReturn, Optional, Sequence, TypeVar, Union
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Literal,
+    NoReturn,
+    Optional,
+    Sequence,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from viajante.control import SearchControl, active
 from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
-from viajante.explore import DEFAULT_EXPLORE_TOP
-from viajante.flights import DEFAULT_TOP
 from viajante.mcp_errors import structured_error, unknown_arguments_body, validation_body
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
@@ -45,7 +58,6 @@ from viajante.mcp_handlers import (
 )
 from viajante.models import EmptyReason
 from viajante.runtime import get_runtime_info as runtime_info
-from viajante.split import DEFAULT_MIN_CONNECTION_HOURS
 from viajante.watch import price_history_tool, watch_price_tool
 
 _T = TypeVar("_T")
@@ -372,9 +384,28 @@ def _compact_blocks(result: Any) -> Any:
     return result
 
 
-def _with_deadline_doc(fn: Callable[..., Any]) -> Callable[..., Any]:
-    fn.__doc__ = (fn.__doc__ or "").rstrip() + "\n" + _DEADLINE_DOC + "\n        "
-    return fn
+def _wire_type(hint: Any) -> Any:
+    """The client-visible type of a handler annotation (what tools/list shows).
+
+    Literal choices are plain strings; Sequence and Mapping are JSON arrays and objects.
+    """
+    origin = get_origin(hint)
+    args = get_args(hint)
+    if origin is Literal:
+        return str
+    if origin is Union:
+        return Union[tuple(_wire_type(arg) for arg in args)]
+    if origin in (abc.Sequence, list):
+        return list[_wire_type(args[0])]
+    if origin in (abc.Mapping, dict):
+        return dict[_wire_type(args[0]), _wire_type(args[1])]
+    return hint
+
+
+async def _hotel_details_runner(fn: Callable[..., _T], **kwargs: object) -> _T:
+    # A stored-quote read stays off the search lock; room_rates asks Skiplagged afresh.
+    runner = run_mcp_tool if kwargs["room_rates"] else run_lookup_tool
+    return await runner(fn, **kwargs)
 
 
 def _room_rates_flag(value: object) -> bool:
@@ -479,13 +510,23 @@ def build_server():
 
     server = ViajanteServer("viajante", instructions=_HELP)
 
+    # Client-visible types that differ from the handler's annotation. tools/list pins these:
+    # the deadline and room_rates validators are strict, and the balances list has no item type.
+    overrides: dict[str, object] = {
+        "deadline_seconds": _DeadlineSeconds,
+        "room_rates": _ROOM_RATES,
+        "balances": Optional[list],
+    }
+
     def tool(
         title: str,
+        handler: Optional[Callable[..., Any]] = None,
         *,
         network: bool,
         envelope: bool = True,
         writes: bool = False,
         returns: type = ToolEnvelope,
+        runner: Optional[Callable[..., Any]] = None,
     ):
         # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
         # provider. A writing tool is neither read-only nor idempotent (it appends), but
@@ -500,7 +541,43 @@ def build_server():
             ),
         )
 
-        def decorate(fn):
+        def decorate(stub):
+            if handler is None:
+                fn = stub
+            else:
+                # The handler owns the parameters (names, defaults, requiredness, types);
+                # the stub owns only the client's description (its docstring).
+                hints = get_type_hints(handler)
+                client = inspect.Signature(
+                    [
+                        p.replace(
+                            annotation=overrides[p.name]
+                            if p.name in overrides
+                            else _wire_type(hints[p.name])
+                        )
+                        for p in inspect.signature(handler).parameters.values()
+                    ],
+                    return_annotation=returns if envelope else inspect.Signature.empty,
+                )
+
+                async def fn(**kwargs):
+                    bound = client.bind(**kwargs)
+                    bound.apply_defaults()
+                    kwargs = bound.arguments
+                    # Resolve the runner at call time so tests can patch the module names.
+                    if runner is not None:
+                        result = await runner(handler, **kwargs)
+                    elif network:
+                        result = await run_mcp_tool(handler, **kwargs)
+                    else:
+                        result = await run_lookup_tool(handler, **kwargs)
+                    return dict(result) if envelope else result
+
+                fn.__name__ = stub.__name__
+                fn.__doc__ = stub.__doc__
+                fn.__signature__ = client
+                if "deadline_seconds" in client.parameters:
+                    fn.__doc__ = (fn.__doc__ or "").rstrip() + "\n" + _DEADLINE_DOC + "\n        "
             if envelope:
                 # `from __future__ import annotations` makes the return a string that cannot
                 # see the class above; FastMCP only builds an outputSchema from a real annotation.
@@ -529,46 +606,8 @@ def build_server():
         """
         return stamp_local(dict(runtime_info()))
 
-    @tool("Search flights", network=True)
-    @_with_deadline_doc
-    async def search_flights(
-        routes: list[str],
-        trip: str = "one-way",
-        max_stops: int = 1,
-        adults: int = 1,
-        cabin: str = "economy",
-        top: int = DEFAULT_TOP,
-        fetch: str = "auto",
-        airlines: str | None = None,
-        exclude_airlines: str | None = None,
-        alliance: str | None = None,
-        exclude_alliance: str | None = None,
-        depart_window: str | None = None,
-        arrive_before: str | None = None,
-        depart_after: str | None = None,
-        max_duration: float | None = None,
-        min_layover: float | None = None,
-        max_layover: float | None = None,
-        via: str | None = None,
-        exclude_via: str | None = None,
-        no_overnight: str | None = None,
-        require_overnight: str | None = None,
-        exclude_airports: str | None = None,
-        include_airports: str | None = None,
-        baggage_buffer: int | None = None,
-        sort: str = "ranked",
-        bags: int | None = None,
-        carry_on: int | None = None,
-        price_cap: int | None = None,
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-        currency: str | None = None,
-        country: str | None = None,
-        nearby: bool = False,
-        proxy: str | None = None,
-        deadline_seconds: _DeadlineSeconds = None,
-    ) -> dict:
+    @tool("Search flights", search_flights_tool, network=True)
+    def search_flights():
         """Google Flights search for named routes and dates. Each routes entry is
         ORIGIN-DEST:YYYY-MM-DD. Use search_dates for the cheapest week and search_flex for
         +/-N days. fetch=detail needs the browser extra and Chromium. Currency is currency, or
@@ -579,10 +618,11 @@ def build_server():
         named hub or leisure trunk, search_hidden_city may run once with the same route and
         date, never when bags were named. Rules and wording: get_guide.
         """
-        return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
-    @tool("Hotel finalist details", network=True)
-    async def get_hotel_details(selection_id: str, room_rates: _ROOM_RATES = False) -> dict:
+    @tool(
+        "Hotel finalist details", get_hotel_details_tool, network=True, runner=_hotel_details_runner
+    )
+    def get_hotel_details():
         """Read a hotel offer this process returned. room_rates must be a boolean.
 
         False returns the stored quote, does not search, and may run during another
@@ -595,179 +635,35 @@ def build_server():
         quote is partial. A read does not evict stored searches. Unknown or
         evicted ids send nothing.
         """
-        return dict(
-            await (run_mcp_tool if room_rates else run_lookup_tool)(
-                get_hotel_details_tool, selection_id=selection_id, room_rates=room_rates
-            )
-        )
 
-    @tool("Cheapest-dates calendar", network=True)
-    @_with_deadline_doc
-    async def search_dates(
-        route: str,
-        start: str,
-        end: str,
-        max_stops: int = 1,
-        adults: int = 1,
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-        cabin: str = "economy",
-        trip: str = "one-way",
-        nights: int | None = None,
-        airlines: str | None = None,
-        exclude_airlines: str | None = None,
-        alliance: str | None = None,
-        exclude_alliance: str | None = None,
-        via: str | None = None,
-        exclude_via: str | None = None,
-        no_overnight: str | None = None,
-        require_overnight: str | None = None,
-        exclude_airports: str | None = None,
-        include_airports: str | None = None,
-        bags: int | None = None,
-        carry_on: int | None = None,
-        price_cap: int | None = None,
-        nearby: bool = False,
-        depart_window: str | None = None,
-        arrive_before: str | None = None,
-        depart_after: str | None = None,
-        max_duration: float | None = None,
-        min_layover: float | None = None,
-        max_layover: float | None = None,
-        currency: str | None = None,
-        country: str | None = None,
-        baggage_buffer: int | None = None,
-        sort: str | None = None,
-        proxy: str | None = None,
-        deadline_seconds: _DeadlineSeconds = None,
-    ) -> dict:
+    @tool("Cheapest-dates calendar", search_dates_tool, network=True)
+    def search_dates():
         """Cheapest-per-day calendar for one named route, up to 31 days. route is ORIGIN-DEST;
         start and end are ISO dates. Use search_flex for +/-N around one date. This calendar
         is HTTP only and has no fetch mode. If it returns blocked, stop: do not switch to a
         browser or follow with search_flex or search_flights. Currency and country as in
         search_flights. Viajante does not convert.
         """
-        return dict(await run_mcp_tool(search_dates_tool, **locals()))
 
-    @tool("Flexible-date flight search", network=True)
-    @_with_deadline_doc
-    async def search_flex(
-        route: str,
-        around: str,
-        flex: int,
-        max_stops: int = 1,
-        adults: int = 1,
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-        cabin: str = "economy",
-        trip: str = "one-way",
-        nights: int | None = None,
-        top: int = DEFAULT_TOP,
-        baggage_buffer: int | None = None,
-        sort: str = "ranked",
-        airlines: str | None = None,
-        exclude_airlines: str | None = None,
-        alliance: str | None = None,
-        exclude_alliance: str | None = None,
-        via: str | None = None,
-        exclude_via: str | None = None,
-        no_overnight: str | None = None,
-        require_overnight: str | None = None,
-        exclude_airports: str | None = None,
-        include_airports: str | None = None,
-        bags: int | None = None,
-        carry_on: int | None = None,
-        price_cap: int | None = None,
-        nearby: bool = False,
-        depart_window: str | None = None,
-        arrive_before: str | None = None,
-        depart_after: str | None = None,
-        max_duration: float | None = None,
-        min_layover: float | None = None,
-        max_layover: float | None = None,
-        currency: str | None = None,
-        country: str | None = None,
-        proxy: str | None = None,
-        deadline_seconds: _DeadlineSeconds = None,
-    ) -> dict:
+    @tool("Flexible-date flight search", search_flex_tool, network=True)
+    def search_flex():
         """Flex window of +/-N days around one date, then one shopping search on the cheapest
         day. route is ORIGIN-DEST; around is an ISO date. Use search_dates for a cheapest-week
         calendar; do not brute-force a date matrix. Currency and country as in search_flights.
         A markup_drift day is not no_results: do not invent a cheapest week.
         A named-date search_flights is allowed.
         """
-        return dict(await run_mcp_tool(search_flex_tool, **locals()))
 
-    @tool("Explore destinations", network=True)
-    @_with_deadline_doc
-    async def search_explore(
-        origin: str,
-        start: str | None = None,
-        days: int = 7,
-        top: int = DEFAULT_EXPLORE_TOP,
-        month: str | None = None,
-        adults: int = 1,
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-        cabin: str = "economy",
-        max_stops: int = 1,
-        airlines: str | None = None,
-        exclude_airlines: str | None = None,
-        alliance: str | None = None,
-        exclude_alliance: str | None = None,
-        via: str | None = None,
-        exclude_via: str | None = None,
-        no_overnight: str | None = None,
-        require_overnight: str | None = None,
-        exclude_airports: str | None = None,
-        include_airports: str | None = None,
-        exclude_regions: str | None = None,
-        bags: int | None = None,
-        carry_on: int | None = None,
-        price_cap: int | None = None,
-        nearby: bool = False,
-        depart_window: str | None = None,
-        arrive_before: str | None = None,
-        depart_after: str | None = None,
-        max_duration: float | None = None,
-        min_layover: float | None = None,
-        max_layover: float | None = None,
-        currency: str | None = None,
-        country: str | None = None,
-        sort: str = "price",
-        baggage_buffer: int | None = None,
-        proxy: str | None = None,
-        deadline_seconds: _DeadlineSeconds = None,
-    ) -> dict:
+    @tool("Explore destinations", search_explore_tool, network=True)
+    def search_explore():
         """Destinations from one origin, then a priced shortlist. Give start (ISO date) or month,
         not both. Needs the browser extra; one adult in economy only. Currency and country as
         in search_flights. Viajante does not convert. A destination without a price is
         not_loaded, not a usable row.
         """
-        return dict(await run_mcp_tool(search_explore_tool, **locals()))
 
-    @tool("Search hotels", network=True)
-    @_with_deadline_doc
-    async def search_hotels(
-        location: str | None = None,
-        check_in: str | None = None,
-        check_out: str | None = None,
-        adults: int = 2,
-        rooms: int = 1,
-        top: int = DEFAULT_TOP,
-        min_rating: float | None = None,
-        entire_home: bool = False,
-        free_cancellation: bool = True,
-        source: str = "google",
-        currency: str | None = None,
-        stays: list[dict] | None = None,
-        near: dict[str, float] | None = None,
-        max_distance_km: float | None = None,
-        deadline_seconds: _DeadlineSeconds = None,
-    ) -> dict:
+    @tool("Search hotels", search_hotels_tool, network=True)
+    def search_hotels():
         """Hotel search. Quotes are total-stay prices, not per person. Currency is required (no
         origin airport), except source skiplagged, whose quotes are USD. Quotes come back in
         the requested currency as the provider returned them. Viajante does not convert and
@@ -782,18 +678,9 @@ def build_server():
         beds. lodging_evidence_conflict marks contradictory room or unit labels. Full rules:
         get_guide.
         """
-        return dict(await run_mcp_tool(search_hotels_tool, **locals()))
 
-    @tool("Hotel room rates", network=True)
-    async def search_hotel_rooms(
-        check_in: str,
-        check_out: str,
-        hotel_id: int | None = None,
-        hotel_name: str | None = None,
-        city: str | None = None,
-        adults: int = 2,
-        rooms: int = 1,
-    ) -> dict:
+    @tool("Hotel room rates", search_hotel_rooms_tool, network=True)
+    def search_hotel_rooms():
         """Room rates for one Skiplagged hotel, for 1-3 finalists. Name it by hotel_id (the
         provider_id of a skiplagged search_hotels offer) or by hotel_name plus city. A name
         must match exactly (case, accents and punctuation ignored); no match or several
@@ -803,51 +690,9 @@ def build_server():
         rooms searched. occupancy_limit is per room type and is not proof that a party fits
         across rooms. Skiplagged only: do not mix these rows with Google or Booking prices.
         """
-        return dict(await run_mcp_tool(search_hotel_rooms_tool, **locals()))
 
-    @tool("Search flights and hotel", network=True)
-    @_with_deadline_doc
-    async def search_trip(
-        routes: list[str],
-        location: str,
-        check_in: str | None = None,
-        check_out: str | None = None,
-        trip: str = "one-way",
-        max_stops: int = 1,
-        adults: int = 1,
-        rooms: int = 1,
-        cabin: str = "economy",
-        top: int = DEFAULT_TOP,
-        fetch: str = "auto",
-        baggage_buffer: int | None = None,
-        sort: str = "ranked",
-        bags: int | None = None,
-        carry_on: int | None = None,
-        airlines: str | None = None,
-        exclude_airlines: str | None = None,
-        alliance: str | None = None,
-        exclude_alliance: str | None = None,
-        via: str | None = None,
-        exclude_via: str | None = None,
-        no_overnight: str | None = None,
-        require_overnight: str | None = None,
-        exclude_airports: str | None = None,
-        include_airports: str | None = None,
-        arrive_before: str | None = None,
-        depart_after: str | None = None,
-        price_cap: int | None = None,
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-        currency: str | None = None,
-        country: str | None = None,
-        min_rating: float | None = None,
-        entire_home: bool = False,
-        free_cancellation: bool = True,
-        source: str = "google",
-        nearby: bool = False,
-        deadline_seconds: _DeadlineSeconds = None,
-    ) -> dict:
+    @tool("Search flights and hotel", search_trip_tool, network=True)
+    def search_trip():
         """Flights then one hotel stay, under one lock. Currency follows the flight origin or an
         explicit code; if unproven, ask. Viajante does not convert. The same currency goes to
         the hotel. Stay dates default to the flights' window. Unnamed baggage_buffer is 0. A
@@ -855,36 +700,9 @@ def build_server():
         carry the same recommendation block as search_flights. trip_total is omitted if either
         side missed.
         """
-        return dict(await run_mcp_tool(search_trip_tool, **locals()))
 
-    @tool("Split-ticket itineraries", network=True)
-    async def search_split_tickets(
-        route: str,
-        trip: str = "one-way",
-        max_stops: int = 1,
-        adults: int = 1,
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-        cabin: str = "economy",
-        top: int = DEFAULT_TOP,
-        fetch: str = "sweep",
-        airlines: str | None = None,
-        exclude_airlines: str | None = None,
-        alliance: str | None = None,
-        exclude_alliance: str | None = None,
-        bags: int | None = None,
-        carry_on: int | None = None,
-        price_cap: int | None = None,
-        via: str | None = None,
-        max_hubs: int | None = None,
-        min_connection_hours: float = DEFAULT_MIN_CONNECTION_HOURS,
-        allow_overnight: bool = False,
-        leg_max_stops: int = 0,
-        currency: str | None = None,
-        country: str | None = None,
-        proxy: str | None = None,
-    ) -> dict:
+    @tool("Split-ticket itineraries", search_split_tickets_tool, network=True)
+    def search_split_tickets():
         """Opt-in separately ticketed itineraries built from real one-way quotes. route is
         ORIGIN-DEST:DATE (one-way: self-transfer via a hub) or, with trip="rt",
         ORIGIN-DEST:OUT:BACK (cheapest outbound plus cheapest return one-way). It runs the
@@ -898,21 +716,12 @@ def build_server():
         is null unless every part shares one currency. Not for multi-city. Full rules:
         get_guide.
         """
-        return dict(await run_mcp_tool(search_split_tickets_tool, **locals()))
 
-    @tool("Look up airports", network=False, envelope=False)
-    async def lookup_airports(query: str, limit: int = 20) -> list:
-        return await run_lookup_tool(lookup_airports_tool, **locals())
+    @tool("Look up airports", lookup_airports_tool, network=False, envelope=False)
+    def lookup_airports(): ...
 
-    @tool("Search hidden-city fares", network=True)
-    async def search_hidden_city(
-        route: str,
-        departure: str,
-        return_date: str | None = None,
-        adults: int = 1,
-        top: int = DEFAULT_TOP,
-        currency: str | None = None,
-    ) -> dict:
+    @tool("Search hidden-city fares", search_hidden_city_tool, network=True)
+    def search_hidden_city():
         """Skiplagged search for a named route. Opt-in; never mixed with Google Flights. Run it
         once after search_flights on a named common route and date. Skip it for named bags,
         explore, dates, flex, multi-city and unproven destinations. Hidden-city tickets can
@@ -921,38 +730,22 @@ def build_server():
         cards are USD, so omit it or pass USD. A keep that matches no card is
         currency_mismatch. Nothing is converted.
         """
-        return dict(await run_mcp_tool(search_hidden_city_tool, **locals()))
 
-    @tool("Compare award to cash", network=False)
-    async def compare_awards(
-        offer: dict,
-        cash_price: float | None = None,
-        currency: str | None = None,
-        balances: list | None = None,
-    ) -> dict:
+    @tool("Compare award to cash", compare_awards_tool, network=False)
+    def compare_awards():
         """Compare a named award offer to cash locally. Does not invent seats.
 
         offer must include origin, destination, departure_date, program, points,
         and evidence. confirmed evidence needs a named source. Unnamed cash_price
         omits cpp_cents. Do not treat estimated or user_supplied as live inventory.
         """
-        return dict(await run_lookup_tool(compare_awards_tool, **locals()))
 
-    @tool("Look up point transfers", network=False)
-    async def lookup_transfers(
-        program: str,
-        points: int,
-        balances: list | None = None,
-    ) -> dict:
+    @tool("Look up point transfers", lookup_transfers_tool, network=False)
+    def lookup_transfers():
         """Local card-to-program transfer table. Not live award availability."""
-        return dict(await run_lookup_tool(lookup_transfers_tool, **locals()))
 
-    @tool("Validate itinerary", network=False)
-    async def validate_itinerary(
-        legs: list[dict],
-        constraints: dict,
-        currency: str | None = None,
-    ) -> dict:
+    @tool("Validate itinerary", validate_itinerary_tool, network=False)
+    def validate_itinerary():
         """Validate selected v2 flight offers locally, without fetching. Pass legs in travel
         order, each with its exact query and one selected offer. The result is tri-state:
         unknown evidence never becomes pass. arrival_deadline is an ISO date and time: an
@@ -960,19 +753,9 @@ def build_server():
         chronological checks owned segment instants. min_stay_days and max_stay_days use owned
         journey dates.
         """
-        return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 
-    @tool("Re-check offer", network=True)
-    async def recheck_offer(
-        offer: dict,
-        query: dict | None = None,
-        currency: str | None = None,
-        country: str | None = None,
-        fetch: str | None = None,
-        proxy: str | None = None,
-        allow_loose_match: bool = False,
-        allow_substitute: bool = False,
-    ) -> dict:
+    @tool("Re-check offer", recheck_offer_tool, network=True)
+    def recheck_offer():
         """Re-check an earlier flight offer with one fresh Google Flights search (never the
         replay cache). offer is a prior search_flights offer, or a {query, offer} row, or
         enough of one: price plus every segment's flight_number, origin, destination and
@@ -982,10 +765,9 @@ def build_server():
         that the offer is gone. Confirm the price on the provider's page; this is not a
         booking guarantee. Full rules: get_guide.
         """
-        return dict(await run_mcp_tool(recheck_offer_tool, **locals()))
 
-    @tool("Plan stay blocks", network=False)
-    async def plan_stay_blocks(roster: dict[str, list[str]]) -> dict:
+    @tool("Plan stay blocks", plan_stay_blocks_tool, network=False)
+    def plan_stay_blocks():
         """Local: group consecutive nights with the same people into blocks.
 
         roster maps each night (YYYY-MM-DD, the night that starts that day) to the
@@ -993,15 +775,9 @@ def build_server():
         check_out, nights, headcount and people, so one search_hotels stay per block
         can use headcount as adults. Never decides where anyone sleeps.
         """
-        return dict(await run_lookup_tool(plan_stay_blocks_tool, **locals()))
 
-    @tool("Split stay costs", network=False)
-    async def split_stay_costs(
-        stays: list[dict],
-        roster: dict[str, list[str]],
-        currency: str,
-        fee_per_person_night: float | None = None,
-    ) -> dict:
+    @tool("Split stay costs", split_stay_costs_tool, network=False)
+    def split_stay_costs():
         """Local: split each stay's total among the people who sleep there.
 
         stays are {name, check_in, check_out, total}; roster is as for
@@ -1012,10 +788,9 @@ def build_server():
         are allocated so each stay sums exactly. Nights no stay covers come back as
         unallocated_nights. Arithmetic only: it does not price or recommend a stay.
         """
-        return dict(await run_lookup_tool(split_stay_costs_tool, **locals()))
 
-    @tool("Verify draft answer", network=False)
-    async def verify_answer(answer: str) -> dict:
+    @tool("Verify draft answer", verify_answer_tool, network=False)
+    def verify_answer():
         """Check a draft reply against this process's recent search payloads.
 
         Call before sending a reply that quotes fares, stays, dates, airport
@@ -1025,7 +800,6 @@ def build_server():
         unowned unless a payload carries them (e.g. trip_total). Local; may run
         during a search.
         """
-        return dict(await run_lookup_tool(verify_answer_tool, **locals()))
 
     @tool("Price history", network=False)
     async def price_history(

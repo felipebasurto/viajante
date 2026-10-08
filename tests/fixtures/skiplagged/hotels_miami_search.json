@@ -1,0 +1,195 @@
+{
+ "content": [
+  {
+   "type": "text",
+   "text": "# Hotels in Miami\n\n- Check-in: 2026-11-17\n- Check-out: 2026-11-20\n- Showing 8 of 300 results (more available)\n\n[Open hotel search](https://skiplagged.com/hotels/47419/miami-beach-florida-hotels/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp)\n\n| Hotel | Rating | Price/night | Total | Amenities | Booking |\n| --- | --- | --- | --- | --- | --- |\n| **Beachside All Suites Hotel**<br/>7500 Collins Ave, Miami Beach, Fl 33141 | 3★ · 5.8/10 | $31 | $112 | Free internet, Handicap accessible | [View deal](https://skiplagged.com/hotel/926127/beachside-all-suites-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |\n| **Oceanside Hotel**<br/>6084 Collins Avenue | 3★ · 6.6/10 | $31 | $104 | Free internet, Fitness center, Handicap accessible | [View deal](https://skiplagged.com/hotel/1378615/oceanside-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |\n| **Palm Tree Club Miami**<br/>1819 79th Street Causeway | 3★ · 7.5/10 | $42 | $154 | Free internet, Fitness center, Free parking | [View deal](https://skiplagged.com/hotel/33334/palm-tree-club-miami-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |\n| **Whitelaw Hotel**<br/>808 Collins Avenue | 3★ · 8.1/10 | $42 | $155 | Free internet, Handicap accessible, Kitchen(ette) | [View deal](https://skiplagged.com/hotel/32022/whitelaw-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |\n| **Riviera South Beach Hotel**<br/>318 20th Street | 4★ · 8.4/10 | $46 | $169 | Free internet, Fitness center, Handicap accessible | [View deal](https://skiplagged.com/hotel/261764/riviera-south-beach-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |\n| **Catalina Hotel and Beach Club**<br/>1732 Collins Avenue | 3★ · 7.7/10 | $47 | $172 | Free internet, Fitness center, Handicap accessible | [View deal](https://skiplagged.com/hotel/31832/catalina-hotel-and-beach-club-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |\n| **Chesterfield Hotel and Suites**<br/>855 Collins Avenue | 3★ · 7.9/10 | $47 | $173 | Free internet, Handicap accessible, Kitchen(ette) | [View deal](https://skiplagged.com/hotel/32021/chesterfield-hotel-and-suites-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |\n| **Metropole Suites South Beach**<br/>635 Collins Avenue | 4★ · 5.6/10 | $50 | $184 | Free internet, Handicap accessible, Kitchen(ette) | [View deal](https://skiplagged.com/hotel/31968/metropole-suites-south-beach-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp) |"
+  }
+ ],
+ "structuredContent": {
+  "searchUrl": "https://skiplagged.com/hotels/47419/miami-beach-florida-hotels/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp",
+  "results": [
+   {
+    "type": "HotelCard",
+    "id": "hotel_926127",
+    "name": "Beachside All Suites Hotel",
+    "rating": {
+     "stars": 3,
+     "text": "3 stars"
+    },
+    "price": {
+     "amount": 30.67,
+     "currency": "USD",
+     "text": "$30.67/night"
+    },
+    "chain": "Independent Hotels",
+    "location": "7500 Collins Ave, Miami Beach, Fl 33141",
+    "amenities": [
+     "Free internet",
+     "Handicap accessible"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/926127/beachside-all-suites-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   },
+   {
+    "type": "HotelCard",
+    "id": "hotel_1378615",
+    "name": "Oceanside Hotel",
+    "rating": {
+     "stars": 3,
+     "text": "3 stars"
+    },
+    "price": {
+     "amount": 30.9,
+     "currency": "USD",
+     "text": "$30.9/night"
+    },
+    "chain": "No chain",
+    "location": "6084 Collins Avenue",
+    "amenities": [
+     "Free internet",
+     "Fitness center",
+     "Handicap accessible"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/1378615/oceanside-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   },
+   {
+    "type": "HotelCard",
+    "id": "hotel_33334",
+    "name": "Palm Tree Club Miami",
+    "rating": {
+     "stars": 3,
+     "text": "3 stars"
+    },
+    "price": {
+     "amount": 42.37,
+     "currency": "USD",
+     "text": "$42.37/night"
+    },
+    "chain": "No chain",
+    "location": "1819 79th Street Causeway",
+    "amenities": [
+     "Free internet",
+     "Fitness center",
+     "Free parking"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/33334/palm-tree-club-miami-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   },
+   {
+    "type": "HotelCard",
+    "id": "hotel_32022",
+    "name": "Whitelaw Hotel",
+    "rating": {
+     "stars": 3,
+     "text": "3 stars"
+    },
+    "price": {
+     "amount": 42.4,
+     "currency": "USD",
+     "text": "$42.4/night"
+    },
+    "chain": "No chain",
+    "location": "808 Collins Avenue",
+    "amenities": [
+     "Free internet",
+     "Handicap accessible",
+     "Kitchen(ette)"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/32022/whitelaw-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   },
+   {
+    "type": "HotelCard",
+    "id": "hotel_261764",
+    "name": "Riviera South Beach Hotel",
+    "rating": {
+     "stars": 4,
+     "text": "4 stars"
+    },
+    "price": {
+     "amount": 46.05,
+     "currency": "USD",
+     "text": "$46.05/night"
+    },
+    "chain": "No chain",
+    "location": "318 20th Street",
+    "amenities": [
+     "Free internet",
+     "Fitness center",
+     "Handicap accessible"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/261764/riviera-south-beach-hotel-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   },
+   {
+    "type": "HotelCard",
+    "id": "hotel_31832",
+    "name": "Catalina Hotel and Beach Club",
+    "rating": {
+     "stars": 3,
+     "text": "3 stars"
+    },
+    "price": {
+     "amount": 46.87,
+     "currency": "USD",
+     "text": "$46.87/night"
+    },
+    "chain": "No chain",
+    "location": "1732 Collins Avenue",
+    "amenities": [
+     "Free internet",
+     "Fitness center",
+     "Handicap accessible"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/31832/catalina-hotel-and-beach-club-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   },
+   {
+    "type": "HotelCard",
+    "id": "hotel_32021",
+    "name": "Chesterfield Hotel and Suites",
+    "rating": {
+     "stars": 3,
+     "text": "3 stars"
+    },
+    "price": {
+     "amount": 47.32,
+     "currency": "USD",
+     "text": "$47.32/night"
+    },
+    "chain": "No chain",
+    "location": "855 Collins Avenue",
+    "amenities": [
+     "Free internet",
+     "Handicap accessible",
+     "Kitchen(ette)"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/32021/chesterfield-hotel-and-suites-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   },
+   {
+    "type": "HotelCard",
+    "id": "hotel_31968",
+    "name": "Metropole Suites South Beach",
+    "rating": {
+     "stars": 4,
+     "text": "4 stars"
+    },
+    "price": {
+     "amount": 50.22,
+     "currency": "USD",
+     "text": "$50.22/night"
+    },
+    "chain": "No chain",
+    "location": "635 Collins Avenue",
+    "amenities": [
+     "Free internet",
+     "Handicap accessible",
+     "Kitchen(ette)"
+    ],
+    "deepLink": "https://skiplagged.com/hotel/31968/metropole-suites-south-beach-miami-beach-florida/2026-11-17/2026-11-20?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp"
+   }
+  ],
+  "pagination": {
+   "totalAvailable": 300,
+   "currentlyShowing": 8,
+   "offset": 0,
+   "limit": 8,
+   "hasMoreResults": true
+  }
+ }
+}

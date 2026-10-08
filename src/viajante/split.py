@@ -22,12 +22,9 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
 
 from viajante.airports import airport_geo
-from viajante.flights import (
-    DEFAULT_TOP,
-    _overlay_carrier_filters,
-    parse_code_list,
-    search_flights,
-)
+from viajante.flight_filters import parse_code_list
+from viajante.flight_routes import _overlay_carrier_filters
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.models import (
     FlightOffer,
     FlightQuery,

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import copy
 import io
 import json
 import unittest
 from datetime import date, datetime, timedelta
 from inspect import getsource
+from pathlib import Path
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
@@ -16,294 +18,195 @@ from viajante.models import (
     HiddenCityReport,
     SearchErrorCode,
 )
-from viajante.skiplagged import parse_skiplagged_offers, search_hidden_city
+from viajante.skiplagged import (
+    SkiplaggedShapeError,
+    parse_skiplagged_offers,
+    search_hidden_city,
+)
 
 FUTURE = date.today() + timedelta(days=40)
+FIXTURES = Path(__file__).parent / "fixtures" / "skiplagged"
+NOV_17 = date(2026, 11, 17)
+NOV_22 = date(2026, 11, 22)
 
 
-class SkiplaggedParseTests(unittest.TestCase):
-    def test_skips_rows_without_a_price(self) -> None:
+def _fixture(name: str) -> dict:
+    """A captured sk_flights_search `result` object (see fixtures/skiplagged/README.md)."""
+    return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def _replay(result: object, calls: list[dict] | None = None):
+    """Injected transport: a fixed handshake, then the given tools/call result."""
+
+    def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+        if calls is not None:
+            calls.append(payload)
+        method = payload.get("method")
+        if method == "initialize":
+            body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+            return 200, {"mcp-session-id": "s1"}, body
+        if method == "notifications/initialized":
+            return 202, {}, ""
+        return 200, {}, json.dumps({"jsonrpc": "2.0", "id": 2, "result": result})
+
+    return rpc
+
+
+class SkiplaggedFixtureParseTests(unittest.TestCase):
+    def test_one_way_cards_are_usd_offers_with_their_deep_link(self) -> None:
         offers = parse_skiplagged_offers(
-            {
-                "structuredContent": {
-                    "flights": [
-                        {"airline": "Delta", "origin": "JFK", "destination": "LHR"},
-                        {
-                            "price": 412,
-                            "currency": "USD",
-                            "airline": "JetBlue",
-                            "origin": "JFK",
-                            "destination": "LHR",
-                            "hidden_city": False,
-                            "url": "https://skiplagged.com/example",
-                        },
-                    ]
-                }
-            },
-            origin="JFK",
-            destination="LHR",
-            departure_date=FUTURE,
-            currency="USD",
-        )
-        self.assertEqual(len(offers), 1)
-        self.assertEqual(offers[0].price, 412)
-        self.assertEqual(offers[0].evidence, "confirmed")
-        self.assertFalse(offers[0].hidden_city)
-        self.assertEqual(offers[0].booking_url, "https://skiplagged.com/example")
-
-    def test_hidden_city_from_ticketed_destination(self) -> None:
-        offers = parse_skiplagged_offers(
-            [
-                {
-                    "price": 89,
-                    "currency": "USD",
-                    "origin": "JFK",
-                    "destination": "BOS",
-                    "ticketed_destination": "LHR",
-                    "layover_city": "BOS",
-                }
-            ],
-            origin="JFK",
-            destination="BOS",
-            departure_date=FUTURE,
-            currency="USD",
-        )
-        self.assertEqual(len(offers), 1)
-        self.assertTrue(offers[0].hidden_city)
-        self.assertEqual(offers[0].warnings, HIDDEN_CITY_WARNINGS)
-
-    def test_json_text_content_payload(self) -> None:
-        offers = parse_skiplagged_offers(
-            {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(
-                            {
-                                "itineraries": [
-                                    {
-                                        "fare": 199.0,
-                                        "curr": "USD",
-                                        "airlineName": "United",
-                                        "hiddenCity": True,
-                                    }
-                                ]
-                            }
-                        ),
-                    }
-                ]
-            },
-            origin="EWR",
-            destination="ORD",
-            departure_date=FUTURE,
-            currency="USD",
-        )
-        self.assertEqual(len(offers), 1)
-        self.assertTrue(offers[0].hidden_city)
-
-    def test_flight_card_nested_price_and_hidden_attribute(self) -> None:
-        offers = parse_skiplagged_offers(
-            {
-                "structuredContent": {
-                    "flights": [
-                        {
-                            "type": "FlightCard",
-                            "airlines": "American Airlines",
-                            "departure": {
-                                "airport": "JFK",
-                                "dateTime": "2026-10-20T05:55:00-04:00",
-                            },
-                            "arrival": {"airport": "MIA", "dateTime": "2026-10-20T09:00:00-04:00"},
-                            "duration": "3h 5m",
-                            "layovers": 0,
-                            "price": {"amount": 154, "currency": "USD"},
-                            "deepLink": (
-                                "https://skiplagged.com/flights/JFK/MIA/2026-10-20#trip=AA2161~"
-                            ),
-                            "attributes": ["hidden-city", "nonstop"],
-                        }
-                    ]
-                }
-            },
+            _fixture("flights_jfk_mia_oneway"),
             origin="JFK",
             destination="MIA",
-            departure_date=FUTURE,
+            departure_date=NOV_17,
             currency="USD",
         )
-        self.assertEqual(len(offers), 1)
-        self.assertEqual(offers[0].price, 154)
+        self.assertEqual(len(offers), 8)
+        self.assertEqual({offer.currency for offer in offers}, {"USD"})
+        self.assertEqual({offer.evidence for offer in offers}, {"confirmed"})
+        self.assertEqual({offer.source for offer in offers}, {"skiplagged"})
+        self.assertTrue(all(offer.booking_url for offer in offers))
+        self.assertTrue(
+            all(
+                offer.booking_url.startswith("https://skiplagged.com/flights/JFK/MIA/2026-11-17")
+                for offer in offers
+            )
+        )
+        self.assertEqual(offers[0].price, 149.0)
         self.assertEqual(offers[0].airline, "American Airlines")
-        self.assertTrue(offers[0].hidden_city)
-        self.assertEqual(offers[0].stops_count, 0)
-        self.assertIn("skiplagged.com", offers[0].booking_url or "")
+        self.assertEqual(offers[0].duration, "3h 18m")
 
-    def test_missing_card_currency_is_skipped(self) -> None:
+    def test_hidden_city_attribute_flags_the_nonstop_cards(self) -> None:
         offers = parse_skiplagged_offers(
-            [{"price": 89, "origin": "LHR", "destination": "JFK"}],
-            origin="LHR",
-            destination="JFK",
-            departure_date=FUTURE,
-            currency="GBP",
-        )
-        self.assertEqual(offers, ())
-
-    def test_dollar_glyph_is_not_origin_cash(self) -> None:
-        offers = parse_skiplagged_offers(
-            [{"price": "$412", "airline": "Delta"}],
-            origin="LHR",
-            destination="JFK",
-            departure_date=FUTURE,
-        )
-        self.assertEqual(offers, ())
-
-    def test_brand_token_is_not_hidden_city(self) -> None:
-        offers = parse_skiplagged_offers(
-            [
-                {
-                    "price": 350,
-                    "currency": "USD",
-                    "attributes": ["skiplagged", "nonstop"],
-                    "skiplagged": True,
-                }
-            ],
+            _fixture("flights_jfk_mia_oneway"),
             origin="JFK",
             destination="MIA",
-            departure_date=FUTURE,
+            departure_date=NOV_17,
         )
-        self.assertEqual(len(offers), 1)
-        self.assertFalse(offers[0].hidden_city)
+        hidden = [offer for offer in offers if offer.hidden_city]
+        self.assertEqual(len(hidden), 2)
+        self.assertEqual({offer.stops_count for offer in hidden}, {0})
+        self.assertEqual(hidden[0].warnings, HIDDEN_CITY_WARNINGS)
+        standard = [offer for offer in offers if not offer.hidden_city]
+        self.assertEqual(len(standard), 6)
+        self.assertEqual(standard[0].warnings, ())
 
-    def test_trip_hash_tilde_is_hidden_city(self) -> None:
+    def test_ticketed_destination_is_never_in_the_payload(self) -> None:
+        # Not in any captured card: no field names the beyond city. Stays null.
         offers = parse_skiplagged_offers(
-            [
-                {
-                    "price": 234,
-                    "currency": "USD",
-                    "airline": "American Airlines",
-                    "url": "https://skiplagged.com/flights/JFK/MIA/2026-11-15#trip=AA475~",
-                }
-            ],
+            _fixture("flights_jfk_mia_oneway"),
             origin="JFK",
             destination="MIA",
-            departure_date=FUTURE,
+            departure_date=NOV_17,
         )
-        self.assertEqual(len(offers), 1)
-        self.assertTrue(offers[0].hidden_city)
-        self.assertIsNone(offers[0].ticketed_destination)
-        self.assertIsNone(offers[0].layover_city)
+        self.assertTrue(all(offer.ticketed_destination is None for offer in offers))
 
-    def test_round_trip_tilde_overrides_false_flag(self) -> None:
+    def test_one_stop_layover_comes_from_the_table_row(self) -> None:
         offers = parse_skiplagged_offers(
-            [
-                {
-                    "price": 480,
-                    "currency": "USD",
-                    "airline": "Swiss",
-                    "hidden_city": False,
-                    "url": (
-                        "https://skiplagged.com/flights/LHR/JFK/2026-11-18/2026-11-25"
-                        "#trip=LX339-LX16,BA116~"
-                    ),
-                }
-            ],
-            origin="LHR",
-            destination="JFK",
-            departure_date=FUTURE,
-        )
-        self.assertEqual(len(offers), 1)
-        self.assertTrue(offers[0].hidden_city)
-
-    def test_nested_legs_stamp_ticketed_and_layover(self) -> None:
-        offers = parse_skiplagged_offers(
-            [
-                {
-                    "price": 89,
-                    "currency": "USD",
-                    "origin": "JFK",
-                    "destination": "BOS",
-                    "legs": [
-                        {"origin": "JFK", "destination": "BOS"},
-                        {"origin": "BOS", "destination": "LHR"},
-                    ],
-                }
-            ],
+            _fixture("flights_jfk_ord_oneway"),
             origin="JFK",
-            destination="BOS",
-            departure_date=FUTURE,
+            destination="ORD",
+            departure_date=NOV_17,
         )
-        self.assertEqual(len(offers), 1)
-        self.assertTrue(offers[0].hidden_city)
-        self.assertEqual(offers[0].ticketed_destination, "LHR")
-        self.assertEqual(offers[0].layover_city, "BOS")
+        one_stop = [offer for offer in offers if offer.stops_count == 1]
+        self.assertEqual(len(one_stop), 1)
+        self.assertEqual(one_stop[0].layover_city, "BOS")
+        self.assertFalse(one_stop[0].hidden_city)
+        nonstop = [offer for offer in offers if offer.stops_count == 0]
+        self.assertTrue(all(offer.layover_city is None for offer in nonstop))
 
-    def test_hidden_city_airport_key(self) -> None:
+    def test_layover_is_unknown_when_the_table_text_is_gone(self) -> None:
+        result = _fixture("flights_jfk_den_oneway")
+        result["content"] = []
         offers = parse_skiplagged_offers(
-            [
-                {
-                    "price": 120,
-                    "currency": "USD",
-                    "destination": "MIA",
-                    "hiddenCityAirport": "PTY",
-                }
-            ],
+            result, origin="JFK", destination="DEN", departure_date=NOV_17
+        )
+        one_stop = [offer for offer in offers if offer.stops_count == 1]
+        self.assertTrue(one_stop)
+        self.assertTrue(all(offer.layover_city is None for offer in one_stop))
+        self.assertEqual(one_stop[0].stops_count, 1)
+
+    def test_round_trip_hidden_return_leg_marks_the_offer(self) -> None:
+        offers = parse_skiplagged_offers(
+            _fixture("flights_jfk_mia_roundtrip"),
             origin="JFK",
             destination="MIA",
-            departure_date=FUTURE,
+            departure_date=NOV_17,
+            return_date=NOV_22,
         )
-        self.assertEqual(len(offers), 1)
-        self.assertTrue(offers[0].hidden_city)
-        self.assertEqual(offers[0].ticketed_destination, "PTY")
-        self.assertEqual(offers[0].layover_city, "MIA")
+        self.assertEqual(len(offers), 8)
+        self.assertTrue(all(offer.hidden_city for offer in offers))
+        self.assertTrue(all(offer.return_date == NOV_22 for offer in offers))
+        self.assertEqual({offer.currency for offer in offers}, {"USD"})
+        self.assertEqual(offers[-1].airline, "Delta Air Lines")
+        self.assertEqual(offers[-1].price, 309.0)
 
-    def test_eur_keep_drops_usd_flight_cards(self) -> None:
-        payload = {
-            "structuredContent": {
-                "flights": [
-                    {
-                        "type": "FlightCard",
-                        "airlines": "Iberia",
-                        "price": {"amount": 622, "currency": "USD"},
-                        "deepLink": "https://skiplagged.com/flights/MAD/MIA/2026-10-15",
-                    }
-                ]
-            }
-        }
+    def test_currency_keep_filters_captured_usd_cards(self) -> None:
         kept = parse_skiplagged_offers(
-            payload,
-            origin="MAD",
-            destination="MIA",
-            departure_date=FUTURE,
+            _fixture("flights_jfk_den_oneway"),
+            origin="JFK",
+            destination="DEN",
+            departure_date=NOV_17,
             currency="EUR",
         )
-        raw = parse_skiplagged_offers(
-            payload,
-            origin="MAD",
-            destination="MIA",
-            departure_date=FUTURE,
-        )
         self.assertEqual(kept, ())
-        self.assertEqual(len(raw), 1)
-        self.assertEqual(raw[0].currency, "USD")
-        self.assertEqual(raw[0].price, 622)
 
-    def test_one_bad_row_does_not_drop_priced_neighbors(self) -> None:
-        class Boom(dict):
-            def get(self, key, default=None):  # noqa: ANN001
-                if key == "airline":
-                    raise TypeError("boom")
-                return super().get(key, default)
+    def test_more_than_nine_adults_fail_before_any_request(self) -> None:
+        calls: list[dict] = []
+        with self.assertRaisesRegex(ValueError, "at most 9 adults"):
+            search_hidden_city(
+                "JFK",
+                "MIA",
+                NOV_17,
+                adults=10,
+                rpc=_replay(_fixture("flights_jfk_mia_oneway"), calls),
+            )
+        self.assertEqual(calls, [])
 
+    def test_hidden_city_is_unknown_when_no_leg_carries_attributes(self) -> None:
+        result = copy.deepcopy(_fixture("flights_jfk_mia_oneway"))
+        for card in result["structuredContent"]["flights"]:
+            card.pop("attributes", None)
         offers = parse_skiplagged_offers(
-            [
-                Boom({"price": 80, "currency": "USD"}),
-                {"price": 120, "currency": "USD", "airline": "Delta"},
-            ],
-            origin="JFK",
-            destination="MIA",
-            departure_date=FUTURE,
+            result, origin="JFK", destination="MIA", departure_date=NOV_17
         )
-        self.assertEqual(len(offers), 1)
-        self.assertEqual(offers[0].price, 120)
+        self.assertTrue(offers)
+        self.assertEqual({offer.hidden_city for offer in offers}, {None})
+        self.assertIsNone(offers[0].to_dict()["hidden_city"])
+        self.assertEqual(offers[0].warnings, ())
+
+    def test_one_bad_card_does_not_drop_priced_neighbors(self) -> None:
+        result = copy.deepcopy(_fixture("flights_jfk_den_oneway"))
+        cards = result["structuredContent"]["flights"]
+        cards[0]["price"]["amount"] = 0
+        del cards[1]["price"]["currency"]
+        cards[2]["price"] = "not a price"
+        offers = parse_skiplagged_offers(
+            result, origin="JFK", destination="DEN", departure_date=NOV_17
+        )
+        self.assertEqual(len(offers), 5)
+
+    def test_missing_flights_list_is_a_shape_change(self) -> None:
+        with self.assertRaises(SkiplaggedShapeError):
+            parse_skiplagged_offers(
+                {"content": [], "structuredContent": {"pagination": {}}},
+                origin="JFK",
+                destination="DEN",
+                departure_date=NOV_17,
+            )
+
+    def test_tool_error_result_is_not_an_empty_result(self) -> None:
+        from viajante.skiplagged import SkiplaggedError
+
+        with self.assertRaises(SkiplaggedError) as caught:
+            parse_skiplagged_offers(
+                {"isError": True, "content": [{"type": "text", "text": "bad origin"}]},
+                origin="JFK",
+                destination="DEN",
+                departure_date=NOV_17,
+            )
+        self.assertNotIsInstance(caught.exception, SkiplaggedShapeError)
+        self.assertIn("bad origin", str(caught.exception))
 
 
 class HiddenCitySearchTests(unittest.TestCase):
@@ -321,52 +224,66 @@ class HiddenCitySearchTests(unittest.TestCase):
         self.assertIsNone(report.currency)
         self.assertNotIn("currency", report.to_dict())
 
-    def _rpc_flights(self, flights: list[dict]) -> object:
-        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
-            if payload.get("method") == "initialize":
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-                return 200, {"mcp-session-id": "s1"}, body
-            return (
-                200,
-                {},
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "result": {"structuredContent": {"flights": flights}},
-                    }
-                ),
-            )
-
-        return rpc
-
-    def test_empty_priced_rows_are_no_results(self) -> None:
-        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
-            method = payload.get("method")
-            if method == "initialize":
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-                return 200, {"mcp-session-id": "s1"}, body
-            empty = {"jsonrpc": "2.0", "id": 2, "result": {"structuredContent": {"flights": []}}}
-            return 200, {}, json.dumps(empty)
-
-        report = search_hidden_city("NRT", "SIN", FUTURE, rpc=rpc)
+    def test_empty_flights_list_is_no_results(self) -> None:
+        report = search_hidden_city(
+            "NRT", "SIN", FUTURE, rpc=_replay({"structuredContent": {"flights": []}})
+        )
         self.assertEqual(report.offers, ())
         assert report.error is not None
         self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
         self.assertIsNone(report.currency)
 
-    def test_usd_cards_with_eur_keep_are_currency_mismatch(self) -> None:
-        rpc = self._rpc_flights(
-            [
-                {
-                    "type": "FlightCard",
-                    "airlines": "Iberia",
-                    "price": {"amount": 622, "currency": "USD"},
-                    "deepLink": "https://skiplagged.com/flights/MAD/MIA/2026-10-15",
-                }
-            ]
+    def test_shape_change_is_markup_drift_not_no_results(self) -> None:
+        report = search_hidden_city("JFK", "MIA", FUTURE, rpc=_replay({"content": []}))
+        self.assertEqual(report.offers, ())
+        assert report.error is not None
+        self.assertEqual(report.error.code, SearchErrorCode.MARKUP_DRIFT)
+
+    def test_tool_error_is_fetch_failed_with_its_message(self) -> None:
+        report = search_hidden_city(
+            "JFK",
+            "MIA",
+            FUTURE,
+            rpc=_replay({"isError": True, "content": [{"type": "text", "text": "bad origin"}]}),
         )
-        report = search_hidden_city("MAD", "MIA", FUTURE, currency="EUR", rpc=rpc)
+        assert report.error is not None
+        self.assertEqual(report.error.code, SearchErrorCode.FETCH_FAILED)
+        self.assertIn("bad origin", report.error.message)
+
+    def test_rate_limit_stops_the_search_after_one_request(self) -> None:
+        calls: list[dict] = []
+
+        def limited(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+            calls.append(payload)
+            if payload.get("method") == "initialize":
+                return (
+                    200,
+                    {"mcp-session-id": "s1"},
+                    json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}),
+                )
+            if payload.get("method") == "notifications/initialized":
+                return 202, {}, ""
+            return 429, {"Retry-After": "120"}, ""
+
+        report = search_hidden_city("JFK", "MIA", FUTURE, rpc=limited)
+        self.assertEqual(report.offers, ())
+        assert report.error is not None
+        self.assertEqual(report.error.code, SearchErrorCode.BLOCKED)
+        self.assertTrue(report.error.rate_limited)
+        self.assertEqual([c.get("method") for c in calls].count("tools/call"), 1)
+
+    def test_usd_keep_returns_the_captured_cards(self) -> None:
+        report = search_hidden_city(
+            "JFK", "MIA", NOV_17, currency="USD", rpc=_replay(_fixture("flights_jfk_mia_oneway"))
+        )
+        self.assertIsNone(report.error)
+        self.assertEqual(len(report.offers), 8)
+        self.assertEqual(report.currency, "USD")
+
+    def test_eur_keep_on_usd_cards_is_currency_mismatch(self) -> None:
+        report = search_hidden_city(
+            "JFK", "MIA", NOV_17, currency="EUR", rpc=_replay(_fixture("flights_jfk_mia_oneway"))
+        )
         self.assertEqual(report.offers, ())
         assert report.error is not None
         self.assertEqual(report.error.code, SearchErrorCode.CURRENCY_MISMATCH)
@@ -379,147 +296,59 @@ class HiddenCitySearchTests(unittest.TestCase):
         self.assertEqual(report.to_dict()["currency"], "USD")
 
     def test_empty_rows_with_eur_keep_stay_no_results(self) -> None:
-        rpc = self._rpc_flights([])
-        report = search_hidden_city("MAD", "MIA", FUTURE, currency="EUR", rpc=rpc)
+        report = search_hidden_city(
+            "MAD",
+            "MIA",
+            FUTURE,
+            currency="EUR",
+            rpc=_replay({"structuredContent": {"flights": []}}),
+        )
         self.assertEqual(report.offers, ())
         assert report.error is not None
         self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
         self.assertEqual(report.currency, "EUR")
 
-    def test_usd_keep_still_returns_usd_cards(self) -> None:
-        rpc = self._rpc_flights([{"price": {"amount": 154, "currency": "USD"}, "airline": "Delta"}])
-        report = search_hidden_city("JFK", "MIA", FUTURE, currency="USD", rpc=rpc)
-        self.assertEqual(len(report.offers), 1)
-        self.assertIsNone(report.error)
-        self.assertEqual(report.offers[0].currency, "USD")
-        self.assertEqual(report.currency, "USD")
+    def test_success_keeps_the_cheapest_top_offers(self) -> None:
+        calls: list[dict] = []
+        report = search_hidden_city(
+            "JFK",
+            "MIA",
+            NOV_17,
+            top=3,
+            rpc=_replay(_fixture("flights_jfk_mia_oneway"), calls),
+        )
+        self.assertEqual([offer.price for offer in report.offers], [149.0, 149.0, 156.0])
+        tool_calls = [c for c in calls if c.get("method") == "tools/call"]
+        self.assertEqual(len(tool_calls), 1)
+        arguments = tool_calls[0]["params"]["arguments"]
+        self.assertEqual(arguments["limit"], 3)
+        self.assertEqual(arguments["sort"], "price")
+        self.assertEqual(arguments["departureDate"], "2026-11-17")
+        self.assertNotIn("returnDate", arguments)
 
-    def test_success_parses_offers(self) -> None:
-        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
-            if payload.get("method") == "initialize":
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-                return 200, {"mcp-session-id": "s1"}, body
-            return (
-                200,
-                {},
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "result": {
-                            "structuredContent": {
-                                "flights": [
-                                    {
-                                        "price": 350,
-                                        "currency": "USD",
-                                        "airline": "Delta",
-                                        "hidden_city": False,
-                                    }
-                                ]
-                            }
-                        },
-                    }
-                ),
-            )
-
-        report = search_hidden_city("JFK", "LHR", FUTURE, rpc=rpc)
-        self.assertEqual(len(report.offers), 1)
-        self.assertIsNone(report.error)
-        self.assertEqual(report.offers[0].price, 350)
-        self.assertEqual(report.currency, "USD")
-
-    def test_does_not_stamp_origin_cash_on_skiplagged_amounts(self) -> None:
-        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
-            if payload.get("method") == "initialize":
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-                return 200, {"mcp-session-id": "s1"}, body
-            return (
-                200,
-                {},
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "result": {
-                            "structuredContent": {
-                                "flights": [
-                                    {
-                                        "price": {"amount": 154, "currency": "USD"},
-                                        "airline": "ANA",
-                                    }
-                                ]
-                            }
-                        },
-                    }
-                ),
-            )
-
-        report = search_hidden_city("NRT", "SIN", FUTURE, rpc=rpc)
-        self.assertEqual(len(report.offers), 1)
-        self.assertEqual(report.offers[0].currency, "USD")
-        self.assertEqual(report.currency, "USD")
-        self.assertNotEqual(report.currency, "JPY")
-
-    def test_top_is_a_fare_cut(self) -> None:
-        captured: list[dict] = []
-
-        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
-            if payload.get("method") == "initialize":
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-                return 200, {"mcp-session-id": "s1"}, body
-            if payload.get("method") == "tools/call":
-                captured.append(payload["params"]["arguments"])
-            return (
-                200,
-                {},
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "result": {
-                            "structuredContent": {
-                                "flights": [
-                                    {"price": 500, "currency": "USD"},
-                                    {"price": 80, "currency": "USD"},
-                                    {"price": 120, "currency": "USD"},
-                                ]
-                            }
-                        },
-                    }
-                ),
-            )
-
-        report = search_hidden_city("JFK", "MIA", FUTURE, top=2, rpc=rpc)
-        self.assertEqual([offer.price for offer in report.offers], [80, 120])
-        self.assertEqual(captured[0]["limit"], 2)
-        self.assertEqual(captured[0]["sort"], "price")
+    def test_round_trip_sends_return_date(self) -> None:
+        calls: list[dict] = []
+        report = search_hidden_city(
+            "JFK",
+            "MIA",
+            NOV_17,
+            return_date=NOV_22,
+            rpc=_replay(_fixture("flights_jfk_mia_roundtrip"), calls),
+        )
+        arguments = next(c for c in calls if c.get("method") == "tools/call")["params"]["arguments"]
+        self.assertEqual(arguments["returnDate"], "2026-11-22")
+        self.assertEqual(len(report.offers), 8)
 
     def test_reuses_mcp_session(self) -> None:
         methods: list[str] = []
+        rpc = _replay(_fixture("flights_jfk_den_oneway"), calls=None)
 
-        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
+        def recording(url: str, payload: dict, headers: dict) -> tuple[int, dict, str]:
             methods.append(str(payload.get("method")))
-            if payload.get("method") == "initialize":
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-                return 200, {"mcp-session-id": "s1"}, body
-            if payload.get("method") == "notifications/initialized":
-                return 202, {}, ""
-            return (
-                200,
-                {},
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "result": {
-                            "structuredContent": {"flights": [{"price": 90, "currency": "USD"}]}
-                        },
-                    }
-                ),
-            )
+            return rpc(url, payload, headers)
 
-        search_hidden_city("JFK", "MIA", FUTURE, rpc=rpc)
-        search_hidden_city("JFK", "MIA", FUTURE, rpc=rpc)
+        search_hidden_city("JFK", "DEN", FUTURE, rpc=recording)
+        search_hidden_city("JFK", "DEN", FUTURE, rpc=recording)
         self.assertEqual(methods.count("initialize"), 1)
         self.assertEqual(methods.count("notifications/initialized"), 1)
         self.assertEqual(methods.count("tools/call"), 2)
@@ -664,47 +493,23 @@ class HiddenCitySelectionTests(unittest.TestCase):
         self.assertEqual(selection_records(payload), {})
         self.assertNotIn("selection_id", payload["offers"][0])
 
-    def test_mcp_tool_returns_a_priced_fixture_offer(self) -> None:
+    def test_mcp_tool_returns_a_captured_offer(self) -> None:
         from viajante import evidence, mcp_handlers
 
         evidence.clear()
         self.addCleanup(evidence.clear)
-
-        def rpc(_url: str, payload: dict, _headers: dict) -> tuple[int, dict, str]:
-            if payload.get("method") == "initialize":
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-                return 200, {"mcp-session-id": "s1"}, body
-            return (
-                200,
-                {},
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "result": {
-                            "structuredContent": {
-                                "flights": [
-                                    {
-                                        "price": 622,
-                                        "currency": "USD",
-                                        "airline": "Delta",
-                                        "hidden_city": True,
-                                    }
-                                ]
-                            }
-                        },
-                    }
-                ),
-            )
+        rpc = _replay(_fixture("flights_jfk_mia_oneway"))
 
         def search(origin, destination, departure_date, **kwargs):
             return search_hidden_city(origin, destination, departure_date, rpc=rpc, **kwargs)
 
         with patch("viajante.mcp_handlers.search_hidden_city", side_effect=search):
-            payload = mcp_handlers.search_hidden_city_tool("JFK-LHR", FUTURE.isoformat())
+            payload = mcp_handlers.search_hidden_city_tool("JFK-MIA", NOV_17.isoformat())
         offer = payload["offers"][0]
-        self.assertEqual(offer["price"], 622)
+        self.assertEqual(offer["price"], 149.0)
+        self.assertEqual(offer["currency"], "USD")
         self.assertEqual(offer["evidence"], "confirmed")
+        self.assertTrue(offer["hidden_city"])
         self.assertNotIn("selection_id", offer)
 
 

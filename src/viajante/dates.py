@@ -9,26 +9,23 @@ from datetime import date, datetime, timezone
 from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
 
 from viajante.control import SearchDeadline, checkpoint, controlled
-from viajante.flights import (
-    DEFAULT_TOP,
+from viajante.flight_evidence import _stamp_offer_evidence
+from viajante.flight_filters import OfferFilters, owned_clock, parse_code_list, parse_offer_filters
+from viajante.flight_offers import (
     FlightSort,
-    OfferFilters,
     _cheapest_by_ranked,
-    _clock_minutes,
     _rank_offers,
-    _stamp_offer_evidence,
-    classify_failure,
     compare_nonstop_vs_one_stop,
+    offers_from_cards,
+    validate_sort,
+)
+from viajante.flight_routes import (
     drop_excluded_airport_trips,
     expand_nearby_trips,
     keep_included_dest_trips,
     normalize_trip_kind,
-    offers_from_cards,
-    owned_clock,
-    parse_code_list,
-    parse_offer_filters,
-    validate_sort,
 )
+from viajante.flights import DEFAULT_TOP, classify_failure
 from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
 from viajante.models import (
@@ -50,6 +47,7 @@ from viajante.models import (
     format_money,
     normalize_country,
 )
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
 from viajante.typical import typical_from_daily_prices, vs_typical, with_typical
 
