@@ -40,6 +40,7 @@ from viajante.parsers import normalize_clock, parse_stops_count
 from viajante.ratelimit import NOT_SENT
 from viajante.storage import write_json_atomic
 from viajante.temporal import local_instant
+from viajante.validate import _mapping
 
 SCHEMA_VERSION = 1
 # ponytail: a one-way shop returns every card in one request, so compare them all. A packaged
@@ -67,12 +68,6 @@ class _Segment:
     day: Optional[str]
     origin: Optional[str]
     destination: Optional[str]
-
-
-def _mapping(value: object, *, role: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{role} must be an object")
-    return value
 
 
 def _text(value: object) -> Optional[str]:

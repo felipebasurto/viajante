@@ -450,8 +450,6 @@ def pair_mixed_one_ways(
     unknown and each ticket is the cheapest of its own search.
     """
     rejected: Counter[str] = Counter()
-    if len(report.queries) != 2:
-        return [], rejected
     out, back = report.queries
     if not isinstance(out, QuerySuccess) or not isinstance(back, QuerySuccess):
         return [], rejected

@@ -334,6 +334,7 @@ class MixedCurrencyTests(unittest.TestCase):
         self.assertEqual(rec.price_comparison, "skipped_mixed_currency")
         self.assertEqual(rec.weights["price"], 0.0)
         self.assertAlmostEqual(sum(rec.weights.values()), 1.0, places=3)
+        self.assertEqual(rec.to_dict()["weights"], rec.weights)
         labels = {label for e in rec.entries for label in e.labels}
         self.assertNotIn("cheapest", labels)
         for entry in rec.entries:
