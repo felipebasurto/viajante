@@ -24,26 +24,13 @@ from viajante.control import (
     wait_for_future,
 )
 from viajante.google_flights_rpc import (
-    SHOPPING_POST_HEADERS,
-    CompactCalendarDay,
-    CompactExplorePlace,
-    CompactParseMiss,
-    EmptyShoppingResults,
     RawFlightCard,
-    ShoppingRejected,
-    build_calendar_request,
-    build_explore_request,
-    build_shopping_request,
-    parse_calendar_body,
-    parse_explore_body,
-    parse_shopping_body,
     raw_rpc_error_status,
     rpc_error_status,
 )
 from viajante.models import (
     FETCH_LANGUAGE,
     FETCH_LOCALE,
-    FlightCabin,
     FlightLeg,
     MultiCity,
     RawJourneyLeg,
@@ -75,7 +62,6 @@ CONSENT_CLICK_TIMEOUT_MS = 5_000
 CONSENT_SETTLE_MS = 1_500
 HTTP_TIMEOUT_SECONDS = 30
 # One replay on empty/drift/5xx. Happy path does not sleep. Not an anti-bot pause.
-SWEEP_RETRY_LIMIT = 1
 SWEEP_RETRY_BACKOFF_SECONDS = 0.05
 # Browser-like HTTP/2 stream cap. Dates fallback is at most 31 days.
 _SWEEP_STREAMS = 8
@@ -431,7 +417,7 @@ class _CooldownClient:
         self._advice = rate_limit_advice(state, sent=False)
         self._basis = str(state.get("basis", "unknown"))
 
-    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+    def _answer(self, url: str) -> SweepHttpResponse:
         return SweepHttpResponse(
             0,
             "",
@@ -443,19 +429,13 @@ class _CooldownClient:
             cooldown_basis=self._basis,
         )
 
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        return self._answer(url)
+
     def post(
         self, url: str, *, data: str, headers: Mapping[str, str], timeout: float
     ) -> SweepHttpResponse:
-        return SweepHttpResponse(
-            0,
-            "",
-            url,
-            rate_limit=self._advice,
-            request_sent=False,
-            attempts=0,
-            stopped=True,
-            cooldown_basis=self._basis,
-        )
+        return self._answer(url)
 
     def close(self) -> None:
         return None
@@ -630,14 +610,16 @@ class ChromeSweepClient:
             return out
         _raise_if_cancelled(cancel_event)
         if out.status == 429:
-            state = note_rate_limited(_retry_after_seconds(response))
+            state = note_rate_limited(_retry_after_seconds(response), endpoint=str(response.url))
             out = replace(
                 out,
                 rate_limit=rate_limit_advice(state),
                 cooldown_basis=state.get("basis", "unknown"),
             )
         elif out.status == 200 and raw_rpc_error_status(out.text) == RPC_THROTTLE_STATUS:
-            state = note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+            state = note_rate_limited(
+                basis="heuristic_rpc_13", cause="rpc_13", endpoint=str(response.url)
+            )
             out = replace(
                 out,
                 rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}"),
@@ -979,24 +961,6 @@ def _is_retriable_sweep_failure(exc: BaseException) -> bool:
     return False
 
 
-def _is_rate_limited_sweep_failure(exc: BaseException) -> bool:
-    return isinstance(exc, GoogleFlightsBlocked) and exc.status == 429
-
-
-def fetch_search_html(
-    url: str,
-    *,
-    client: Optional[SweepHttpClient] = None,
-    timeout: float = HTTP_TIMEOUT_SECONDS,
-) -> tuple[str, str]:
-    if client is None:
-        _, paused = cooldown_client(COOLDOWN_UNCHECKED)
-        client = paused or shared_chrome_sweep_client()
-    response = client.get(url, timeout=timeout)
-    raise_for_sweep_response(response, url)
-    return response.text, response.url
-
-
 def parse_http_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
     return parse_flight_cards(extract_main_html(html))
 
@@ -1060,7 +1024,7 @@ def parse_flight_cards(html: str) -> tuple[RawFlightCard, ...]:
 
 
 class GoogleFlightsHttpSource:
-    """Sweep source: compact shopping RPC, HTML card parse as fallback. No Chromium."""
+    """Sweep transport shared by the public-page source: client, cooldown, one replay."""
 
     def __init__(
         self,
@@ -1083,112 +1047,6 @@ class GoogleFlightsHttpSource:
         self._cooldown = COOLDOWN_UNCHECKED
         self.config = SimpleNamespace(html_lang=html_lang, currency=currency, country=country)
 
-    def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        return self._retry_sweep(lambda: self._fetch_once(trip))
-
-    def fetch_with_calendar(
-        self,
-        query: Trip,
-        start: date,
-        end: date,
-    ) -> tuple[tuple[RawFlightCard, ...], tuple[CompactCalendarDay, ...]]:
-        """Shopping + typical calendar on one multiplexed round-trip."""
-        return self._retry_sweep(lambda: self._fetch_with_calendar_once(query, start, end))
-
-    def fetch_many(self, trips: Sequence[Trip]) -> list[tuple[RawFlightCard, ...] | BaseException]:
-        """Multiplexed shopping POSTs for calendar-day fanout. Isolates per-trip errors."""
-        if not trips:
-            return []
-        client = self._ensure_client()
-        jobs = [self._shopping_post(trip) for trip in trips]
-        responses = dispatch_posts(client, jobs, timeout=self._timeout)
-        results: list[tuple[RawFlightCard, ...] | BaseException] = []
-        for trip, job, response in zip(trips, jobs, responses, strict=True):
-            try:
-                results.append(self._cards_from_shopping_response(client, trip, response, job.url))
-            except BaseException as exc:
-                results.append(exc)
-        client, replay = self._plan_replay(client, results)
-        if replay:
-            try:
-                retried = dispatch_posts(client, [jobs[i] for i in replay], timeout=self._timeout)
-            except SearchDeadline as exc:
-                # Days that already arrived stay; only the replayed ones were cut.
-                for index in replay:
-                    results[index] = exc
-                return results
-            for index, response in zip(replay, retried, strict=True):
-                try:
-                    results[index] = self._cards_from_shopping_response(
-                        client, trips[index], response, jobs[index].url
-                    )
-                except BaseException as exc:
-                    results[index] = exc
-        return results
-
-    def fetch_many_with_calendar(
-        self,
-        jobs: Sequence[tuple[Trip, date, date]],
-    ) -> list[tuple[tuple[RawFlightCard, ...] | BaseException, tuple[CompactCalendarDay, ...]]]:
-        """Shopping + typical calendar for many stays on one multiplexed round-trip."""
-        if not jobs:
-            return []
-        if len(jobs) == 1:
-            query, start, end = jobs[0]
-            try:
-                cards, days = self.fetch_with_calendar(query, start, end)
-            except BaseException as exc:
-                return [(exc, ())]
-            return [(cards, days)]
-        client = self._ensure_client()
-        posts: list[SweepPost] = []
-        for query, start, end in jobs:
-            posts.append(self._shopping_post(query))
-            posts.append(self._calendar_post(query, start, end))
-        responses = dispatch_posts(client, posts, timeout=self._timeout)
-        results: list[
-            tuple[tuple[RawFlightCard, ...] | BaseException, tuple[CompactCalendarDay, ...]]
-        ] = []
-        for index, (query, _start, _end) in enumerate(jobs):
-            shop_resp = responses[2 * index]
-            cal_resp = responses[2 * index + 1]
-            try:
-                cards: tuple[RawFlightCard, ...] | BaseException = (
-                    self._cards_from_shopping_response(
-                        client, query, shop_resp, posts[2 * index].url
-                    )
-                )
-            except BaseException as exc:
-                cards = exc
-            days = self._days_from_calendar_response(cal_resp)
-            results.append((cards, days))
-        client, replay = self._plan_replay(client, [cards for cards, _days in results])
-        if replay:
-            retry_posts: list[SweepPost] = []
-            for index in replay:
-                query, start, end = jobs[index]
-                retry_posts.append(self._shopping_post(query))
-                retry_posts.append(self._calendar_post(query, start, end))
-            try:
-                retried = dispatch_posts(client, retry_posts, timeout=self._timeout)
-            except SearchDeadline as exc:
-                for index in replay:
-                    results[index] = (exc, ())
-                return results
-            for offset, index in enumerate(replay):
-                query, _start, _end = jobs[index]
-                shop_resp = retried[2 * offset]
-                cal_resp = retried[2 * offset + 1]
-                try:
-                    cards = self._cards_from_shopping_response(
-                        client, query, shop_resp, retry_posts[2 * offset].url
-                    )
-                except BaseException as exc:
-                    cards = exc
-                days = self._days_from_calendar_response(cal_resp)
-                results[index] = (cards, days)
-        return results
-
     def reset(self) -> None:
         if self._injected_client is None:
             reset_shared_chrome_sweep_client()
@@ -1208,15 +1066,15 @@ class GoogleFlightsHttpSource:
         ):
             return client, []
         rate = [i for i, exc in failures if isinstance(exc, SweepTransportError)]
-        retry = [i for i, exc in failures if i not in rate and _is_retriable_sweep_failure(exc)]
-        replay = sorted(rate + retry) if rate else retry
-        if not replay or SWEEP_RETRY_LIMIT < 1:
-            return client, []
         if rate:
-            return self._client_after_rate_limit(), replay
+            retry = [i for i, exc in failures if i not in rate and _is_retriable_sweep_failure(exc)]
+            return self._client_after_rate_limit(), sorted(rate + retry)
+        retry = [i for i, exc in failures if _is_retriable_sweep_failure(exc)]
+        if not retry:
+            return client, []
         if SWEEP_RETRY_BACKOFF_SECONDS > 0:
             self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
-        return client, replay
+        return client, retry
 
     def _client_after_rate_limit(self) -> SweepHttpClient:
         self.reset()
@@ -1237,241 +1095,6 @@ class GoogleFlightsHttpSource:
                 return paused
         return shared_chrome_sweep_client(proxy=self._proxy)
 
-    def _retry_sweep(self, fn: Callable[[], Any]) -> Any:
-        try:
-            return fn()
-        except Exception as exc:
-            if SWEEP_RETRY_LIMIT < 1 or not _is_retriable_sweep_failure(exc):
-                raise
-            if SWEEP_RETRY_BACKOFF_SECONDS > 0:
-                self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
-            return fn()
-
-    def _shopping_post(self, trip: Trip) -> SweepPost:
-        url, body = build_shopping_request(
-            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
-        )
-        return SweepPost(url, body, SHOPPING_POST_HEADERS)
-
-    def _calendar_post(self, trip: Trip, start: date, end: date) -> SweepPost:
-        url, body = build_calendar_request(
-            trip,
-            start,
-            end,
-            html_lang=self._html_lang,
-            currency=self._currency,
-            country=self._country,
-        )
-        return SweepPost(url, body, SHOPPING_POST_HEADERS)
-
-    def _fetch_once(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        client = self._ensure_client()
-        try:
-            return self._fetch_compact(client, trip)
-        except (GoogleFlightsBlocked, NoFlightsFound, GoogleFlightsRejected):
-            raise
-        except CompactParseMiss:
-            pass
-        url = build_search_url(
-            trip,
-            html_lang=self._html_lang,
-            currency=self._currency,
-            country=self._country,
-        )
-        html, _final_url = fetch_search_html(url, client=client, timeout=self._timeout)
-        return parse_http_flight_cards(html)
-
-    def _fetch_with_calendar_once(
-        self,
-        query: Trip,
-        start: date,
-        end: date,
-    ) -> tuple[tuple[RawFlightCard, ...], tuple[CompactCalendarDay, ...]]:
-        client = self._ensure_client()
-        posts = (self._shopping_post(query), self._calendar_post(query, start, end))
-        shop_resp, cal_resp = dispatch_posts(client, posts, timeout=self._timeout)
-        try:
-            cards = self._cards_from_shopping_response(client, query, shop_resp, posts[0].url)
-        except CompactParseMiss:
-            cards = self._html_cards(client, query)
-        days = self._days_from_calendar_response(cal_resp)
-        return cards, days
-
-    def _fetch_compact(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
-        post = self._shopping_post(trip)
-        try:
-            response = client.post(
-                post.url, data=post.data, headers=post.headers, timeout=self._timeout
-            )
-        except (CompactParseMiss, SearchDeadline):
-            raise
-        except Exception as exc:
-            raise CompactParseMiss(f"shopping POST failed: {exc}") from exc
-        return self._cards_from_shopping_response(client, trip, response, post.url)
-
-    def fetch_selected(
-        self,
-        trip: Trip,
-        selections: Sequence[list[Any]],
-    ) -> list[tuple[RawFlightCard, ...] | BaseException]:
-        """Next-leg shopping for owned outbound slices. One miss does not drop the rest."""
-        if not selections:
-            return []
-        client = self._ensure_client()
-        posts = []
-        for selected in selections:
-            url, body = build_shopping_request(
-                trip,
-                html_lang=self._html_lang,
-                currency=self._currency,
-                country=self._country,
-                selected_flight=selected,
-            )
-            posts.append(SweepPost(url, body, SHOPPING_POST_HEADERS))
-        responses = dispatch_posts(client, posts, timeout=self._timeout)
-        parsed: list[tuple[RawFlightCard, ...] | BaseException] = []
-        for post, response in zip(posts, responses, strict=True):
-            try:
-                parsed.append(
-                    self._cards_from_shopping_response(
-                        client,
-                        trip,
-                        response,
-                        post.url,
-                        allow_html_fallback=False,
-                    )
-                )
-            except Exception as exc:
-                parsed.append(exc)
-        return parsed
-
-    def _cards_from_shopping_response(
-        self,
-        client: SweepHttpClient,
-        trip: Trip,
-        response: SweepHttpResponse,
-        url: str,
-        *,
-        allow_html_fallback: bool = True,
-    ) -> tuple[RawFlightCard, ...]:
-        if response.deadline:
-            raise SearchDeadline()
-        raise_for_sweep_response(response, url)
-        if (
-            response.status in {403, 429}
-            or response.status >= 500
-            or looks_blocked(response.text, response.url)
-        ):
-            _raise_if_blocked(
-                response.status, response.text, response.url, url, response.rate_limit
-            )
-        if response.status >= 400:
-            raise CompactParseMiss(f"shopping HTTP {response.status}")
-        try:
-            return parse_shopping_body(response.text, currency=self._currency)
-        except EmptyShoppingResults as exc:
-            raise NoFlightsFound() from exc
-        except ShoppingRejected as exc:
-            raise GoogleFlightsRejected(str(exc)) from exc
-        except CompactParseMiss:
-            if not allow_html_fallback:
-                raise
-            return self._html_cards(client, trip)
-
-    def _html_cards(self, client: SweepHttpClient, trip: Trip) -> tuple[RawFlightCard, ...]:
-        url = build_search_url(
-            trip, html_lang=self._html_lang, currency=self._currency, country=self._country
-        )
-        html, _final_url = fetch_search_html(url, client=client, timeout=self._timeout)
-        return parse_http_flight_cards(html)
-
-    def _days_from_calendar_response(
-        self, response: SweepHttpResponse
-    ) -> tuple[CompactCalendarDay, ...]:
-        """Typical side of a paired POST: a block, HTTP error, or miss is no typical, not a fail."""
-        if (
-            response.deadline
-            or response.status >= 400
-            or looks_blocked(response.text, response.url)
-        ):
-            return ()
-        try:
-            return parse_calendar_body(response.text)
-        except Exception:
-            return ()
-
-    def fetch_calendar(
-        self,
-        trip: Trip,
-        start: date,
-        end: date,
-    ) -> tuple[CompactCalendarDay, ...]:
-        client = self._ensure_client()
-        url, body = build_calendar_request(
-            trip,
-            start,
-            end,
-            html_lang=self._html_lang,
-            currency=self._currency,
-            country=self._country,
-        )
-        response = self._post_rpc(client, url, body)
-        try:
-            return parse_calendar_body(response.text)
-        except ShoppingRejected as exc:
-            raise GoogleFlightsRejected(str(exc)) from exc
-
-    def fetch_explore(
-        self,
-        origin: str,
-        departure_date: date,
-        *,
-        adults: int = 1,
-        cabin: FlightCabin = "economy",
-        children: int = 0,
-        infants_in_seat: int = 0,
-        infants_on_lap: int = 0,
-    ) -> tuple[CompactExplorePlace, ...]:
-        client = self._ensure_client()
-        url, body = build_explore_request(
-            origin,
-            departure_date,
-            adults=adults,
-            cabin=cabin,
-            children=children,
-            infants_in_seat=infants_in_seat,
-            infants_on_lap=infants_on_lap,
-            html_lang=self._html_lang,
-            currency=self._currency,
-            country=self._country,
-        )
-        response = self._post_rpc(client, url, body)
-        try:
-            return parse_explore_body(response.text)
-        except ShoppingRejected as exc:
-            raise GoogleFlightsRejected(str(exc)) from exc
-
-    def _post_rpc(self, client: SweepHttpClient, url: str, body: str) -> SweepHttpResponse:
-        try:
-            response = client.post(
-                url, data=body, headers=SHOPPING_POST_HEADERS, timeout=self._timeout
-            )
-        except (CompactParseMiss, SearchDeadline):
-            raise
-        except Exception as exc:
-            # No response at all (DNS, reset, timeout) is a transport failure, not drift.
-            raise SweepTransportError(
-                f"Google Flights request failed before any response: {type(exc).__name__}: {exc}",
-                timeout=isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.casefold(),
-            ) from exc
-        if response.status in {403, 429, 503} or looks_blocked(response.text, response.url):
-            _raise_if_blocked(
-                response.status, response.text, response.url, url, response.rate_limit
-            )
-        if response.status >= 400:
-            raise CompactParseMiss(f"shopping HTTP {response.status}")
-        return response
-
 
 _DETAIL_UNPROVEN = (
     "bags",
@@ -1484,8 +1107,6 @@ _DETAIL_UNPROVEN = (
 
 
 class GoogleFlightsSource:
-    automatic_typical = False
-
     def __init__(
         self,
         state_dir: Path,
@@ -1503,7 +1124,6 @@ class GoogleFlightsSource:
             country=country,
         )
         self._session = session or ChromiumSession(state_dir, self._config)
-        self._http: Optional[GoogleFlightsHttpSource] = None
         self._started = False
         self.partial_error: Optional[BaseException] = None
         self.scope_bound = False
@@ -1716,28 +1336,11 @@ class GoogleFlightsSource:
         except Exception as exc:
             raise GoogleFlightsMarkupError("Could not reload the first journey board.") from exc
 
-    def fetch_calendar(
-        self,
-        trip: Trip,
-        start: date,
-        end: date,
-    ) -> tuple[CompactCalendarDay, ...]:
-        if self._http is None:
-            self._http = GoogleFlightsHttpSource(
-                html_lang=self._config.html_lang,
-                currency=self._config.currency,
-                country=self._config.country,
-            )
-        return self._http.fetch_calendar(trip, start, end)
-
     def reset(self) -> None:
         self._session.reset()
 
     def close(self) -> None:
         self._session.close()
-        if self._http is not None:
-            self._http.close()
-            self._http = None
 
     def _fetch_html(self, url: str) -> str:
         if not self._started:

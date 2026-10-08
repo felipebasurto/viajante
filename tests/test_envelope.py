@@ -38,7 +38,7 @@ from viajante.google_flights import (
     NoFlightsFound,
     RawFlightCard,
 )
-from viajante.google_flights_rpc import CompactCalendarDay, CompactExplorePlace, CompactParseMiss
+from viajante.google_flights_rpc import CompactCalendarDay, CompactExplorePlace
 from viajante.google_hotels_rpc import EmptyHotelResults, HotelsBlocked
 from viajante.hotels import _run_search
 from viajante.models import (
@@ -441,21 +441,25 @@ class HotelEmptyReasonTests(_StateDirCase):
 
 class DatesFlexExploreTests(_StateDirCase):
     class _Source:
+        """Per-day shop source: a priced day answers one card, an unpriced day answers none."""
+
         def __init__(self, calendar: object, cards: dict | None = None) -> None:
             self.calendar = calendar
             self.cards = cards or {}
             self.config = SimpleNamespace(html_lang="en", currency="USD")
 
-        def fetch_calendar(self, query, start, end):
+        def fetch(self, query):
             if isinstance(self.calendar, Exception):
                 raise self.calendar
-            return self.calendar
-
-        def fetch(self, query):
-            response = self.cards.get(query.departure_date, ())
-            if isinstance(response, Exception):
-                raise response
-            return response
+            if query.departure_date in self.cards:
+                response = self.cards[query.departure_date]
+                if isinstance(response, Exception):
+                    raise response
+                return response
+            for day in self.calendar:
+                if day.departure_date == query.departure_date and day.price is not None:
+                    return (_card(price=f"${day.price:g}"),)
+            return ()
 
         def close(self) -> None:
             pass
@@ -466,17 +470,16 @@ class DatesFlexExploreTests(_StateDirCase):
         )
         return stamp_search(reports_payload(report), now=NOW)
 
-    def test_calendar_cells_without_a_price_are_never_provider_empty(self) -> None:
-        # An unpriced or missing calendar cell does not prove the provider has no flights.
+    def test_unpriced_days_of_a_successful_shop_are_provider_empty_per_day(self) -> None:
+        # Each day was shopped and answered no fare, so each day is a provider-empty row.
         payload = self._dates(
             self._Source((CompactCalendarDay(DAY, None),))  # the second day is missing entirely
         )
-        self.assertEqual({row["empty_reason"] for row in payload["days"]}, {"not_loaded"})
+        self.assertEqual({row["empty_reason"] for row in payload["days"]}, {"provider_empty"})
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
-            ("no_results", "partial", "not_loaded"),
+            ("no_results", "complete", "provider_empty"),
         )
-        self.assertNotIn("provider_empty", str(payload["days"]))
 
     def test_priced_calendar_is_ok(self) -> None:
         payload = self._dates(
@@ -486,12 +489,12 @@ class DatesFlexExploreTests(_StateDirCase):
         )
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
-            ("ok", "partial", None),
+            ("ok", "complete", None),
         )
 
     def test_sweep_days_filtered_locally_are_filtered_out_not_empty(self) -> None:
         source = self._Source(
-            CompactParseMiss("drift"),
+            (),
             cards={DAY: (_card(),), DAY + timedelta(1): ()},
         )
         payload = self._dates(source, max_duration_hours=0.5)
@@ -514,8 +517,8 @@ class DatesFlexExploreTests(_StateDirCase):
         restamped = stamp_search(payload, now=NOW)
         self.assertEqual((restamped["status"], restamped["completeness"]), ("ok", "partial"))
 
-    def test_flex_calendar_miss_is_failed_not_no_results(self) -> None:
-        source = self._Source(CompactParseMiss("drift"))
+    def test_flex_markup_drift_on_every_day_is_failed_not_no_results(self) -> None:
+        source = self._Source(GoogleFlightsMarkupError("drift"))
         report = search_flex("JFK", "LHR", DAY, 1, source=source, currency="USD")
         payload = stamp_search(reports_payload(report), now=NOW)
         self.assertEqual(payload["error"]["code"], "markup_drift")
@@ -524,12 +527,12 @@ class DatesFlexExploreTests(_StateDirCase):
             ("failed", "blocked", "not_loaded"),
         )
 
-    def test_flex_window_with_no_priced_day_is_not_loaded_not_no_flights(self) -> None:
+    def test_flex_window_with_no_priced_day_is_provider_empty(self) -> None:
         source = self._Source(())
         report = search_flex("JFK", "LHR", DAY, 1, source=source, currency="USD")
         payload = stamp_search(reports_payload(report), now=NOW)
-        self.assertEqual(payload["empty_reason"], "not_loaded")
-        self.assertEqual((payload["status"], payload["completeness"]), ("no_results", "partial"))
+        self.assertEqual(payload["empty_reason"], "provider_empty")
+        self.assertEqual((payload["status"], payload["completeness"]), ("no_results", "complete"))
 
     class _ExploreSource:
         def __init__(self, places: object, prices: dict | None = None) -> None:

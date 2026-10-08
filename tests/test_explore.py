@@ -10,10 +10,10 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.airports import airport_geo
-from viajante.cli import _print_explore_report, main
+from viajante.cli import main
+from viajante.cli_report import _print_explore_report
 from viajante.explore import search_explore
 from viajante.flights import (
-    _calendar_summary_from_source,
     _normalize_offer,
     parse_depart_window,
     parse_named_clock,
@@ -25,14 +25,10 @@ from viajante.google_flights_public import (
     PublicGoogleFlightsHttpSource,
 )
 from viajante.google_flights_rpc import (
-    CompactCalendarDay,
     CompactExplorePlace,
     CompactParseMiss,
-    build_explore_inner,
-    build_shopping_inner,
     explore_request_constraints,
     explore_request_echo,
-    parse_explore_body,
     parse_explore_catalog,
 )
 from viajante.models import (
@@ -44,12 +40,6 @@ from viajante.models import (
     RawSegment,
 )
 from viajante.tfs import encode_explore_tfs
-from viajante.typical import (
-    typical_from_daily_prices,
-    vs_typical,
-    vs_typical_pct,
-    with_typical_dest,
-)
 
 
 class _FrozenDate(date):
@@ -180,57 +170,6 @@ class FakeExploreSource:
         self.closed = True
 
 
-class FakeExploreCalendarSource(FakeExploreSource):
-    def __init__(
-        self,
-        places: tuple[CompactExplorePlace, ...] | Exception,
-        prices: dict[str, tuple[RawFlightCard, ...]] | None = None,
-        calendars: dict[str, tuple[CompactCalendarDay, ...] | Exception] | None = None,
-    ) -> None:
-        super().__init__(places, prices)
-        self.calendars = calendars or {}
-        self.calendar_calls: list[tuple[str, str, date, date]] = []
-
-    def fetch_calendar(self, query: FlightQuery, start: date, end: date):
-        self.calendar_calls.append((query.origin, query.destination, start, end))
-        days = self.calendars.get(query.destination, ())
-        if isinstance(days, Exception):
-            raise days
-        return days
-
-
-class ExploreParseTests(unittest.TestCase):
-    def test_recorded_shape_yields_dest_rows(self) -> None:
-        body = _explore_body(
-            ("OPO", "Porto", "Portugal"),
-            ("LIS", "Lisbon", "Portugal"),
-            ("FCO", "Rome", "Italy"),
-        )
-        places = parse_explore_body(body)
-        self.assertEqual([place.iata for place in places], ["OPO", "LIS", "FCO"])
-        self.assertEqual(places[0].city, "Porto")
-        self.assertEqual(places[2].country, "Italy")
-
-    def test_unreadable_explore_is_a_miss(self) -> None:
-        with self.assertRaises(CompactParseMiss):
-            parse_explore_body("not explore")
-
-    def test_explore_inner_clears_the_destination(self) -> None:
-        inner = build_explore_inner("NRT", date(2026, 9, 1))
-        self.assertEqual(inner[3][13][0][0], [[["NRT", 0]]])
-        self.assertEqual(inner[3][13][0][1], [])
-        self.assertEqual(inner[3][6], [1, 0, 0, 0])
-        named = build_explore_inner(
-            "NRT",
-            date(2026, 9, 1),
-            adults=2,
-            children=1,
-            infants_in_seat=1,
-            infants_on_lap=1,
-        )
-        self.assertEqual(named[3][6], [2, 1, 1, 1])
-
-
 class ExploreSearchTests(unittest.TestCase):
     def test_prices_the_shortlist(self) -> None:
         source = FakeExploreSource(
@@ -267,9 +206,6 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(report.destinations[0].price, 28.0)
         self.assertEqual(report.destinations[1].iata, "LIS")
         self.assertEqual(report.destinations[1].price, 61.0)
-        self.assertIsNone(report.destinations[0].typical)
-        self.assertIsNone(report.destinations[1].typical)
-        self.assertNotIn("typical", report.destinations[0].to_dict(currency="EUR"))
         self.assertTrue(source.closed)
 
     def test_named_price_cap_drops_dests_without_an_owned_under_cap_fare(self) -> None:
@@ -735,10 +671,6 @@ class ExploreSearchTests(unittest.TestCase):
         shop = source.fetched_queries[0]
         self.assertEqual(shop.alliances, ("star",))
         self.assertEqual(shop.exclude_alliances, ("oneworld",))
-        self.assertEqual(
-            build_shopping_inner(shop)[1][13][0][7],
-            [None, [["*A"]], [["*O"]]],
-        )
         by_iata = {row.iata: row.price for row in report.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -777,7 +709,6 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(shop.children, 1)
         self.assertEqual(shop.infants_in_seat, 1)
         self.assertEqual(shop.infants_on_lap, 1)
-        self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
         self.assertEqual({row.iata for row in report.destinations}, {"OPO", "LIS"})
         unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual(source.explore_occupancy[-1], (1, 0, 0, 0))
@@ -785,7 +716,6 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(unnamed_shop.children, 0)
         self.assertEqual(unnamed_shop.infants_in_seat, 0)
         self.assertEqual(unnamed_shop.infants_on_lap, 0)
-        self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
         self.assertEqual({row.iata for row in unnamed.destinations}, {"OPO", "LIS"})
 
     def test_named_currency_country_reach_http_source(self) -> None:
@@ -1587,141 +1517,15 @@ class ExcludeRegionsExploreTests(unittest.TestCase):
 
 
 class TypicalExploreDestTests(unittest.TestCase):
-    def test_shopped_dest_without_calendar_omits_typical(self) -> None:
-        source = FakeExploreSource(
-            (
-                CompactExplorePlace("OPO", "Porto", "Portugal"),
-                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
-                CompactExplorePlace("FCO", "Rome", "Italy"),
-            ),
-            prices={
-                "OPO": (_card(price="€28"),),
-                "LIS": (_card(price="€61"),),
-                "FCO": (_card(price="€90"),),
-            },
-        )
-        report = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
-        self.assertEqual([row.iata for row in report.destinations], ["OPO", "LIS", "FCO"])
-        mix = typical_from_daily_prices([row.price for row in report.destinations])
-        self.assertEqual(mix, 61.0)
-        for dest in report.destinations:
-            self.assertIsNone(dest.typical)
-            self.assertIsNone(dest.vs_typical)
-            self.assertIsNone(dest.vs_typical_pct)
-            self.assertIsNone(dest.typical_deal(currency="EUR"))
-            self.assertNotIn("typical", dest.to_dict(currency="EUR"))
-            self.assertNotEqual(dest.typical, mix)
-
-    def test_unnamed_still_lists_dests_without_typical(self) -> None:
-        source = FakeExploreSource(
-            (
-                CompactExplorePlace("OPO", "Porto", "Portugal"),
-                CompactExplorePlace("FCO", "Rome", "Italy"),
-            ),
-            prices={"OPO": (_card(price="€28"),)},
-        )
-        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
-        self.assertEqual([row.iata for row in report.destinations], ["OPO", "FCO"])
-        self.assertEqual(report.destinations[0].price, 28.0)
-        self.assertIsNone(report.destinations[0].typical)
-        self.assertIsNone(report.destinations[1].price)
-        self.assertIsNone(report.destinations[1].typical)
-        self.assertNotIn("typical", report.destinations[0].to_dict(currency="EUR"))
-
-    def test_shopped_dest_stamps_the_same_triple_as_flights(self) -> None:
-        days = (
-            CompactCalendarDay(date(2026, 9, 1), 100.0),
-            CompactCalendarDay(date(2026, 9, 2), 120.0),
-            CompactCalendarDay(date(2026, 9, 3), 80.0),
-        )
-        source = FakeExploreCalendarSource(
-            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
-            prices={"OPO": (_card(price="€80"),)},
-            calendars={"OPO": days},
-        )
-        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=source)
-        dest = report.destinations[0]
-        self.assertEqual(dest.price, 80.0)
-        shop = FlightQuery("NRT", "OPO", date(2026, 9, 1))
-        summary = _calendar_summary_from_source(source, shop, {})
-        assert summary is not None
-        self.assertEqual(summary.median_price, typical_from_daily_prices((100.0, 120.0, 80.0)))
-        self.assertEqual(dest.typical, summary.median_price)
-        self.assertEqual(dest.vs_typical, vs_typical(80.0, summary.median_price))
-        self.assertEqual(dest.vs_typical_pct, vs_typical_pct(80.0, summary.median_price))
-        self.assertEqual(dest.typical_deal(currency="EUR"), "below typical 100 € (−20%)")
-        stamped = with_typical_dest(dest, summary.median_price)
-        self.assertEqual(stamped.typical, dest.typical)
-        self.assertEqual(stamped.vs_typical, dest.vs_typical)
-        self.assertEqual(stamped.vs_typical_pct, dest.vs_typical_pct)
-        self.assertTrue(any(call[1] == "OPO" for call in source.calendar_calls))
-
-    def test_thin_or_missing_calendar_omits_typical(self) -> None:
-        thin = FakeExploreCalendarSource(
-            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
-            prices={"OPO": (_card(price="€80"),)},
-            calendars={
-                "OPO": (
-                    CompactCalendarDay(date(2026, 9, 1), 80.0),
-                    CompactCalendarDay(date(2026, 9, 2), 90.0),
-                )
-            },
-        )
-        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=thin)
-        self.assertEqual(report.destinations[0].price, 80.0)
-        self.assertIsNone(report.destinations[0].typical)
-        self.assertNotIn("typical", report.destinations[0].to_dict(currency="EUR"))
-        missed = FakeExploreCalendarSource(
-            (CompactExplorePlace("LIS", "Lisbon", "Portugal"),),
-            prices={"LIS": (_card(price="€61"),)},
-            calendars={"LIS": CompactParseMiss("no wrb.fr calendar payload")},
-        )
-        report = search_explore("NRT", date(2026, 9, 1), days=7, top=1, source=missed)
-        self.assertEqual(report.destinations[0].price, 61.0)
-        self.assertIsNone(report.destinations[0].typical)
-        self.assertNotIn("typical", report.destinations[0].to_dict(currency="EUR"))
-
-    def test_does_not_copy_typical_from_another_dest(self) -> None:
-        source = FakeExploreCalendarSource(
-            (
-                CompactExplorePlace("OPO", "Porto", "Portugal"),
-                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
-            ),
-            prices={
-                "OPO": (_card(price="€80"),),
-                "LIS": (_card(price="€61"),),
-            },
-            calendars={
-                "OPO": (
-                    CompactCalendarDay(date(2026, 9, 1), 100.0),
-                    CompactCalendarDay(date(2026, 9, 2), 120.0),
-                    CompactCalendarDay(date(2026, 9, 3), 80.0),
-                )
-            },
-        )
-        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
-        by_iata = {row.iata: row for row in report.destinations}
-        self.assertEqual(by_iata["OPO"].typical, 100.0)
-        self.assertEqual(by_iata["OPO"].vs_typical, "below")
-        self.assertIsNone(by_iata["LIS"].typical)
-        self.assertNotIn("typical", by_iata["LIS"].to_dict(currency="EUR"))
-        self.assertNotEqual(by_iata["LIS"].typical, by_iata["OPO"].typical)
-
     def test_batched_source_prices_all_dests_in_one_dispatch(self) -> None:
-        class Batched(FakeExploreCalendarSource):
+        class Batched(FakeExploreSource):
             def __init__(self, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
-                self.batches: list[list[tuple[str, date, date]]] = []
+                self.batches: list[list[str]] = []
 
-            def fetch_many_with_calendar(self, jobs):
-                self.batches.append([(trip.destination, start, end) for trip, start, end in jobs])
-                rows = []
-                for trip, _start, _end in jobs:
-                    cards = self.prices.get(trip.destination)
-                    rows.append(
-                        (cards or NoFlightsFound(), self.calendars.get(trip.destination, ()))
-                    )
-                return rows
+            def fetch_many(self, trips):
+                self.batches.append([trip.destination for trip in trips])
+                return [self.prices.get(trip.destination) or NoFlightsFound() for trip in trips]
 
         source = Batched(
             (
@@ -1729,50 +1533,13 @@ class TypicalExploreDestTests(unittest.TestCase):
                 CompactExplorePlace("LIS", "Lisbon", "Portugal"),
             ),
             prices={"OPO": (_card(price="€80"),)},
-            calendars={
-                "OPO": (
-                    CompactCalendarDay(date(2026, 9, 1), 100.0),
-                    CompactCalendarDay(date(2026, 9, 2), 120.0),
-                    CompactCalendarDay(date(2026, 9, 3), 80.0),
-                ),
-                "LIS": (
-                    CompactCalendarDay(date(2026, 9, 1), 50.0),
-                    CompactCalendarDay(date(2026, 9, 2), 50.0),
-                    CompactCalendarDay(date(2026, 9, 3), 50.0),
-                ),
-            },
         )
         report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
-        self.assertEqual([[job[0] for job in batch] for batch in source.batches], [["OPO", "LIS"]])
+        self.assertEqual(source.batches, [["OPO", "LIS"]])
         self.assertEqual(source.fetched_queries, [])
-        self.assertEqual(source.calendar_calls, [])
         by_iata = {row.iata: row for row in report.destinations}
         self.assertEqual(by_iata["OPO"].price, 80.0)
-        self.assertEqual(by_iata["OPO"].typical, 100.0)
         self.assertIsNone(by_iata["LIS"].price)
-        self.assertIsNone(by_iata["LIS"].typical)
-
-    def test_explore_cli_prints_typical_deal_for_shopped_dest(self) -> None:
-        source = FakeExploreCalendarSource(
-            (CompactExplorePlace("OPO", "Porto", "Portugal"),),
-            prices={"OPO": (_card(price="€80"),)},
-            calendars={
-                "OPO": (
-                    CompactCalendarDay(date(2026, 9, 1), 100.0),
-                    CompactCalendarDay(date(2026, 9, 2), 120.0),
-                    CompactCalendarDay(date(2026, 9, 3), 80.0),
-                )
-            },
-        )
-        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
-            buffer = io.StringIO()
-            with redirect_stdout(buffer):
-                code = main(["explore", "NRT", "--from", "2026-09-01", "--days", "7"])
-        self.assertEqual(code, 0)
-        output = buffer.getvalue()
-        self.assertIn("OPO", output)
-        self.assertIn("80 JPY", output)
-        self.assertIn("below typical 100 JPY (−20%)", output)
 
 
 class StopsCompareExploreShopTests(unittest.TestCase):
@@ -1829,12 +1596,6 @@ class StopsCompareExploreShopTests(unittest.TestCase):
         catalog = ExploreDestination(iata="LIS", city="Lisbon", country="Portugal", price=61.0)
         self.assertIsNone(catalog.stops_compare)
         self.assertNotIn("stops_compare", catalog.to_dict(currency="EUR"))
-        self.assertIsNone(catalog.typical)
-        self.assertNotIn("typical", catalog.to_dict(currency="EUR"))
-        self.assertIsNone(by_iata["FCO"].typical)
-        self.assertNotIn("typical", by_iata["FCO"].to_dict(currency="EUR"))
-        self.assertIsNone(by_iata["OPO"].typical)
-        self.assertNotIn("typical", by_iata["OPO"].to_dict(currency="EUR"))
 
     def test_omits_empty_side_and_block(self) -> None:
         only_one = FakeExploreSource(

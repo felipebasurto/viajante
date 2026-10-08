@@ -242,6 +242,43 @@ class PublicFlightsSourceTests(unittest.TestCase):
         self.assertEqual(offers[0].legs[1].segments[0].flight_number, "TA202")
         self.assertTrue(source.scope_bound)
 
+    def test_single_round_trip_reads_its_return_pages_in_one_multiplexed_batch(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.gets: list[str] = []
+                self.batches: list[list[str]] = []
+
+            def get(self, url, *, timeout):
+                self.gets.append(url)
+                return SweepHttpResponse(200, "outbound", url)
+
+            def get_many(self, urls, *, timeout):
+                self.batches.append(list(urls))
+                return [SweepHttpResponse(200, "return", url) for url in urls]
+
+            def close(self) -> None:
+                return None
+
+        outbound = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
+        returned = _card("SIN", "HAN", BACK, "09:00", "TA202", "€340")
+        client = Client()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        query = RoundTrip("HAN", "SIN", OUT, BACK, adults=2, max_stops=0)
+
+        def parse(response, url, trip=None):
+            return (outbound,) if response.text == "outbound" else (returned,)
+
+        with (
+            patch.object(source, "_parse_response", side_effect=parse),
+            patch.object(PublicGoogleFlightsHttpSource, "_selected_echo", return_value=True),
+        ):
+            offers = source.fetch(query)
+        self.assertEqual(len(client.gets), 1)
+        self.assertEqual(len(client.batches), 1)
+        self.assertEqual(len(client.batches[0]), 1)
+        self.assertEqual([offer.price for offer in offers], ["€340"])
+        self.assertTrue(source.scope_bound)
+
     def test_equal_priced_return_options_are_preserved(self) -> None:
         source = _source()
         query = RoundTrip("HAN", "SIN", OUT, BACK, adults=2, max_stops=0)
@@ -270,9 +307,7 @@ class PublicFlightsSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "Selected outbound echo was not proven"):
                 source.fetch(query)
 
-    def test_public_transport_is_get_only_and_disables_automatic_typical(self) -> None:
-        source = _source()
-        self.assertFalse(source.automatic_typical)
+    def test_public_transport_is_get_only(self) -> None:
         query = FlightQuery("HAN", "SIN", OUT, adults=2, max_stops=0)
         good = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
 
@@ -287,9 +322,8 @@ class PublicFlightsSourceTests(unittest.TestCase):
         client = GetOnly()
         source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
         with patch("viajante.google_flights_public.parse_shopping_page", return_value=(good,)):
-            cards, days = source.fetch_with_calendar(query, OUT, BACK)
+            cards = source.fetch(query)
         self.assertEqual(cards, (good,))
-        self.assertEqual(days, ())
         self.assertEqual(len(client.urls), 1)
         self.assertIn("/travel/flights?", client.urls[0])
         self.assertFalse(hasattr(client, "post"))

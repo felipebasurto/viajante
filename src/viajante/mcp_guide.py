@@ -145,20 +145,29 @@ proxied 429); do not invent a wait.
 ## Flight recommendation
 
 A successful search_flights (and the flights half of search_trip) query may carry a
-recommendation block beside its offers: one recommended pick, a shortlist of up to
-three offers that differ in stops or departure slot, per-offer highlights and
-tradeoffs from returned fields only, and published score weights. It is evidence,
-not a verdict; offers and their order are unchanged. Read relaxed_requirements
-first. A relaxed pick failed a requirement you named (listed there, and unmet in the
-entry), so it is not an exact match. When the query row has empty_reason
-filtered_out (envelope status no_results when every query is filtered_out) and a
-recommendation, offers is empty because the named filters removed every row, and
-the recommendation is a relaxed pick, not an exact match: say which requirements it
-relaxed. Offers whose currency
-differs or is unproven are never price-compared. Provider-empty queries carry no
-recommendation. Fare rules (refund, change) are never in the rows. requirements
-lists max_stops even when it is only the default, so its presence does not mean the
-caller named a stop limit.
+`recommendation` block beside its offers. It is additive evidence, not a verdict: `offers`
+and their order do not change, and nothing in the block tells you what to book. It holds:
+
+- `requirements`: each constraint you named (`max_stops`, `depart_window`, `depart_after`,
+  `arrive_before`, `max_duration`, `bags`, `carry_on`), with a per-offer status of `met`,
+  `unmet` or `unknown`. `max_stops` appears even when it is only the default, so its presence
+  does not mean you named a stop limit.
+- `relaxed_requirements`: the named requirements that were dropped so an entry could exist.
+  An entry that relaxed one is not an exact match on that requirement; read this list first.
+  When the query row has empty_reason filtered_out (envelope status no_results when every
+  query is filtered_out) and a recommendation, offers is empty because your named filters
+  removed every row, and the recommendation is a relaxed pick, not an exact match. Say which
+  requirements were relaxed.
+- `shortlist`: up to three offers with a role label, each with its score breakdown under the
+  published `SCORE_WEIGHTS`, its `highlights` and `tradeoffs`. Role labels are `top_score`
+  (highest weighted score), `lowest_price` and `shortest`. An offer can hold more than one
+  label, and a label does not mean "buy this".
+- `highlights` and `tradeoffs` come only from returned fields (price text, duration, stops,
+  layover, clocks, carrier, bag counts). A missing field is reported as unknown, never filled.
+
+Offers whose currency differs or is unproven are never price-compared or price-scored.
+Provider-empty queries carry no recommendation. Round-trip and multi-city packages are never
+relaxed. Fare rules (refund, change) are never in the rows, so the block makes no claim about them.
 
 ## Public-page transport in 1.4.6
 
@@ -203,7 +212,9 @@ search_flights on a hub or leisure trunk, the caller may run it once
 sequentially. Do not mix evidence. Skip when bags were named.
 Skiplagged cards are USD; omit currency or pass USD. Do not copy a
 Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
-currency_mismatch (owned quote stamped), not no_results. No FX.
+currency_mismatch (owned quote stamped), not no_results. No FX. Never run it for explore, dates,
+flex, multi-city or an unproven destination. Hidden-city tickets can violate airline contracts:
+lead with hidden_city true rows and confirm on booking_url; Viajante does not book.
 
 ## Split tickets
 
@@ -227,6 +238,13 @@ rows that were all rejected are no_results with filtered_out; only provider-empt
 provider_empty (every leg empty, whatever the packaged fare was). coverage is heuristic:
 it never proves other hubs or dates have no fare.
 observed_at is the search time, null when every fetch was a recorded cooldown.
+Hubs: max_hubs defaults to 3 (at most 5); 2 queries per hub, 3 with allow_overnight, and mixed
+one-ways use 2. A mixed one-way pair takes the cheapest outbound and the cheapest return that
+departs after the outbound lands; otherwise timing_proven is false. A pair without an owned
+arrival date is timing_proven false and is used only when no proven pair exists in its currency.
+Ticket queries carry occupancy, cabin, bags and carrier filters; clock, layover, via and overnight
+filters do not apply per ticket. min_connection_hours (default 3) is a planning default, not
+evidence.
 
 ## Local tools
 
@@ -261,6 +279,11 @@ filtered_out (an answered not_among_offers stays ok); check_failed carries the f
 not_loaded; incomplete_identity is failed and blocked. Caller-typed values are not recorded as
 owned evidence. It is not a booking guarantee; the price is confirmed only on the provider's own
 page.
+
+recheck_offer's query defaults to the offer's evidence query and is replayed. Its price_cap is not
+sent: a break is listed in filter_violations, which also checks max_stops, airlines and
+exclude_airlines. filters_replayed lists what rode the request. A hand-built offer also needs query
+adults, cabin, max_stops and currency.
 
 ## Hotel finalist details
 
@@ -332,6 +355,21 @@ arrival margin; a latest check-out time alone does not prove a flight is reachab
 Keep warnings in the final response. Browser access denial is not a broken URL
 or provider throttling: name the actual limitation and use available permitted
 read-only evidence; never ask for permission the user already granted.
+
+Hotel search fields. The hotel request carries adults and rooms only, so never state a room
+split. priced_adults is the party Google priced. resolved_place and place_bounds say where Google
+searched; neighbors outside place_bounds are not the named place. place_types and class_label say
+what a property is (a hotel search also returns hostels). entire_home=true asks for a house or
+villa; those offers carry sleeps, bedrooms and beds, and hotels do not. lodging_evidence_conflict
+marks explicit room labels that contradict an entire-unit label; lodging_kind and
+property_type_evidence then stay unknown. stays batches up to 8 location/check_in/check_out
+objects; adults and rooms default to the top-level values, and each stay is one query.
+property_matrix lists each property's total per stay, sorted by name and never by price; a null
+cell means that property was not among that stay's returned offers, which is not proof it is
+unavailable. Skiplagged room rates
+(search_hotel_rooms) carry occupancy_limit, refundable, free_cancellation and taxes_and_fees as
+listed; a hotel name must match exactly, and no match is no_results, never a guess. search_trip's
+stay dates default to the flights' window.
 
 ## Currency, bags and locale
 

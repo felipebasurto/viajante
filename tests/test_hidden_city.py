@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.cli import main
+from viajante.control import SearchDeadline
 from viajante.models import (
     HIDDEN_CITY_WARNINGS,
     HiddenCityOffer,
@@ -644,6 +645,15 @@ class HiddenCityCliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         search.assert_not_called()
         self.assertIn("OUT:BACK", err.getvalue())
+
+
+class HiddenCityDeadlineTests(unittest.TestCase):
+    def test_deadline_propagates_instead_of_becoming_a_fetch_failure(self) -> None:
+        def rpc(url, payload, headers):
+            raise SearchDeadline()
+
+        with self.assertRaises(SearchDeadline):
+            search_hidden_city("JFK", "MIA", FUTURE, rpc=rpc)
 
 
 class HiddenCitySelectionTests(unittest.TestCase):

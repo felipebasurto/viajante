@@ -111,6 +111,9 @@ class PublicTransportRegressions(unittest.TestCase):
                 )
                 self.assertEqual(rate_limit_status()["basis"], "provider_retry_after")
                 self.assertEqual(rate_limit_status()["cooldown_s"], 120)
+                self.assertEqual(
+                    rate_limit_status()["endpoint"], "www.google.com/service/GetExploreDestinations"
+                )
                 self.assertEqual(page.waits, 0)
                 self.assertTrue(page.closed)
                 # Reset only the test's temporary cooldown before the next subcase.

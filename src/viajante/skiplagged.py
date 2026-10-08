@@ -12,7 +12,13 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
-from viajante.control import check_cancelled, checkpoint, controlled, interruptible_sleep
+from viajante.control import (
+    SearchDeadline,
+    check_cancelled,
+    checkpoint,
+    controlled,
+    interruptible_sleep,
+)
 from viajante.models import (
     FETCH_LANGUAGE,
     HIDDEN_CITY_SOURCE,
@@ -40,6 +46,7 @@ _TIMEOUT_SECONDS = 30
 _SESSION_LOCK = threading.Lock()
 _SESSION_IDS: dict[tuple[object, str], str] = {}
 RpcPost = Callable[[str, dict[str, Any], Mapping[str, str]], tuple[int, Mapping[str, str], str]]
+_PRICE_KEYS = ("price", "fare", "total", "amount", "totalPrice")
 
 
 class SkiplaggedError(RuntimeError):
@@ -81,16 +88,24 @@ def _pace(rpc: RpcPost) -> None:
         _LAST_CALL[0] = time.monotonic()
 
 
-def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str]) -> None:
+def _header(headers: Mapping[str, str], name: str) -> str:
+    wanted = name.casefold()
+    for key, value in headers.items():
+        if key.casefold() == wanted:
+            return str(value)
+    return ""
+
+
+def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str], url: str) -> None:
     check_cancelled()
     if status != 429:
         return
     try:
-        retry_after = float(headers.get("retry-after") or headers.get("Retry-After") or "")
+        retry_after: Optional[float] = float(_header(headers, "retry-after"))
     except ValueError:
         retry_after = None
     if _is_live(rpc):
-        state = note_rate_limited(retry_after, file=SKIPLAGGED_RATE_LIMIT_FILE)
+        state = note_rate_limited(retry_after, file=SKIPLAGGED_RATE_LIMIT_FILE, endpoint=url)
         raise SkiplaggedRateLimited(
             rate_limit_advice(state, provider="Skiplagged", reason="HTTP 429")
         )
@@ -169,15 +184,14 @@ def _handshake(rpc: RpcPost, url: str) -> str:
         },
     }
     status, headers, body = rpc(url, init_payload, _headers())
-    _check_status(status, rpc, headers)
+    _check_status(status, rpc, headers, url)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     _rpc_result(_sse_json(body))
-    session_id = headers.get("mcp-session-id") or headers.get("Mcp-Session-Id") or ""
+    session_id = _header(headers, "mcp-session-id")
     notify = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-    headers = _headers(session_id=session_id or None)
-    status, notify_headers, _notify_body = rpc(url, notify, headers)
-    _check_status(status, rpc, notify_headers)
+    status, notify_headers, _notify_body = rpc(url, notify, _headers(session_id=session_id or None))
+    _check_status(status, rpc, notify_headers, url)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     return session_id
@@ -199,6 +213,12 @@ def _drop_session(rpc: RpcPost, url: str) -> None:
         _SESSION_IDS.pop((rpc, url), None)
 
 
+def _post_call(rpc: RpcPost, url: str, payload: dict[str, Any], session_id: str) -> tuple[int, str]:
+    status, headers, body = rpc(url, payload, _headers(session_id=session_id or None))
+    _check_status(status, rpc, headers, url)
+    return status, body
+
+
 def _call_mcp(
     arguments: Mapping[str, Any],
     *,
@@ -216,13 +236,11 @@ def _call_mcp(
         "method": "tools/call",
         "params": {"name": tool, "arguments": dict(arguments)},
     }
-    status, call_headers, body = rpc(url, call_payload, _headers(session_id=session_id or None))
-    _check_status(status, rpc, call_headers)
+    status, body = _post_call(rpc, url, call_payload, session_id)
     if status in {400, 404} and session_id:
         _drop_session(rpc, url)
         session_id = _session_id(rpc, url)
-        status, call_headers, body = rpc(url, call_payload, _headers(session_id=session_id or None))
-        _check_status(status, rpc, call_headers)
+        status, body = _post_call(rpc, url, call_payload, session_id)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP search failed ({status}).")
     return _rpc_result(_sse_json(body))
@@ -313,10 +331,9 @@ def _iso_currency(value: Any) -> Optional[str]:
 
 
 def _owned_currency(row: Mapping[str, Any], price_value: Any) -> Optional[str]:
-    price_obj = row.get("price") if not isinstance(price_value, dict) else price_value
     nested = None
-    if isinstance(price_obj, dict):
-        nested = price_obj.get("currency") or price_obj.get("curr")
+    if isinstance(price_value, dict):
+        nested = price_value.get("currency") or price_value.get("curr")
     return _iso_currency(_first_str(row, "currency", "curr")) or _iso_currency(nested)
 
 
@@ -468,12 +485,8 @@ def _offer_from_row(
     mapped = _as_mapping(row)
     if mapped is None:
         return None
-    price_value = None
-    for key in ("price", "fare", "total", "amount", "totalPrice"):
-        if key in mapped:
-            price_value = mapped.get(key)
-            break
-    price = _first_number(mapped, "price", "fare", "total", "amount", "totalPrice")
+    price_value = next((mapped[key] for key in _PRICE_KEYS if key in mapped), None)
+    price = _first_number(mapped, *_PRICE_KEYS)
     if price is None or price <= 0:
         return None
     offer_currency = _owned_currency(mapped, price_value)
@@ -639,6 +652,8 @@ def search_hidden_city(
     error: Optional[SearchError] = None
     try:
         result = _call_mcp(arguments, rpc=rpc or _rpc_post)
+    except SearchDeadline:
+        raise
     except Exception as exc:
         error = _classify(exc)
     else:

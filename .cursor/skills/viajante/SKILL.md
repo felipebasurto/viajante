@@ -50,7 +50,7 @@ Only when the user asks for cheaper or more flexible options, or the packaged fa
 
 ## Hidden-city
 
-After a named-route `search_flights` (one origin, one dest, ISO date), if the dest is a hub or leisure trunk (JFK-MIA, LHR-JFK, LAX-CUN, …) or Google looks like a through-fare might undercut (`typical_deal` poor, odd one-stops), call `search_hidden_city` once with the same route and date. Sequential (process lock). Do not mix the two JSON payloads. Lead with `hidden_city: true` rows and the owned warnings. Print owned `ticketed_destination` / `layover_city` when present. Do not treat a hidden fare as a cheaper legal fare until the human opens `booking_url` (do not scrape Skiplagged). Skip explore, dates, flex calendars, multi-city, unproven dests, and any search that named `bags` / a checked bag. Omit hidden-city `currency` (Skiplagged cards are USD); do not copy a Google/origin quote keep (GBP, JPY, …). `no_results` / `blocked`: stop that Skiplagged leg; do not fill from Google. `currency_mismatch`: omit currency or pass the owned card code in the error (usually USD) and retry once. Do not treat that as an empty market.
+After a named-route `search_flights` (one origin, one dest, ISO date), if the dest is a hub or leisure trunk (JFK-MIA, LHR-JFK, LAX-CUN, …) or Google looks like a through-fare might undercut (`vs_typical` shows a poor price, odd one-stops), call `search_hidden_city` once with the same route and date. Sequential (process lock). Do not mix the two JSON payloads. Lead with `hidden_city: true` rows and the owned warnings. Print owned `ticketed_destination` / `layover_city` when present. Do not treat a hidden fare as a cheaper legal fare until the human opens `booking_url` (do not scrape Skiplagged). Skip explore, dates, flex calendars, multi-city, unproven dests, and any search that named `bags` / a checked bag. Omit hidden-city `currency` (Skiplagged cards are USD); do not copy a Google/origin quote keep (GBP, JPY, …). `no_results` / `blocked`: stop that Skiplagged leg; do not fill from Google. `currency_mismatch`: omit currency or pass the owned card code in the error (usually USD) and retry once. Do not treat that as an empty market.
 
 ## Hotels: ask once
 
@@ -89,7 +89,7 @@ Check `get_runtime_info` or `viajante --version` before relying on new flags/too
 
 `search_dates` is an HTTP calendar and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment. Optional MCP `country` is Google `gl` (origin market). Omit when unset. Do not pass a destination ISO.
 
-Unnamed `baggage_buffer` is 0. The 1.4.6 public-page transport sends `carry_on` (one bag for the whole party, not per passenger), `airlines`, `exclude_airlines` and `alliances`; every page must echo them or the read fails. Google ignores an airline exclusion, so viajante drops excluded and carrier-unknown cards locally; operator and codeshare evidence is limited. It refuses named checked `bags`, `exclude_alliances`, and multi-city (use `fetch=detail`) before network work. `search_explore` needs the browser extra and accepts only one adult in economy. Detail refuses bag and carrier filters. Do not remove requested filters silently; a base-fare search is a separate scenario. Round-trip results complete up to eight owned outbound selections and remain scope-bound/partial. Automatic typical-price fanout is disabled. `VIAJANTE_SWEEP_MODE=conservative` caps HTTP/2 dispatch at two instead of eight. Do not invent a bag fee.
+Unnamed `baggage_buffer` is 0. The public-page transport sends `carry_on` (one bag for the whole party, not per passenger), `airlines`, `exclude_airlines` and `alliances`; every page must echo them or the read fails. Google ignores an airline exclusion, so viajante drops excluded and carrier-unknown cards locally; operator and codeshare evidence is limited. It refuses named checked `bags`, `exclude_alliances`, and multi-city (use `fetch=detail`) before network work. `search_explore` needs the browser extra and accepts only one adult in economy. Detail refuses bag and carrier filters. Do not remove requested filters silently; a base-fare search is a separate scenario. Round-trip results complete up to eight owned outbound selections and remain scope-bound/partial. Automatic typical-price fanout is disabled. `VIAJANTE_SWEEP_MODE=conservative` caps HTTP/2 dispatch at two instead of eight. Do not invent a bag fee.
 
 ## Destination triage
 
@@ -102,7 +102,7 @@ No implied home hub. Use the origin the user named. If unnamed, ask.
 
 ## Report
 
-Copy owned numbers. Print `typical_deal` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. When a flights query carries `recommendation`, read `relaxed_requirements` first and say which named requirements the pick relaxed; quote `highlights` / `tradeoffs` as returned, keep "unknown" wording, and do not compare prices across currencies. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
+Copy owned numbers. Print `vs_typical` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. When a flights query carries `recommendation`, read `relaxed_requirements` first and say which named requirements the pick relaxed; quote `highlights` / `tradeoffs` as returned, keep "unknown" wording, and do not compare prices across currencies. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
 
 Only values returned by a Viajante payload are search evidence. Do not use a manually operated Google Flights tab to continue an MCP failure or present its price as a Viajante result.
 
@@ -183,7 +183,7 @@ has claims no search owns (see `error_code`), not that a search failed.
 | `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
 | `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
 | `search_hidden_city` `blocked` / fetch failed | Stop. Do not treat a Google Flights tab as Skiplagged evidence. Wait 30–60 minutes. |
-| Flex `markup_drift` with empty `days` | Compact calendar miss, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
+| Flex `markup_drift` with empty `days` | A day page could not be parsed, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
 | `markup_drift` (other) | Stop. Do not retry the same parse. |
 | Process busy (`already running`) | Wait for that search to finish. Do not start another search in this process. |
 | MCP timeout `-32001` | Not the process lock. Do not 8×60s-retry it as lock-busy. |
@@ -197,6 +197,6 @@ State dir: `VIAJANTE_STATE_DIR` or XDG. Exit 0/1/2/3 = all ok / bad input / all 
 
 The status 13 cooldown is a guess and can pause Google for 2 minutes when the
 status has another cause. Google base/tax/fee breakdown (`record[6][2][44]`,
-unconfirmed) and caller-named exchange rates remain outside this release.
+unconfirmed) and caller-named exchange rates remain unimplemented.
 
 Checkout tests: `uv run python -m unittest discover -s tests -v`. `viajante bench` is contributor-only (needs `tests/bench/`).

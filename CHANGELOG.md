@@ -5,7 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+The per-release record files and smoke notes that used to sit in `docs/` were folded into this
+changelog and removed. Their full text remains in git history up to commit 6ee0fb7.
+
 ## [Unreleased]
+
+### Changed
+
+- **Breaking (flight `recommendation`, schema 2):** shortlist entries reference
+  their offer by `evidence_id` and `google_flights_url` instead of repeating it.
+  The full `offer` is embedded only when the query's `offers` list does not
+  include it (a relaxed pick). `relaxation_order` and `scoring` are gone;
+  `weights` appears only when prices could not be compared. Labels are role
+  names: `top_score`, `lowest_price`, `shortest` (and their `_distinct` forms),
+  `alternative`. Comparative highlights ("Lowest fare among N compared") are
+  removed; highlights restate returned fields only. A one-way result with
+  eight offers is about 23% smaller.
+- A packaged round trip reads its selected return pages in one concurrent batch
+  instead of one after another (about twice as fast end to end).
+- MCP `tools/list` is about 29% smaller: tool descriptions are shorter, the
+  detail moved to `viajante://guide`, and generated schema titles are gone.
+- Cooldown records name the viajante version and endpoint that wrote them, and
+  the blocked message says when another install recorded the cooldown.
+- Public-page `ds:1` extraction no longer scans the whole page with the stdlib
+  HTML parser (about 6x faster on a large results page).
+
+### Fixed
+
+- A nonstop (or otherwise narrowed) search that Google answers with a rendered
+  results page but no itineraries is `no_results` / `provider_empty`, not
+  `failed` / `markup_drift`.
+- A search deadline is no longer retried as a fetch failure in Skiplagged room
+  rates or hidden-city search.
+- Non-finite stay totals and award inputs are rejected instead of leaking `NaN`.
+
+### Removed
+
+- The unreachable unsigned RPC transport, the legacy RPC calendar and automatic
+  typical path, unused carrier shopping helpers, and the never-set offer
+  `cheapest_date` / `cheapest` fields.
 
 ## [1.4.7] - 2026-10-08
 
@@ -39,9 +77,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chromium` command for the npm/uvx setup.
 
 ## [1.4.6] - 2026-10-07
-
-See the [release record](docs/release-1.4.6.md) for transport behavior,
-compatibility changes, validation, and publication verification.
 
 ### Changed
 
@@ -95,9 +130,6 @@ compatibility changes, validation, and publication verification.
   candidates. See the release record for validation boundaries.
 
 ## [1.4.5] - 2026-10-07
-
-See the [release record](docs/release-1.4.5.md) for the complete integrated PR
-inventory, compatibility changes, candidate validation and publication handoff.
 
 ### Added
 
@@ -252,7 +284,7 @@ inventory, compatibility changes, candidate validation and publication handoff.
 - Skiplagged HTTP 429 is `blocked` with `rate_limited: true`, without retries. Its separate `skiplagged-rate-limit.json` pauses new calls; real calls are paced one second apart.
 - Detail fetch fails fast on `google.com/sorry` instead of waiting minutes for result cards.
 - `viajante hidden-city` and MCP `search_hidden_city`: Skiplagged cards are USD. A named keep that matches no owned card currency is `currency_mismatch` (owned quote stamped), not silent `no_results`. Viajante does not convert. Omit currency or pass USD; do not advertise EUR as a Skiplagged quote.
-- MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs. Historical smoke evidence is in `docs/smoke-2026-09-17.md`.
+- MCP `search_dates` round-trip calendar path: when `return_date` is set, the calendar sweep uses owned outbound+return pairs.
 - MCP `validate_itinerary`: never reports `feasible=true` without owned provenance; incomplete evidence stays unknown/infeasible.
 
 ### Known limitations

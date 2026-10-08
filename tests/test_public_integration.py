@@ -26,7 +26,7 @@ from viajante.google_flights_public import (
     GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
 )
-from viajante.google_flights_rpc import CompactCalendarDay, RawFlightCard
+from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -457,8 +457,6 @@ class SweepDiagnosticsTests(unittest.TestCase):
 class _DaySource:
     """Public-style per-day source answering fetch_many with scripted outcomes."""
 
-    automatic_typical = False
-
     def __init__(self, results: list[object]) -> None:
         self.results = results
         self.trips: list[object] = []
@@ -471,30 +469,22 @@ class _DaySource:
     def fetch(self, trip):
         raise AssertionError("per-day fetch is not used when fetch_many exists")
 
-    def fetch_calendar(self, trip, start, end):
-        raise AssertionError("public transport never makes a calendar RPC")
-
     def close(self) -> None:
         self.closed = True
 
 
-class _CalendarShop:
-    """Compact-calendar rows plus one captured fresh shop for the chosen day."""
+class _DayShop:
+    """Public-style day source: only the chosen day is priced, every query is recorded."""
 
-    def __init__(self, days: tuple[CompactCalendarDay, ...], cards) -> None:
-        self.days = days
+    def __init__(self, chosen: date, cards) -> None:
+        self.chosen = chosen
         self.cards = cards
-        self.calendar_queries: list[object] = []
         self.fetched: list[object] = []
         self.closed = False
 
-    def fetch_calendar(self, query, start, end):
-        self.calendar_queries.append(query)
-        return self.days
-
     def fetch(self, query):
         self.fetched.append(query)
-        return self.cards
+        return self.cards if query.departure_date == self.chosen else ()
 
     def close(self) -> None:
         self.closed = True
@@ -564,8 +554,6 @@ class DatesDeadlineCancelTests(unittest.TestCase):
         progress_lines: list[str] = []
 
         class Transport:
-            automatic_typical = False
-
             def fetch_round_trip_window(self, trips, on_day):
                 for index, trip in enumerate(trips):
                     if index == 2:
@@ -616,16 +604,8 @@ class DatesDeadlineCancelTests(unittest.TestCase):
 
 
 class FlexShopReplayTests(unittest.TestCase):
-    def _shop_source(self, *cards: RawFlightCard) -> _CalendarShop:
-        chosen = date(2099, 1, 15)
-        return _CalendarShop(
-            (
-                CompactCalendarDay(date(2099, 1, 14), 180.0),
-                CompactCalendarDay(chosen, 90.0),
-                CompactCalendarDay(date(2099, 1, 16), 140.0),
-            ),
-            cards,
-        )
+    def _shop_source(self, *cards: RawFlightCard) -> _DayShop:
+        return _DayShop(date(2099, 1, 15), cards)
 
     def test_flex_shop_replays_cabin_stops_stay_and_party(self) -> None:
         card = RawFlightCard("Iberia", "08:00", "09:20", "1 hr", "Nonstop", "€90")
@@ -645,14 +625,13 @@ class FlexShopReplayTests(unittest.TestCase):
             currency="EUR",
             baggage_buffer=0,
         )
+        self.assertEqual(source.fetched[-1].cabin, "business")
+        self.assertEqual(source.fetched[-1].max_stops, 2)
+        self.assertEqual(source.fetched[-1].adults, 2)
+        self.assertEqual(source.fetched[-1].children, 1)
+        self.assertEqual(source.fetched[-1].return_date, date(2099, 1, 20))
         self.assertEqual(source.fetched[0].cabin, "business")
         self.assertEqual(source.fetched[0].max_stops, 2)
-        self.assertEqual(source.fetched[0].adults, 2)
-        self.assertEqual(source.fetched[0].children, 1)
-        self.assertEqual(source.fetched[0].return_date, date(2099, 1, 20))
-        seed = source.calendar_queries[0]
-        self.assertEqual(seed.cabin, "business")
-        self.assertEqual(seed.max_stops, 2)
         self.assertEqual(report.trip, "rt")
 
     def test_flex_shop_applies_every_named_filter(self) -> None:

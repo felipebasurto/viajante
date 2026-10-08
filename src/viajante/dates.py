@@ -1,4 +1,4 @@
-"""Cheapest-per-day calendar via the owned Google Flights date-grid RPC."""
+"""Cheapest-per-day calendar: one owned public-page shop per day in the window."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from viajante.flights import (
 )
 from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
-from viajante.google_flights_rpc import CompactCalendarDay, CompactParseMiss
 from viajante.models import (
     DateCalendarReport,
     DateCalendarSummary,
@@ -189,11 +188,7 @@ def format_summary_line(summary: DateCalendarSummary, currency: str) -> str:
     )
 
 
-class CalendarSource(Protocol):
-    def fetch_calendar(
-        self, trip: Trip, start: date, end: date
-    ) -> Sequence[CompactCalendarDay]: ...
-
+class DaySource(Protocol):
     def fetch(self, trip: Trip) -> Sequence[RawFlightCard]: ...
 
     def close(self) -> None: ...
@@ -480,7 +475,7 @@ def _nearby_suffix(seed: FlightQuery | RoundTrip) -> str:
 
 
 def _date_calendar_for_seed(
-    client: CalendarSource,
+    client: DaySource,
     seed: FlightQuery | RoundTrip,
     start: date,
     end: date,
@@ -500,22 +495,11 @@ def _date_calendar_for_seed(
         f"(max {MAX_DATE_WINDOW_DAYS} days{_stay_label(kind, stay)}){_nearby_suffix(seed)}"
     )
     started = time.perf_counter()
-    backend = "calendar"
     try:
         checkpoint()
-        if getattr(client, "automatic_typical", True) is False:
-            days = _sweep_per_day(
-                client, seed, start, end, stay, report_progress, filters, baggage_buffer
-            )
-        else:
-            compact = client.fetch_calendar(seed, start, end)
-            days = _rows_from_calendar(start, end, compact, nights=stay)
-    except CompactParseMiss:
-        report_progress("calendar miss; pricing each day with shopping sweep")
         days = _sweep_per_day(
             client, seed, start, end, stay, report_progress, filters, baggage_buffer
         )
-        backend = "sweep"
     except Exception as exc:
         error = classify_failure(exc)
         days = _error_rows(start, end, error, nights=stay)
@@ -533,7 +517,7 @@ def _date_calendar_for_seed(
         days=days,
         trip=kind,
         nights=stay,
-        fetch_backend=backend,
+        fetch_backend="calendar",
         fetch_ms=fetch_ms,
         google_flights_url=google_flights_url(seed, currency=currency, country=country),
         nearby_label=seed.nearby_label,
@@ -582,7 +566,7 @@ def search_dates(
     baggage_buffer: Optional[int] = None,
     sort: Optional[FlightSort] = None,
     progress: Optional[Callable[[str], None]] = None,
-    source: Optional[CalendarSource] = None,
+    source: Optional[DaySource] = None,
     cancel: Optional[threading.Event] = None,
     deadline_seconds: Optional[float] = None,
 ) -> DateCalendarReport | tuple[DateCalendarReport, ...]:
@@ -703,7 +687,7 @@ def cheapest_priced_day(
 
 
 def _flex_report_for_seed(
-    client: CalendarSource,
+    client: DaySource,
     seed: FlightQuery | RoundTrip,
     around: date,
     flex_days: int,
@@ -737,19 +721,8 @@ def _flex_report_for_seed(
     shop: FlightQuery | RoundTrip | None = None
     try:
         checkpoint()
-        if getattr(client, "automatic_typical", True) is False:
-            days = _sweep_per_day(
-                client, seed, start, end, stay, report_progress, filters, baggage_buffer
-            )
-        else:
-            compact = client.fetch_calendar(seed, start, end)
-            days = _rows_from_calendar(start, end, compact, nights=stay)
-    except CompactParseMiss as exc:
-        report_progress("calendar miss; no fare")
-        days = ()
-        error = SearchError(
-            code=SearchErrorCode.MARKUP_DRIFT,
-            message=str(exc) or "calendar miss; no fare",
+        days = _sweep_per_day(
+            client, seed, start, end, stay, report_progress, filters, baggage_buffer
         )
     except Exception as exc:
         error = classify_failure(exc)
@@ -863,14 +836,13 @@ def search_flex(
     country: Optional[str] = None,
     proxy: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
-    source: Optional[CalendarSource] = None,
+    source: Optional[DaySource] = None,
     cancel: Optional[threading.Event] = None,
     deadline_seconds: Optional[float] = None,
 ) -> FlexSearchReport | tuple[FlexSearchReport, ...]:
-    """Calendar window, then at most one shopping POST on the cheapest legal day.
+    """Price each day of the window, then at most one shop on the cheapest legal day.
 
-    A compact calendar miss or a window with no priced day is empty: no
-    per-day shopping sweep, no invented fare.
+    A window with no priced day is empty: no shop is sent and no fare is invented.
     """
     currency = resolve_quote_currency(currency, origin)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
@@ -953,48 +925,10 @@ def search_flex(
     return one_or_many(reports)
 
 
-def _return_for(day: date, nights: Optional[int], found: Optional[date] = None) -> Optional[date]:
-    if found is not None:
-        return found
+def _return_for(day: date, nights: Optional[int]) -> Optional[date]:
     if nights is None:
         return None
     return shift_day(day, nights)
-
-
-def _rows_from_calendar(
-    start: date,
-    end: date,
-    compact: Sequence[CompactCalendarDay],
-    *,
-    nights: Optional[int] = None,
-) -> tuple[DatePriceRow, ...]:
-    by_day = {row.departure_date: row for row in compact}
-    rows: list[DatePriceRow] = []
-    cursor = start
-    while cursor <= end:
-        found = by_day.get(cursor)
-        returning = _return_for(cursor, nights, None if found is None else found.return_date)
-        if found is None or found.price is None:
-            rows.append(
-                DatePriceRow(
-                    departure_date=cursor,
-                    return_date=returning,
-                    status="empty",
-                    # A cell the calendar left unpriced does not prove there are no flights.
-                    empty_reason="not_loaded",
-                )
-            )
-        else:
-            rows.append(
-                DatePriceRow(
-                    departure_date=cursor,
-                    price=found.price,
-                    return_date=returning,
-                    status="ok",
-                )
-            )
-        cursor = shift_day(cursor, 1)
-    return tuple(rows)
 
 
 def _row_from_day_cards(
@@ -1051,7 +985,7 @@ def _row_from_day_error(
 
 
 def _sweep_per_day(
-    source: CalendarSource,
+    source: DaySource,
     seed: FlightQuery | RoundTrip,
     start: date,
     end: date,
@@ -1146,7 +1080,7 @@ def _sweep_per_day(
 
 
 def _fetch_or_exception(
-    source: CalendarSource, trip: FlightQuery | RoundTrip
+    source: DaySource, trip: FlightQuery | RoundTrip
 ) -> Sequence[RawFlightCard] | Exception:
     try:
         checkpoint()

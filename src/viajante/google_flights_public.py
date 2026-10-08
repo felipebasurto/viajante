@@ -6,7 +6,7 @@ import contextlib
 import re
 import time
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date
 from typing import Callable, Sequence
 from urllib.parse import urlencode
 
@@ -37,7 +37,6 @@ from viajante.google_flights import (
 )
 from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
 from viajante.google_flights_rpc import (
-    CompactCalendarDay,
     CompactExplorePlace,
     CompactParseMiss,
     EmptyShoppingResults,
@@ -141,7 +140,6 @@ def _carrier_catalog_tokens(data: object) -> set[str] | None:
 class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
     """Read server-rendered ds:1 data; complete RTs with owned outbound selections."""
 
-    automatic_typical = False
     transport = "public_page"
 
     def __init__(self, **kwargs) -> None:
@@ -382,7 +380,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
         if not isinstance(trip, RoundTrip):
             return matched
-        return self._round_trip_packages(trip, matched, self._read_selected_return)
+        client = self._round_trip_batch_client()
+        if client is None:
+            return self._round_trip_packages(trip, matched, self._read_selected_return)
+        slots, _halt, _client = self._return_slots(client, trip, matched)
+        return self._round_trip_packages(trip, matched, _cached_return_reader(slots))
 
     def _read_selected_return(
         self, trip: RoundTrip, outbound: RawFlightCard
@@ -461,12 +463,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             if isinstance(diagnostics, dict):
                 exc.diagnostics = {**diagnostics, "attempts": 2}
             raise
-
-    def fetch_with_calendar(self, query, start, end):
-        return self.fetch(query), ()  # No hidden 31-day fanout for an optional typical.
-
-    def fetch_many_with_calendar(self, jobs):
-        return [(result, ()) for result in self.fetch_many([query for query, _, _ in jobs])]
 
     def _round_trip_batch_client(self):
         """Sweep client when it can multiplex GETs. Otherwise the serial loop stays."""
@@ -822,33 +818,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
         return responses
 
-    def fetch_calendar(self, trip: Trip, start: date, end: date):
-        self._validate_capabilities(trip)
-        if end < start or (end - start).days > 30:
-            raise ValueError("public calendar requires an ordered window of at most 31 days")
-        queries = []
-        for offset in range((end - start).days + 1):
-            day = start + timedelta(days=offset)
-            changes = {"departure_date": day}
-            if isinstance(trip, RoundTrip):
-                changes["return_date"] = day + (trip.return_date - trip.departure_date)
-            queries.append(replace(trip, **changes))
-        outcomes = self.fetch_many(queries)
-        days = []
-        for query, outcome in zip(queries, outcomes, strict=True):
-            if isinstance(outcome, BaseException):
-                raise outcome  # Unknown is never an unpriced provider-empty cell.
-            prices = [parse_price(card.price) for card in outcome]
-            owned = [price for price in prices if price is not None]
-            days.append(
-                CompactCalendarDay(
-                    query.departure_date,
-                    min(owned) if owned else None,
-                    query.return_date if isinstance(query, RoundTrip) else None,
-                )
-            )
-        return tuple(days)
-
     def fetch_explore(
         self,
         origin: str,
@@ -1045,9 +1014,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             if self._proxy is None:
                 checkpoint()
                 state = (
-                    note_rate_limited(retry_after_seconds)
+                    note_rate_limited(retry_after_seconds, endpoint=response.url)
                     if response.status == 429
-                    else note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+                    else note_rate_limited(
+                        basis="heuristic_rpc_13", cause="rpc_13", endpoint=response.url
+                    )
                 )
                 reason = rate_limit_advice(state, reason=cause)
                 basis = state.get("basis", "unknown")

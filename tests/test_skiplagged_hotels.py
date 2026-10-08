@@ -7,6 +7,7 @@ from random import Random
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
+from viajante.control import SearchDeadline
 from viajante.hotels import _run_search, search_hotels
 from viajante.models import (
     HotelQuery,
@@ -283,6 +284,25 @@ class SkiplaggedRateLimitTests(unittest.TestCase):
         self.assertEqual(report.error.code, SearchErrorCode.BLOCKED)
         self.assertTrue(report.error.rate_limited)
         self.assertEqual(calls, ["initialize"])
+
+    def test_rooms_deadline_is_not_retried_or_reported_as_fetch_failure(self) -> None:
+        calls: list = []
+        sleeps: list = []
+
+        def rpc(url, payload, headers):
+            calls.append(payload.get("method"))
+            raise SearchDeadline()
+
+        report = search_hotel_rooms(
+            1,
+            date(2026, 12, 1),
+            date(2026, 12, 4),
+            rpc=rpc,
+            sleep=sleeps.append,
+        )
+        self.assertEqual(report.error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sleeps, [])
 
 
 def _routing_rpc(search_result: dict, details_result: dict, calls: list):

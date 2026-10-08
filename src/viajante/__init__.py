@@ -1,46 +1,15 @@
-"""Local Google Flights and hotel search for scripts and agents."""
+"""Local Google Flights and hotel search for scripts and agents.
 
-from viajante.airports import lookup_airports
-from viajante.dates import search_dates, search_flex
-from viajante.details import get_hotel_details
-from viajante.explore import search_explore
-from viajante.flights import get_flights, search_flights
-from viajante.hotels import search_hotels
-from viajante.models import (
-    AwardCompareReport,
-    AwardOffer,
-    CancellationEvidence,
-    ConstraintCheck,
-    DateCalendarReport,
-    EvidenceCompleteness,
-    ExploreReport,
-    FlexSearchReport,
-    FlightLeg,
-    FlightQuery,
-    HiddenCityReport,
-    HotelQuery,
-    HotelSearchReport,
-    ItineraryValidationReport,
-    MultiCity,
-    OfferEvidence,
-    PointsBalance,
-    PropertyTypeEvidence,
-    QueryFailure,
-    QuerySuccess,
-    RoundTrip,
-    SearchCoverage,
-    SearchError,
-    SearchErrorCode,
-    SearchReport,
-    Trip,
-    TripSearchReport,
-)
-from viajante.points import compare_award, load_award_offer, transfer_paths
-from viajante.skiplagged import search_hidden_city
-from viajante.trip import search_trip
-from viajante.validate import validate_itinerary
+Public names load on first access, so importing one submodule (for example
+``viajante.models``) does not pull in the whole search stack.
+"""
 
-__all__ = [
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
+_MODELS = (
     "AwardCompareReport",
     "AwardOffer",
     "CancellationEvidence",
@@ -68,18 +37,37 @@ __all__ = [
     "SearchReport",
     "Trip",
     "TripSearchReport",
-    "compare_award",
-    "get_flights",
-    "get_hotel_details",
-    "load_award_offer",
-    "lookup_airports",
-    "search_dates",
-    "search_explore",
-    "search_flex",
-    "search_flights",
-    "search_hidden_city",
-    "search_hotels",
-    "search_trip",
-    "transfer_paths",
-    "validate_itinerary",
-]
+)
+
+_EXPORTS: dict[str, str] = {
+    **dict.fromkeys(_MODELS, "viajante.models"),
+    "compare_award": "viajante.points",
+    "load_award_offer": "viajante.points",
+    "transfer_paths": "viajante.points",
+    "get_flights": "viajante.flights",
+    "search_flights": "viajante.flights",
+    "search_dates": "viajante.dates",
+    "search_flex": "viajante.dates",
+    "get_hotel_details": "viajante.details",
+    "search_explore": "viajante.explore",
+    "lookup_airports": "viajante.airports",
+    "search_hidden_city": "viajante.skiplagged",
+    "search_hotels": "viajante.hotels",
+    "search_trip": "viajante.trip",
+    "validate_itinerary": "viajante.validate",
+}
+
+__all__ = sorted(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module 'viajante' has no attribute {name!r}")
+    value = getattr(importlib.import_module(module), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_EXPORTS))

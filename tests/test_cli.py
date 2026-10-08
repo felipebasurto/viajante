@@ -12,7 +12,8 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 import viajante
-from viajante.cli import _format_clock, _join_cancellation_rows, _print_report, main
+from viajante.cli import main
+from viajante.cli_report import _format_clock, _join_cancellation_rows, _print_report
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -67,8 +68,6 @@ def _offer(
     typical: Optional[float] = None,
     vs_typical: Optional[VsTypical] = None,
     vs_typical_pct: Optional[int] = None,
-    cheapest_date: Optional[date] = None,
-    cheapest: Optional[float] = None,
     checked_bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     flight_numbers: Optional[tuple[str, ...]] = None,
@@ -91,8 +90,6 @@ def _offer(
         typical=typical,
         vs_typical=vs_typical,
         vs_typical_pct=vs_typical_pct,
-        cheapest_date=cheapest_date,
-        cheapest=cheapest,
         checked_bags=checked_bags,
         carry_on=carry_on,
         flight_numbers=flight_numbers,
@@ -145,7 +142,7 @@ class RecommendationPrintTests(unittest.TestCase):
             ),
         )
         text = _rendered(report)
-        self.assertIn("[recommended, cheapest, fastest]", text)
+        self.assertIn("[top_score, lowest_price, shortest]", text)
         self.assertIn("Relaxed requirements: max_stops", text)
         self.assertIn("Fare rules (refund, change) not shown", text)
         self.assertIn("Note: No offer met every stated requirement", text)
@@ -463,22 +460,6 @@ class ReportRenderingTests(unittest.TestCase):
         silent = _rendered(_report(_offer(price=289.0)))
         self.assertNotIn("typical", silent)
 
-    def test_typical_label_prints_cheapest_owned_day_when_present(self) -> None:
-        output = _rendered(
-            _report(
-                _offer(
-                    price=289.0,
-                    typical=340.0,
-                    vs_typical="below",
-                    vs_typical_pct=-15,
-                    cheapest_date=date(2026, 9, 16),
-                    cheapest=300.0,
-                )
-            )
-        )
-        self.assertIn("below typical 340 USD (−15%)", output)
-        self.assertIn("cheapest 2026-09-16 300 USD", output)
-
     def test_non_eur_currency_does_not_print_euro_glyph(self) -> None:
         output = _rendered(
             _report(
@@ -487,15 +468,12 @@ class ReportRenderingTests(unittest.TestCase):
                     typical=340.0,
                     vs_typical="below",
                     vs_typical_pct=-15,
-                    cheapest_date=date(2026, 9, 16),
-                    cheapest=300.0,
                 ),
                 currency="USD",
             )
         )
         self.assertIn("289 USD", output)
         self.assertIn("below typical 340 USD (−15%)", output)
-        self.assertIn("cheapest 2026-09-16 300 USD", output)
         self.assertNotIn("€", output)
         self.assertNotIn("cheapest", _rendered(_report(_offer(price=289.0))))
 

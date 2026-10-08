@@ -1,53 +1,21 @@
-"""Owned Google Flights shopping RPC: request encode and compact parse."""
+"""Owned Google Flights compact-data decoder: shopping, explore catalog, and wrb.fr parsing."""
 
 from __future__ import annotations
 
 import base64
 import json
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Callable, Optional, TypeVar
-from urllib.parse import parse_qs, quote, urlencode
+from urllib.parse import parse_qs
 
 from viajante.airports import airport_geo
-from viajante.carriers import carrier_filter_payload, shopping_carrier_codes
-from viajante.models import (
-    FETCH_LANGUAGE,
-    FlightCabin,
-    RawJourneyLeg,
-    RawLayover,
-    RawSegment,
-    RoundTrip,
-    Trip,
-)
+from viajante.models import RawJourneyLeg, RawLayover, RawSegment
 from viajante.parsers import normalize_clock
-from viajante.tfs import CABIN_SEAT, TRIP_ONE_WAY, trip_kind_code
 
-SHOPPING_RESULTS_URL = (
-    "https://www.google.com/_/FlightsFrontendUi/data/"
-    "travel.frontend.flights.FlightsFrontendService/GetShoppingResults"
-)
-CALENDAR_GRID_URL = (
-    "https://www.google.com/_/FlightsFrontendUi/data/"
-    "travel.frontend.flights.FlightsFrontendService/GetCalendarGrid"
-)
-CALENDAR_GRAPH_URL = (
-    "https://www.google.com/_/FlightsFrontendUi/data/"
-    "travel.frontend.flights.FlightsFrontendService/GetCalendarGraph"
-)
-EXPLORE_DESTINATIONS_URL = (
-    "https://www.google.com/_/FlightsFrontendUi/data/"
-    "travel.frontend.flights.FlightsFrontendService/GetExploreDestinations"
-)
-
-_SEGMENT_OUTBOUND = 3
-_SEGMENT_RETURN = 1
 _ANTI_XSSI = ")]}'"
 _T = TypeVar("_T")
-# viajante max_stops -> shopping segment[3]. TFS field 5 stays the viajante integer.
-_SHOPPING_STOPS: Mapping[int, int] = {0: 1, 1: 2, 2: 3}
 # Compact fare blocks put a [checked, carry_on] pair after the booking token.
 # Counts above this are not bag counts (prices, durations).
 _MAX_BAG_COUNT = 9
@@ -95,282 +63,6 @@ class CompactExplorePlace:
     iata: str
     city: str
     country: Optional[str]
-
-
-def shopping_stop_code(max_stops: int) -> int:
-    try:
-        return _SHOPPING_STOPS[max_stops]
-    except KeyError:
-        raise ValueError("max_stops must be 0, 1, or 2") from None
-
-
-def _segment_classifier(trip: Trip, index: int) -> int:
-    if isinstance(trip, RoundTrip) and index == 1:
-        return _SEGMENT_RETURN
-    return _SEGMENT_OUTBOUND
-
-
-def _shopping_segment(
-    *,
-    origin: str,
-    destination: Optional[str],
-    departure_date: date,
-    max_stops: int,
-    classifier: int = _SEGMENT_OUTBOUND,
-    selected_flight: Any = None,
-    carriers: Any = None,
-) -> list[Any]:
-    dest_field: Any = [[[destination, 0]]] if destination else []
-    return [
-        [[[origin, 0]]],
-        dest_field,
-        None,
-        shopping_stop_code(max_stops),
-        None,
-        None,
-        departure_date.isoformat(),
-        carriers,
-        selected_flight,
-        None,
-        None,
-        None,
-        None,
-        None,
-        classifier,
-    ]
-
-
-def _bags_constraint(*, bags: Optional[int], carry_on: Optional[int]) -> Any:
-    if bags is None and carry_on is None:
-        return None
-    return [0 if bags is None else bags, 0 if carry_on is None else carry_on]
-
-
-def _occupancy_slot(
-    *,
-    adults: int,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-) -> list[int]:
-    # Shopping constraints[6]: adults, children 2–11, infants in seat, infants on lap.
-    return [adults, children, infants_in_seat, infants_on_lap]
-
-
-def _constraints_from_segments(
-    segments: list[list[Any]],
-    *,
-    adults: int,
-    cabin: FlightCabin,
-    trip_kind: int = TRIP_ONE_WAY,
-    bags: Optional[int] = None,
-    carry_on: Optional[int] = None,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-) -> list[Any]:
-    return [
-        None,
-        None,
-        trip_kind,
-        None,
-        [],
-        CABIN_SEAT[cabin],
-        _occupancy_slot(
-            adults=adults,
-            children=children,
-            infants_in_seat=infants_in_seat,
-            infants_on_lap=infants_on_lap,
-        ),
-        None,  # 7 price-cap: RPC layout unknown; named cap is a local post-filter
-        None,
-        None,
-        _bags_constraint(bags=bags, carry_on=carry_on),  # [checked, carry_on]
-        None,
-        None,
-        segments,
-        None,
-        None,
-        None,
-        1,
-    ]
-
-
-def build_search_constraints(
-    trip: Trip,
-    *,
-    selected_flight: Any = None,
-) -> list[Any]:
-    carriers = carrier_filter_payload(*shopping_carrier_codes(trip))
-    return _constraints_from_segments(
-        [
-            _shopping_segment(
-                origin=leg.origin,
-                destination=leg.destination,
-                departure_date=leg.departure_date,
-                max_stops=leg.max_stops,
-                classifier=_segment_classifier(trip, index),
-                selected_flight=selected_flight if index == 0 else None,
-                carriers=carriers,
-            )
-            for index, leg in enumerate(trip.legs)
-        ],
-        adults=trip.adults,
-        children=trip.children,
-        infants_in_seat=trip.infants_in_seat,
-        infants_on_lap=trip.infants_on_lap,
-        cabin=trip.cabin,
-        trip_kind=trip_kind_code(trip),
-        bags=trip.bags,
-        carry_on=trip.carry_on,
-    )
-
-
-def build_shopping_inner(trip: Trip, *, selected_flight: Any = None) -> list[Any]:
-    return [
-        [None, None, None, None],
-        build_search_constraints(trip, selected_flight=selected_flight),
-        0,
-        1,
-        0,
-        1,
-    ]
-
-
-def _rpc_params(
-    html_lang: str,
-    currency: str,
-    country: Optional[str] = None,
-) -> dict[str, str]:
-    params = {
-        "hl": html_lang,
-        "curr": currency,
-        "soc-app": "162",
-        "soc-platform": "1",
-        "soc-device": "1",
-        "rt": "c",
-    }
-    if country:
-        params["gl"] = country
-    return params
-
-
-def _rpc_body(inner: list[Any]) -> str:
-    envelope = json.dumps(
-        [None, json.dumps(inner, separators=(",", ":"))],
-        separators=(",", ":"),
-    )
-    return f"f.req={quote(envelope, safe='')}"
-
-
-def build_shopping_request(
-    trip: Trip,
-    *,
-    html_lang: str = FETCH_LANGUAGE,
-    currency: str,
-    country: Optional[str] = None,
-    selected_flight: Any = None,
-) -> tuple[str, str]:
-    url = f"{SHOPPING_RESULTS_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
-    return url, _rpc_body(build_shopping_inner(trip, selected_flight=selected_flight))
-
-
-def build_calendar_inner(
-    trip: Trip,
-    start: date,
-    end: date,
-) -> list[Any]:
-    """One-way stays on GetCalendarGrid: `[None, constraints, [start, end]]`.
-
-    Packaged RT is GetCalendarGraph: `[window, None, [nights, nights]]` plus a
-    trailing itinerary `1`. Grid with only an outbound window is the one-way
-    shape; Google ErrorResponse-rejects that for RT. A 31-day Grid return
-    window is 31×31 cells (cap 200), so dates/typical cannot use Grid for RT.
-    """
-    constraints = build_search_constraints(trip)
-    window = [start.isoformat(), end.isoformat()]
-    if not isinstance(trip, RoundTrip):
-        return [None, constraints, window]
-    constraints.append(1)
-    nights = (trip.return_date - trip.departure_date).days
-    return [None, constraints, window, None, [nights, nights]]
-
-
-def build_calendar_request(
-    trip: Trip,
-    start: date,
-    end: date,
-    *,
-    html_lang: str = FETCH_LANGUAGE,
-    currency: str,
-    country: Optional[str] = None,
-) -> tuple[str, str]:
-    base = CALENDAR_GRAPH_URL if isinstance(trip, RoundTrip) else CALENDAR_GRID_URL
-    url = f"{base}?{urlencode(_rpc_params(html_lang, currency, country))}"
-    return url, _rpc_body(build_calendar_inner(trip, start, end))
-
-
-def build_explore_inner(
-    origin: str,
-    departure_date: date,
-    *,
-    adults: int = 1,
-    cabin: FlightCabin = "economy",
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-) -> list[Any]:
-    constraints = _constraints_from_segments(
-        [
-            _shopping_segment(
-                origin=origin,
-                destination=None,
-                departure_date=departure_date,
-                max_stops=1,
-            )
-        ],
-        adults=adults,
-        children=children,
-        infants_in_seat=infants_in_seat,
-        infants_on_lap=infants_on_lap,
-        cabin=cabin,
-    )
-    return [None, None, None, constraints]
-
-
-def build_explore_request(
-    origin: str,
-    departure_date: date,
-    *,
-    adults: int = 1,
-    cabin: FlightCabin = "economy",
-    html_lang: str = FETCH_LANGUAGE,
-    currency: str,
-    country: Optional[str] = None,
-    children: int = 0,
-    infants_in_seat: int = 0,
-    infants_on_lap: int = 0,
-) -> tuple[str, str]:
-    url = f"{EXPLORE_DESTINATIONS_URL}?{urlencode(_rpc_params(html_lang, currency, country))}"
-    return url, _rpc_body(
-        build_explore_inner(
-            origin,
-            departure_date,
-            adults=adults,
-            cabin=cabin,
-            children=children,
-            infants_in_seat=infants_in_seat,
-            infants_on_lap=infants_on_lap,
-        )
-    )
-
-
-SHOPPING_POST_HEADERS = {
-    "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-    "X-Same-Domain": "1",
-    "Origin": "https://www.google.com",
-    "Referer": "https://www.google.com/travel/flights",
-}
 
 
 def _wrb_json(text: str, *, kind: str) -> Any:
@@ -526,7 +218,20 @@ def raw_rpc_error_status(text: str) -> Optional[int]:
 
 
 def _has_itinerary_slots(data: list[Any]) -> bool:
-    return len(data) > 3 and isinstance(data[2], list)
+    if len(data) > 3 and isinstance(data[2], list):
+        return True
+    # A rendered results frame (header, route echo, filter catalog) with both slots null
+    # is how the public page answers a query with no matching flights.
+    return (
+        len(data) > 7
+        and data[2] is None
+        and data[3] is None
+        and isinstance(data[0], list)
+        and isinstance(data[1], list)
+        and bool(data[1])
+        and isinstance(data[7], list)
+        and bool(data[7])
+    )
 
 
 def _collect_itineraries(data: list[Any]) -> list[Any]:
@@ -969,74 +674,6 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
             )
         )
     return tuple(segments)
-
-
-def parse_calendar_body(text: str) -> tuple[CompactCalendarDay, ...]:
-    data = _wrb_json(text, kind="calendar")
-    if not isinstance(data, list) or len(data) < 2 or not isinstance(data[1], list):
-        raise CompactParseMiss("calendar payload has no date rows")
-    rows: list[CompactCalendarDay] = []
-    for item in data[1]:
-        parsed = _calendar_row(item)
-        if parsed is not None:
-            rows.append(parsed)
-    if not rows:
-        raise CompactParseMiss("calendar rows had no readable dates")
-    return tuple(rows)
-
-
-def parse_explore_body(text: str) -> tuple[CompactExplorePlace, ...]:
-    data = _wrb_json(text, kind="explore")
-    if not isinstance(data, list) or len(data) < 4 or not isinstance(data[3], list):
-        raise CompactParseMiss("explore payload has no destination group")
-    group = data[3][0] if data[3] else None
-    if not isinstance(group, list):
-        raise CompactParseMiss("explore destination group is missing")
-    places: list[CompactExplorePlace] = []
-    seen: set[str] = set()
-    for item in group:
-        place = _explore_place(item)
-        if place is None or place.iata in seen:
-            continue
-        seen.add(place.iata)
-        places.append(place)
-    if not places:
-        raise CompactParseMiss("explore group had no destination codes")
-    return tuple(places)
-
-
-def _calendar_row(item: object) -> Optional[CompactCalendarDay]:
-    if not isinstance(item, list) or not item or not isinstance(item[0], str):
-        return None
-    try:
-        day = date.fromisoformat(item[0])
-    except ValueError:
-        return None
-    returning: Optional[date] = None
-    if len(item) > 1 and isinstance(item[1], str):
-        try:
-            returning = date.fromisoformat(item[1])
-        except ValueError:
-            returning = None
-    price: Optional[float] = None
-    if len(item) > 2 and isinstance(item[2], list) and item[2]:
-        block = item[2][0]
-        if isinstance(block, list) and len(block) > 1:
-            amount = block[1]
-            if isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount > 0:
-                price = float(amount)
-    return CompactCalendarDay(departure_date=day, price=price, return_date=returning)
-
-
-def _explore_place(item: object) -> Optional[CompactExplorePlace]:
-    if not isinstance(item, list) or len(item) < 16:
-        return None
-    city = item[2] if isinstance(item[2], str) and item[2] else None
-    country = item[4] if isinstance(item[4], str) and item[4] else None
-    iata = item[15] if isinstance(item[15], str) else None
-    if city is None or iata is None or len(iata) != 3 or not iata.isalpha():
-        return None
-    return CompactExplorePlace(iata=iata.upper(), city=city, country=country)
 
 
 @dataclass(frozen=True)

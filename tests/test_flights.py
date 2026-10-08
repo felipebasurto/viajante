@@ -16,6 +16,7 @@ from viajante.flights import (
     _overnight_from_owned_clocks,
     _rank_offers,
     _run_search,
+    _shop_offers,
     as_trips,
     classify_failure,
     compare_nonstop_vs_one_stop,
@@ -30,6 +31,7 @@ from viajante.flights import (
     parse_depart_window,
     parse_flight_plan,
     parse_named_clock,
+    parse_offer_filters,
     parse_overnight_airports,
     parse_overnight_lists,
     parse_route_specs,
@@ -45,7 +47,6 @@ from viajante.google_flights import (
     RawFlightCard,
     google_flights_url,
 )
-from viajante.google_flights_rpc import build_shopping_inner
 from viajante.models import (
     FlightOffer,
     FlightQuery,
@@ -388,7 +389,28 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsInstance(report.queries[0], QueryFailure)
         self.assertEqual(report.queries[0].error.code.value, "fetch_failed")
 
-    def test_many_one_ways_use_one_calendar_batch_when_source_offers_it(self) -> None:
+    def test_flight_search_never_makes_a_typical_calendar_lookup(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+
+        class Source(FakeSource):
+            def fetch_calendar(self, *_args):
+                raise AssertionError("an ordinary flight search has no automatic typical")
+
+        report = _run_search(
+            (query,),
+            top=8,
+            source=Source({("JFK", "LHR", "2026-09-01", 1): (card(airline="Iberia"),)}),
+            sleep=lambda _seconds: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            currency="EUR",
+        )
+        offer = report.queries[0].offers[0]
+        self.assertEqual(offer.airline, "Iberia")
+        self.assertIsNone(offer.typical)
+        self.assertIsNone(offer.vs_typical)
+
+    def test_many_one_ways_use_one_batch_when_source_offers_it(self) -> None:
         q1 = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         q2 = FlightQuery("JFK", "CDG", date(2026, 9, 2), max_stops=1)
 
@@ -405,13 +427,9 @@ class FlightsOrchestrationTests(unittest.TestCase):
             def fetch(self, query):  # type: ignore[no-untyped-def]
                 raise AssertionError("batched one-ways should not call fetch")
 
-            def fetch_many_with_calendar(self, jobs):
+            def fetch_many(self, queries):
                 self.batch_calls += 1
-                rows = []
-                for query, _start, _end in jobs:
-                    cards = FakeSource.fetch(self, query)
-                    rows.append((cards, ()))
-                return rows
+                return [FakeSource.fetch(self, query) for query in queries]
 
         source = BatchSource()
         sleeps: list[float] = []
@@ -487,13 +505,11 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(four_hundred, 1, price_cap=400))
         self.assertIsNone(_normalize_offer(over_four, 1, price_cap=400))
 
-    def test_parse_flight_plan_named_price_cap_stays_off_index_7(self) -> None:
+    def test_parse_flight_plan_keeps_price_cap_on_the_query(self) -> None:
         plan = parse_flight_plan(["JFK-LHR:2026-09-01"], max_stops=1, price_cap=200)
         self.assertEqual(plan[0].price_cap, 200)
-        self.assertIsNone(build_shopping_inner(plan[0])[1][7])
         unnamed = parse_flight_plan(["JFK-LHR:2026-09-01"], max_stops=1)
         self.assertIsNone(unnamed[0].price_cap)
-        self.assertIsNone(build_shopping_inner(unnamed[0])[1][7])
 
     def test_out_back_without_trip_is_two_one_ways_not_packaged(self) -> None:
         from datetime import timedelta
@@ -1346,25 +1362,54 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(short, max_stops=1, max_layover_hours=10))
 
 
+class ShopOffersSinglePassTests(unittest.TestCase):
+    def test_one_parse_gives_the_enforced_and_relaxed_walks(self) -> None:
+        cards = (
+            card(price="100 €", departure="07:00", arrival="08:00", duration="1 h"),
+            card(
+                price="90 €",
+                stops="1 stop",
+                layover_city="Paris",
+                layover_hours=2.0,
+                departure="09:00",
+                arrival="15:00",
+                duration="6 h",
+            ),
+            card(
+                price="80 €", stops="2 stops", departure="10:00", arrival="20:00", duration="10 h"
+            ),
+            card(price="70 €", departure="22:00", arrival="23:00", duration="1 h"),
+            card(price="not priced", departure="08:00", arrival="09:00", duration="1 h"),
+        )
+        trip = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+        filters = parse_offer_filters(depart_window=(6 * 60, 12 * 60), max_duration_hours=5.0)
+        pool, eligible = _shop_offers(cards, trip, filters, baggage_buffer=0)
+        enforced = [
+            offer
+            for raw in cards
+            if (offer := _normalize_offer(raw, 1, **vars(filters))) is not None
+        ]
+        relaxed = [
+            offer
+            for raw in cards
+            if (offer := _normalize_offer(raw, 1, enforce_requirements=False, **vars(filters)))
+            is not None
+        ]
+        self.assertEqual(eligible, enforced)
+        self.assertEqual(pool, relaxed)
+        self.assertEqual([offer.price for offer in eligible], [100.0])
+        self.assertEqual([offer.price for offer in pool], [100.0, 90.0, 80.0, 70.0])
+
+
 class FetchModeTests(unittest.TestCase):
-    def test_auto_is_public_sweep_for_one_or_two_queries(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 1), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 2), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 1, packaged=True), "sweep")
-        self.assertEqual(resolve_fetch_mode("detail", 1, packaged=True), "detail")
+    def test_auto_and_sweep_are_the_public_sweep(self) -> None:
+        self.assertEqual(resolve_fetch_mode("auto"), "sweep")
+        self.assertEqual(resolve_fetch_mode("sweep"), "sweep")
 
-    def test_auto_is_sweep_for_three_or_more(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 3), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 10), "sweep")
-
-    def test_explicit_modes_win(self) -> None:
-        self.assertEqual(resolve_fetch_mode("sweep", 1), "sweep")
-        self.assertEqual(resolve_fetch_mode("detail", 8), "detail")
-
-    def test_auto_without_browser_stays_on_sweep(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 1, browser_available=False), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 2, browser_available=False), "sweep")
-        self.assertEqual(resolve_fetch_mode("detail", 1, browser_available=False), "detail")
+    def test_detail_is_explicit_only(self) -> None:
+        self.assertEqual(resolve_fetch_mode("detail"), "detail")
+        with self.assertRaises(ValueError):
+            resolve_fetch_mode("browser")  # type: ignore[arg-type]
 
     def test_fallback_on_empty_or_failure_not_on_ok(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
