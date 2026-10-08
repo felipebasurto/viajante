@@ -15,11 +15,10 @@ import time
 import unicodedata
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
 from viajante.airports import canonical_city_name, lookup_airports
-from viajante.control import checkpoint, controlled, interruptible_sleep
+from viajante.control import SearchDeadline, checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -31,7 +30,12 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
-from viajante.orchestration import MAX_ATTEMPTS, retry_backoff_seconds
+from viajante.orchestration import (
+    MAX_ATTEMPTS,
+    NON_RETRIABLE_CODES,
+    classify_failure,
+    retry_backoff_seconds,
+)
 from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import (
     SKIPLAGGED_MCP_URL,
@@ -191,7 +195,6 @@ class SkiplaggedHotelsSource:
     def __init__(self, *, rpc: RpcPost = _rpc_post, url: str = SKIPLAGGED_MCP_URL) -> None:
         self._rpc = rpc
         self._url = url
-        self.config = SimpleNamespace(html_lang=FETCH_LANGUAGE, currency=SKIPLAGGED_HOTEL_CURRENCY)
 
     def fetch(self, query: HotelQuery, applied: AppliedHotelFilters, limit: int) -> HotelPage:
         del applied
@@ -318,7 +321,9 @@ def parse_rooms_report(
     )
 
 
-def _failure(exc: BaseException) -> SearchError:
+def skiplagged_failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, SearchDeadline):
+        return classify_failure(exc)
     if isinstance(exc, SkiplaggedRateLimited):
         return SearchError(
             code=SearchErrorCode.BLOCKED,
@@ -543,12 +548,8 @@ def search_hotel_rooms(
             report = replace(report, requested_name=hotel_name)
             break
         except Exception as exc:  # noqa: BLE001 - typed into the report below
-            error = _failure(exc)
-            if error.code in (
-                SearchErrorCode.NO_RESULTS,
-                SearchErrorCode.MARKUP_DRIFT,
-                SearchErrorCode.BLOCKED,
-            ):
+            error = skiplagged_failure(exc)
+            if error.code in NON_RETRIABLE_CODES:
                 break
             if attempt + 1 < MAX_ATTEMPTS:
                 sleep(retry_backoff_seconds(attempt, random_gen))

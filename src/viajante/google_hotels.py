@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import Optional
 
 from viajante.control import SearchDeadline, note_cut
@@ -79,7 +78,6 @@ class GoogleHotelsSource:
         self._injected_client = client
         self._timeout = timeout
         self._cooldown = COOLDOWN_UNCHECKED
-        self.config = SimpleNamespace(html_lang=html_lang, currency=currency)
 
     def fetch(
         self,

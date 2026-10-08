@@ -47,6 +47,7 @@ OVERLAY_CLICK_TIMEOUT_MS = 3_000
 OVERLAY_SETTLE_MS = 800
 FAILURE_HTML_NAME = "booking-last-failure.html"
 FAILURE_META_NAME = "booking-last-failure.txt"
+FAILURE_PNG_NAME = "booking-last-failure.png"
 
 
 class BookingResultsTimeout(TimeoutError):
@@ -138,7 +139,7 @@ class BookingHotelsSource:
         if html:
             write_text_atomic(html, self._state_dir / FAILURE_HTML_NAME)
         with contextlib.suppress(Exception):
-            page.screenshot(path=str(self._state_dir / "booking-last-failure.png"))
+            page.screenshot(path=str(self._state_dir / FAILURE_PNG_NAME))
 
     @staticmethod
     def _clean_link(link: Optional[str]) -> Optional[str]:
