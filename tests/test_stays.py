@@ -133,6 +133,8 @@ class SplitStayCostsTests(unittest.TestCase):
             "night outside roster": (stay(check_out="2026-12-12"), "EUR"),
             "reversed": (stay(check_in="2026-12-06", check_out="2026-12-03"), "EUR"),
             "negative total": (stay(total=-5), "EUR"),
+            "nan total": (stay(total=float("nan")), "EUR"),
+            "overflowing total": (stay(total="1e400"), "EUR"),
             "text total": (stay(total="lots"), "EUR"),
             "no name": (stay(name=" "), "EUR"),
             "no stays": ([], "EUR"),

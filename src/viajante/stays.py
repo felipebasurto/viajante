@@ -7,7 +7,7 @@ money: every amount stays in the one currency the caller names.
 from __future__ import annotations
 
 from datetime import date, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Mapping, Optional, Sequence
 
 from viajante.models import (
@@ -92,14 +92,14 @@ def plan_stay_blocks(roster: Mapping[str, Sequence[str]]) -> StayBlocksReport:
 
 def _cents(value: object, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        raise ValueError(f"{label} must be a number")
+        raise ValueError(f"{label} must be a non-negative finite number")
     try:
         amount = Decimal(str(value))
-    except ArithmeticError as exc:
-        raise ValueError(f"{label} must be a number") from exc
-    if amount < 0 or not amount.is_finite():
-        raise ValueError(f"{label} must not be negative")
-    return int((amount * _CENTS).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        if not amount.is_finite() or amount < 0:
+            raise ValueError(f"{label} must be a non-negative finite number")
+        return int((amount * _CENTS).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    except InvalidOperation as exc:
+        raise ValueError(f"{label} must be a non-negative finite number") from exc
 
 
 def _money(cents: int) -> float:
@@ -136,12 +136,61 @@ def split_stay_costs(
     """
     code = normalize_currency(currency)
     nights = _parse_roster(roster)
-    roster_by_day = {day: names for day, names in nights}
+    roster_by_day = dict(nights)
     names_by_key = {name.casefold(): name for name in _display_names(nights)}
     fee_cents = 0 if fee_per_person_night is None else _cents(fee_per_person_night, "fee")
     if not stays:
         raise ValueError("at least one stay is required")
+    parsed = _parse_stays(stays)
 
+    shares: dict[str, list[tuple[str, int, int]]] = {key: [] for key in names_by_key}
+    split_stays: list[SplitStay] = []
+    grand_cents = 0
+    for name, check_in, check_out, total_cents in parsed:
+        by_person = _nights_by_person(name, check_in, check_out, roster_by_day)
+        for key, cents in _shares_in_cents(total_cents, by_person).items():
+            shares[key].append((name, by_person[key], cents))
+        person_nights = sum(by_person.values())
+        grand_cents += total_cents
+        rate = (Decimal(total_cents) / _CENTS / person_nights).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP
+        )
+        split_stays.append(
+            SplitStay(name, check_in, check_out, _money(total_cents), person_nights, float(rate))
+        )
+
+    people: list[PersonCost] = []
+    for key, display in names_by_key.items():
+        if not shares[key]:
+            continue
+        room_cents = sum(cents for _, _, cents in shares[key])
+        nights_here = sum(count for _, count, _ in shares[key])
+        fee = nights_here * fee_cents
+        grand_cents += fee
+        people.append(
+            PersonCost(
+                name=display,
+                nights=nights_here,
+                fee=_money(fee),
+                total=_money(room_cents + fee),
+                shares=tuple(
+                    StayShare(stay, count, _money(cents)) for stay, count, cents in shares[key]
+                ),
+            )
+        )
+    return StayCostSplit(
+        currency=code,
+        stays=tuple(split_stays),
+        people=tuple(people),
+        total=_money(grand_cents),
+        unallocated_nights=tuple(
+            day for day, _ in nights if not any(ci <= day < co for _, ci, co, _ in parsed)
+        ),
+        fee_per_person_night=None if fee_per_person_night is None else _money(fee_cents),
+    )
+
+
+def _parse_stays(stays: Sequence[Mapping[str, object]]) -> list[tuple[str, date, date, int]]:
     parsed: list[tuple[str, date, date, int]] = []
     for index, stay in enumerate(stays):
         if not isinstance(stay, Mapping):
@@ -160,57 +209,23 @@ def split_stay_costs(
     for (a_name, _, a_out, _), (b_name, b_in, _, _) in zip(parsed, parsed[1:], strict=False):
         if a_out > b_in:
             raise ValueError(f"{a_name} and {b_name} overlap")
+    return parsed
 
-    person_stay: dict[str, list[StayShare]] = {key: [] for key in names_by_key}
-    person_nights_total: dict[str, int] = {key: 0 for key in names_by_key}
-    covered: set[date] = set()
-    split_stays: list[SplitStay] = []
-    grand_cents = 0
-    for name, check_in, check_out, total_cents in parsed:
-        by_person: dict[str, int] = {}
-        day = check_in
-        while day < check_out:
-            if day not in roster_by_day:
-                raise ValueError(f"{name} covers {day.isoformat()}, which is not in the roster")
-            covered.add(day)
-            for person in roster_by_day[day]:
-                by_person[person.casefold()] = by_person.get(person.casefold(), 0) + 1
-            day += timedelta(days=1)
-        person_nights = sum(by_person.values())
-        if person_nights == 0:
-            raise ValueError(f"nobody sleeps in {name}")
-        for key, cents in _shares_in_cents(total_cents, by_person).items():
-            person_stay[key].append(StayShare(name, by_person[key], _money(cents)))
-            person_nights_total[key] += by_person[key]
-        grand_cents += total_cents
-        rate = (Decimal(total_cents) / _CENTS / person_nights).quantize(
-            Decimal("0.0001"), rounding=ROUND_HALF_UP
-        )
-        split_stays.append(
-            SplitStay(name, check_in, check_out, _money(total_cents), person_nights, float(rate))
-        )
 
-    people: list[PersonCost] = []
-    for key, display in names_by_key.items():
-        if not person_stay[key]:
-            continue
-        room_cents = sum(round(share.total * 100) for share in person_stay[key])
-        fee = person_nights_total[key] * fee_cents
-        grand_cents += fee
-        people.append(
-            PersonCost(
-                name=display,
-                nights=person_nights_total[key],
-                fee=_money(fee),
-                total=_money(room_cents + fee),
-                shares=tuple(person_stay[key]),
-            )
-        )
-    return StayCostSplit(
-        currency=code,
-        stays=tuple(split_stays),
-        people=tuple(people),
-        total=_money(grand_cents),
-        unallocated_nights=tuple(day for day, _ in nights if day not in covered),
-        fee_per_person_night=None if fee_per_person_night is None else _money(fee_cents),
-    )
+def _nights_by_person(
+    name: str,
+    check_in: date,
+    check_out: date,
+    roster_by_day: Mapping[date, tuple[str, ...]],
+) -> dict[str, int]:
+    """Person-nights per casefolded name inside one stay. Every night must be on the roster."""
+    by_person: dict[str, int] = {}
+    day = check_in
+    while day < check_out:
+        if day not in roster_by_day:
+            raise ValueError(f"{name} covers {day.isoformat()}, which is not in the roster")
+        for person in roster_by_day[day]:
+            key = person.casefold()
+            by_person[key] = by_person.get(key, 0) + 1
+        day += timedelta(days=1)
+    return by_person
