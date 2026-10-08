@@ -257,6 +257,14 @@ def _sorted_deduplicated_offers(
     return tuple(deduplicated)
 
 
+def _gives_up(exc: BaseException, failure: SearchError) -> bool:
+    """True when another attempt cannot change the outcome: a non-retriable code, or a
+    Booking results timeout or sweep transport error (the page will not appear on retry)."""
+    return failure.code in NON_RETRIABLE_CODES or isinstance(
+        exc, (BookingResultsTimeout, SweepTransportError)
+    )
+
+
 def _classify_hotel_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, (SkiplaggedRateLimited, SkiplaggedNoHotels, SkiplaggedParseMiss)):
         return skiplagged_failure(exc)
@@ -353,9 +361,7 @@ def _run_search(
             except Exception as exc:
                 failure = _classify_hotel_failure(exc)
                 source.reset()
-                if failure.code in NON_RETRIABLE_CODES or isinstance(
-                    exc, (BookingResultsTimeout, SweepTransportError)
-                ):
+                if _gives_up(exc, failure):
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     sleep(retry_backoff_seconds(attempt, random_gen))
