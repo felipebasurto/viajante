@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from datetime import date, datetime, timezone
+from pathlib import Path
 from random import Random
 from unittest.mock import patch
 
@@ -168,6 +169,37 @@ class SkiplaggedSearchParseTests(unittest.TestCase):
         table = TABLE.replace("| $190 |", "| — |")
         page = parse_search_page(_search_result(table=table))
         self.assertEqual([card.title for card in page.cards], ["a&o Prague Rhea"])
+
+
+class SkiplaggedCapturedSearchTests(unittest.TestCase):
+    """The live `sk_hotels_search` reply in fixtures/skiplagged/hotels_miami_search.json."""
+
+    @staticmethod
+    def _captured() -> dict:
+        path = Path(__file__).parent / "fixtures" / "skiplagged" / "hotels_miami_search.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_total_comes_from_the_table_not_the_structured_nightly_rate(self) -> None:
+        page = parse_search_page(self._captured())
+        self.assertEqual(len(page.cards), 8)
+        first = page.cards[0]
+        self.assertEqual(first.title, "Beachside All Suites Hotel")
+        self.assertEqual(first.total_price, "$112")  # structured price is $30.67/night
+        self.assertEqual((first.rating, first.class_label), ("5.8", "3 stars"))
+        self.assertEqual(first.provider_id, "926127")
+        self.assertEqual(page.resolved_place, "miami-beach-florida")
+
+    def test_card_priced_in_another_currency_is_dropped(self) -> None:
+        result = self._captured()
+        cards = result["structuredContent"]["results"]
+        cards[0]["price"]["currency"] = "EUR"
+        page = parse_search_page(result)
+        self.assertNotIn("Beachside All Suites Hotel", [card.title for card in page.cards])
+        self.assertEqual(len(page.cards), 7)
+        for card in cards:
+            card["price"]["currency"] = "EUR"
+        with self.assertRaises(SkiplaggedParseMiss):
+            parse_search_page(result)
 
 
 class SkiplaggedAppliedFilterTests(unittest.TestCase):

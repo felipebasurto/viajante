@@ -17,6 +17,11 @@ Files:
   `searchUrl`).
 - `flights_jfk_mia_roundtrip.json`: same, with `returnDate` 2026-11-22. Cards carry
   a nested `returnFlight`.
+- `hotels_miami_search.json`: `result` of `tools/call` `sk_hotels_search` (city
+  Miami, 2026-11-17 to 2026-11-20, 2 adults, 1 room, `limit` 8, `sort` price),
+  captured the same day with `imageUrl` removed. `structuredContent.results[].price`
+  is a per-night rate (`$30.67/night`); the stay total with taxes and the review
+  score (`5.8/10`) appear only in the markdown table, so the parser reads both.
 
 No session ids, headers, cookies or tokens are stored. The `searchUrl` and
 `deepLink` values include the public `utm_*` tracking parameters the server

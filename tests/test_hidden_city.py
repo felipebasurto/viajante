@@ -151,6 +151,18 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
         )
         self.assertEqual(kept, ())
 
+    def test_more_than_nine_adults_fail_before_any_request(self) -> None:
+        calls: list[dict] = []
+        with self.assertRaisesRegex(ValueError, "at most 9 adults"):
+            search_hidden_city(
+                "JFK",
+                "MIA",
+                NOV_17,
+                adults=10,
+                rpc=_replay(_fixture("flights_jfk_mia_oneway"), calls),
+            )
+        self.assertEqual(calls, [])
+
     def test_hidden_city_is_unknown_when_no_leg_carries_attributes(self) -> None:
         result = copy.deepcopy(_fixture("flights_jfk_mia_oneway"))
         for card in result["structuredContent"]["flights"]:

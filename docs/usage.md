@@ -422,7 +422,9 @@ price or availability. `verify_answer` checks provenance, not link reachability.
 ### Skiplagged hotels and room rates (opt-in)
 
 `--source skiplagged` searches Skiplagged. Its quotes are USD: omit `--currency` or name USD. Another currency is
-`currency_mismatch`, and nothing converts. It takes at most 10 adults and 9 rooms per search, has no
+`currency_mismatch`, and nothing converts. It takes at most 10 adults and 9 rooms per search (hidden-city flights:
+at most 9 adults). The stay total and review score come from the reply's table: the structured `price` is a nightly
+rate and is never shown as a total. It has no
 `--entire-home`, and its search cards carry no cancellation terms, so the output says so. It matches the city
 loosely; `resolved_place` is the place it actually searched. Its rows are never mixed with Google or Booking rows.
 

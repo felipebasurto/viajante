@@ -144,6 +144,16 @@ def _table_rows(text: str) -> dict[str, dict[str, Any]]:
     return rows
 
 
+def _priced_in_usd(card: Mapping[str, Any]) -> bool:
+    """False when the structured price names a currency other than USD.
+
+    The structured ``price`` is a nightly rate; the stay total comes from the table.
+    """
+    price = card.get("price")
+    currency = price.get("currency") if isinstance(price, dict) else None
+    return not isinstance(currency, str) or currency.strip().upper() == SKIPLAGGED_HOTEL_CURRENCY
+
+
 def parse_search_page(result: Any) -> HotelPage:
     _check_error(result)
     structured = result.get("structuredContent") if isinstance(result, dict) else None
@@ -162,6 +172,8 @@ def parse_search_page(result: Any) -> HotelPage:
         name = card.get("name")
         if row is None or not isinstance(name, str) or not name.strip():
             continue
+        if not _priced_in_usd(card):
+            continue  # The table's "$" total is only owned when the card says USD.
         amenities = card.get("amenities")
         stars = card.get("rating")
         parsed.append(

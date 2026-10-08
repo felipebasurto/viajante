@@ -208,8 +208,10 @@ add new prose labels to any result.
   returned offers, not unavailable. `near` is a point the caller names; none is
   assumed. Distances are straight-line.
 - Skiplagged is opt-in and never mixed with Google or Booking rows. Its quotes are
-  USD, it takes at most 10 adults and 9 rooms, and `resolved_place` is the place it
-  actually searched. Room rates cover at most 5 rooms per request. Ids are valid only
+  USD, hotels take at most 10 adults and 9 rooms, hidden-city flights at most 9
+  adults, and `resolved_place` is the place it actually searched. A hotel's total is
+  the stay total from the provider's table; the structured price is nightly and is
+  never used as a total. A card whose structured price is not USD is dropped. Room rates cover at most 5 rooms per request. Ids are valid only
   within this process. A name matches exactly after normalization; no match or
   several matches is `no_results`, never a guess.
 - Room rates never apply to the original price, and their capacity never proves a

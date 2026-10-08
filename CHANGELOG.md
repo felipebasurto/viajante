@@ -58,6 +58,10 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
 - A search deadline is no longer retried as a fetch failure in Skiplagged room
   rates or hidden-city search.
 - Non-finite stay totals and award inputs are rejected instead of leaking `NaN`.
+- Skiplagged hidden-city search refuses more than 9 adults before sending, as
+  the provider's schema allows. A Skiplagged hotel card whose structured price
+  names a currency other than USD is dropped instead of being read as a USD
+  total.
 - A Skiplagged reply without `structuredContent.flights` is `markup_drift`, and
   a tool error result is `fetch_failed` with its message, instead of being
   guessed through fallback keys.

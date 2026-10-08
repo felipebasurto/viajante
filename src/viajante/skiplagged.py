@@ -47,6 +47,7 @@ from viajante.ratelimit import (
 
 SKIPLAGGED_MCP_URL = "https://mcp.skiplagged.com/mcp"
 SKIPLAGGED_FLIGHTS_TOOL = "sk_flights_search"
+MAX_SEARCH_ADULTS = 9  # sk_flights_search inputSchema: adults maximum 9
 _PROTOCOL = "2025-03-26"
 _TIMEOUT_SECONDS = 30
 _SESSION_LOCK = threading.Lock()
@@ -502,6 +503,11 @@ def search_hidden_city(
         raise ValueError("top must be positive")
     if adults < 1:
         raise ValueError("adults must be at least 1")
+    if adults > MAX_SEARCH_ADULTS:
+        raise ValueError(
+            f"source skiplagged takes at most {MAX_SEARCH_ADULTS} adults per search; "
+            "split the party into separate searches"
+        )
     today = date.today()
     if departure_date < today:
         raise ValueError(f"departure date is in the past: {departure_date.isoformat()}")
