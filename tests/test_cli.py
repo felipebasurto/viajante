@@ -145,7 +145,7 @@ class RecommendationPrintTests(unittest.TestCase):
             ),
         )
         text = _rendered(report)
-        self.assertIn("[recommended, cheapest, fastest]", text)
+        self.assertIn("[top_score, lowest_price, shortest]", text)
         self.assertIn("Relaxed requirements: max_stops", text)
         self.assertIn("Fare rules (refund, change) not shown", text)
         self.assertIn("Note: No offer met every stated requirement", text)

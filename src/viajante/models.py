@@ -1013,7 +1013,8 @@ class QuerySuccess:
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.recommendation is not None:
-            payload["recommendation"] = self.recommendation.to_dict(currency)
+            listed = {offer.evidence.evidence_id for offer in self.offers if offer.evidence}
+            payload["recommendation"] = self.recommendation.to_dict(listed, currency)
         _put_present(payload, "empty_reason", self.empty_reason)
         return payload
 
