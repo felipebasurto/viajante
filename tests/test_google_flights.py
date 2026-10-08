@@ -1735,8 +1735,9 @@ def _multi_board_html(rows) -> str:
 class _MultiRow:
     """One locator chain: ``.first`` waits, ``.nth(i).click()`` advances a board."""
 
-    def __init__(self, page) -> None:
+    def __init__(self, page, selector: str = "") -> None:
         self._page = page
+        self._selector = selector
         self._index = 0
 
     @property
@@ -1748,6 +1749,12 @@ class _MultiRow:
         return self
 
     def wait_for(self, **_):
+        # A wait only resolves when the fake DOM carries one of its selectors.
+        dom = self._page.dom_selectors
+        if dom is not None and not any(
+            part.strip() in dom for part in self._selector.split(",")
+        ):
+            raise TimeoutError(f"never attached: {self._selector}")
         return None
 
     def click(self, **_):
@@ -1759,9 +1766,10 @@ class _MultiRow:
 class _MultiPage:
     """Fake detail page serving one board innerHTML per click step."""
 
-    def __init__(self, boards, *, fail_after_clicks=()) -> None:
+    def __init__(self, boards, *, fail_after_clicks=(), dom_selectors=None) -> None:
         self._boards = list(boards)
         self._fail = set(fail_after_clicks)
+        self.dom_selectors = dom_selectors
         self.step = 0
         self.clicks = 0
         self.row_indexes: list[int] = []
@@ -1771,8 +1779,8 @@ class _MultiPage:
         self.url = url
         self.step = 0
 
-    def locator(self, _selector):
-        return _MultiRow(self)
+    def locator(self, selector):
+        return _MultiRow(self, selector)
 
     def evaluate(self, script):
         if "querySelector('h3')" in script:
@@ -1865,6 +1873,26 @@ class MultiCityDetailTests(unittest.TestCase):
             self.assertIn(card.price, {"£1,200", "£1,300"})
             self.assertEqual(len(card.flight_numbers or ()), 2)
         self.assertEqual(source.metadata_for(trip), (None, True))
+
+    def test_board_without_results_container_still_completes(self) -> None:
+        # Live multi-city boards render the rows without the results container
+        # (.eQ35Ce) or the empty-state node; the readiness wait must accept rows.
+        board1 = _multi_board_html(
+            [("LHR", "JFK", "AA", "103", "20261110", "10:15 AM on Tue, Nov 10", "£500")]
+        )
+        board2 = _multi_board_html(
+            [("JFK", "LAX", "AA", "201", "20261114", "9:00 AM on Sat, Nov 14", "£1,200")]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        page = _MultiPage([board1, board2], dom_selectors={"ul.Rk10dc li"})
+        cards = self._source(page).fetch(trip)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].price, "£1,200")
 
     def test_three_leg_package_picks_cheapest_middle_board_row(self) -> None:
         board1 = _multi_board_html(

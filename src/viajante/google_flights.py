@@ -89,6 +89,9 @@ EMPTY_STATE_TEXT = "No options matching your search"
 
 SECTION_SELECTOR = 'div[jsname="IWWDBc"], div[jsname="YdtKid"]'
 CARD_SELECTOR = "ul.Rk10dc li"
+# Multi-city boards render their rows without the results container, so a board
+# is ready when either the container, the empty state, or a row is attached.
+BOARD_READY_SELECTOR = f"{READY_SELECTOR}, {CARD_SELECTOR}"
 AIRLINE_SELECTOR = "div.sSHqwe.tPgKwe.ogfYpf span"
 TIME_SELECTOR = "span.mv1WYe div"
 DURATION_SELECTOR = "div.Ak5kof div"
@@ -1274,7 +1277,7 @@ class GoogleFlightsSource:
         """
         from viajante.google_flights_public import PublicGoogleFlightsHttpSource
 
-        page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+        page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
         checkpoint()
         html = page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
         matches_leg = PublicGoogleFlightsHttpSource._matches_leg
@@ -1334,7 +1337,7 @@ class GoogleFlightsSource:
             page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
             if looks_blocked("", page.url):
                 raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
-            page.locator(READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+            page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
         except (SearchDeadline, GoogleFlightsBlocked):
             raise
         except Exception as exc:
