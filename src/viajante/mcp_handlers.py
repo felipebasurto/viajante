@@ -43,19 +43,15 @@ from viajante.explore import (
     search_explore,
     validate_explore_window,
 )
-from viajante.flights import (
-    DEFAULT_TOP,
-    FlightSort,
-    as_trips,
-    expand_nearby_trips,
+from viajante.flight_filters import (
     parse_depart_window,
-    parse_flight_plan,
     parse_named_clock,
     parse_overnight_airports,
     parse_via_airports,
-    search_flights,
-    validate_flight_search_args,
 )
+from viajante.flight_offers import FlightSort
+from viajante.flight_routes import as_trips, expand_nearby_trips, parse_flight_plan
+from viajante.flights import DEFAULT_TOP, search_flights, validate_flight_search_args
 from viajante.hotels import (
     HotelSourceName,
     resolve_hotel_currency,
@@ -757,9 +753,9 @@ def search_hotels_tool(
 
 @_cached
 def search_hotel_rooms_tool(
-    hotel_id: Optional[int],
     check_in: str,
     check_out: str,
+    hotel_id: Optional[int] = None,
     *,
     hotel_name: Optional[str] = None,
     city: Optional[str] = None,

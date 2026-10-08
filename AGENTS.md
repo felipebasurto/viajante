@@ -30,7 +30,13 @@ add new prose labels to any result.
 - Public sweep GET concurrency: `src/viajante/sweep_config.py`
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
-- Routes, LCC buffer, nearby expand, flight ranking, or `get_flights`: `src/viajante/flights.py`
+- Reject-only Google consent cookies kept across CLI processes (`google-consent.json`): `src/viajante/consent.py`
+- Route specs, metro and nearby expand, trip include/exclude: `src/viajante/flight_routes.py`
+- Flight post-filters (clocks, layover, via, overnight, bag requirements): `src/viajante/flight_filters.py`
+- Offer normalization, LCC buffer, flight ranking, per-query recommendation: `src/viajante/flight_offers.py`
+- Flight evidence stamps (Google Flights URLs, offer evidence): `src/viajante/flight_evidence.py`
+- Round-trip / multi-city next-leg completion and package filters: `src/viajante/flight_packages.py`
+- Search loop, failure classification, `search_flights`, or `get_flights`: `src/viajante/flights.py`
 - Per-query `recommendation` (requirements, relaxation, score, shortlist): `src/viajante/recommend.py`
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
@@ -42,16 +48,16 @@ add new prose labels to any result.
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags: `src/viajante/cli.py`; printed tables and exit codes: `src/viajante/cli_report.py`
-- Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
+- Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py` (descriptions, client-type overrides), `src/viajante/mcp_handlers.py` (parameters and defaults; the client schema is derived from these signatures)
 - MCP result envelope: `src/viajante/envelope.py`
 - MCP input-error JSON body: `src/viajante/mcp_errors.py`
 - MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
-- Low-cost carrier list (partial): `src/viajante/flights.py` (`LOW_COST_NAMES`)
+- Low-cost carrier list (partial): `src/viajante/flight_offers.py` (`LOW_COST_NAMES`)
 - Airline aliases and alliance tfs carrier codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
-- Domain types or JSON keys: `src/viajante/models.py`
+- Domain types or JSON keys: `src/viajante/models_common.py` (shared primitives, errors, evidence, coverage), `models_flights.py`, `models_dates_explore.py`, `models_hotels.py`, `models_trip.py`, `models_hidden_city.py`, `models_awards.py`, `models_stays.py`, `models_validation.py`; `models.py` only re-exports them
 - Same-route median from requested priced days: `src/viajante/typical.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
 - Offline IATA lookup and metro groups: `src/viajante/airports.py`
@@ -60,7 +66,7 @@ add new prose labels to any result.
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 - Opt-in split tickets: `src/viajante/split.py`
-- Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
+- Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`; captured responses: `tests/fixtures/skiplagged/`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
 - Offline evidence-bound itinerary validation and UTC civil-time resolution: `src/viajante/validate.py`, `src/viajante/temporal.py`
@@ -84,7 +90,7 @@ add new prose labels to any result.
   `search_split_tickets`, `search_hidden_city`, `compare_awards`,
   `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`,
   `split_stay_costs`, `verify_answer`, `price_history`, `watch_price`,
-  `get_runtime_info`, `get_guide`. Signatures: `src/viajante/mcp_server.py`.
+  `get_runtime_info`, `get_guide`. Signatures: `src/viajante/mcp_handlers.py` (derived into the client schema by `mcp_server.py`).
 - Library: `get_flights` (a route spec or trip objects; turning prose into a
   route is the caller's job), the `search_*` functions, `get_hotel_details`, and
   `validate_itinerary`.
@@ -122,7 +128,9 @@ add new prose labels to any result.
 - Currency is `--currency` / MCP `currency`, or inferred from a named origin
   airport's owned country (JFK USD, LHR GBP, NRT JPY, GRU BRL). If it is not
   proven, ask or error. Google and Booking hotels require a named currency.
-  Skiplagged hotels and hidden-city cards are USD.
+  Skiplagged hotels and hidden-city cards are USD. A hidden-city card's
+  `hidden_city` comes only from Skiplagged's `attributes`; without them it is null
+  (unknown), never false.
 - Viajante never converts. The MCP caller does FX. A keep that matches no owned
   card is `currency_mismatch`, with the owned quote stamped, never `no_results`.
 - Ask or error when country, destination, or currency is not proven: a city with
@@ -200,8 +208,10 @@ add new prose labels to any result.
   returned offers, not unavailable. `near` is a point the caller names; none is
   assumed. Distances are straight-line.
 - Skiplagged is opt-in and never mixed with Google or Booking rows. Its quotes are
-  USD, it takes at most 10 adults and 9 rooms, and `resolved_place` is the place it
-  actually searched. Room rates cover at most 5 rooms per request. Ids are valid only
+  USD, hotels take at most 10 adults and 9 rooms, hidden-city flights at most 9
+  adults, and `resolved_place` is the place it actually searched. A hotel's total is
+  the stay total from the provider's table; the structured price is nightly and is
+  never used as a total. A card whose structured price is not USD is dropped. Room rates cover at most 5 rooms per request. Ids are valid only
   within this process. A name matches exactly after normalization; no match or
   several matches is `no_results`, never a guess.
 - Room rates never apply to the original price, and their capacity never proves a
@@ -300,6 +310,10 @@ add new prose labels to any result.
 - JSON output only with `--save`. Browser state and failure dumps live under
   `VIAJANTE_STATE_DIR`, `$XDG_STATE_HOME/viajante`, or `~/.local/state/viajante`,
   never in the checkout. Writes are temp-file then rename.
+- `google-consent.json` in that state dir holds only the Google-domain cookies a
+  declined consent (reject) left behind. Accepted consent is never stored. It
+  expires after 30 days and is ignored when unreadable. Do not extend it to accept
+  or non-Google cookies.
 - Do not commit `booking-last-failure.html` / `.txt`, scraped caches, CSVs, personal
   trip scripts or routes, reservation data, browser session files, or paths from a
   private repository. An origin-specific fare table is not allowed.

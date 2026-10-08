@@ -14,21 +14,17 @@ from typing import Callable, Optional, Protocol, Sequence, Tuple
 from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
 from viajante.control import checkpoint, controlled
 from viajante.dates import _fetch_or_exception, calendar_trip, one_or_many
-from viajante.flights import (
+from viajante.flight_filters import OfferFilters, owned_clock, parse_code_list, parse_offer_filters
+from viajante.flight_offers import (
     FlightSort,
-    OfferFilters,
     _cheapest_by_fare,
     _cheapest_by_ranked,
-    _clock_minutes,
-    classify_failure,
     compare_nonstop_vs_one_stop,
-    expand_nearby_origins,
     offers_from_cards,
-    owned_clock,
-    parse_code_list,
-    parse_offer_filters,
     validate_sort,
 )
+from viajante.flight_routes import expand_nearby_origins
+from viajante.flights import classify_failure
 from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
 from viajante.google_flights_rpc import CompactExplorePlace
@@ -46,6 +42,7 @@ from viajante.models import (
     explore_stop,
     normalize_country,
 )
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
 
 DEFAULT_EXPLORE_TOP = 12

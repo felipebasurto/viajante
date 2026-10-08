@@ -18,13 +18,9 @@ from unittest.mock import MagicMock, patch
 import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers, skiplagged
 from viajante.explore import search_explore
-from viajante.flights import (
-    NO_OFFER_FILTERS,
-    OfferFilters,
-    _normalize_offer,
-    _run_search,
-    search_flights,
-)
+from viajante.flight_filters import NO_OFFER_FILTERS, OfferFilters
+from viajante.flight_offers import _normalize_offer
+from viajante.flights import _run_search, search_flights
 from viajante.google_flights import GoogleFlightsBlocked, GoogleFlightsSource
 from viajante.google_flights_rpc import CompactExplorePlace, RawFlightCard
 from viajante.models import (

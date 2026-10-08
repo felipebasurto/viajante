@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import _isolate  # noqa: F401
 from viajante import mcp_handlers
 from viajante.cli import main
-from viajante.flights import (
+from viajante.flight_routes import (
     drop_excluded_airport_trips,
     expand_nearby_trips,
     nearby_notes,

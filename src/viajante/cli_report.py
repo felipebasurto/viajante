@@ -12,11 +12,7 @@ from viajante.dates import (
     format_summary_line,
     format_week_calendar,
 )
-from viajante.flights import (
-    FlightSort,
-    _clock_minutes,
-    _effective_cost,
-)
+from viajante.flight_offers import FlightSort, _effective_cost
 from viajante.google_flights import google_flights_url
 from viajante.models import (
     AppliedHotelFilters,
@@ -42,6 +38,7 @@ from viajante.models import (
     TripSearchReport,
     format_money,
 )
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.recommend import Recommendation
 from viajante.split import (
     MAX_OTHER_CURRENCY_ROWS,
@@ -865,7 +862,7 @@ def _print_hidden_city_report(report: HiddenCityReport) -> None:
         return
     print(f"{'price':>12}  {'hidden':<7}  airline")
     for offer in report.offers:
-        flag = "yes" if offer.hidden_city else "no"
+        flag = {True: "yes", False: "no"}.get(offer.hidden_city, "unknown")
         airline = offer.airline or "?"
         extra = ""
         if offer.ticketed_destination:

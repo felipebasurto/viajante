@@ -10,6 +10,8 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-08
+
 ### Changed
 
 - **Breaking (flight `recommendation`, schema 2):** shortlist entries reference
@@ -29,6 +31,24 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   the blocked message says when another install recorded the cooldown.
 - Public-page `ds:1` extraction no longer scans the whole page with the stdlib
   HTML parser (about 6x faster on a large results page).
+- A declined Google consent is kept for the next CLI call. When Google serves its
+  consent page, the sweep stores only the `SOCS` cookie in `google-consent.json` in
+  the state directory (30-day cap; accepted consent is never stored; an unreadable
+  file is ignored). A new process then skips the consent round trip. In a live check
+  on 2026-10-08, a cold `flights --fetch sweep` took 3 requests and about 1.7–2.2 s
+  before, and 1 request and about 0.9 s after (one run each, not a benchmark).
+
+- `skiplagged.py` parses the shape Skiplagged's MCP actually returns
+  (`structuredContent.flights`: `price.amount` / `price.currency`, `deepLink`,
+  `attributes`, `layovers`, `returnFlight`), checked against captured responses
+  in `tests/fixtures/skiplagged/`. The guessed alias keys are gone. A hidden-city
+  card's `hidden_city` is `null` when Skiplagged sends no `attributes`.
+- MCP tool parameters are declared once, in `mcp_handlers.py`; the client schema
+  is derived from those signatures (`tools/list` is byte-identical).
+- `flights.py` and `models.py` are split into smaller modules (`flight_routes`,
+  `flight_filters`, `flight_offers`, `flight_evidence`, `flight_packages`;
+  `models_common`, `models_flights`, `models_hotels`, ...). `viajante.models`
+  still exports every name; serialized JSON is unchanged.
 
 ### Fixed
 
@@ -38,6 +58,13 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
 - A search deadline is no longer retried as a fetch failure in Skiplagged room
   rates or hidden-city search.
 - Non-finite stay totals and award inputs are rejected instead of leaking `NaN`.
+- Skiplagged hidden-city search refuses more than 9 adults before sending, as
+  the provider's schema allows. A Skiplagged hotel card whose structured price
+  names a currency other than USD is dropped instead of being read as a USD
+  total.
+- A Skiplagged reply without `structuredContent.flights` is `markup_drift`, and
+  a tool error result is `fetch_failed` with its message, instead of being
+  guessed through fallback keys.
 
 ### Removed
 
@@ -335,7 +362,8 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.4.7...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.0...develop
+[1.5.0]: https://github.com/felipebasurto/viajante/compare/v1.4.7...v1.5.0
 [1.4.7]: https://github.com/felipebasurto/viajante/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/felipebasurto/viajante/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/felipebasurto/viajante/compare/v1.4.1...v1.4.5
