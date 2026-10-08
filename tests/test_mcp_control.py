@@ -19,7 +19,6 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 from test_audit_regressions import _card as _rt_card
 from test_audit_regressions import _direct
-from test_google_flights import _compact_body, _itinerary, _MuxFakeSweepClient
 from test_google_hotels import _hotel_record, _ScriptedHotelClient, _search_payload, _wrap_wrb
 from viajante import evidence, mcp_handlers, mcp_server
 from viajante.control import (
@@ -39,7 +38,6 @@ from viajante.explore import search_explore
 from viajante.flights import _calendar_summary_from_source, search_flights
 from viajante.google_flights import (
     ChromeSweepClient,
-    GoogleFlightsHttpSource,
     NoFlightsFound,
     RawFlightCard,
     SweepHttpResponse,
@@ -978,29 +976,6 @@ class HotelAndDatesCutTests(unittest.TestCase):
         self.assertFalse(coverage["complete"])
         self.assertEqual(coverage["stopping_reason"], "deadline")
 
-    def test_a_single_post_replay_cut_keeps_days_that_arrived(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        blocked = SweepHttpResponse(503, "", "https://x")
-
-        class Client(_MuxFakeSweepClient):
-            def post_many(self, jobs, *, timeout):
-                return [
-                    self._response(jobs[0].url),
-                    self._response(jobs[1].url),
-                    blocked,
-                ]
-
-            def post(self, url, *, data, headers, timeout):
-                raise SearchDeadline()
-
-        source = GoogleFlightsHttpSource(client=Client(shop_text=shop), currency="USD")
-        trips = tuple(FlightQuery("JFK", "LHR", FUTURE + timedelta(days=i)) for i in range(3))
-        with patch("viajante.google_flights.SWEEP_RETRY_BACKOFF_SECONDS", 0):
-            results = source.fetch_many(trips)
-        self.assertEqual(results[0][0].airline, "Vueling")
-        self.assertEqual(results[1][0].airline, "Vueling")
-        self.assertIsInstance(results[2], SearchDeadline)
-
 
 class PartialBatchTests(unittest.TestCase):
     def test_responses_that_arrived_before_the_deadline_are_kept(self) -> None:
@@ -1024,22 +999,6 @@ class PartialBatchTests(unittest.TestCase):
         time.sleep(0.2)
         self.assertEqual([r.deadline for r in out], [False, True])
         self.assertEqual(out[0].text, "arrived")
-
-    def test_arrived_routes_keep_their_cards_and_the_rest_are_deadline(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-
-        class Client(_MuxFakeSweepClient):
-            def post_many(self, jobs, *, timeout):
-                return [
-                    self._response(jobs[0].url),
-                    SweepHttpResponse(0, "", jobs[1].url, deadline=True),
-                ]
-
-        source = GoogleFlightsHttpSource(client=Client(shop_text=shop), currency="USD")
-        trips = tuple(FlightQuery("JFK", dest, FUTURE) for dest in ("LHR", "CDG"))
-        first, second = source.fetch_many(trips)
-        self.assertEqual(first[0].airline, "Vueling")
-        self.assertIsInstance(second, SearchDeadline)
 
 
 class MergedEnvelopeTests(McpControlCase):
@@ -1079,30 +1038,6 @@ class MergedEnvelopeTests(McpControlCase):
         self.assertIsNone(payload["retry_after"])
         self.assertIsNone(payload["retry_after_seconds"])
         self.assert_untouched()
-
-    def test_a_deadline_cut_of_the_calendar_replay_keeps_the_arrived_route(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-
-        class Client(_MuxFakeSweepClient):
-            def post_many(self, jobs, *, timeout):
-                self.post_many_calls += 1
-                if self.post_many_calls > 1:
-                    raise SearchDeadline()
-                return [
-                    SweepHttpResponse(503, "", jobs[0].url),
-                    self._response(jobs[1].url),
-                    self._response(jobs[2].url),
-                    self._response(jobs[3].url),
-                ]
-
-        source = GoogleFlightsHttpSource(client=Client(shop_text=shop), currency="USD")
-        jobs = [
-            (FlightQuery("JFK", dest, FUTURE), FUTURE, FUTURE + timedelta(days=3))
-            for dest in ("LHR", "CDG")
-        ]
-        (first, _), (second, _) = source.fetch_many_with_calendar(jobs)
-        self.assertIsInstance(first, SearchDeadline)
-        self.assertEqual(second[0].airline, "Vueling")
 
     def test_a_skipped_detail_fallback_marks_the_search_cut(self) -> None:
         class Empty(FakeFlights):

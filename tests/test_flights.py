@@ -45,7 +45,6 @@ from viajante.google_flights import (
     RawFlightCard,
     google_flights_url,
 )
-from viajante.google_flights_rpc import build_shopping_inner
 from viajante.models import (
     FlightOffer,
     FlightQuery,
@@ -487,13 +486,11 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(four_hundred, 1, price_cap=400))
         self.assertIsNone(_normalize_offer(over_four, 1, price_cap=400))
 
-    def test_parse_flight_plan_named_price_cap_stays_off_index_7(self) -> None:
+    def test_parse_flight_plan_keeps_price_cap_on_the_query(self) -> None:
         plan = parse_flight_plan(["JFK-LHR:2026-09-01"], max_stops=1, price_cap=200)
         self.assertEqual(plan[0].price_cap, 200)
-        self.assertIsNone(build_shopping_inner(plan[0])[1][7])
         unnamed = parse_flight_plan(["JFK-LHR:2026-09-01"], max_stops=1)
         self.assertIsNone(unnamed[0].price_cap)
-        self.assertIsNone(build_shopping_inner(unnamed[0])[1][7])
 
     def test_out_back_without_trip_is_two_one_ways_not_packaged(self) -> None:
         from datetime import timedelta

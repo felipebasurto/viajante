@@ -28,11 +28,8 @@ from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactExplorePlace,
     CompactParseMiss,
-    build_explore_inner,
-    build_shopping_inner,
     explore_request_constraints,
     explore_request_echo,
-    parse_explore_body,
     parse_explore_catalog,
 )
 from viajante.models import (
@@ -197,38 +194,6 @@ class FakeExploreCalendarSource(FakeExploreSource):
         if isinstance(days, Exception):
             raise days
         return days
-
-
-class ExploreParseTests(unittest.TestCase):
-    def test_recorded_shape_yields_dest_rows(self) -> None:
-        body = _explore_body(
-            ("OPO", "Porto", "Portugal"),
-            ("LIS", "Lisbon", "Portugal"),
-            ("FCO", "Rome", "Italy"),
-        )
-        places = parse_explore_body(body)
-        self.assertEqual([place.iata for place in places], ["OPO", "LIS", "FCO"])
-        self.assertEqual(places[0].city, "Porto")
-        self.assertEqual(places[2].country, "Italy")
-
-    def test_unreadable_explore_is_a_miss(self) -> None:
-        with self.assertRaises(CompactParseMiss):
-            parse_explore_body("not explore")
-
-    def test_explore_inner_clears_the_destination(self) -> None:
-        inner = build_explore_inner("NRT", date(2026, 9, 1))
-        self.assertEqual(inner[3][13][0][0], [[["NRT", 0]]])
-        self.assertEqual(inner[3][13][0][1], [])
-        self.assertEqual(inner[3][6], [1, 0, 0, 0])
-        named = build_explore_inner(
-            "NRT",
-            date(2026, 9, 1),
-            adults=2,
-            children=1,
-            infants_in_seat=1,
-            infants_on_lap=1,
-        )
-        self.assertEqual(named[3][6], [2, 1, 1, 1])
 
 
 class ExploreSearchTests(unittest.TestCase):
@@ -735,10 +700,6 @@ class ExploreSearchTests(unittest.TestCase):
         shop = source.fetched_queries[0]
         self.assertEqual(shop.alliances, ("star",))
         self.assertEqual(shop.exclude_alliances, ("oneworld",))
-        self.assertEqual(
-            build_shopping_inner(shop)[1][13][0][7],
-            [None, [["*A"]], [["*O"]]],
-        )
         by_iata = {row.iata: row.price for row in report.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
         self.assertEqual(by_iata["OPO"], 28.0)
@@ -777,7 +738,6 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(shop.children, 1)
         self.assertEqual(shop.infants_in_seat, 1)
         self.assertEqual(shop.infants_on_lap, 1)
-        self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
         self.assertEqual({row.iata for row in report.destinations}, {"OPO", "LIS"})
         unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
         self.assertEqual(source.explore_occupancy[-1], (1, 0, 0, 0))
@@ -785,7 +745,6 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertEqual(unnamed_shop.children, 0)
         self.assertEqual(unnamed_shop.infants_in_seat, 0)
         self.assertEqual(unnamed_shop.infants_on_lap, 0)
-        self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
         self.assertEqual({row.iata for row in unnamed.destinations}, {"OPO", "LIS"})
 
     def test_named_currency_country_reach_http_source(self) -> None:

@@ -18,13 +18,13 @@ from viajante.google_flights import (
     RATE_LIMIT_MAX_COOLDOWN_SECONDS,
     ChromeSweepClient,
     GoogleFlightsBlocked,
-    GoogleFlightsHttpSource,
     SweepHttpResponse,
     SweepPost,
     _raise_if_blocked,
     note_rate_limited,
     rate_limit_status,
 )
+from viajante.google_flights_public import PublicGoogleFlightsHttpSource
 from viajante.google_hotels import GoogleHotelsSource
 from viajante.google_hotels_rpc import HotelsBlocked
 from viajante.models import FlightQuery, HotelQuery, QueryFailure
@@ -94,7 +94,9 @@ class CooldownGateTests(_StateDir):
             patch("viajante.google_hotels.shared_chrome_sweep_client") as hotels_client,
         ):
             with self.assertRaises(GoogleFlightsBlocked) as flights:
-                GoogleFlightsHttpSource(currency="USD").fetch(FlightQuery("JFK", "LHR", departure))
+                PublicGoogleFlightsHttpSource(currency="USD").fetch(
+                    FlightQuery("JFK", "LHR", departure)
+                )
             with self.assertRaises(HotelsBlocked) as hotels:
                 GoogleHotelsSource(currency="USD").fetch(
                     HotelQuery("Tokyo", departure, departure + timedelta(days=2)), None, 5
@@ -112,7 +114,7 @@ class CooldownGateTests(_StateDir):
     def test_proxied_search_is_not_paused(self) -> None:
         note_rate_limited()
         with patch("viajante.google_flights.shared_chrome_sweep_client") as client:
-            GoogleFlightsHttpSource(
+            PublicGoogleFlightsHttpSource(
                 proxy="http://proxy.example:8080", currency="EUR"
             )._ensure_client()
         client.assert_called_once()

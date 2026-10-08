@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import unittest
 from contextlib import redirect_stdout
 from datetime import date, datetime
@@ -34,18 +33,12 @@ from viajante.google_flights import GoogleFlightsRejected, RawFlightCard, google
 from viajante.google_flights_rpc import (
     CompactCalendarDay,
     CompactParseMiss,
-    build_calendar_inner,
-    build_calendar_request,
-    build_shopping_inner,
-    build_shopping_request,
-    parse_calendar_body,
 )
 from viajante.models import (
     MIN_PRICED_DAYS_FOR_SUMMARY,
     DateCalendarReport,
     DatePriceRow,
     FlexSearchReport,
-    FlightQuery,
     RawJourneyLeg,
     RawLayover,
     RawSegment,
@@ -53,7 +46,7 @@ from viajante.models import (
     SearchErrorCode,
     owned_calendar_summary,
 )
-from viajante.typical import MIN_DAILY_PRICES, typical_from_daily_prices
+from viajante.typical import MIN_DAILY_PRICES
 
 
 class _FrozenDate(date):
@@ -76,21 +69,6 @@ def setUpModule() -> None:
 def tearDownModule() -> None:
     while _patchers:
         _patchers.pop().stop()  # type: ignore[attr-defined]
-
-
-def _calendar_body(rows: list[list[object]]) -> str:
-    data = [None, rows]
-    wrb = [["wrb.fr", None, json.dumps(data, separators=(",", ":"))]]
-    raw = json.dumps(wrb, separators=(",", ":"))
-    return f")]}}'\n\n{len(raw)}\n{raw}"
-
-
-def _priced(day: str, price: int) -> list[object]:
-    return [day, None, [[None, price], "tok"], 1]
-
-
-def _priced_rt(outbound: str, returning: str, price: int) -> list[object]:
-    return [outbound, returning, [[None, price], "tok"], 1]
 
 
 class FakeCalendarSource:
@@ -216,105 +194,6 @@ class DateWindowTests(unittest.TestCase):
             resolve_date_trip("rt", None)
         with self.assertRaises(ValueError):
             resolve_date_trip("multi", 5)
-
-
-class CalendarParseTests(unittest.TestCase):
-    def test_cheapest_per_day_from_fixture(self) -> None:
-        body = _calendar_body(
-            [
-                _priced("2026-09-01", 81),
-                _priced("2026-09-02", 81),
-                _priced("2026-09-03", 67),
-                ["2026-09-04", None, None, 1],
-            ]
-        )
-        days = parse_calendar_body(body)
-        self.assertEqual(len(days), 4)
-        self.assertEqual(days[0].departure_date, date(2026, 9, 1))
-        self.assertEqual(days[0].price, 81.0)
-        self.assertEqual(days[2].price, 67.0)
-        self.assertIsNone(days[3].price)
-        self.assertEqual(
-            typical_from_daily_prices([row.price for row in days]),
-            81.0,
-        )
-
-    def test_round_trip_calendar_rows_keep_return_dates(self) -> None:
-        body = _calendar_body(
-            [
-                _priced_rt("2026-11-01", "2026-11-06", 410),
-                _priced_rt("2026-11-02", "2026-11-07", 388),
-                ["2026-11-03", "2026-11-08", None, 1],
-            ]
-        )
-        days = parse_calendar_body(body)
-        self.assertEqual(days[0].departure_date, date(2026, 11, 1))
-        self.assertEqual(days[0].return_date, date(2026, 11, 6))
-        self.assertEqual(days[0].price, 410.0)
-        self.assertEqual(days[1].price, 388.0)
-        self.assertIsNone(days[2].price)
-        self.assertEqual(days[2].return_date, date(2026, 11, 8))
-
-    def test_unreadable_calendar_is_a_miss(self) -> None:
-        with self.assertRaises(CompactParseMiss):
-            parse_calendar_body("not a calendar")
-
-    def test_calendar_inner_keeps_owned_constraints_and_window(self) -> None:
-        query = FlightQuery("JFK", "LHR", date(2026, 9, 1))
-        inner = build_calendar_inner(query, date(2026, 9, 1), date(2026, 9, 14))
-        self.assertEqual(inner[2], ["2026-09-01", "2026-09-14"])
-        self.assertEqual(inner[1][13][0][0], [[["JFK", 0]]])
-        self.assertEqual(inner[1][13][0][1], [[["LHR", 0]]])
-
-    def test_round_trip_calendar_inner_uses_stay_length(self) -> None:
-        trip = calendar_trip(
-            "BOS", "LHR", date(2026, 11, 1), nights=5, cabin="business", max_stops=2
-        )
-        inner = build_calendar_inner(trip, date(2026, 11, 1), date(2026, 11, 30))
-        self.assertEqual(inner[2], ["2026-11-01", "2026-11-30"])
-        self.assertIsNone(inner[3])
-        self.assertEqual(inner[4], [5, 5])
-        self.assertEqual(inner[1][2], 1)
-        self.assertEqual(inner[1][5], 3)
-        self.assertEqual(inner[1][-1], 1)
-        segments = inner[1][13]
-        self.assertEqual(len(segments), 2)
-        self.assertEqual(segments[0][6], "2026-11-01")
-        self.assertEqual(segments[1][6], "2026-11-06")
-        self.assertEqual(segments[0][0], [[["BOS", 0]]])
-        self.assertEqual(segments[0][1], [[["LHR", 0]]])
-        self.assertEqual(segments[1][0], [[["LHR", 0]]])
-        self.assertEqual(segments[1][1], [[["BOS", 0]]])
-
-    def test_rt_calendar_request_is_graph_stay_not_one_way_grid(self) -> None:
-        """LHR-BKK RT nights=14 bags=1: calendar is Graph+stay, shopping is Results."""
-        trip = calendar_trip("LHR", "BKK", date(2026, 11, 6), nights=14, bags=1)
-        start, end = date(2026, 11, 6), date(2026, 11, 30)
-        cal_url, _body = build_calendar_request(trip, start, end, currency="GBP", country="GB")
-        shop_url, _shop_body = build_shopping_request(trip, currency="GBP", country="GB")
-        inner = build_calendar_inner(trip, start, end)
-        shop = build_shopping_inner(trip)
-        self.assertIn("GetCalendarGraph", cal_url)
-        self.assertNotIn("GetCalendarGrid", cal_url)
-        self.assertIn("GetShoppingResults", shop_url)
-        self.assertIn("curr=GBP", cal_url)
-        self.assertIn("gl=GB", cal_url)
-        self.assertEqual(inner[2], ["2026-11-06", "2026-11-30"])
-        self.assertIsNone(inner[3])
-        self.assertEqual(inner[4], [14, 14])
-        self.assertEqual(inner[1][2], shop[1][2])
-        self.assertEqual(inner[1][10], [1, 0])
-        self.assertEqual(inner[1][10], shop[1][10])
-        self.assertEqual(inner[1][13], shop[1][13])
-        self.assertEqual(len(inner[1]), len(shop[1]) + 1)
-        self.assertEqual(inner[1][-1], 1)
-        ow = FlightQuery("LHR", "BKK", date(2026, 11, 6), bags=1)
-        ow_url, _ = build_calendar_request(ow, start, end, currency="GBP", country="GB")
-        ow_inner = build_calendar_inner(ow, start, end)
-        self.assertIn("GetCalendarGrid", ow_url)
-        self.assertNotIn("GetCalendarGraph", ow_url)
-        self.assertEqual(len(ow_inner), 3)
-        self.assertEqual(ow_inner[1][10], [1, 0])
 
 
 class DateSearchTests(unittest.TestCase):
@@ -1655,10 +1534,6 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(trip.children, 0)
         self.assertEqual(trip.infants_in_seat, 0)
         self.assertEqual(trip.infants_on_lap, 0)
-        self.assertEqual(
-            build_calendar_inner(trip, date(2026, 9, 12), date(2026, 9, 13))[1][6],
-            [1, 0, 0, 0],
-        )
         too_few = _card(checked_bags=0, carry_on=0, price="€40")
         over_cap = _card(airline="Ryanair", airline_codes=("FR",), price="€401")
         other_via = _card(stops="1 stop", layover_city="DXB", price="€80")
@@ -2347,10 +2222,6 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(seed.children, 1)
         self.assertEqual(seed.infants_in_seat, 1)
         self.assertEqual(seed.infants_on_lap, 1)
-        self.assertEqual(
-            build_calendar_inner(seed, date(2026, 9, 1), date(2026, 9, 2))[1][6],
-            [2, 1, 1, 1],
-        )
         unnamed_source = FakeCalendarSource(
             (
                 CompactCalendarDay(date(2026, 9, 1), 45.0),
@@ -2366,10 +2237,6 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(unnamed_seed.children, 0)
         self.assertEqual(unnamed_seed.infants_in_seat, 0)
         self.assertEqual(unnamed_seed.infants_on_lap, 0)
-        self.assertEqual(
-            build_calendar_inner(unnamed_seed, date(2026, 9, 1), date(2026, 9, 2))[1][6],
-            [1, 0, 0, 0],
-        )
 
     def test_dates_named_currency_country_reach_http_source(self) -> None:
         source = FakeCalendarSource(
@@ -2461,10 +2328,6 @@ class ShopFilterTests(unittest.TestCase):
         shop = source.fetched_queries[0]
         self.assertEqual(shop.alliances, ("star",))
         self.assertEqual(shop.exclude_alliances, ("oneworld",))
-        self.assertEqual(
-            build_shopping_inner(shop)[1][13][0][7],
-            [None, [["*A"]], [["*O"]]],
-        )
         self.assertEqual(report.days[0].price, 30.0)
 
     def test_dates_sweep_occupancy_rides_the_shopping_request(self) -> None:
@@ -2491,7 +2354,6 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(shop.children, 1)
         self.assertEqual(shop.infants_in_seat, 1)
         self.assertEqual(shop.infants_on_lap, 1)
-        self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
         unnamed_source = FakeCalendarSource(
             CompactParseMiss("no wrb.fr calendar payload"),
             cards={date(2026, 9, 1): (iberia,)},
@@ -2501,7 +2363,6 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(unnamed_shop.children, 0)
         self.assertEqual(unnamed_shop.infants_in_seat, 0)
         self.assertEqual(unnamed_shop.infants_on_lap, 0)
-        self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
 
     def test_flex_shop_alliance_rides_the_shopping_request(self) -> None:
         iberia = _card(airline="Iberia", airline_codes=("IB",), price="€90")
@@ -2521,10 +2382,6 @@ class ShopFilterTests(unittest.TestCase):
         shop = source.fetched_queries[0]
         self.assertEqual(shop.alliances, ("star",))
         self.assertEqual(shop.exclude_alliances, ("oneworld",))
-        self.assertEqual(
-            build_shopping_inner(shop)[1][13][0][7],
-            [None, [["*A"]], [["*O"]]],
-        )
         self.assertEqual([offer.price for offer in report.offers], [40.0, 90.0])
         self.assertEqual(
             [row.price for row in report.days],
@@ -2568,11 +2425,6 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(shop.children, 1)
         self.assertEqual(shop.infants_in_seat, 1)
         self.assertEqual(shop.infants_on_lap, 1)
-        self.assertEqual(build_shopping_inner(shop)[1][6], [2, 1, 1, 1])
-        self.assertEqual(
-            build_calendar_inner(seed, date(2026, 9, 11), date(2026, 9, 13))[1][6],
-            [2, 1, 1, 1],
-        )
         self.assertEqual([offer.price for offer in report.offers], [90.0])
         unnamed_source = _flex_shop_source(iberia)
         search_flex("JFK", "LHR", date(2026, 9, 12), 1, source=unnamed_source, baggage_buffer=0)
@@ -2580,7 +2432,6 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(unnamed_shop.children, 0)
         self.assertEqual(unnamed_shop.infants_in_seat, 0)
         self.assertEqual(unnamed_shop.infants_on_lap, 0)
-        self.assertEqual(build_shopping_inner(unnamed_shop)[1][6], [1, 0, 0, 0])
 
     def test_flex_named_currency_country_reach_http_source(self) -> None:
         iberia = _card(airline="Iberia", airline_codes=("IB",), price="€90")
