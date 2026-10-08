@@ -486,8 +486,9 @@ class PipelineTests(unittest.TestCase):
         shortlist = payload["recommendation"]["shortlist"]
         self.assertEqual(payload["recommendation"]["relaxed_requirements"], ["max_stops"])
         self.assertEqual(shortlist[0]["requirements"], {"max_stops": "unmet"})
-        self.assertTrue(shortlist[0]["offer"]["evidence"]["evidence_id"].startswith("gf_"))
-        self.assertTrue(shortlist[0]["offer"]["google_flights_url"])
+        self.assertTrue(shortlist[0]["evidence_id"].startswith("gf_"))
+        self.assertTrue(shortlist[0]["google_flights_url"])
+        self.assertNotIn("offer", shortlist[0])
 
     def test_offers_key_and_order_are_unchanged_and_recommendation_is_additive(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
@@ -521,9 +522,13 @@ class PipelineTests(unittest.TestCase):
             },
             set(with_rec),
         )
-        recommended = with_rec["recommendation"]["shortlist"][0]["offer"]
-        shown = next(o for o in with_rec["offers"] if o["airline"] == recommended["airline"])
-        self.assertEqual(recommended["evidence"]["evidence_id"], shown["evidence"]["evidence_id"])
+        recommended = with_rec["recommendation"]["shortlist"][0]
+        shown = next(
+            o
+            for o in with_rec["offers"]
+            if o["evidence"]["evidence_id"] == recommended["evidence_id"]
+        )
+        self.assertEqual(shown["airline"], "Delta")
 
     def test_clock_requirements_come_from_the_named_filters(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
@@ -572,7 +577,9 @@ class SurfaceTests(unittest.TestCase):
             payload = search_flights_tool([f"JFK-LHR:{future}"], currency="USD")
         recommendation = payload["queries"][0]["recommendation"]
         self.assertEqual(recommendation["shortlist"][0]["labels"][0], "recommended")
-        self.assertEqual(recommendation["scoring"]["weights"], dict(SCORE_WEIGHTS))
+        self.assertNotIn("scoring", recommendation)
+        self.assertNotIn("relaxation_order", recommendation)
+        self.assertNotIn("weights", recommendation)
         json.dumps(payload)
 
     def test_relaxed_pick_sits_next_to_a_filtered_out_envelope(self) -> None:
@@ -659,9 +666,7 @@ class SurfaceTests(unittest.TestCase):
         )
         row = report.queries[0]
         shown = row.offers[0].to_dict("USD")["legs"][0]["segments"][0]
-        picked = row.recommendation.to_dict("USD")["shortlist"][0]["offer"]["legs"][0]["segments"][
-            0
-        ]
+        picked = row.recommendation.entries[0].offer.to_dict("USD")["legs"][0]["segments"][0]
         for key in ("arrival_date", "departure_timezone", "arrival_timezone"):
             self.assertEqual(picked[key], shown[key])
             self.assertEqual(shown[key], segment.to_dict()[key])
