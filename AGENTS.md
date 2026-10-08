@@ -51,7 +51,7 @@ add new prose labels to any result.
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
-- Domain types or JSON keys: `src/viajante/models.py`
+- Domain types or JSON keys: `src/viajante/models_common.py` (shared primitives, errors, evidence, coverage), `models_flights.py`, `models_dates_explore.py`, `models_hotels.py`, `models_trip.py`, `models_hidden_city.py`, `models_awards.py`, `models_stays.py`, `models_validation.py`; `models.py` only re-exports them
 - Same-route median from requested priced days: `src/viajante/typical.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
 - Offline IATA lookup and metro groups: `src/viajante/airports.py`
