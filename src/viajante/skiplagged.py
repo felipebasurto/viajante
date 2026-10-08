@@ -12,7 +12,13 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
-from viajante.control import check_cancelled, checkpoint, controlled, interruptible_sleep
+from viajante.control import (
+    SearchDeadline,
+    check_cancelled,
+    checkpoint,
+    controlled,
+    interruptible_sleep,
+)
 from viajante.models import (
     FETCH_LANGUAGE,
     HIDDEN_CITY_SOURCE,
@@ -639,6 +645,8 @@ def search_hidden_city(
     error: Optional[SearchError] = None
     try:
         result = _call_mcp(arguments, rpc=rpc or _rpc_post)
+    except SearchDeadline:
+        raise
     except Exception as exc:
         error = _classify(exc)
     else:
