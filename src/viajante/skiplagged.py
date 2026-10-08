@@ -96,7 +96,7 @@ def _header(headers: Mapping[str, str], name: str) -> str:
     return ""
 
 
-def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str]) -> None:
+def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str], url: str) -> None:
     check_cancelled()
     if status != 429:
         return
@@ -105,7 +105,7 @@ def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str]) -> None
     except ValueError:
         retry_after = None
     if _is_live(rpc):
-        state = note_rate_limited(retry_after, file=SKIPLAGGED_RATE_LIMIT_FILE)
+        state = note_rate_limited(retry_after, file=SKIPLAGGED_RATE_LIMIT_FILE, endpoint=url)
         raise SkiplaggedRateLimited(
             rate_limit_advice(state, provider="Skiplagged", reason="HTTP 429")
         )
@@ -184,14 +184,14 @@ def _handshake(rpc: RpcPost, url: str) -> str:
         },
     }
     status, headers, body = rpc(url, init_payload, _headers())
-    _check_status(status, rpc, headers)
+    _check_status(status, rpc, headers, url)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     _rpc_result(_sse_json(body))
     session_id = _header(headers, "mcp-session-id")
     notify = {"jsonrpc": "2.0", "method": "notifications/initialized"}
     status, notify_headers, _notify_body = rpc(url, notify, _headers(session_id=session_id or None))
-    _check_status(status, rpc, notify_headers)
+    _check_status(status, rpc, notify_headers, url)
     if status >= 400:
         raise SkiplaggedError(f"Skiplagged MCP initialize failed ({status}).")
     return session_id
@@ -215,7 +215,7 @@ def _drop_session(rpc: RpcPost, url: str) -> None:
 
 def _post_call(rpc: RpcPost, url: str, payload: dict[str, Any], session_id: str) -> tuple[int, str]:
     status, headers, body = rpc(url, payload, _headers(session_id=session_id or None))
-    _check_status(status, rpc, headers)
+    _check_status(status, rpc, headers, url)
     return status, body
 
 
