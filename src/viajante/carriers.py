@@ -26,12 +26,6 @@ AIRLINE_CODE_ALIASES = {
     "W6": ("wizz", "wizz air"),
 }
 
-ALLIANCE_SHOPPING_CODE = {
-    "oneworld": "*O",
-    "skyteam": "*S",
-    "star": "*A",
-}
-
 # Enum names the Google Flights public page writes into a `tfs` leg when an
 # alliance checkbox is ticked in the UI (captured from live page traffic).
 ALLIANCE_TFS_CODE = {
@@ -108,45 +102,20 @@ def parse_alliances(text: Optional[str]) -> Optional[Tuple[str, ...]]:
     return _unique(names)
 
 
-def _carrier_codes(
-    trip: Any, alliance_codes: dict[str, str]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def tfs_carrier_codes(trip: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
     include = list(getattr(trip, "airlines", None) or ())
     include.extend(
-        alliance_codes[name]
+        ALLIANCE_TFS_CODE[name]
         for name in (getattr(trip, "alliances", None) or ())
-        if name in alliance_codes
+        if name in ALLIANCE_TFS_CODE
     )
     exclude = list(getattr(trip, "exclude_airlines", None) or ())
     exclude.extend(
-        alliance_codes[name]
+        ALLIANCE_TFS_CODE[name]
         for name in (getattr(trip, "exclude_alliances", None) or ())
-        if name in alliance_codes
+        if name in ALLIANCE_TFS_CODE
     )
     return _unique(include), _unique(exclude)
-
-
-def shopping_carrier_codes(trip: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    return _carrier_codes(trip, ALLIANCE_SHOPPING_CODE)
-
-
-def tfs_carrier_codes(trip: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    return _carrier_codes(trip, ALLIANCE_TFS_CODE)
-
-
-def carrier_filter_payload(
-    include: Sequence[str],
-    exclude: Sequence[str],
-) -> Any:
-    if not include and not exclude:
-        return None
-    include_codes = [[code] for code in include]
-    exclude_codes = [[code] for code in exclude]
-    if include and exclude:
-        return [None, include_codes, exclude_codes]
-    if include:
-        return [None, include_codes]
-    return [1, exclude_codes]
 
 
 _AIRLINE_STRIP = re.compile(r"[^a-z0-9 ]+")
