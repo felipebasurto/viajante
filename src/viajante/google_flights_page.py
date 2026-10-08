@@ -4,39 +4,15 @@ from __future__ import annotations
 
 import json
 import re
-from html.parser import HTMLParser
 from typing import Optional
+
+from selectolax.lexbor import LexborHTMLParser
 
 from viajante.google_flights_rpc import CompactParseMiss, RawFlightCard, parse_shopping_data
 
-_CALL = re.compile(r"AF_initDataCallback\s*\(")
+_CALL = re.compile(r"AF_initDataCallback\s*\(\s*\{")
 _IDENTIFIER = re.compile(r"[$A-Za-z_][$\w]*")
-
-
-class _InitDataScripts(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=False)
-        self._collecting = False
-        self._parts: list[str] = []
-        self.scripts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
-        if tag.casefold() != "script":
-            return
-        values = dict(attrs)
-        classes = (values.get("class") or "").split()
-        self._collecting = "ds:1" in classes
-        self._parts = []
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.casefold() == "script" and self._collecting:
-            self.scripts.append("".join(self._parts))
-            self._collecting = False
-            self._parts = []
-
-    def handle_data(self, data: str) -> None:
-        if self._collecting:
-            self._parts.append(data)
+_JSON = json.JSONDecoder()
 
 
 def _skip_space(source: str, index: int) -> int:
@@ -65,6 +41,13 @@ def _read_string(source: str, index: int) -> tuple[str, int]:
 
 
 def _skip_value(source: str, index: int) -> tuple[str, int]:
+    """Text and end of one callback property value. JSON is taken in C; other JS is scanned."""
+    try:
+        _, end = _JSON.raw_decode(source, index)
+    except ValueError:
+        pass
+    else:
+        return source[index:end], end
     start = index
     stack: list[str] = []
     pairs = {"[": "]", "{": "}", "(": ")"}
@@ -88,27 +71,21 @@ def _skip_value(source: str, index: int) -> tuple[str, int]:
     return source[start:index].strip(), index
 
 
-def _read_callback_object(source: str, start: int) -> tuple[str, int]:
-    if start >= len(source) or source[start] != "{":
-        raise ValueError("callback argument is not an object")
-    value, end = _skip_value(source, start)
-    if not value.endswith("}"):
-        raise ValueError("unterminated callback object")
-    return value[1:-1], end
-
-
-def _callback_properties(source: str) -> tuple[Optional[str], Optional[str]]:
-    """Read only top-level key/data properties from a callback object literal."""
-    index = 0
+def _callback_properties(source: str, index: int) -> tuple[Optional[str], Optional[str]]:
+    """Top-level key and data of a callback object literal, read from just after its "{"."""
     key_value: Optional[str] = None
     data_value: Optional[str] = None
-    while index < len(source):
+    while True:
         index = _skip_space(source, index)
-        while index < len(source) and source[index] == ",":
-            index = _skip_space(source, index + 1)
         if index >= len(source):
-            break
-        if source[index] in "'\"":
+            raise ValueError("unterminated callback object")
+        char = source[index]
+        if char == "}":
+            return key_value, data_value
+        if char == ",":
+            index += 1
+            continue
+        if char in "'\"":
             property_key, index = _read_string(source, index)
         else:
             match = _IDENTIFIER.match(source, index)
@@ -134,40 +111,33 @@ def _callback_properties(source: str) -> tuple[Optional[str], Optional[str]]:
             if property_key == "data":
                 data_value = raw_value
         index = _skip_space(source, index)
-        if index < len(source) and source[index] not in ",":
+        if index >= len(source) or source[index] not in ",}":
             raise ValueError("invalid callback separator")
-    return key_value, data_value
 
 
-def _extract_ds1_data(script: str) -> object:
+def _ds1_data_in(script: str) -> Optional[list]:
     for match in _CALL.finditer(script):
         try:
-            object_start = _skip_space(script, match.end())
-            props, _ = _read_callback_object(script, object_start)
-            key, raw_data = _callback_properties(props)
+            key, raw_data = _callback_properties(script, match.end())
             if key != "ds:1" or raw_data is None:
                 continue
             data = json.loads(raw_data)
-            if isinstance(data, list):
-                return data
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             continue
-    raise CompactParseMiss("no readable AF_initDataCallback ds:1 data")
+        if isinstance(data, list):
+            return data
+    return None
 
 
-def extract_ds1_data(html: str) -> object:
+def extract_ds1_data(html: str) -> list:
     """Extract the balanced JSON data array for the page's ds:1 callback."""
-    parser = _InitDataScripts()
-    try:
-        parser.feed(html)
-        parser.close()
-    except (ValueError, AssertionError) as exc:
-        raise CompactParseMiss("Google Flights page markup could not be read") from exc
-    for script in parser.scripts:
-        try:
-            return _extract_ds1_data(script)
-        except CompactParseMiss:
+    root = LexborHTMLParser(html)
+    for node in root.css("script"):
+        if "ds:1" not in (node.attributes.get("class") or "").split():
             continue
+        data = _ds1_data_in(node.text(deep=True))
+        if data is not None:
+            return data
     raise CompactParseMiss("Google Flights page has no readable ds:1 payload")
 
 
