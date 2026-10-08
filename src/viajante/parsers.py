@@ -14,6 +14,7 @@ _DURATION_DAYS = re.compile(r"(\d+)\s*(?:days?|d)\b")
 _DURATION_HOURS = re.compile(r"(\d+)\s*(?:h|hr|hrs|hours?)\b")
 _DURATION_MINUTES = re.compile(r"(\d+)\s*(?:min|mins|minutes?|m)\b")
 _DIGITS = re.compile(r"(\d+)")
+_DIGIT = re.compile(r"\d")
 
 
 def _parse_grouped_number(num: str, *, three_decimal: bool) -> float:
@@ -68,7 +69,7 @@ def parse_price(price_text: str | None) -> float | None:
     if cleaned.startswith("-"):
         num = f"-{num}"
     leftover = (cleaned[: match.start()] + cleaned[match.end() :]).replace("-", "")
-    if re.search(r"\d", leftover):
+    if _DIGIT.search(leftover):
         return None
     iso = None
     prefix = _CURRENCY_PREFIX.search(cleaned[: match.start()])
