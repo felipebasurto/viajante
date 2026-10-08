@@ -25,7 +25,7 @@ from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple
 from viajante.models import FlightOffer
 from viajante.parsers import clock_minutes
 
-RECOMMENDATION_SCHEMA_VERSION = 1
+RECOMMENDATION_SCHEMA_VERSION = 2
 # Hide connections slower than this multiple of the fastest nonstop/shortest
 # elapsed time. Short-haul overnight hops drop out; long-haul 1-stops stay.
 RANKED_SLOW_CONNECTION_FACTOR = 3.0
@@ -157,16 +157,18 @@ class ShortlistEntry:
     highlights: Tuple[str, ...]
     tradeoffs: Tuple[str, ...]
 
-    def to_dict(self, currency: str) -> Mapping[str, object]:
+    def to_dict(self) -> Mapping[str, object]:
+        evidence = self.offer.evidence
         return {
             "labels": list(self.labels),
+            "evidence_id": evidence.evidence_id if evidence else None,
+            "google_flights_url": self.offer.google_flights_url,
             "score": self.score,
             "breakdown": dict(self.breakdown),
             "departure_slot": departure_slot(self.offer),
             "requirements": dict(self.requirements),
             "highlights": list(self.highlights),
             "tradeoffs": list(self.tradeoffs),
-            "offer": self.offer.to_dict(currency),
         }
 
 
@@ -188,23 +190,27 @@ class Recommendation:
             self, entries=tuple(replace(entry, offer=fn(entry.offer)) for entry in self.entries)
         )
 
-    def to_dict(self, currency: str) -> Mapping[str, object]:
-        return {
+    def to_dict(self, currency: Optional[str] = None) -> Mapping[str, object]:
+        """Compact payload: offers are referenced by ``evidence_id``, not embedded again.
+
+        ``currency`` is accepted for the existing caller and is not needed to serialize.
+        Weights are emitted only when price is not compared, since that is the only case
+        where they differ from ``SCORE_WEIGHTS``.
+        """
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "requirements": dict(self.requirements.to_dict()),
             "relaxed_requirements": list(self.relaxed_requirements),
-            "relaxation_order": list(RELAX_ORDER),
-            "scoring": {
-                "weights": dict(self.weights),
-                "scale": "0-100, higher is better; breakdown penalties run 0 (best) to 1 (worst)",
-            },
             "price_comparison": self.price_comparison,
             "compared": self.compared,
             "duplicates_removed": self.duplicates_removed,
             "slow_connections_hidden": self.slow_connections_hidden,
-            "shortlist": [entry.to_dict(currency) for entry in self.entries],
+            "shortlist": [entry.to_dict() for entry in self.entries],
             "notes": list(self.notes),
         }
+        if self.price_comparison != "compared":
+            payload["weights"] = dict(self.weights)
+        return payload
 
 
 def _excess(values: Sequence[Optional[float]]) -> list[float]:
@@ -470,7 +476,7 @@ def recommend_offers(
         notes.insert(
             0,
             "No offer met every stated requirement. Relaxed (fewest first, earlier names in "
-            f"relaxation_order first on ties): {', '.join(relaxed)}.",
+            f"the fixed relax order first on ties): {', '.join(relaxed)}.",
         )
     if comparison != "compared":
         notes.append("Offers do not share a proven currency; fares are not compared or scored.")

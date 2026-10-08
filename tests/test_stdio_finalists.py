@@ -330,12 +330,13 @@ class StdioFinalistTests(unittest.TestCase):
                         self.assertEqual(metro_row["query"]["destination"], "CDG")
                         self.assertIn("recommendation", metro_row)
                         shown = metro_row["offers"][0]["legs"][0]["segments"][0]
-                        picked = metro_row["recommendation"]["shortlist"][0]["offer"]["legs"][0][
-                            "segments"
-                        ][0]
                         for key in ("arrival_date", "departure_timezone", "arrival_timezone"):
-                            self.assertEqual(picked[key], shown[key])
                             self.assertEqual(shown[key], _SEGMENT[key])
+                        self.assertTrue(
+                            metro_row["recommendation"]["shortlist"][0]["evidence_id"].startswith(
+                                "gf_"
+                            )
+                        )
                     same_metro = await session.call_tool(
                         "search_flights",
                         {"routes": ["LON-LON:2099-07-01"], "fetch": "sweep"},
