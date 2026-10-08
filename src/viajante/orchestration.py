@@ -73,6 +73,16 @@ def classify_failure(exc: BaseException) -> SearchError:
     )
 
 
+def should_retry(failure: SearchError, *, transport: bool = False) -> bool:
+    """Whether another attempt can change the answer.
+
+    A provider-settled code (no results, rejected, blocked, markup drift, no browser,
+    deadline) is final. A transport failure that never produced an HTTP response is
+    final for the sweep loops too: the caller passes ``transport`` for that case.
+    """
+    return failure.code not in NON_RETRIABLE_CODES and not transport
+
+
 def retry_backoff_seconds(attempt: int, random_gen) -> float:
     return BACKOFF_BASE_SECONDS * (2**attempt) + random_gen.uniform(0, BACKOFF_JITTER_SECONDS)
 

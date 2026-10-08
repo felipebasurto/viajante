@@ -307,9 +307,7 @@ class PublicFlightsSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "Selected outbound echo was not proven"):
                 source.fetch(query)
 
-    def test_public_transport_is_get_only_and_disables_automatic_typical(self) -> None:
-        source = _source()
-        self.assertFalse(source.automatic_typical)
+    def test_public_transport_is_get_only(self) -> None:
         query = FlightQuery("HAN", "SIN", OUT, adults=2, max_stops=0)
         good = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
 
@@ -324,9 +322,8 @@ class PublicFlightsSourceTests(unittest.TestCase):
         client = GetOnly()
         source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
         with patch("viajante.google_flights_public.parse_shopping_page", return_value=(good,)):
-            cards, days = source.fetch_with_calendar(query, OUT, BACK)
+            cards = source.fetch(query)
         self.assertEqual(cards, (good,))
-        self.assertEqual(days, ())
         self.assertEqual(len(client.urls), 1)
         self.assertIn("/travel/flights?", client.urls[0])
         self.assertFalse(hasattr(client, "post"))

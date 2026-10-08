@@ -17,12 +17,9 @@ from viajante.dates import _fetch_or_exception, calendar_trip, one_or_many
 from viajante.flights import (
     FlightSort,
     OfferFilters,
-    _calendar_summary_from_source,
     _cheapest_by_fare,
     _cheapest_by_ranked,
     _clock_minutes,
-    _summary_from_calendar_days,
-    _typical_window,
     classify_failure,
     compare_nonstop_vs_one_stop,
     expand_nearby_origins,
@@ -50,7 +47,6 @@ from viajante.models import (
     normalize_country,
 )
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
-from viajante.typical import with_typical_dest
 
 DEFAULT_EXPLORE_TOP = 12
 MAX_EXPLORE_TOP = 30
@@ -277,27 +273,25 @@ def search_explore(
             )
             for place in chosen
         ]
-        typical_start, typical_end = _typical_window(start)
         batch = None
-        fetch_batch = getattr(client, "fetch_many_with_calendar", None)
+        fetch_batch = getattr(client, "fetch_many", None)
         if callable(fetch_batch) and len(shops) > 1:
             report_progress(f"pricing {len(shops)} dests on one multiplexed round-trip")
             try:
                 checkpoint()
-                batch = fetch_batch([(shop, typical_start, typical_end) for shop in shops])
+                batch = fetch_batch(shops)
             except Exception:
                 batch = None
         priced: list[ExploreDestination] = []
         pricing_errors: list[QueryFailure] = []
         succeeded = empty = 0
         shop_cards = 0
-        typical_cache: dict = {}
         for index, (place, shop) in enumerate(zip(chosen, shops, strict=True)):
             if batch is None:
                 report_progress(f"[{index + 1}/{len(chosen)}] pricing {place.iata}")
-                cards, calendar_days = _fetch_or_exception(client, shop), None
+                cards = _fetch_or_exception(client, shop)
             else:
-                cards, calendar_days = batch[index]
+                cards = batch[index]
             cheapest, compare = _cheapest_shop(
                 cards, shop, filters, baggage_buffer=baggage_buffer, sort=sort
             )
@@ -323,14 +317,6 @@ def search_explore(
                 google_flights_url=google_flights_url(shop, currency=currency, country=country),
                 baggage_buffer=cheapest.baggage_buffer if cheapest is not None else None,
             )
-            if cheapest is not None:
-                summary = (
-                    _calendar_summary_from_source(client, shop, typical_cache)
-                    if batch is None
-                    else _summary_from_calendar_days(calendar_days, typical_start, typical_end)
-                )
-                if summary is not None:
-                    dest = with_typical_dest(dest, summary.median_price)
             priced.append(dest)
         stop_reason, stop_note = explore_stop(error, pricing_errors)
         empty_reason = None

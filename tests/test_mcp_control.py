@@ -35,7 +35,7 @@ from viajante.control import (
 )
 from viajante.dates import search_dates, search_flex
 from viajante.explore import search_explore
-from viajante.flights import _calendar_summary_from_source, search_flights
+from viajante.flights import search_flights
 from viajante.google_flights import (
     ChromeSweepClient,
     NoFlightsFound,
@@ -43,7 +43,7 @@ from viajante.google_flights import (
     SweepHttpResponse,
     SweepPost,
 )
-from viajante.google_flights_rpc import CompactCalendarDay, CompactExplorePlace
+from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
 from viajante.hotels import search_hotels
 from viajante.models import FlightQuery, HotelQuery, HotelSearchReport, QueryFailure
@@ -88,10 +88,6 @@ class FakeFlights:
 
 
 class FakeCalendar(FakeFlights):
-    def fetch_calendar(self, seed, start, end):
-        self.calls += 1
-        return [CompactCalendarDay(departure_date=start, price=480.0)]
-
     def fetch_explore(self, origin, start, **kwargs):
         self.calls += 1
         return [CompactExplorePlace(iata="LHR", city="London", country="GB")]
@@ -542,16 +538,12 @@ class DeadlineTests(McpControlCase):
         self.assertEqual(explore.error.code.value, "deadline")
 
     def test_flex_counters_include_a_shop_cut_by_the_deadline(self) -> None:
-        class CalendarThenCut(FakeCalendar):
-            def fetch_calendar(self, seed, start, end):
-                span = (end - start).days + 1
-                return [
-                    CompactCalendarDay(departure_date=start + timedelta(days=i), price=400.0 + i)
-                    for i in range(span)
-                ]
-
+        class DaysThenCutShop(FakeFlights):
             def fetch(self, trip):
-                raise SearchDeadline()
+                self.calls += 1
+                if self.calls > 5:  # a flex of two days is five priced days, then the shop
+                    raise SearchDeadline()
+                return [_card()]
 
         flex = search_flex(
             "JFK",
@@ -559,7 +551,7 @@ class DeadlineTests(McpControlCase):
             FUTURE + timedelta(days=3),
             2,
             currency="USD",
-            source=CalendarThenCut(),
+            source=DaysThenCutShop(),
         )
         coverage = flex.coverage
         self.assertEqual(flex.error.code.value, "deadline")
@@ -741,106 +733,6 @@ class ReturnLegDeadlineTests(McpControlCase):
         self.assertEqual(source.selected_calls, 2, "the second call must hit the provider")
         self.assertEqual(len(second["queries"][0]["offers"][0]["legs"]), 2)
         self.assertTrue(second["coverage"]["complete"])
-
-    def test_sequential_flights_keep_a_fare_that_arrived_before_the_typical_was_cut(self) -> None:
-        source = FakeCalendar(0.6)
-
-        def fetch_calendar(_seed, _start, _end):
-            interruptible_sleep(5)
-            checkpoint()
-            return []
-
-        source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
-        self.use_source(source)
-
-        async def main():
-            async with _session(mcp_server.build_server()) as session:
-                return await session.call_tool(
-                    "search_flights", _args(routes=ROUTES[:1], deadline_seconds=0.8)
-                )
-
-        result = asyncio.run(main())
-        self.assertFalse(result.isError, result)
-        payload = json.loads(result.content[0].text)
-        row = payload["queries"][0]
-        self.assertEqual(row["status"], "ok")
-        self.assertEqual(row["offers"][0]["price"], 480.0)
-        self.assertIsNone(row["offers"][0]["typical"])
-        self.assertFalse(payload["coverage"]["complete"])
-        self.assertEqual(payload["coverage"]["stopping_reason"], "deadline")
-        self.assertEqual(mcp_handlers._CACHE, {})
-
-    def test_a_cut_typical_lookup_keeps_the_fare_and_marks_the_search_cut(self) -> None:
-        source = FakeCalendar()
-
-        def fetch_calendar(_seed, _start, _end):
-            raise SearchDeadline()
-
-        source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
-        trips = tuple(FlightQuery("JFK", dest, FUTURE) for dest in ("LHR", "CDG", "FRA"))
-        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
-            report = search_flights(trips, fetch="sweep", currency="USD", deadline_seconds=30)
-        self.assertEqual([q.status for q in report.queries], ["ok", "ok", "ok"])
-        offer = report.queries[0].offers[0]
-        self.assertEqual(offer.price, 480.0)
-        self.assertIsNone(offer.typical)
-        self.assertFalse(report.coverage.complete)
-        self.assertEqual(report.coverage.stopping_reason, "deadline")
-        self.assertEqual(report.coverage.succeeded, 3)
-
-    def test_a_cut_typical_lookup_is_unknown_not_cached_as_none(self) -> None:
-        source = FakeCalendar()
-        source.fetch_calendar = lambda *_a: (_ for _ in ()).throw(SearchDeadline())  # type: ignore[method-assign]
-        cache: dict = {}
-        seed = FlightQuery("JFK", "LHR", FUTURE)
-        with active(SearchControl()) as control:
-            self.assertIsNone(_calendar_summary_from_source(source, seed, cache))
-        self.assertEqual(cache, {})
-        self.assertTrue(control.cut)
-
-    def test_explore_keeps_the_places_and_fare_when_the_typical_is_cut(self) -> None:
-        source = FakeCalendar()
-
-        def fetch_calendar(_seed, _start, _end):
-            raise SearchDeadline()
-
-        source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
-        report = search_explore(
-            "JFK", FUTURE, currency="USD", source=source, top=1, deadline_seconds=30
-        )
-        self.assertIsNone(report.error)
-        self.assertEqual(
-            [(d.iata, d.price, d.typical) for d in report.destinations], [("LHR", 480.0, None)]
-        )
-        self.assertFalse(report.coverage.complete)
-        self.assertEqual(report.coverage.stopping_reason, "deadline")
-
-    def test_explore_through_the_tool_returns_the_arrived_fare_and_is_not_cached(self) -> None:
-        source = FakeCalendar(0.2)
-
-        def fetch_calendar(_seed, _start, _end):
-            interruptible_sleep(5)
-            checkpoint()
-            return []
-
-        source.fetch_calendar = fetch_calendar  # type: ignore[method-assign]
-        payload = self._explore_via_client(source, deadline_seconds=0.8)
-        self.assertEqual([d["iata"] for d in payload["destinations"]], ["LHR"])
-        self.assertEqual(payload["destinations"][0]["price"], 480.0)
-        self.assertNotIn("typical", payload["destinations"][0])
-        self.assertFalse(payload["coverage"]["complete"])
-        self.assertEqual(mcp_handlers._CACHE, {})
-
-    def _explore_via_client(self, source, **extra: object) -> dict:
-        async def main():
-            async with _session(mcp_server.build_server()) as session:
-                args = {"origin": "JFK", "start": str(FUTURE), "currency": "USD", "top": 1, **extra}
-                return await session.call_tool("search_explore", args)
-
-        with patch("viajante.explore.GoogleFlightsHttpSource", return_value=source):
-            result = asyncio.run(main())
-        self.assertFalse(result.isError, result)
-        return json.loads(result.content[0].text)
 
     def test_the_cut_flag_decides_the_cache_not_the_clock(self) -> None:
         runs: list[int] = []

@@ -389,7 +389,28 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsInstance(report.queries[0], QueryFailure)
         self.assertEqual(report.queries[0].error.code.value, "fetch_failed")
 
-    def test_many_one_ways_use_one_calendar_batch_when_source_offers_it(self) -> None:
+    def test_flight_search_never_makes_a_typical_calendar_lookup(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+
+        class Source(FakeSource):
+            def fetch_calendar(self, *_args):
+                raise AssertionError("an ordinary flight search has no automatic typical")
+
+        report = _run_search(
+            (query,),
+            top=8,
+            source=Source({("JFK", "LHR", "2026-09-01", 1): (card(airline="Iberia"),)}),
+            sleep=lambda _seconds: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            currency="EUR",
+        )
+        offer = report.queries[0].offers[0]
+        self.assertEqual(offer.airline, "Iberia")
+        self.assertIsNone(offer.typical)
+        self.assertIsNone(offer.vs_typical)
+
+    def test_many_one_ways_use_one_batch_when_source_offers_it(self) -> None:
         q1 = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         q2 = FlightQuery("JFK", "CDG", date(2026, 9, 2), max_stops=1)
 
@@ -406,13 +427,9 @@ class FlightsOrchestrationTests(unittest.TestCase):
             def fetch(self, query):  # type: ignore[no-untyped-def]
                 raise AssertionError("batched one-ways should not call fetch")
 
-            def fetch_many_with_calendar(self, jobs):
+            def fetch_many(self, queries):
                 self.batch_calls += 1
-                rows = []
-                for query, _start, _end in jobs:
-                    cards = FakeSource.fetch(self, query)
-                    rows.append((cards, ()))
-                return rows
+                return [FakeSource.fetch(self, query) for query in queries]
 
         source = BatchSource()
         sleeps: list[float] = []
