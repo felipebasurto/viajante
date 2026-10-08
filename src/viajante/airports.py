@@ -215,13 +215,8 @@ def _by_code() -> dict[str, Airport]:
 
 def is_known_iata(code: str) -> bool:
     # Known-code checks skip the city/name scan tables used by lookup_airports.
-    if len(code) == 3 and code.isalpha():
-        text = code if code.isupper() else code.upper()
-    else:
-        text = code.strip().upper()
-        if len(text) != 3 or not text.isalpha():
-            return False
-    return text in _by_code()
+    text = code.strip().upper()
+    return len(text) == 3 and text.isalpha() and text in _by_code()
 
 
 def _lookup_indexes() -> tuple[
