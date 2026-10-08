@@ -21,7 +21,6 @@ from viajante.control import (
     controlled,
     current_control,
     interruptible_sleep,
-    note_cut,
 )
 from viajante.google_flights import (
     GoogleFlightsBlocked,
@@ -41,7 +40,6 @@ from viajante.google_flights_public import (
 )
 from viajante.history import recorded_flights
 from viajante.models import (
-    DateCalendarSummary,
     FetchBackend,
     FlightCabin,
     FlightLeg,
@@ -61,14 +59,13 @@ from viajante.models import (
     StopsCompareSide,
     Trip,
     normalize_country,
-    owned_calendar_summary,
 )
 from viajante.orchestration import (
     BROWSER_INSTALL_HINT,
     MAX_ATTEMPTS,
-    NON_RETRIABLE_CODES,
     inter_query_delay_seconds,
     retry_backoff_seconds,
+    should_retry,
     sweep_inter_query_delay_seconds,
 )
 from viajante.orchestration import (
@@ -92,7 +89,6 @@ from viajante.recommend import (
     recommend_offers,
 )
 from viajante.storage import default_state_dir
-from viajante.typical import TYPICAL_WINDOW_DAYS, with_typical
 
 DEFAULT_TOP = 8
 
@@ -134,8 +130,6 @@ _ROUTE_SPEC_RE = re.compile(r"^[A-Za-z]{3}-[A-Za-z]{3}:")
 FetchMode = Literal["auto", "sweep", "detail"]
 TripKind = Literal["one-way", "rt", "multi"]
 FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | Tuple[RoundTrip, ...] | MultiCity
-TypicalTrip = FlightQuery | RoundTrip
-TypicalCacheKey = tuple[str, str, date, Optional[int], int, int, int, int, int, str]
 ROUTE_GRAMMAR = "ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK"
 RT_GRAMMAR = "ORIGIN-DESTINATION:OUT:BACK"
 MULTI_GRAMMAR = "ORIGIN-DESTINATION:DATE"
@@ -1520,80 +1514,6 @@ def _rank_offers(
     return tuple(deduped)
 
 
-def _typical_window(start: date) -> tuple[date, date]:
-    end = date.fromordinal(start.toordinal() + TYPICAL_WINDOW_DAYS - 1)
-    return start, end
-
-
-def _typical_nights(trip: Trip) -> Optional[int]:
-    if isinstance(trip, RoundTrip):
-        return (trip.return_date - trip.departure_date).days
-    return None
-
-
-def _typical_trip(trip: Trip) -> Optional[TypicalTrip]:
-    if isinstance(trip, (FlightQuery, RoundTrip)):
-        return trip
-    return None
-
-
-def _typical_cache_key(trip: TypicalTrip) -> TypicalCacheKey:
-    start, _end = _typical_window(trip.departure_date)
-    return (
-        trip.origin,
-        trip.destination,
-        start,
-        _typical_nights(trip),
-        trip.max_stops,
-        trip.adults,
-        trip.children,
-        trip.infants_in_seat,
-        trip.infants_on_lap,
-        trip.cabin,
-    )
-
-
-def _summary_from_calendar_days(
-    days: Optional[Sequence[Any]],
-    start: date,
-    end: date,
-) -> Optional[DateCalendarSummary]:
-    if not days:
-        return None
-    in_window = [
-        (row.departure_date, row.price) for row in days if start <= row.departure_date <= end
-    ]
-    return owned_calendar_summary(in_window)
-
-
-def _calendar_summary_from_source(
-    source: _FlightSource,
-    trip: TypicalTrip,
-    cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]],
-) -> Optional[DateCalendarSummary]:
-    if getattr(source, "automatic_typical", True) is False:
-        return None
-    fetch_calendar = getattr(source, "fetch_calendar", None)
-    if not callable(fetch_calendar):
-        return None
-    key = _typical_cache_key(trip)
-    if key in cache:
-        return cache[key]
-    start, end = _typical_window(trip.departure_date)
-    try:
-        days = fetch_calendar(trip, start, end)
-    except SearchDeadline:
-        # Unknown, not "no typical": nothing is cached, and the search is marked cut.
-        note_cut()
-        return None
-    except Exception:
-        cache[key] = None
-        return None
-    summary = _summary_from_calendar_days(days, start, end)
-    cache[key] = summary
-    return summary
-
-
 def _recommend(
     trip: Trip,
     pool: Sequence[FlightOffer],
@@ -1871,29 +1791,6 @@ def _passes_packaged_filters(offer: FlightOffer, trip: Trip, filters: OfferFilte
     return True
 
 
-def _stamp_typical(
-    trip: Trip,
-    offers: Tuple[FlightOffer, ...],
-    source: _FlightSource,
-    cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]],
-) -> Tuple[FlightOffer, ...]:
-    seed = _typical_trip(trip)
-    if not offers or seed is None:
-        return offers
-    summary = _calendar_summary_from_source(source, seed, cache)
-    if summary is None:
-        return offers
-    return tuple(
-        with_typical(
-            offer,
-            summary.median_price,
-            cheapest_date=summary.cheapest_date,
-            cheapest=summary.min_price,
-        )
-        for offer in offers
-    )
-
-
 def _run_search(
     trips: Sequence[Trip],
     *,
@@ -1914,7 +1811,6 @@ def _run_search(
 ) -> SearchReport:
     report_progress = progress or (lambda _: None)
     results: list[QueryResult] = []
-    typical_cache: dict[TypicalCacheKey, Optional[DateCalendarSummary]] = {}
 
     def _success_from_cards(trip: Trip, cards: Sequence[RawFlightCard]) -> QuerySuccess:
         packaged = len(trip.legs) > 1
@@ -1936,18 +1832,14 @@ def _run_search(
                     break
             pool = eligible
         ranked = _rank_offers(eligible, top=top, sort=sort)
-        shown = _stamp_typical(trip, ranked, source, typical_cache)
         recommendation = _recommend(trip, pool, filters, currency=currency, packaged=packaged)
-        if recommendation is not None:
-            stamped = dict(zip(ranked, shown, strict=True))
-            recommendation = recommendation.map_offers(lambda offer: stamped.get(offer, offer))
         metadata_for = getattr(source, "metadata_for", None)
         page_error, scope_bound = metadata_for(trip) if callable(metadata_for) else (None, False)
         return QuerySuccess(
             query=trip,
             raw_count=len(cards),
             eligible_count=len(eligible),
-            offers=shown,
+            offers=ranked,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
             recommendation=recommendation,
             page_errors=(classify_failure(page_error),) if page_error is not None else (),
@@ -1965,7 +1857,7 @@ def _run_search(
     def _maybe_reset(failure: SearchError) -> None:
         # Empty/rejected/markup are owned outcomes. Drop TLS only when a
         # retry might succeed, or when the session may be poisoned (blocked).
-        if failure.code not in NON_RETRIABLE_CODES or failure.code == SearchErrorCode.BLOCKED:
+        if should_retry(failure) or failure.code == SearchErrorCode.BLOCKED:
             source.reset()
 
     def _search_one(trip: Trip, *, start_attempt: int = 0) -> QueryResult:
@@ -1974,22 +1866,12 @@ def _run_search(
         for attempt in range(start_attempt, MAX_ATTEMPTS):
             try:
                 checkpoint()
-                fetch_pair = getattr(source, "fetch_with_calendar", None)
-                seed = _typical_trip(trip)
-                if callable(fetch_pair) and seed is not None:
-                    start, end = _typical_window(seed.departure_date)
-                    cards, days = fetch_pair(seed, start, end)
-                    typical_cache[_typical_cache_key(seed)] = _summary_from_calendar_days(
-                        days, start, end
-                    )
-                else:
-                    cards = source.fetch(trip)
-                outcome = _success_from_cards(trip, cards)
+                outcome = _success_from_cards(trip, source.fetch(trip))
                 break
             except Exception as exc:
                 failure = classify_failure(exc)
                 _maybe_reset(failure)
-                if failure.code in NON_RETRIABLE_CODES or isinstance(exc, SweepTransportError):
+                if not should_retry(failure, transport=isinstance(exc, SweepTransportError)):
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     delay = retry_backoff(attempt, random_gen)
@@ -2007,35 +1889,22 @@ def _run_search(
             report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
         return _stamp(outcome)
 
-    fetch_batch = getattr(source, "fetch_many_with_calendar", None)
+    fetch_batch = getattr(source, "fetch_many", None)
     if (
         callable(fetch_batch)
         and len(trips) > 1
-        and all(_typical_trip(trip) is not None for trip in trips)
+        and all(isinstance(trip, (FlightQuery, RoundTrip)) for trip in trips)
     ):
         for index, trip in enumerate(trips):
             report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
-        jobs = []
-        for trip in trips:
-            seed = _typical_trip(trip)
-            if seed is None:
-                continue
-            start, end = _typical_window(seed.departure_date)
-            jobs.append((seed, start, end))
         try:
             checkpoint()
-            batch_rows = fetch_batch(jobs)
+            batch_rows = fetch_batch(list(trips))
         except Exception:
             batch_rows = None
         if batch_rows is not None:
-            for trip, (cards_or_exc, days) in zip(trips, batch_rows, strict=True):
-                seed = _typical_trip(trip)
+            for trip, cards_or_exc in zip(trips, batch_rows, strict=True):
                 if not isinstance(cards_or_exc, BaseException):
-                    if seed is not None:
-                        start, end = _typical_window(seed.departure_date)
-                        typical_cache[_typical_cache_key(seed)] = _summary_from_calendar_days(
-                            days, start, end
-                        )
                     try:
                         results.append(_stamp(_success_from_cards(trip, cards_or_exc)))
                     except SearchDeadline as exc:
@@ -2044,9 +1913,8 @@ def _run_search(
                         )
                     continue
                 failure = classify_failure(cards_or_exc)
-                if failure.code in NON_RETRIABLE_CODES or isinstance(
-                    cards_or_exc, SweepTransportError
-                ):
+                transport = isinstance(cards_or_exc, SweepTransportError)
+                if not should_retry(failure, transport=transport):
                     _maybe_reset(failure)
                     outcome = QueryFailure(query=trip, error=failure)
                     report_progress(f"  {outcome.error.code.value}: {outcome.error.message}")
