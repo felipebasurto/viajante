@@ -238,6 +238,16 @@ def _iso_z(value: datetime) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _put_present(payload: dict[str, object], key: str, value: object) -> None:
+    if value is not None:
+        payload[key] = value
+
+
+def _put_truthy(payload: dict[str, object], key: str, value: object) -> None:
+    if value:
+        payload[key] = value
+
+
 def _store_nearby_label(obj: object) -> None:
     label = obj.nearby_label  # type: ignore[attr-defined]
     object.__setattr__(obj, "nearby_label", (label.strip() if label else None) or None)
@@ -450,12 +460,9 @@ class RawSegment:
             payload["departure_date"] = self.departure_date.isoformat()
         if self.arrival_date is not None:
             payload["arrival_date"] = self.arrival_date.isoformat()
-        if self.departure_timezone is not None:
-            payload["departure_timezone"] = self.departure_timezone
-        if self.arrival_timezone is not None:
-            payload["arrival_timezone"] = self.arrival_timezone
-        if self.carrier is not None:
-            payload["carrier"] = self.carrier
+        _put_present(payload, "departure_timezone", self.departure_timezone)
+        _put_present(payload, "arrival_timezone", self.arrival_timezone)
+        _put_present(payload, "carrier", self.carrier)
         return payload
 
 
@@ -834,12 +841,9 @@ class FlightOffer:
             "evidence": self.evidence.to_dict() if self.evidence else None,
             "completeness": self.completeness.to_dict() if self.completeness else None,
         }
-        if self.google_flights_url:
-            payload["google_flights_url"] = self.google_flights_url
-        if self.checked_bags is not None:
-            payload["checked_bags"] = self.checked_bags
-        if self.carry_on is not None:
-            payload["carry_on"] = self.carry_on
+        _put_truthy(payload, "google_flights_url", self.google_flights_url)
+        _put_present(payload, "checked_bags", self.checked_bags)
+        _put_present(payload, "carry_on", self.carry_on)
         if self.cheapest_date is not None and self.cheapest is not None:
             payload["cheapest_date"] = self.cheapest_date.isoformat()
             payload["cheapest"] = self.cheapest
@@ -1010,8 +1014,7 @@ class QuerySuccess:
             payload["stops_compare"] = self.stops_compare.to_dict()
         if self.recommendation is not None:
             payload["recommendation"] = self.recommendation.to_dict(currency)
-        if self.empty_reason is not None:
-            payload["empty_reason"] = self.empty_reason
+        _put_present(payload, "empty_reason", self.empty_reason)
         return payload
 
 
@@ -1267,18 +1270,12 @@ class DatePriceRow:
             payload["scope_bound"] = True
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
-        if self.google_flights_url:
-            payload["google_flights_url"] = self.google_flights_url
-        if self.baggage_buffer is not None:
-            payload["baggage_buffer"] = self.baggage_buffer
-        if self.duration_hours is not None:
-            payload["duration_hours"] = self.duration_hours
-        if self.departure:
-            payload["departure"] = self.departure
-        if self.arrival:
-            payload["arrival"] = self.arrival
-        if self.empty_reason is not None:
-            payload["empty_reason"] = self.empty_reason
+        _put_truthy(payload, "google_flights_url", self.google_flights_url)
+        _put_present(payload, "baggage_buffer", self.baggage_buffer)
+        _put_present(payload, "duration_hours", self.duration_hours)
+        _put_truthy(payload, "departure", self.departure)
+        _put_truthy(payload, "arrival", self.arrival)
+        _put_present(payload, "empty_reason", self.empty_reason)
         payload.update(_typical_json(self.typical, self.vs_typical, self.vs_typical_pct, currency))
         return payload
 
@@ -1386,12 +1383,10 @@ class DateCalendarReport:
             "coverage": self.coverage.to_dict() if self.coverage else None,
             "days": [row.to_dict(self.currency) for row in self.days],
         }
-        if self.nights is not None:
-            payload["nights"] = self.nights
+        _put_present(payload, "nights", self.nights)
         if self.summary is not None:
             payload["summary"] = self.summary.to_dict()
-        if self.google_flights_url:
-            payload["google_flights_url"] = self.google_flights_url
+        _put_truthy(payload, "google_flights_url", self.google_flights_url)
         return payload
 
 
@@ -1517,14 +1512,12 @@ class FlexSearchReport:
             "days": [row.to_dict(self.currency) for row in self.days],
             "offers": [offer.to_dict(self.currency) for offer in self.offers],
         }
-        if self.nights is not None:
-            payload["nights"] = self.nights
+        _put_present(payload, "nights", self.nights)
         if self.return_date is not None:
             payload["return_date"] = self.return_date.isoformat()
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
-        if self.google_flights_url:
-            payload["google_flights_url"] = self.google_flights_url
+        _put_truthy(payload, "google_flights_url", self.google_flights_url)
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         return payload
@@ -1569,18 +1562,13 @@ class ExploreDestination:
             "country": self.country,
             "price": self.price,
         }
-        if self.duration_hours is not None:
-            payload["duration_hours"] = self.duration_hours
-        if self.departure:
-            payload["departure"] = self.departure
-        if self.arrival:
-            payload["arrival"] = self.arrival
+        _put_present(payload, "duration_hours", self.duration_hours)
+        _put_truthy(payload, "departure", self.departure)
+        _put_truthy(payload, "arrival", self.arrival)
         if self.stops_compare is not None:
             payload["stops_compare"] = self.stops_compare.to_dict()
-        if self.google_flights_url:
-            payload["google_flights_url"] = self.google_flights_url
-        if self.baggage_buffer is not None:
-            payload["baggage_buffer"] = self.baggage_buffer
+        _put_truthy(payload, "google_flights_url", self.google_flights_url)
+        _put_present(payload, "baggage_buffer", self.baggage_buffer)
         payload.update(_typical_json(self.typical, self.vs_typical, self.vs_typical_pct, currency))
         return payload
 
@@ -1664,14 +1652,12 @@ class ExploreReport:
             "coverage": self.coverage.to_dict() if self.coverage else None,
             "destinations": [row.to_dict(self.currency) for row in self.destinations],
         }
-        if self.google_flights_url:
-            payload["google_flights_url"] = self.google_flights_url
+        _put_truthy(payload, "google_flights_url", self.google_flights_url)
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         if self.pricing_errors:
             payload["pricing_errors"] = [row.to_dict() for row in self.pricing_errors]
-        if self.empty_reason is not None:
-            payload["empty_reason"] = self.empty_reason
+        _put_present(payload, "empty_reason", self.empty_reason)
         return payload
 
 
@@ -2153,8 +2139,7 @@ class HiddenCityOffer:
         }
         if self.return_date is not None:
             payload["return_date"] = self.return_date.isoformat()
-        if self.booking_url:
-            payload["booking_url"] = self.booking_url
+        _put_truthy(payload, "booking_url", self.booking_url)
         if self.warnings:
             payload["warnings"] = list(self.warnings)
         return payload
@@ -2200,12 +2185,10 @@ class HiddenCityReport:
             "offers": [offer.to_dict() for offer in self.offers],
             "warnings": list(self.warnings),
         }
-        if self.currency:
-            payload["currency"] = self.currency
+        _put_truthy(payload, "currency", self.currency)
         if self.return_date is not None:
             payload["return_date"] = self.return_date.isoformat()
-        if self.fetch_ms is not None:
-            payload["fetch_ms"] = self.fetch_ms
+        _put_present(payload, "fetch_ms", self.fetch_ms)
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         return payload
@@ -2265,18 +2248,12 @@ class AwardOffer:
             "cabin": self.cabin,
             "evidence": self.evidence,
         }
-        if self.taxes is not None:
-            payload["taxes"] = self.taxes
-        if self.currency:
-            payload["currency"] = self.currency
-        if self.remaining_seats is not None:
-            payload["remaining_seats"] = self.remaining_seats
-        if self.booking_url:
-            payload["booking_url"] = self.booking_url
-        if self.source:
-            payload["source"] = self.source
-        if self.airline:
-            payload["airline"] = self.airline
+        _put_present(payload, "taxes", self.taxes)
+        _put_truthy(payload, "currency", self.currency)
+        _put_present(payload, "remaining_seats", self.remaining_seats)
+        _put_truthy(payload, "booking_url", self.booking_url)
+        _put_truthy(payload, "source", self.source)
+        _put_truthy(payload, "airline", self.airline)
         if self.return_date is not None:
             payload["return_date"] = self.return_date.isoformat()
         return payload
@@ -2331,10 +2308,8 @@ class TransferPath:
             "covers": self.covers,
             "last_verified": self.last_verified.isoformat(),
         }
-        if self.transfer_minutes is not None:
-            payload["transfer_minutes"] = self.transfer_minutes
-        if self.promo_bonus_percent:
-            payload["promo_bonus_percent"] = self.promo_bonus_percent
+        _put_present(payload, "transfer_minutes", self.transfer_minutes)
+        _put_truthy(payload, "promo_bonus_percent", self.promo_bonus_percent)
         return payload
 
 
@@ -2382,12 +2357,9 @@ class AwardCompareReport:
             "transfer_paths": [path.to_dict() for path in self.transfer_paths],
             "playbook": [step.to_dict() for step in self.playbook],
         }
-        if self.currency:
-            payload["currency"] = self.currency
-        if self.cash_price is not None:
-            payload["cash_price"] = self.cash_price
-        if self.cpp_cents is not None:
-            payload["cpp_cents"] = self.cpp_cents
+        _put_truthy(payload, "currency", self.currency)
+        _put_present(payload, "cash_price", self.cash_price)
+        _put_present(payload, "cpp_cents", self.cpp_cents)
         return payload
 
 
@@ -2479,10 +2451,8 @@ class HotelRoomsReport:
             "error": self.error.to_dict() if self.error else None,
             "fetch_ms": self.fetch_ms,
         }
-        if self.answered_adults is not None:
-            payload["answered_adults"] = self.answered_adults
-        if self.answered_rooms is not None:
-            payload["answered_rooms"] = self.answered_rooms
+        _put_present(payload, "answered_adults", self.answered_adults)
+        _put_present(payload, "answered_rooms", self.answered_rooms)
         if self.answered_check_in is not None:
             payload["answered_check_in"] = self.answered_check_in.isoformat()
         if self.answered_check_out is not None:
