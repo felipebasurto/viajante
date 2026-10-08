@@ -218,7 +218,20 @@ def raw_rpc_error_status(text: str) -> Optional[int]:
 
 
 def _has_itinerary_slots(data: list[Any]) -> bool:
-    return len(data) > 3 and isinstance(data[2], list)
+    if len(data) > 3 and isinstance(data[2], list):
+        return True
+    # A rendered results frame (header, route echo, filter catalog) with both slots null
+    # is how the public page answers a query with no matching flights.
+    return (
+        len(data) > 7
+        and data[2] is None
+        and data[3] is None
+        and isinstance(data[0], list)
+        and isinstance(data[1], list)
+        and bool(data[1])
+        and isinstance(data[7], list)
+        and bool(data[7])
+    )
 
 
 def _collect_itineraries(data: list[Any]) -> list[Any]:

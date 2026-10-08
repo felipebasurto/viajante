@@ -49,6 +49,25 @@ class GoogleFlightsPageTests(unittest.TestCase):
         with self.assertRaises(EmptyShoppingResults):
             parse_shopping_page(_page(empty), currency="EUR")
 
+    def test_rendered_page_with_null_itinerary_slots_is_empty_not_markup_drift(self) -> None:
+        # Live shape for a nonstop search on a route with no nonstop flights: the page
+        # echoes the route and the filter catalog, and both itinerary slots are null.
+        header = [None, [[1, 2, 3], None, None, None, None, [[1]]], 0, "req"]
+        route_echo = [[[[["BCN", 0], "Barcelona"]], [[["NRT", 0], "Narita"]]]]
+        catalog = [[[None, 496], [None, 4725]], [[["ONEWORLD", "Oneworld"]]]]
+        empty = [header, route_echo, None, None, None, None, None, catalog] + [None] * 16
+        with self.assertRaises(EmptyShoppingResults):
+            parse_shopping_page(_page(empty), currency="EUR")
+
+    def test_null_itinerary_slots_without_a_rendered_frame_stay_markup_drift(self) -> None:
+        for data in (
+            [None, None, None, None],
+            [[None], None, None, None, None, None, None, [[]]],
+            [[None], [[]], None, None, None, None, None, None],
+        ):
+            with self.subTest(data=data), self.assertRaises(CompactParseMiss):
+                parse_shopping_page(_page(data), currency="EUR")
+
     def test_raw_rpc_status_keeps_errorresponse_visible(self) -> None:
         error_response = ')]}\'\n\n[["wrb.fr",null,null,null,null,[13],"generic"]]'
         self.assertEqual(raw_rpc_error_status(error_response), 13)
