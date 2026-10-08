@@ -16,6 +16,7 @@ from urllib.parse import urlencode, urljoin, urlsplit
 from selectolax.lexbor import LexborHTMLParser
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
+from viajante.consent import is_reject_form, restore_consent_cookies, save_consent_cookies
 from viajante.control import (
     SearchCancelled,
     SearchDeadline,
@@ -536,6 +537,7 @@ class ChromeSweepClient:
             asyncio.set_event_loop(self._loop)
             try:
                 self._session = curl_requests.AsyncSession(**session_kw)
+                restore_consent_cookies(self._session)
                 self._consent_lock = asyncio.Lock()
             except BaseException as exc:
                 self._error = exc
@@ -585,8 +587,10 @@ class ChromeSweepClient:
                 action, data=fields, timeout=timeout, allow_redirects=True
             )
             _raise_if_cancelled(cancel_event)
-            # ponytail: SOCS is process-lifetime; 429 reset builds a new client.
             self._consent_ok = not _is_consent_interstitial(str(save.url))
+            # Only a declined consent is kept, so the next process skips this round trip.
+            if self._consent_ok and is_reject_form(fields):
+                save_consent_cookies(self._session)
             return self._consent_ok
 
     async def _exchange(

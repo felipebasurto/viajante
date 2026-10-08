@@ -31,6 +31,12 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   the blocked message says when another install recorded the cooldown.
 - Public-page `ds:1` extraction no longer scans the whole page with the stdlib
   HTML parser (about 6x faster on a large results page).
+- A declined Google consent is kept for the next CLI call. When Google serves its
+  consent page, the sweep stores only the `SOCS` cookie in `google-consent.json` in
+  the state directory (30-day cap; accepted consent is never stored; an unreadable
+  file is ignored). A new process then skips the consent round trip. In a live check
+  on 2026-10-08, a cold `flights --fetch sweep` took 3 requests and about 1.7–2.2 s
+  before, and 1 request and about 0.9 s after (one run each, not a benchmark).
 
 ### Fixed
 
