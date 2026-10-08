@@ -65,14 +65,19 @@ def _sdk() -> types.SimpleNamespace:
     http_client = getattr(streamable_http, "streamable_http_client", None) or (
         streamable_http.streamablehttp_client
     )
-    from mcp.shared.memory import create_connected_server_and_client_session
+    from mcp.client import Client
     from mcp.types import TextContent
     from pydantic import AnyUrl
+
+    @contextlib.asynccontextmanager
+    async def memory_session(server):
+        async with Client(server) as client:
+            yield client.session
 
     return types.SimpleNamespace(
         ClientSession=ClientSession,
         http_client=http_client,
-        memory_session=create_connected_server_and_client_session,
+        memory_session=memory_session,
         TextContent=TextContent,
         AnyUrl=AnyUrl,
     )
@@ -126,7 +131,7 @@ def _session_call(server, calls):
     """Run `calls(session)` against the server over an in-memory MCP session."""
 
     async def main():
-        async with _sdk().memory_session(server._mcp_server) as session:
+        async with _sdk().memory_session(server) as session:
             return await calls(session)
 
     return asyncio.run(main())
@@ -159,15 +164,15 @@ class ToolMetadataTests(_StateDir):
                 hints = tool.annotations
                 self.assertIsNotNone(hints)
                 writes = name in WRITING_TOOLS
-                self.assertIs(hints.readOnlyHint, not writes)
-                self.assertIs(hints.destructiveHint, False)
-                self.assertIs(hints.idempotentHint, not writes)
-                self.assertIsInstance(hints.openWorldHint, bool)
+                self.assertIs(hints.read_only_hint, not writes)
+                self.assertIs(hints.destructive_hint, False)
+                self.assertIs(hints.idempotent_hint, not writes)
+                self.assertIsInstance(hints.open_world_hint, bool)
 
     def test_open_world_hint_matches_the_tools_that_reach_a_provider(self) -> None:
         for name, tool in self.tools.items():
             with self.subTest(tool=name):
-                self.assertEqual(tool.annotations.openWorldHint, name in NETWORK_TOOLS)
+                self.assertEqual(tool.annotations.open_world_hint, name in NETWORK_TOOLS)
 
     def test_network_tools_are_exactly_the_ones_on_the_search_runner(self) -> None:
         """Tools on `run_mcp_tool` fetch from a provider; every other tool must stay local."""
@@ -175,10 +180,10 @@ class ToolMetadataTests(_StateDir):
 
         def args_for(tool) -> dict:
             filler = {"string": "x", "array": [], "object": {}, "integer": 1, "number": 1.0}
-            props = tool.inputSchema.get("properties", {})
+            props = tool.input_schema.get("properties", {})
             return {
                 key: filler.get(props[key].get("type"), "x")
-                for key in tool.inputSchema.get("required", [])
+                for key in tool.input_schema.get("required", [])
             }
 
         async def calls(session):
@@ -259,7 +264,7 @@ class ToolMetadataTests(_StateDir):
             results = _session_call(self.server, calls)
         for name, result in results.items():
             with self.subTest(tool=name):
-                self.assertFalse(result.isError, _text(result))
+                self.assertFalse(result.is_error, _text(result))
 
 
 @NEEDS_SDK
@@ -273,7 +278,7 @@ class InvalidParameterTests(_StateDir):
             return await session.call_tool(tool, args)
 
         result = _session_call(self.server, calls)
-        self.assertTrue(result.isError, _text(result))
+        self.assertTrue(result.is_error, _text(result))
         return _error_body(result)
 
     def test_bad_inputs_have_one_stable_shape_and_a_provable_field(self) -> None:
@@ -342,7 +347,7 @@ class InvalidParameterTests(_StateDir):
                     return await session.call_tool(tool, args)
 
                 result = _session_call(self.server, calls)
-                self.assertTrue(result.isError)
+                self.assertTrue(result.is_error)
                 text = _text(result)
                 prefix = f"Error executing tool {tool}: "
                 self.assertTrue(text.startswith(prefix + "{"), text)
@@ -385,7 +390,7 @@ class InvalidParameterTests(_StateDir):
                     return await session.call_tool("search_flights", args)
 
                 result = _session_call(self.server, calls)
-                self.assertTrue(result.isError)
+                self.assertTrue(result.is_error)
                 body = _error_body(result)
                 self.assertEqual(body["code"], "invalid_parameter")
                 self.assertEqual(body["field"], field)
@@ -510,8 +515,8 @@ class SearchEnvelopeTests(_StateDir):
             )
 
         result = _session_call(server, calls)
-        self.assertFalse(result.isError)
-        body = result.structuredContent
+        self.assertFalse(result.is_error)
+        body = result.structured_content
         error = body["queries"][0]["error"]
         self.assertEqual((body["status"], body["empty_reason"]), ("rate_limited", "not_loaded"))
         self.assertEqual(body["retry_after"], error["retry_after"])
@@ -530,7 +535,7 @@ class SearchEnvelopeTests(_StateDir):
 
         with patch("viajante.mcp_handlers.search_flights", return_value=report):
             result = _session_call(server, calls)
-        self.assertTrue(result.isError)
+        self.assertTrue(result.is_error)
         text = _text(result)
         self.assertIn("viajante could not read the shape", text)
         self.assertNotIn("invalid_parameter", text)
@@ -635,19 +640,19 @@ class GuideSurfaceTests(_StateDir):
 
         async def calls(session):
             listed = await session.list_resources()
-            read = await session.read_resource(_sdk().AnyUrl("viajante://guide"))
+            read = await session.read_resource("viajante://guide")
             tool = await session.call_tool("get_guide", {})
             return listed, read, tool
 
         listed, read, tool = _session_call(server, calls)
         resource = next(r for r in listed.resources if str(r.uri) == "viajante://guide")
-        self.assertEqual(resource.mimeType, "text/markdown")
+        self.assertEqual(resource.mime_type, "text/markdown")
         self.assertEqual(read.contents[0].text, GUIDE)
-        self.assertFalse(tool.isError)
+        self.assertFalse(tool.is_error)
         body = json.loads(_text(tool))
         self.assertEqual(body["guide"], GUIDE)
         self.assertEqual((body["status"], body["completeness"]), ("ok", "complete"))
-        self.assertEqual(tool.structuredContent["guide"], GUIDE)
+        self.assertEqual(tool.structured_content["guide"], GUIDE)
         self.assertIn("retry_after", body)
         self.assertTrue(GUIDE.startswith("# viajante MCP guide"))
 
@@ -659,7 +664,7 @@ class GuideSurfaceTests(_StateDir):
             return listed, await session.call_tool("get_guide", {})
 
         listed, result = _session_call(server, calls)
-        schemas = {tool.name: tool.outputSchema for tool in listed.tools}
+        schemas = {tool.name: tool.output_schema for tool in listed.tools}
         schema = schemas["get_guide"]
         self.assertEqual(schema["properties"]["guide"]["type"], "string")
         self.assertIn("guide", schema["required"])
@@ -668,8 +673,8 @@ class GuideSurfaceTests(_StateDir):
         self.assertEqual(set(schema["properties"]) - envelope, {"guide"})
         self.assertNotIn("guide", schemas["get_runtime_info"]["properties"])
         self.assertIsNone(schemas["lookup_airports"])
-        jsonschema.validate(result.structuredContent, schema)
-        self.assertEqual(result.structuredContent["guide"], GUIDE)
+        jsonschema.validate(result.structured_content, schema)
+        self.assertEqual(result.structured_content["guide"], GUIDE)
 
     def test_server_instructions_are_the_short_text(self) -> None:
         server = mcp_server.build_server()
@@ -695,15 +700,22 @@ class MainArgumentTests(_StateDir):
 
     def test_http_binds_loopback_by_default_without_a_warning(self) -> None:
         build, server, err = self.run_main("--transport", "streamable-http")
-        build.assert_called_once_with(host="127.0.0.1", port=8000)
-        server.run.assert_called_once_with(transport="streamable-http")
+        build.assert_called_once_with()
+        # MCP 2 takes the bind address on run(), not on the server constructor.
+        kwargs = server.run.call_args.kwargs
+        self.assertEqual(kwargs["transport"], "streamable-http")
+        self.assertEqual((kwargs["host"], kwargs["port"]), ("127.0.0.1", 8000))
+        self.assertIn("transport_security", kwargs)
         self.assertEqual(err, "")
 
     def test_non_loopback_host_warns_about_the_shared_ip_and_cooldown(self) -> None:
-        build, _server, err = self.run_main(
+        build, server, err = self.run_main(
             "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "9001"
         )
-        build.assert_called_once_with(host="0.0.0.0", port=9001)
+        build.assert_called_once_with()
+        kwargs = server.run.call_args.kwargs
+        self.assertEqual((kwargs["host"], kwargs["port"]), ("0.0.0.0", 9001))
+        self.assertNotIn("transport_security", kwargs)
         self.assertIn("no authentication", err)
         self.assertIn("this machine's IP", err)
         self.assertIn("cooldown", err)
@@ -711,11 +723,11 @@ class MainArgumentTests(_StateDir):
     def test_any_loopback_address_is_quiet(self) -> None:
         for host in ("127.0.0.2", "127.255.255.254", "::1", "[::1]", "localhost"):
             with self.subTest(host=host):
-                build, _server, err = self.run_main(
+                _build, server, err = self.run_main(
                     "--transport", "streamable-http", "--host", host
                 )
                 self.assertEqual(err, "")
-                self.assertEqual(build.call_args.kwargs["host"], host)
+                self.assertEqual(server.run.call_args.kwargs["host"], host)
 
     def test_other_addresses_warn(self) -> None:
         for host in ("0.0.0.0", "192.168.1.20", "::", "example.com"):
@@ -857,7 +869,7 @@ class StreamableHttpSessionTests(_StateDir):
         async def session_calls():
             sdk = _sdk()
             url = f"http://127.0.0.1:{port}/mcp"
-            async with sdk.http_client(url) as (read, write, _session_id):
+            async with sdk.http_client(url) as (read, write):
                 async with sdk.ClientSession(read, write) as session:
                     init = await session.initialize()
                     tools = await session.list_tools()
@@ -883,14 +895,14 @@ class StreamableHttpSessionTests(_StateDir):
                     return init, tools, split, bad
 
         init, tools, split, bad = asyncio.run(asyncio.wait_for(session_calls(), 60))
-        self.assertEqual(init.serverInfo.name, "viajante")
+        self.assertEqual(init.server_info.name, "viajante")
         self.assertEqual(init.instructions, INSTRUCTIONS)
         self.assertEqual({t.name for t in tools.tools}, NETWORK_TOOLS | LOCAL_TOOLS)
-        self.assertFalse(split.isError, _text(split))
+        self.assertFalse(split.is_error, _text(split))
         payload = json.loads(_text(split))
         self.assertEqual(payload["currency"], "USD")
         self.assertEqual(payload["stays"][0]["total"], 200)
-        self.assertTrue(bad.isError)
+        self.assertTrue(bad.is_error)
         self.assertEqual(_error_body(bad)["field"], "query")
         self.assertIsInstance(bad.content[0], _sdk().TextContent)
 
@@ -953,16 +965,16 @@ class SplitTicketStdioTests(_StateDir):
                     return tools["search_split_tickets"], result
 
         tool, result = asyncio.run(asyncio.wait_for(calls(), 60))
-        self.assertFalse(result.isError, _text(result))
-        structured = result.structuredContent
-        validate(structured, tool.outputSchema)
+        self.assertFalse(result.is_error, _text(result))
+        structured = result.structured_content
+        validate(structured, tool.output_schema)
         self.assertEqual((structured["status"], structured["completeness"]), ("ok", "complete"))
         self.assertEqual(structured["observed_at"], structured["searched_at"])
         self.assertEqual(structured["observed_at_basis"], "fetch")
         row = structured["itineraries"][0]
         self.assertEqual((row["split_ticket"], row["connection_protected"]), (True, False))
         self.assertEqual(json.loads(_text(result)), structured)
-        self.assertTrue(tool.annotations.openWorldHint)
+        self.assertTrue(tool.annotations.open_world_hint)
         self.assertEqual(tool.title, "Split-ticket itineraries")
 
     def test_a_recorded_cooldown_returns_a_null_observation_over_stdio(self) -> None:
@@ -989,9 +1001,9 @@ class SplitTicketStdioTests(_StateDir):
                     return tools["search_split_tickets"], result
 
         tool, result = asyncio.run(asyncio.wait_for(calls(), 60))
-        self.assertFalse(result.isError, _text(result))
-        structured = result.structuredContent
-        validate(structured, tool.outputSchema)
+        self.assertFalse(result.is_error, _text(result))
+        structured = result.structured_content
+        validate(structured, tool.output_schema)
         self.assertEqual(
             (structured["status"], structured["completeness"], structured["empty_reason"]),
             ("rate_limited", "blocked", "not_loaded"),

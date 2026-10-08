@@ -107,7 +107,7 @@ One search at a time in the MCP process. Every tool has a title and annotations;
 open-world for the search tools, `recheck_offer`, `watch_price`, and `get_hotel_details`
 (`room_rates` false still runs during a search). `watch_price` writes. Bad input fails the call with
 JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
-after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=1.14.1`.
+after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=2.3.0`.
 
 A cancelled call frees the lock. `deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
 partial result: `coverage.complete=false`, `coverage.stopping_reason="deadline"`,

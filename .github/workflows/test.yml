@@ -33,7 +33,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --no-dev --extra mcp
       - name: Pin the declared minimum SDK
-        run: uv pip install 'mcp==1.14.1'
+        run: uv pip install 'mcp==2.3.0'
       - name: Stdio MCP smoke on the minimum SDK
         run: uv run --no-sync python scripts/mcp-smoke.py
         env:
@@ -58,7 +58,7 @@ jobs:
           uv venv /tmp/viajante-wheel
           WHEEL=$(echo dist/*.whl)
           uv pip install --python /tmp/viajante-wheel "$WHEEL"
-          uv pip install --python /tmp/viajante-wheel 'mcp>=1.14.1,<2'
+          uv pip install --python /tmp/viajante-wheel 'mcp>=2.3.0,<3'
           /tmp/viajante-wheel/bin/viajante airports JFK
           /tmp/viajante-wheel/bin/viajante --version
           /tmp/viajante-wheel/bin/python -c "from importlib.resources import files; t=files('viajante').joinpath('THIRD_PARTY_NOTICES').read_text(); assert 'Permission is hereby granted' in t"

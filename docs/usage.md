@@ -798,7 +798,7 @@ search at a time. See the signatures in
   `search_hotels`, `search_hotel_rooms`, `search_trip`, `search_split_tickets`,
   `search_hidden_city`, `recheck_offer`, `watch_price`, `get_hotel_details`)
   and `false` for the local ones. `get_hotel_details` with `room_rates` false
-  does not take the search worker. This needs `mcp>=1.14.1`.
+  does not take the search worker. This needs `mcp>=2.3.0`.
 - **Guide.** The server instructions hold only the load-bearing rules. The full
   operational guide is the `viajante://guide` resource (markdown) and the
   `get_guide` tool for clients without resource support.
