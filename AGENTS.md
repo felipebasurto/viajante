@@ -276,8 +276,8 @@ add new prose labels to any result.
 - Invalid input is an `isError` result: the SDK's exact `Error executing tool <name>: `
   prefix, then `{"error": {"code": "invalid_parameter", ...}}`. A viajante-side
   decode error or an unreadable result shape is never blamed on the caller.
-- The server needs `mcp>=1.14.1`. Loopback HTTP passes `transport_security`
-  explicitly. It has no auth, binds loopback by default, is never hosted, and has no
+- The server needs `mcp>=2.3.0` (MCP SDK 2.x, `MCPServer`). Loopback HTTP passes
+  `transport_security` to `run()` explicitly. It has no auth, binds loopback by default, is never hosted, and has no
   `remotes` in `server.json`.
 - Keep the server instructions and `viajante://guide` consistent with each other and
   with this file.

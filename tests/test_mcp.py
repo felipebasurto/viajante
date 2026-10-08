@@ -1031,7 +1031,7 @@ class _FakeFastMCP:
 
 
 def _sdk_module_names() -> tuple[str, ...]:
-    return ("mcp", "mcp.server", "mcp.server.fastmcp", "mcp.types")
+    return ("mcp", "mcp.server", "mcp.server.mcpserver", "mcp.types")
 
 
 class McpServerImportTests(unittest.TestCase):
@@ -1067,16 +1067,16 @@ class McpServerImportTests(unittest.TestCase):
             self.assertNotIn(name, sys.modules)
         fake_mcp = types.ModuleType("mcp")
         fake_server = types.ModuleType("mcp.server")
-        fake_fastmcp = types.ModuleType("mcp.server.fastmcp")
-        fake_fastmcp.FastMCP = _FakeFastMCP
+        fake_fastmcp = types.ModuleType("mcp.server.mcpserver")
+        fake_fastmcp.MCPServer = _FakeFastMCP
         fake_types = types.ModuleType("mcp.types")
         fake_types.ToolAnnotations = lambda **kw: kw
         fake_mcp.server = fake_server
         fake_mcp.types = fake_types
-        fake_server.fastmcp = fake_fastmcp
+        fake_server.mcpserver = fake_fastmcp
         sys.modules["mcp"] = fake_mcp
         sys.modules["mcp.server"] = fake_server
-        sys.modules["mcp.server.fastmcp"] = fake_fastmcp
+        sys.modules["mcp.server.mcpserver"] = fake_fastmcp
         sys.modules["mcp.types"] = fake_types
 
         def _drop_fakes() -> None:

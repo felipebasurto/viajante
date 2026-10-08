@@ -168,7 +168,7 @@ class StdioFinalistTests(unittest.TestCase):
         from mcp.client.stdio import stdio_client
 
         def payload(result):
-            self.assertFalse(result.isError, getattr(result, "content", result))
+            self.assertFalse(result.is_error, getattr(result, "content", result))
             return json.loads(next(item.text for item in result.content if item.type == "text"))
 
         async def exercise():
@@ -182,7 +182,7 @@ class StdioFinalistTests(unittest.TestCase):
                     flights_tool = next(
                         tool for tool in listing.tools if tool.name == "search_flights"
                     )
-                    self.assertNotIn("selection", flights_tool.inputSchema["properties"])
+                    self.assertNotIn("selection", flights_tool.input_schema["properties"])
                     original = payload(
                         await session.call_tool(
                             "search_flights",
@@ -309,19 +309,19 @@ class StdioFinalistTests(unittest.TestCase):
                         "get_hotel_details",
                         {"selection_id": hotel_ref, "room_rates": "yes"},
                     )
-                    self.assertTrue(rejected.isError)
+                    self.assertTrue(rejected.is_error)
                     self.assertIn("boolean", rejected.content[0].text)
                     missing = await session.call_tool(
                         "get_hotel_details", {"selection_id": "sel_missing"}
                     )
-                    self.assertTrue(missing.isError)
+                    self.assertTrue(missing.is_error)
                     self.assertIn("unknown or evicted", missing.content[0].text)
                     metro = await session.call_tool(
                         "search_flights",
                         {"routes": ["LON-CDG:2099-07-01"], "fetch": "sweep", "top": 1},
                     )
                     metro_body = payload(metro)
-                    jsonschema.validate(metro_body, flights_tool.outputSchema)
+                    jsonschema.validate(metro_body, flights_tool.output_schema)
                     self.assertEqual(
                         {row["query"]["origin"] for row in metro_body["queries"]},
                         {"LHR", "LGW", "STN", "LTN", "LCY", "SEN"},
@@ -341,13 +341,13 @@ class StdioFinalistTests(unittest.TestCase):
                         "search_flights",
                         {"routes": ["LON-LON:2099-07-01"], "fetch": "sweep"},
                     )
-                    self.assertTrue(same_metro.isError)
+                    self.assertTrue(same_metro.is_error)
                     self.assertIn("same metro", same_metro.content[0].text)
                     member = await session.call_tool(
                         "search_flights",
                         {"routes": ["JFK-NYC:2099-07-01"], "fetch": "sweep"},
                     )
-                    self.assertTrue(member.isError)
+                    self.assertTrue(member.is_error)
                     self.assertIn("same metro", member.content[0].text)
                     deadline = payload(await session.call_tool("validate_itinerary", DEADLINE_ARGS))
                     status = next(

@@ -37,6 +37,18 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   file is ignored). A new process then skips the consent round trip. In a live check
   on 2026-10-08, a cold `flights --fetch sweep` took 3 requests and about 1.7–2.2 s
   before, and 1 request and about 0.9 s after (one run each, not a benchmark).
+- The MCP server runs on the MCP Python SDK 2.x (`MCPServer` replaces `FastMCP`), so
+  the floor is `mcp>=2.3.0`. Transport settings (`host`, `port`,
+  `transport_security`) go to `run()`. A failed tool is still a result with
+  `is_error` and the same text, not a protocol error. Progress relays read the
+  request meta from the SDK context.
+- Upgraded the locked dependencies to their newest allowed versions: `mcp` 2.3.0,
+  `playwright` 1.63.0, `ruff` 0.16.10, `selectolax` 1.0.0, `pydantic` 2.14.0,
+  `curl-cffi` 0.16.3, `filelock` 4.0.12 and the rest of the lock. `pyee` stays at
+  13.x, the newest that `playwright` 1.63 allows.
+- Known difference: the SDK client's default negotiation (protocol 2026) sends no
+  `progressToken`, so progress notifications reach only clients that send one on the
+  legacy handshake.
 
 - `skiplagged.py` parses the shape Skiplagged's MCP actually returns
   (`structuredContent.flights`: `price.amount` / `price.currency`, `deepLink`,

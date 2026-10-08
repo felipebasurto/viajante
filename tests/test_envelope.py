@@ -1201,9 +1201,9 @@ class OutputSchemaTests(unittest.TestCase):
         self.assertEqual(len(tools), 22)
         for name, tool in tools.items():
             if name == "lookup_airports":
-                self.assertIsNone(tool.outputSchema)
+                self.assertIsNone(tool.output_schema)
                 continue
-            schema = tool.outputSchema
+            schema = tool.output_schema
             with self.subTest(tool=name):
                 own = {"guide"} if name == "get_guide" else set()
                 self.assertEqual(set(schema["required"]), ENVELOPE_KEYS | own)
@@ -1214,14 +1214,15 @@ class OutputSchemaTests(unittest.TestCase):
                 self.assertEqual(reasons, list(EMPTY_REASONS))
 
     def test_structured_content_keeps_every_payload_key(self) -> None:
-        _content, structured = asyncio.run(self.server.call_tool("get_runtime_info", {}))
+        # MCP 2 hands back a CallToolResult: text in .content, the payload in .structured_content.
+        structured = asyncio.run(self.server.call_tool("get_runtime_info", {})).structured_content
         self.assertTrue(ENVELOPE_KEYS <= set(structured))
         self.assertIn("viajante_version", structured)
-        content, structured = asyncio.run(
+        result = asyncio.run(
             self.server.call_tool("plan_stay_blocks", {"roster": {"2027-01-01": ["ana"]}})
         )
-        self.assertIn("blocks", structured)
-        self.assertEqual(json.loads(content[0].text)["status"], "ok")
+        self.assertIn("blocks", result.structured_content)
+        self.assertEqual(json.loads(result.content[0].text)["status"], "ok")
 
     def test_search_result_round_trips_with_payload_and_envelope(self) -> None:
         report = MagicMock()
@@ -1232,9 +1233,9 @@ class OutputSchemaTests(unittest.TestCase):
             "queries": [],
         }
         with patch("viajante.mcp_handlers.search_flights", return_value=report):
-            _content, structured = asyncio.run(
+            structured = asyncio.run(
                 self.server.call_tool("search_flights", {"routes": [f"JFK-LHR:{DAY.isoformat()}"]})
-            )
+            ).structured_content
         self.assertEqual(structured["schema_version"], 2)
         self.assertEqual(structured["observed_at"], "2026-08-10T10:00:00Z")
         self.assertEqual(structured["queries"], [])

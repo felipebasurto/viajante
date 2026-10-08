@@ -83,8 +83,8 @@ immediately instead of queueing. Lookups, local stay arithmetic, `price_history`
 verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
 
-Loopback HTTP passes `transport_security` explicitly, because the SDK only does that itself from 1.23 and this
-package supports 1.14.1 and later.
+Loopback HTTP passes `transport_security` to `run()` explicitly, so the allowed Host and Origin
+list is viajante's and does not depend on the SDK default.
 
 MCP client compatibility lives at the adapter edge. `mcp_server.py` registers each
 tool with a title and read-only annotations (`openWorldHint` only for tools that go
@@ -280,8 +280,7 @@ recorded cooldown answered every request (nothing was sent). `stamp_search`
 raises on a payload shape it does not recognise instead of defaulting to
 `no_results`. `verify_answer` is local: its `status` follows its verdict.
 
-Machine-readable schema: the mcp SDK (the supported floor is 1.14.1; earlier
-releases crash at startup on this module's postponed annotations) derives `outputSchema` and
+Machine-readable schema: the mcp SDK (the supported floor is 2.3.0; the 1.x line has no `MCPServer`) derives `outputSchema` and
 `structuredContent` from a tool's return annotation. The envelope is a pydantic
 model with `extra="allow"`, so tool-specific keys stay in the structured result.
 `lookup_airports` keeps its bare list return and has no output schema (a list

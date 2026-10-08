@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from functools import partial
 from typing import (
     Annotated,
@@ -107,7 +108,9 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-_CONTEXT_FACTORY: Optional[Callable[[], Any]] = None
+# The SDK's Context for the tool call in flight (set in ViajanteServer.call_tool). Progress
+# relays read it; a call outside a request sees None.
+_CURRENT_CONTEXT: ContextVar[Any] = ContextVar("viajante_mcp_context", default=None)
 _CURRENT: list = []
 _ENV_DEADLINE: Optional[float] = None
 _PROGRESS_WARNED = False
@@ -230,16 +233,25 @@ class ProgressRelay:
 
 def _progress_relay(loop: asyncio.AbstractEventLoop) -> Optional[ProgressRelay]:
     """A relay only when this request carries a progressToken; otherwise nothing is sent."""
-    if _CONTEXT_FACTORY is None:
+    ctx = _CURRENT_CONTEXT.get()
+    if ctx is None:
         return None
     try:
-        ctx = _CONTEXT_FACTORY()
         meta = ctx.request_context.meta
     except (LookupError, ValueError, AttributeError):
         return None
-    if meta is None or getattr(meta, "progressToken", None) is None:
+    if _progress_token(meta) is None:
         return None
     return ProgressRelay(ctx, loop, _PROGRESS_INTERVAL_SECONDS)
+
+
+def _progress_token(meta: Any) -> Any:
+    """The request's progress token. MCP 2 carries `_meta` as a TypedDict (a plain dict)."""
+    if meta is None:
+        return None
+    if isinstance(meta, dict):
+        return meta.get("progress_token", meta.get("progressToken"))
+    return getattr(meta, "progress_token", None) or getattr(meta, "progressToken", None)
 
 
 def _reraise(exc: ValueError, params: dict[str, object]) -> NoReturn:
@@ -340,10 +352,28 @@ def _unlabelled(node: Any) -> Any:
     return out
 
 
+def _tool_error_text(name: str, exc: Exception) -> str:
+    """The text a failed tool call returns: the original error, never the SDK's wrapper."""
+    cause = exc.__cause__ or exc
+    if isinstance(cause, ValueError) and callable(getattr(cause, "errors", None)):
+        body = validation_body(
+            cause.errors(include_url=False, include_context=False, include_input=False)
+        )
+        return _TOOL_ERROR_PREFIX.format(name=name) + body
+    return str(cause)
+
+
+def _error_result(text: str) -> Any:
+    from mcp.types import CallToolResult, TextContent
+
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
 def _compact_blocks(result: Any) -> Any:
     """Re-serialize JSON text blocks without indentation. Keys and values are untouched."""
-    if isinstance(result, tuple):
-        return (_compact_blocks(result[0]), *result[1:])
+    if hasattr(result, "structured_content") and hasattr(result, "content"):
+        # MCP 2 returns a CallToolResult; the text blocks are what travels.
+        return result.model_copy(update={"content": _compact_blocks(list(result.content))})
     if isinstance(result, list):
         return [
             block.model_copy(update={"text": _compact_json(block.text)})
@@ -400,9 +430,19 @@ def _loopback_security(host: str):
     )
 
 
-def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
-    global _ROOM_RATES, _CONTEXT_FACTORY, _ENV_DEADLINE, _DeadlineSeconds
-    from mcp.server.fastmcp import FastMCP
+def _run_options(*, http: bool, host: str, port: int) -> dict[str, object]:
+    """Transport settings for run(). MCP 2 takes host, port and the security rules there."""
+    if not http:
+        return {}
+    options: dict[str, object] = {"host": host, "port": port}
+    if _is_loopback(host):
+        options["transport_security"] = _loopback_security(host)
+    return options
+
+
+def build_server():
+    global _ROOM_RATES, _ENV_DEADLINE, _DeadlineSeconds
+    from mcp.server.mcpserver import MCPServer
     from mcp.types import ToolAnnotations
     from pydantic import BaseModel, BeforeValidator, ConfigDict, StrictFloat, StrictInt
 
@@ -426,31 +466,36 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     class GuideEnvelope(ToolEnvelope):
         guide: str
 
-    options: dict[str, object] = {}
-    if host is not None:
-        options = {"host": host, "port": port}
-        if _is_loopback(host):
-            options["transport_security"] = _loopback_security(host)
-
-    class ViajanteServer(FastMCP):
+    class ViajanteServer(MCPServer):
         async def list_tools(self):
             return [
                 tool.model_copy(
                     update={
-                        "inputSchema": _unlabelled(tool.inputSchema),
-                        "outputSchema": _unlabelled(tool.outputSchema),
+                        "input_schema": _unlabelled(tool.input_schema),
+                        "output_schema": _unlabelled(tool.output_schema),
                     }
                 )
                 for tool in await super().list_tools()
             ]
 
-        async def call_tool(self, name, arguments):
+        async def call_tool(self, name, arguments, context=None):
+            # A failed tool is a result with is_error, as FastMCP made it, so its text reaches
+            # the caller unchanged. MCP 2 would raise instead.
+            token = _CURRENT_CONTEXT.set(context)
+            try:
+                return _compact_blocks(await self._checked_call(name, arguments, context))
+            except Exception as exc:
+                return _error_result(_tool_error_text(name, exc))
+            finally:
+                _CURRENT_CONTEXT.reset(token)
+
+        async def _checked_call(self, name, arguments, context):
             # The SDK rejects missing or mistyped arguments before any handler runs, with
             # pydantic text. Give those the same JSON body as a handler's ValueError.
             # An argument the tool does not declare is a misspelled filter, never ignored.
             declared = next(
                 (
-                    t.inputSchema.get("properties", {})
+                    t.input_schema.get("properties", {})
                     for t in await self.list_tools()
                     if t.name == name
                 ),
@@ -461,19 +506,17 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
                 raise ValueError(
                     _TOOL_ERROR_PREFIX.format(name=name) + unknown_arguments_body(unknown)
                 )
-            try:
-                return _compact_blocks(await super().call_tool(name, arguments))
-            except Exception as exc:
-                cause = exc.__cause__
-                if not (isinstance(cause, ValueError) and callable(getattr(cause, "errors", None))):
-                    raise
-                body = validation_body(
-                    cause.errors(include_url=False, include_context=False, include_input=False)
-                )
-                raise type(exc)(_TOOL_ERROR_PREFIX.format(name=name) + body) from cause
+            return await super().call_tool(name, arguments, context)
 
-    server = ViajanteServer("viajante", instructions=_HELP, **options)
-    _CONTEXT_FACTORY = getattr(server, "get_context", None)
+    server = ViajanteServer("viajante", instructions=_HELP)
+
+    # Client-visible types that differ from the handler's annotation. tools/list pins these:
+    # the deadline and room_rates validators are strict, and the balances list has no item type.
+    overrides: dict[str, object] = {
+        "deadline_seconds": _DeadlineSeconds,
+        "room_rates": _ROOM_RATES,
+        "balances": Optional[list],
+    }
 
     # Client-visible types that differ from the handler's annotation. tools/list pins these:
     # the deadline and room_rates validators are strict, and the balances list has no item type.
@@ -845,14 +888,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             file=sys.stderr,
         )
     try:
-        server = build_server(host=host, port=port) if http else build_server()
+        server = build_server()
     except ValueError as exc:
         raise SystemExit(f"viajante-mcp: {exc}") from exc
     except ImportError as exc:
         raise SystemExit(
             "viajante-mcp requires the mcp extra. Install with: uv sync --extra mcp"
         ) from exc
-    server.run(transport=parsed.transport)
+    server.run(transport=parsed.transport, **_run_options(http=http, host=host, port=port))
 
 
 if __name__ == "__main__":

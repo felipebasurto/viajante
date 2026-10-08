@@ -126,10 +126,13 @@ def _args(routes=ROUTES, **extra: object) -> dict:
     return {"routes": list(routes), "fetch": "sweep", "currency": "USD", **extra}
 
 
-def _session(server):
-    from mcp.shared.memory import create_connected_server_and_client_session
+@contextlib.asynccontextmanager
+async def _session(server, mode="auto"):
+    from mcp.client import Client
 
-    return create_connected_server_and_client_session(server._mcp_server)
+    # Progress tokens ride the legacy handshake: MCP 2 negotiation does not send one.
+    async with Client(server, mode=mode) as client:
+        yield client.session
 
 
 class ProgressTests(McpControlCase):
@@ -143,13 +146,13 @@ class ProgressTests(McpControlCase):
         async def main():
             server = mcp_server.build_server()
             with patch.object(mcp_server, "_PROGRESS_INTERVAL_SECONDS", 0):
-                async with _session(server) as session:
+                async with _session(server, mode="legacy") as session:
                     return await session.call_tool(
                         "search_flights", _args(), progress_callback=on_progress
                     )
 
         result = asyncio.run(main())
-        self.assertFalse(result.isError, result)
+        self.assertFalse(result.is_error, result)
         values = [row[0] for row in seen]
         self.assertEqual(values, sorted(set(values)), "progress must strictly increase")
         indexed = [(p, t) for p, t, m in seen if m and m.startswith("[")]
@@ -162,7 +165,7 @@ class ProgressTests(McpControlCase):
 
         async def main(**kwargs):
             server = mcp_server.build_server()
-            async with _session(server) as session:
+            async with _session(server, mode="legacy") as session:
                 return await session.call_tool("search_flights", _args(), **kwargs)
 
         with patch("viajante.mcp_server.ProgressRelay") as relay:
@@ -230,8 +233,6 @@ class CancelTests(McpControlCase):
         self.assertEqual(source.calls, 1)
 
     def test_cancelled_request_stops_the_worker_and_frees_the_lock(self) -> None:
-        from mcp import types
-
         source = self.use_source(FakeFlights(delay=0.3))
         timings: dict[str, float] = {}
 
@@ -239,17 +240,10 @@ class CancelTests(McpControlCase):
             server = mcp_server.build_server()
             loop = asyncio.get_running_loop()
             async with _session(server) as session:
-                request_id = session._request_id
                 slow = asyncio.create_task(session.call_tool("search_flights", _args()))
                 self.assertTrue(await loop.run_in_executor(None, source.started.wait, 5))
-                await session.send_notification(
-                    types.ClientNotification(
-                        types.CancelledNotification(
-                            method="notifications/cancelled",
-                            params=types.CancelledNotificationParams(requestId=request_id),
-                        )
-                    )
-                )
+                # Abandoning the call makes the SDK send notifications/cancelled.
+                slow.cancel()
                 await asyncio.sleep(0.05)
                 timings["cancelled"] = time.monotonic()
                 source.delay = 0.0
@@ -260,7 +254,7 @@ class CancelTests(McpControlCase):
                 return calls_at_cancel, second
 
         calls_at_cancel, second = asyncio.run(main())
-        self.assertFalse(second.isError, second)
+        self.assertFalse(second.is_error, second)
         self.assertNotIn("already running", second.content[0].text)
         self.assertEqual(calls_at_cancel, 1)
         self.assertEqual(source.calls, 2, "cancelled queries 2 and 3 must never be sent")
@@ -378,9 +372,9 @@ class DeadlineTests(McpControlCase):
         async def main():
             async with _session(mcp_server.build_server()) as session:
                 first = await session.call_tool("search_flights", _args(deadline_seconds=30))
-                self.assertFalse(first.isError)
+                self.assertFalse(first.is_error)
                 bad = await session.call_tool("search_flights", _args(deadline_seconds=-1))
-                self.assertTrue(bad.isError)
+                self.assertTrue(bad.is_error)
                 self.assertIn("deadline_seconds", bad.content[0].text)
 
         asyncio.run(main())
@@ -395,7 +389,7 @@ class DeadlineTests(McpControlCase):
                 return await session.call_tool("search_flights", _args(deadline_seconds=0.1))
 
         result = asyncio.run(main())
-        self.assertFalse(result.isError, result)
+        self.assertFalse(result.is_error, result)
         payload = json.loads(result.content[0].text)
         statuses = [q["status"] for q in payload["queries"]]
         self.assertEqual(statuses, ["ok", "error", "error"])
@@ -491,11 +485,11 @@ class DeadlineTests(McpControlCase):
         for bad in ("5", True):
             with self.subTest(bad=bad):
                 result = asyncio.run(call(bad))
-                self.assertTrue(result.isError, result)
+                self.assertTrue(result.is_error, result)
         self.assertEqual(source.calls, 0)
         ok = asyncio.run(call(5))
-        self.assertFalse(ok.isError, ok)
-        self.assertEqual(asyncio.run(call(2.5)).isError, False)
+        self.assertFalse(ok.is_error, ok)
+        self.assertEqual(asyncio.run(call(2.5)).is_error, False)
 
     def test_expired_deadline_sends_no_query(self) -> None:
         source = FakeFlights()
@@ -711,7 +705,7 @@ class ReturnLegDeadlineTests(McpControlCase):
                 return await session.call_tool("search_flights", args)
 
         result = asyncio.run(main())
-        self.assertFalse(result.isError, result)
+        self.assertFalse(result.is_error, result)
         return json.loads(result.content[0].text)
 
     def test_deadline_in_the_return_leg_fetch_is_partial_and_never_cached(self) -> None:
@@ -901,7 +895,7 @@ class MergedEnvelopeTests(McpControlCase):
                 return await session.call_tool("search_flights", _args(**extra))
 
         result = asyncio.run(main())
-        self.assertFalse(result.isError, result)
+        self.assertFalse(result.is_error, result)
         return json.loads(result.content[0].text)
 
     def test_partial_deadline_result_stays_ok_and_partial(self) -> None:

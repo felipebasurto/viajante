@@ -44,33 +44,33 @@ async def main() -> None:
             await session.initialize()
             tools = (await session.list_tools()).tools
             check(len(tools) == 22, f"expected 22 tools, got {sorted(t.name for t in tools)}")
-            bare = {tool.name for tool in tools if tool.outputSchema is None}
+            bare = {tool.name for tool in tools if tool.output_schema is None}
             check(bare == {"lookup_airports"}, f"tools without an output schema: {sorted(bare)}")
             for tool in tools:
-                if tool.outputSchema is not None:
-                    missing = ENVELOPE - set(tool.outputSchema["properties"])
+                if tool.output_schema is not None:
+                    missing = ENVELOPE - set(tool.output_schema["properties"])
                     check(not missing, f"{tool.name} schema lacks {sorted(missing)}")
             result = await session.call_tool("get_runtime_info", {})
-            check(not result.isError, f"get_runtime_info errored: {result}")
-            structured = result.structuredContent
+            check(not result.is_error, f"get_runtime_info errored: {result}")
+            structured = result.structured_content
             check(bool(structured), "get_runtime_info returned no structuredContent")
             missing = ENVELOPE - set(structured)
             check(not missing, f"structuredContent lacks {sorted(missing)}")
             check(structured["status"] == "ok", f"status {structured['status']!r}")
             check(structured["completeness"] == "complete", f"completeness {structured!r}")
-            guide_schema = next(t.outputSchema for t in tools if t.name == "get_guide")
+            guide_schema = next(t.output_schema for t in tools if t.name == "get_guide")
             check(
                 guide_schema["properties"].get("guide", {}).get("type") == "string",
                 "get_guide schema does not declare the guide string",
             )
             check("guide" in guide_schema["required"], "get_guide schema does not require guide")
             guide = await session.call_tool("get_guide", {})
-            check(not guide.isError, f"get_guide errored: {guide}")
-            structured = guide.structuredContent or {}
+            check(not guide.is_error, f"get_guide errored: {guide}")
+            structured = guide.structured_content or {}
             check("guide" in structured, "get_guide returned no guide")
             check(not ENVELOPE - set(structured), "get_guide lacks the envelope")
             bad = await session.call_tool("get_runtime_info", {"verbos": True})
-            check(bad.isError, "an undeclared argument was accepted")
+            check(bad.is_error, "an undeclared argument was accepted")
             text = bad.content[0].text
             prefix = "Error executing tool get_runtime_info: "
             check(text.startswith(prefix + "{"), f"unexpected error text {text!r}")
