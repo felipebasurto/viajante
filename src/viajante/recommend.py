@@ -333,13 +333,14 @@ def recommend_offers(
     relaxed: Tuple[str, ...] = ()
     candidates: list[tuple[FlightOffer, Mapping[str, Status]]] = []
     for size in range(len(stated) + 1 if relax else 1):
-        for relaxed in combinations(stated, size):
+        for dropped in combinations(stated, size):
             candidates = [
                 row
                 for row in rows
-                if all(status != "unmet" or name in relaxed for name, status in row[1].items())
+                if all(status != "unmet" or name in dropped for name, status in row[1].items())
             ]
             if candidates:
+                relaxed = dropped
                 break
         if candidates:
             break
