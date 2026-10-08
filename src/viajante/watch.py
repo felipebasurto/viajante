@@ -18,7 +18,6 @@ from viajante.envelope import ENVELOPE_KEYS, stamp_local
 from viajante.evidence import record
 from viajante.history import (
     SCHEMA_VERSION,
-    HistoryReadError,
     change_between,
     forced_recording,
     price_history,
@@ -26,7 +25,14 @@ from viajante.history import (
     short_reason,
 )
 from viajante.mcp_handlers import check_search_params, search_flights_tool, search_hotels_tool
-from viajante.storage import default_state_dir, exclusive_lock, write_json_atomic
+from viajante.storage import (
+    UnreadableStateError,
+    default_state_dir,
+    exclusive_lock,
+    read_failure_reason,
+    read_optional_bytes,
+    write_json_atomic,
+)
 
 WATCHES_FILE = "price-watches.json"
 MAX_WATCHES = 50
@@ -36,40 +42,25 @@ _TOOLS: dict[str, Callable[..., Mapping[str, object]]] = {
     "flight": search_flights_tool,
     "hotel": search_hotels_tool,
 }
-
-
 _TOOL_NAMES = {"flight": "search_flights", "hotel": "search_hotels"}
-
-
-class WatchesReadError(OSError):
-    """The saved-watches file exists but could not be read. Never the same as no watches."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(f"{reason}; saved watches were not changed")
-        self.reason = reason
 
 
 def _path():
     return default_state_dir() / WATCHES_FILE
 
 
-def watches_read_reason(exc: BaseException) -> str:
-    """A reason safe to hand to an MCP client: no paths."""
-    if isinstance(exc, PermissionError):
-        return "permission denied accessing saved watches"
-    if isinstance(exc, OSError):
-        return f"could not access saved watches ({exc.strerror or type(exc).__name__})"
-    return "the saved watches file is corrupt"
-
-
 def _load() -> dict[str, dict]:
     """Saved watches. A missing file is empty; any other read or parse failure raises."""
     try:
-        data = json.loads(_path().read_text(encoding="utf-8"))
-    except FileNotFoundError:
+        raw = read_optional_bytes(_path())
+    except OSError as exc:
+        raise UnreadableStateError(read_failure_reason(exc, "saved watches")) from exc
+    if raw is None:
         return {}
-    except (OSError, ValueError) as exc:
-        raise WatchesReadError(watches_read_reason(exc)) from exc
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        data = None
     watches = data.get("watches") if isinstance(data, dict) else None
     if not isinstance(watches, dict) or not all(
         isinstance(spec, dict)
@@ -77,7 +68,7 @@ def _load() -> dict[str, dict]:
         and isinstance(spec.get("params"), dict)
         for spec in watches.values()
     ):
-        raise WatchesReadError(watches_read_reason(ValueError()))
+        raise UnreadableStateError("the saved watches file is corrupt")
     return watches
 
 
@@ -150,7 +141,7 @@ def watch_price_tool(
     if name is None:
         try:
             return stamp_local({"watches": list_watches()})
-        except WatchesReadError as exc:
+        except UnreadableStateError as exc:
             return stamp_local(
                 {"watches": None, "read_error": exc.reason},
                 status="failed",
@@ -169,22 +160,18 @@ def watch_price_tool(
     read_error: Optional[str] = None
     try:
         stored = read_observations(strict=True)
-    except HistoryReadError as exc:
+    except UnreadableStateError as exc:
         stored, read_error = [], short_reason(exc)
     results = []
-    ids = [row["id"] for row in stored]
+    position = {row["id"]: index for index, row in enumerate(stored)}
     stored_ids = {row["id"] for row in written.entries}
     for entry in [*written.entries, *written.unsaved]:
-        before = stored[: ids.index(entry["id"])] if entry["id"] in ids else stored
+        before = stored[: position.get(entry["id"], len(stored))]
         earlier = [
             row
             for row in before
             if row["query_key"] == entry["query_key"] and row["currency"] == entry["currency"]
         ]
-        other = any(
-            row["query_key"] == entry["query_key"] and row["currency"] != entry["currency"]
-            for row in stored
-        )
         result: dict[str, Any] = {
             "kind": entry["kind"],
             "query_key": entry["query_key"],
@@ -198,7 +185,10 @@ def watch_price_tool(
             result["note"] = "history could not be read; no comparison"
         elif not earlier:
             result["note"] = "First observation of this query in this currency; nothing to compare."
-            if other:
+            if any(
+                row["query_key"] == entry["query_key"] and row["currency"] != entry["currency"]
+                for row in stored
+            ):
                 result["note"] += " Observations in other currencies are never compared."
         results.append(result)
     cached = bool(payload.get("cached"))

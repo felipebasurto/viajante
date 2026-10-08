@@ -14,7 +14,6 @@ are never logged as new observations.
 from __future__ import annotations
 
 import contextlib
-import errno
 import functools
 import hashlib
 import inspect
@@ -33,7 +32,14 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 from viajante.control import check_cancelled
 from viajante.models import HotelQuerySuccess, QuerySuccess
 from viajante.runtime import package_version
-from viajante.storage import default_state_dir, exclusive_lock, write_bytes_atomic
+from viajante.storage import (
+    UnreadableStateError,
+    default_state_dir,
+    exclusive_lock,
+    read_failure_reason,
+    read_optional_bytes,
+    write_bytes_atomic,
+)
 
 ENV_RECORD = "VIAJANTE_PRICE_HISTORY"
 HISTORY_FILE = "price-history.jsonl"
@@ -45,7 +51,18 @@ DEFAULT_OBSERVATION_LIMIT = 20
 SCHEMA_VERSION = 1
 FLIGHT_PROVIDER = "google-flights"
 
+_SUBJECT = "price history"
 _TEXT_FIELDS = ("id", "kind", "query_key", "currency", "observed_at")
+_OBSERVATION_FIELDS = (
+    "id",
+    "observed_at",
+    "cheapest",
+    "cheapest_text",
+    "cheapest_label",
+    "offers",
+    "provider",
+    "fetch_backend",
+)
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FLIGHT_FILTERS = (
     "top",
@@ -100,77 +117,68 @@ def _path():
     return default_state_dir() / HISTORY_FILE
 
 
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def _valid(line: bytes) -> Optional[dict]:
     try:
         row = json.loads(line.decode("utf-8"))
     except ValueError:  # includes UnicodeDecodeError
         return None
-    if not isinstance(row, dict):
-        return None
-    if not all(isinstance(row.get(key), str) for key in _TEXT_FIELDS):
+    if not isinstance(row, dict) or not all(isinstance(row.get(k), str) for k in _TEXT_FIELDS):
         return None
     cheapest = row.get("cheapest")
     if isinstance(cheapest, bool) or not isinstance(cheapest, (int, float)):
         return None
     try:
-        finite = math.isfinite(cheapest)
+        if not math.isfinite(cheapest) or cheapest <= 0:
+            return None
     except OverflowError:
-        # JSON integers are arbitrary precision; malformed local history must
-        # not make a reader or the next append fail while coercing one to float.
+        # JSON integers are arbitrary precision; malformed local history must not make
+        # a reader or the next append fail while coercing one to float.
         return None
-    if not finite or cheapest <= 0:
+    query, filters = row.get("query"), row.get("filters")
+    if not isinstance(query, dict) or not isinstance(filters, dict):
         return None
-    if not isinstance(row.get("query"), dict) or not isinstance(row.get("filters"), dict):
-        return None
-    query = row["query"]
     legs = query.get("legs")
-    if legs is not None and (
-        not isinstance(legs, list)
-        or not all(
+    if legs is not None and not (
+        isinstance(legs, list)
+        and all(
             isinstance(leg, dict) and isinstance(leg.get("departure_date"), str) for leg in legs
         )
     ):
         return None
-    required = (
-        ("location", "check_in", "check_out")
-        if row["kind"] == "hotel"
-        else ("origin", "destination", "departure_date", "trip")
-    )
-    if row["kind"] not in ("flight", "hotel") or not all(
-        isinstance(query.get(key), str) for key in required
-    ):
+    if row["kind"] == "hotel":
+        text_keys, count_keys = ("location", "check_in", "check_out"), ("adults", "rooms")
+    elif row["kind"] == "flight":
+        text_keys, count_keys = ("origin", "destination", "departure_date", "trip"), ("adults",)
+    else:
         return None
-    if not all(
-        isinstance(query.get(key), int) and not isinstance(query[key], bool) and query[key] > 0
-        for key in (("adults", "rooms") if row["kind"] == "hotel" else ("adults",))
-    ):
+    if not all(isinstance(query.get(k), str) for k in text_keys):
+        return None
+    if not all(_positive_int(query.get(k)) for k in count_keys):
         return None
     return row
 
 
-class HistoryReadError(OSError):
-    """The log exists but could not be read. Never the same as an empty history."""
-
-
-def _raw_lines() -> list[bytes]:
+def _lines() -> list[bytes]:
     """Non-empty lines of the log. A missing file is empty; any other read error raises."""
     try:
-        data = _path().read_bytes()
-    except FileNotFoundError:
-        return []
+        data = read_optional_bytes(_path())
     except OSError as exc:
-        raise HistoryReadError(exc.errno, exc.strerror, exc.filename) from exc
-    return [line for line in data.split(b"\n") if line.strip()]
+        raise UnreadableStateError(read_failure_reason(exc, _SUBJECT)) from exc
+    return [] if data is None else [line for line in data.split(b"\n") if line.strip()]
 
 
 def read_observations(*, strict: bool = False) -> list[dict]:
     """Every readable entry, oldest first. Unparsable lines are skipped one by one.
 
-    An unreadable file reads as empty unless ``strict``, which raises HistoryReadError.
+    An unreadable file reads as empty unless ``strict``, which raises UnreadableStateError.
     """
     try:
-        lines = _raw_lines()
-    except HistoryReadError:
+        lines = _lines()
+    except UnreadableStateError:
         if strict:
             raise
         return []
@@ -188,25 +196,21 @@ def append_observations(entries: Sequence[Mapping[str, Any]]) -> None:
         json.dumps(dict(row), ensure_ascii=False, sort_keys=True).encode("utf-8") for row in entries
     ]
     with exclusive_lock(_path()):
-        lines = _raw_lines() + new_lines
-        excess = sum(_valid(line) is not None for line in lines) - MAX_ENTRIES
-        kept = []
-        for line in lines:
-            if excess > 0 and _valid(line) is not None:
-                excess -= 1
-                continue
-            kept.append(line)
+        lines = _lines() + new_lines
+        valid = [index for index, line in enumerate(lines) if _valid(line) is not None]
+        dropped = set(valid[: max(0, len(valid) - MAX_ENTRIES)])
+        kept = [line for index, line in enumerate(lines) if index not in dropped]
         write_bytes_atomic(b"\n".join(kept) + b"\n", _path())
 
 
 def clear_history() -> tuple[int, int]:
     """Delete the log. Returns (observations, unreadable lines) it held.
 
-    Refuses (HistoryReadError) when the file exists but cannot be read, so it never
+    Refuses (UnreadableStateError) when the file exists but cannot be read, so it never
     reports an unseen history as empty.
     """
     with exclusive_lock(_path()):
-        lines = _raw_lines()
+        lines = _lines()
         valid = sum(_valid(line) is not None for line in lines)
         _path().unlink(missing_ok=True)
     return valid, len(lines) - valid
@@ -214,12 +218,10 @@ def clear_history() -> tuple[int, int]:
 
 def short_reason(exc: BaseException) -> str:
     """A reason safe to hand to an MCP client: no paths, no temp file names."""
+    if isinstance(exc, UnreadableStateError):
+        return exc.reason
     if isinstance(exc, OSError):
-        reading = isinstance(exc, HistoryReadError)
-        if exc.errno in (errno.EACCES, errno.EPERM):
-            return f"permission denied {'accessing' if reading else 'writing'} price history"
-        verb = "access" if reading else "write"
-        return f"could not {verb} price history ({exc.strerror or type(exc).__name__})"
+        return read_failure_reason(exc, _SUBJECT, writing=True)
     return f"price history could not be recorded ({type(exc).__name__})"
 
 
@@ -378,15 +380,13 @@ def change_between(previous: Mapping[str, Any], current: Mapping[str, Any]) -> d
 
 def trend(rows: Sequence[Mapping[str, Any]]) -> dict:
     """Facts about one chronological same-query, same-currency series. No forecast."""
-    first, last = rows[0], rows[-1]
-    low = min(rows, key=lambda row: row["cheapest"])
-    high = max(rows, key=lambda row: row["cheapest"])
+    last = rows[-1]
     out: dict[str, Any] = {
         "observation_count": len(rows),
-        "first_seen": _point(first),
+        "first_seen": _point(rows[0]),
         "last_seen": _point(last),
-        "lowest": _point(low),
-        "highest": _point(high),
+        "lowest": _point(min(rows, key=lambda row: row["cheapest"])),
+        "highest": _point(max(rows, key=lambda row: row["cheapest"])),
         "change_since_previous": None,
     }
     if len(rows) == 1:
@@ -452,20 +452,7 @@ def series(rows: Sequence[Mapping[str, Any]], *, limit: int = DEFAULT_OBSERVATIO
                 "filters": group[0]["filters"],
                 "currency": currency,
                 "observations": [
-                    {
-                        field: row.get(field)
-                        for field in (
-                            "id",
-                            "observed_at",
-                            "cheapest",
-                            "cheapest_text",
-                            "cheapest_label",
-                            "offers",
-                            "provider",
-                            "fetch_backend",
-                        )
-                    }
-                    for row in shown
+                    {name: row.get(name) for name in _OBSERVATION_FIELDS} for row in shown
                 ],
                 "observations_omitted": len(group) - len(shown),
                 "trend": trend(group),
@@ -490,7 +477,7 @@ def price_history(
     read_error: Optional[str] = None
     try:
         stored = read_observations(strict=True)
-    except HistoryReadError as exc:
+    except UnreadableStateError as exc:
         stored, read_error = [], short_reason(exc)
     matched = select(
         stored,
