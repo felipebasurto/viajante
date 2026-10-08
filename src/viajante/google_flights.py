@@ -417,7 +417,7 @@ class _CooldownClient:
         self._advice = rate_limit_advice(state, sent=False)
         self._basis = str(state.get("basis", "unknown"))
 
-    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+    def _answer(self, url: str) -> SweepHttpResponse:
         return SweepHttpResponse(
             0,
             "",
@@ -429,19 +429,13 @@ class _CooldownClient:
             cooldown_basis=self._basis,
         )
 
+    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
+        return self._answer(url)
+
     def post(
         self, url: str, *, data: str, headers: Mapping[str, str], timeout: float
     ) -> SweepHttpResponse:
-        return SweepHttpResponse(
-            0,
-            "",
-            url,
-            rate_limit=self._advice,
-            request_sent=False,
-            attempts=0,
-            stopped=True,
-            cooldown_basis=self._basis,
-        )
+        return self._answer(url)
 
     def close(self) -> None:
         return None
