@@ -12,7 +12,8 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 import viajante
-from viajante.cli import _format_clock, _join_cancellation_rows, _print_report, main
+from viajante.cli import main
+from viajante.cli_report import _format_clock, _join_cancellation_rows, _print_report
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
