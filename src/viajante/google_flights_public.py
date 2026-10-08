@@ -1049,9 +1049,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             if self._proxy is None:
                 checkpoint()
                 state = (
-                    note_rate_limited(retry_after_seconds)
+                    note_rate_limited(retry_after_seconds, endpoint=response.url)
                     if response.status == 429
-                    else note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+                    else note_rate_limited(
+                        basis="heuristic_rpc_13", cause="rpc_13", endpoint=response.url
+                    )
                 )
                 reason = rate_limit_advice(state, reason=cause)
                 basis = state.get("basis", "unknown")

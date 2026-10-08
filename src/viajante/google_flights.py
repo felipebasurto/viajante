@@ -610,14 +610,16 @@ class ChromeSweepClient:
             return out
         _raise_if_cancelled(cancel_event)
         if out.status == 429:
-            state = note_rate_limited(_retry_after_seconds(response))
+            state = note_rate_limited(_retry_after_seconds(response), endpoint=str(response.url))
             out = replace(
                 out,
                 rate_limit=rate_limit_advice(state),
                 cooldown_basis=state.get("basis", "unknown"),
             )
         elif out.status == 200 and raw_rpc_error_status(out.text) == RPC_THROTTLE_STATUS:
-            state = note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+            state = note_rate_limited(
+                basis="heuristic_rpc_13", cause="rpc_13", endpoint=str(response.url)
+            )
             out = replace(
                 out,
                 rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}"),
