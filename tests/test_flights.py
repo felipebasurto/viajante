@@ -16,6 +16,7 @@ from viajante.flights import (
     _overnight_from_owned_clocks,
     _rank_offers,
     _run_search,
+    _shop_offers,
     as_trips,
     classify_failure,
     compare_nonstop_vs_one_stop,
@@ -30,6 +31,7 @@ from viajante.flights import (
     parse_depart_window,
     parse_flight_plan,
     parse_named_clock,
+    parse_offer_filters,
     parse_overnight_airports,
     parse_overnight_lists,
     parse_route_specs,
@@ -1346,25 +1348,54 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(short, max_stops=1, max_layover_hours=10))
 
 
+class ShopOffersSinglePassTests(unittest.TestCase):
+    def test_one_parse_gives_the_enforced_and_relaxed_walks(self) -> None:
+        cards = (
+            card(price="100 €", departure="07:00", arrival="08:00", duration="1 h"),
+            card(
+                price="90 €",
+                stops="1 stop",
+                layover_city="Paris",
+                layover_hours=2.0,
+                departure="09:00",
+                arrival="15:00",
+                duration="6 h",
+            ),
+            card(
+                price="80 €", stops="2 stops", departure="10:00", arrival="20:00", duration="10 h"
+            ),
+            card(price="70 €", departure="22:00", arrival="23:00", duration="1 h"),
+            card(price="not priced", departure="08:00", arrival="09:00", duration="1 h"),
+        )
+        trip = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+        filters = parse_offer_filters(depart_window=(6 * 60, 12 * 60), max_duration_hours=5.0)
+        pool, eligible = _shop_offers(cards, trip, filters, baggage_buffer=0)
+        enforced = [
+            offer
+            for raw in cards
+            if (offer := _normalize_offer(raw, 1, **vars(filters))) is not None
+        ]
+        relaxed = [
+            offer
+            for raw in cards
+            if (offer := _normalize_offer(raw, 1, enforce_requirements=False, **vars(filters)))
+            is not None
+        ]
+        self.assertEqual(eligible, enforced)
+        self.assertEqual(pool, relaxed)
+        self.assertEqual([offer.price for offer in eligible], [100.0])
+        self.assertEqual([offer.price for offer in pool], [100.0, 90.0, 80.0, 70.0])
+
+
 class FetchModeTests(unittest.TestCase):
-    def test_auto_is_public_sweep_for_one_or_two_queries(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 1), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 2), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 1, packaged=True), "sweep")
-        self.assertEqual(resolve_fetch_mode("detail", 1, packaged=True), "detail")
+    def test_auto_and_sweep_are_the_public_sweep(self) -> None:
+        self.assertEqual(resolve_fetch_mode("auto"), "sweep")
+        self.assertEqual(resolve_fetch_mode("sweep"), "sweep")
 
-    def test_auto_is_sweep_for_three_or_more(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 3), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 10), "sweep")
-
-    def test_explicit_modes_win(self) -> None:
-        self.assertEqual(resolve_fetch_mode("sweep", 1), "sweep")
-        self.assertEqual(resolve_fetch_mode("detail", 8), "detail")
-
-    def test_auto_without_browser_stays_on_sweep(self) -> None:
-        self.assertEqual(resolve_fetch_mode("auto", 1, browser_available=False), "sweep")
-        self.assertEqual(resolve_fetch_mode("auto", 2, browser_available=False), "sweep")
-        self.assertEqual(resolve_fetch_mode("detail", 1, browser_available=False), "detail")
+    def test_detail_is_explicit_only(self) -> None:
+        self.assertEqual(resolve_fetch_mode("detail"), "detail")
+        with self.assertRaises(ValueError):
+            resolve_fetch_mode("browser")  # type: ignore[arg-type]
 
     def test_fallback_on_empty_or_failure_not_on_ok(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
