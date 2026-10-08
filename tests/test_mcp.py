@@ -740,7 +740,7 @@ class McpHandlerTests(unittest.TestCase):
     def test_search_hotel_rooms_forwards_party_and_rejects_past_check_in(self) -> None:
         fake = _report(provider="skiplagged", rates=())
         with patch("viajante.mcp_handlers.search_hotel_rooms", return_value=fake) as search:
-            search_hotel_rooms_tool(25584, FUTURE, FUTURE_OUT, adults=5, rooms=2)
+            search_hotel_rooms_tool(FUTURE, FUTURE_OUT, hotel_id=25584, adults=5, rooms=2)
         self.assertEqual(search.call_args.args[0], 25584)
         self.assertEqual(
             search.call_args.kwargs,
@@ -748,7 +748,7 @@ class McpHandlerTests(unittest.TestCase):
         )
         with patch("viajante.mcp_handlers.search_hotel_rooms") as search:
             with self.assertRaises(ValueError):
-                search_hotel_rooms_tool(25584, "2020-01-01", "2020-01-04")
+                search_hotel_rooms_tool("2020-01-01", "2020-01-04", hotel_id=25584)
         search.assert_not_called()
 
     def test_search_hotels_unnamed_currency_is_ok_only_for_skiplagged(self) -> None:
