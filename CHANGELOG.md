@@ -10,6 +10,8 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-08
+
 ### Changed
 
 - **Breaking (flight `recommendation`, schema 2):** shortlist entries reference
@@ -335,7 +337,8 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.4.7...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.0...develop
+[1.5.0]: https://github.com/felipebasurto/viajante/compare/v1.4.7...v1.5.0
 [1.4.7]: https://github.com/felipebasurto/viajante/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/felipebasurto/viajante/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/felipebasurto/viajante/compare/v1.4.1...v1.4.5
