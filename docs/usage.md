@@ -7,9 +7,7 @@ This guide assumes Viajante is installed. See the
 [browser support](../README.md#optional-browser-support) for Booking.com.
 Examples use November 2026; replace the dates with future travel dates.
 
-The [1.4.5 release record](release-1.4.5.md) lists changes from 1.4.1. The
-[1.4.6 candidate record](release-1.4.6.md) documents the public-page flight
-transport and its current limits; release validation is still pending.
+Release history is in the [changelog](../CHANGELOG.md).
 
 - [Flights](#flights)
 - [Dates and flexible travel](#dates-and-flexible-travel)
@@ -59,9 +57,9 @@ list and accepted values.
 | `--cabin business` | Select a cabin: `economy`, `premium-economy`, `business`, or `first`. |
 | `--max-stops 0` | Set the maximum number of stops to `0`, `1`, or `2`. |
 | `--airlines BA,AA` / `--exclude-airlines BA,AA` | Include or exclude airline codes. Public-page sweep only; see the limits below. |
-| `--alliance oneworld` | Include `oneworld`, `skyteam`, or `star`. Public-page sweep only. `--exclude-alliance` is refused in 1.4.6. |
+| `--alliance oneworld` | Include `oneworld`, `skyteam`, or `star`. Public-page sweep only. `--exclude-alliance` is refused: no page evidence can prove it. |
 | `--carry-on` | Request one carry-on bag for the whole party (Google's counter is a party total). Public-page sweep only. |
-| `--bags N` | Checked bags. Refused in 1.4.6: no transport can verify them. |
+| `--bags N` | Checked bags. Refused: no transport can verify them. |
 | `--depart-window 06:00-12:00` | Keep flights departing within a local time window. |
 | `--depart-after 08:00` / `--arrive-before 20:00` | Filter on reported local departure or arrival times. |
 | `--via IST` / `--exclude-via DXB` | Filter on reported connecting airports. |
@@ -96,6 +94,15 @@ For `--trip rt`, the page's displayed outbound amounts are selection references,
 not standalone fares. Viajante checks at most eight outbound candidates on
 selected return pages; only the provider's returned package total is reported.
 The report is scope-bound because additional outbound choices were not checked.
+
+Named `--max-stops 0` with a named positive `--min-layover` (or a `--via` that needs a layover) keeps both
+constraints and prints one note that they cannot both be met; neither is dropped and no one-stop is invented.
+Overnight constraints combine: `--require-overnight` and `--via` both apply, and a contradiction keeps both
+overnight constraints. `--alliance` has no member list; the page's own alliance row is the only evidence.
+A non-zero `--baggage-buffer` marks offers `needs_bag_verify` while bag counts are unknown.
+
+Exclusions: a named origin or destination in an exclude list returns nothing, unless `--nearby` already owned a
+non-excluded airport in the same city. An unnamed side stays unset. Do not rewrite a route to a substitute airport.
 
 ### Metro city codes
 
@@ -201,6 +208,9 @@ not compared on price: `price_comparison` says `skipped_mixed_currency` or
 The other weights are rescaled (duration 0.7, stops 0.3), as `scoring.weights`
 shows. Viajante does not convert.
 
+The labels name a pick's role in the shortlist. They describe the offer, not a decision: read the
+fields in `highlights` and `tradeoffs`, and make the choice yourself.
+
 **Wording.** `highlights` and `tradeoffs` restate returned fields only: fare
 text, duration, stops, layover city and length, clocks, carrier, bag counts. A
 missing fact reads as unknown ("Checked bag fee unknown", "Carry-on not shown").
@@ -222,14 +232,15 @@ failure; only a recognized provider-empty shape means no results. Round-trip
 searches check at most eight outbound candidates through selected return pages.
 The public page bootstraps no multi-city results, so `auto` and `sweep` refuse
 `--trip multi` before any request. Use an explicit `--fetch detail` for
-multi-city; it drives the browser through each leg and is not yet verified
-against the live provider in 1.4.6. Detail refuses bag and carrier filters.
+multi-city; it drives the browser through each leg and is not yet verified against the live provider. Detail refuses bag and carrier filters.
 
 Flights, dates, and flex sweep requests accept `--proxy URL` (`proxy` in MCP).
 `VIAJANTE_SWEEP_MODE=standard` allows at most 8 concurrent GETs; `conservative`
 allows 2. Any other value fails before provider access. This is a local
-concurrency setting, not a provider quota guarantee. Browser detail requests
-have built-in pacing and run sequentially.
+concurrency setting, not a provider quota guarantee. Browser detail requests have built-in pacing and run sequentially: 4.5 s plus up to 1.5 s of jitter between
+queries, and 3 attempts with 8 s exponential backoff and jitter, with a browser reset after each failed attempt.
+No flag shortens that or parallelizes it. Progress goes to stderr. Detail uses Playwright's own Chromium user agent; do not spoof a stale
+browser UA. Flight pages block images, media, and fonts; Booking.com blocks images and media.
 
 ### Split tickets (opt-in)
 
@@ -242,7 +253,8 @@ These filters do not yet apply to split itineraries. `--split-via` and
 split pairings in the requested currency.
 
 `--split-tickets` adds separately ticketed alternatives built only from real
-one-way quotes. It costs extra searches, so it is off by default and capped.
+one-way quotes. It costs extra searches, so it is off by default and capped. Hub splits use two
+searches per hub (three with `--split-overnight`); mixed one-ways use two searches in total.
 
 ```bash
 # One-way: origin to hub on one ticket, hub to destination on another
@@ -323,15 +335,14 @@ This checks November 12–18 with one public-page GET per day (up to 31), select
 the cheapest returned date, then makes one additional fresh public-page search
 for that date when a provider block has not stopped the search. Day failures
 remain attached to their rows; an unpriced or failed day is never treated as a
-fare. `dates` and `flex` use public-page GETs even if their accepted fetch
-setting says `detail`; they do not launch Playwright.
+fare. `dates` and `flex` always use public-page GETs and never launch Playwright. For `flex`, `typical` is stamped at report level from the same window.
 
 `dates` uses the same explicit per-day GET fanout across its requested window,
 up to 31 days. Successful dates stay visible when other dates fail. An ordinary
 `flights` query does not add an automatic 31-day typical-price lookup; dates and
 flex use only the windows the caller explicitly named.
 
-Date grids stay in date order unless you request another sort. Sorting a grid
+Each day's row picks its winner by fare plus any baggage buffer. Date grids stay in date order unless you request another sort. Sorting a grid
 does not cut it down to a top-N list. When there are at least three priced days,
 `typical` describes the same-route median of the explicitly searched days. It is
 omitted when fewer than three days are priced or the query is multi-city.
@@ -345,9 +356,9 @@ a same-city airport) and date, and each priced catalog row must prove its
 origin and destination, otherwise the read fails or the row is dropped. Only
 the page's default one-adult economy state can be proven, so a non-default
 party or cabin is refused before networking. Owned destinations are then
-shopped over the public page as ordinary one-way searches. A raw RPC status 13
-on the catalog stops the search and records the shared Google cooldown. In
-1.4.6 that status was frequent on the catalog request, so an empty or blocked
+shopped over the public page as ordinary one-way searches. `--exclude-regions` is explore-only and excludes
+destinations by owned IANA time-zone prefix. Unnamed sort is by price. A raw RPC status 13
+on the catalog stops the search and records the shared Google cooldown. A raw status 13 on the catalog request can stop the read, so an empty or blocked
 explore proves nothing about destinations; name routes and use `flights`,
 `dates`, or `flex` instead.
 
@@ -372,7 +383,9 @@ viajante hotels Tokyo 2026-11-12 2026-11-16 \
 
 The CLI defaults to Booking.com. MCP defaults to Google Hotels. Google ratings
 use a 0–5 scale; Booking.com ratings use 0–10, so choose the threshold for your
-source.
+source. Google Hotels HTTP retries with the same 3 attempts and 8 s backoff as Booking. A Booking card-wait
+timeout fails at once, and a Booking challenge is not retried in a loop. Non-property titles such as `closed`
+are dropped.
 
 `--allow-non-refundable` removes the default free-cancellation requirement.
 On Booking.com, `--compare-cancellation` runs two sequential searches, with
@@ -384,6 +397,9 @@ separately. If a free-cancellation filter was applied but the property card
 does not state cancellation terms, the output says `filter applied; card
 silent`. It does not mark the property's terms as confirmed free cancellation.
 Property type, room counts, and cancellation terms can remain unknown.
+A card title containing `apartment` may infer an entire unit when the card is silent. A card whose room label
+contradicts an entire-unit chip is `lodging_evidence_conflict`: lodging kind and property type then stay unknown,
+and the title and raw evidence are kept instead of choosing one label.
 
 Use `--near LAT,LNG` for a named reference point and `--max-distance-km N`
 to enforce a radius before price ranking. N must be finite and positive and
@@ -400,6 +416,24 @@ Google entity and search URLs reproduce dates, adults, rooms and currency.
 `link_context` and `applied.url_context` state whether a link identifies a
 stay, property, location or none. A stay context does not guarantee the quoted
 price or availability. `verify_answer` checks provenance, not link reachability.
+
+### Skiplagged hotels and room rates (opt-in)
+
+`--source skiplagged` searches Skiplagged. Its quotes are USD: omit `--currency` or name USD. Another currency is
+`currency_mismatch`, and nothing converts. It takes at most 10 adults and 9 rooms per search, has no
+`--entire-home`, and its search cards carry no cancellation terms, so the output says so. It matches the city
+loosely; `resolved_place` is the place it actually searched. Its rows are never mixed with Google or Booking rows.
+
+For one to three finalists, fetch room rates (at most five rooms per request, in provider order, USD):
+
+```bash
+viajante hotel-rooms 2026-11-12 2026-11-16 --hotel-id ID
+viajante hotel-rooms 2026-11-12 2026-11-16 --name "Hotel Name" --city Lisbon
+```
+
+A name matches only after normalization; no match or several matches is `no_results`, never a guessed id.
+`occupancy_limit` is per room type and does not prove that a party fits across rooms. Room terms never apply to
+the original price. Hotel ids belong to the process that issued them.
 
 ## Flights and hotels together
 
@@ -513,7 +547,9 @@ and layover filters, `top`, `sort`, and so on), the cheapest returned amount and
 its currency, the number of offers, provider, backend, and `observed_at`.
 Failures, empty results, rate-limited searches, and replayed MCP cache hits are
 never recorded. A `recheck-offer` is a real search and is recorded too when the opt-in is on. Entries are never edited; the file keeps the newest 2000.
-Currencies are never converted.
+Currencies are never converted. A recording failure never loses the search result; a `watch` run reports
+`recording_error` instead of claiming there was no offer. A log that exists but cannot be read stops an append
+or `--clear` and is reported as unreadable, never treated as empty.
 
 ```bash
 viajante history --route JFK-LHR --date 2027-03-01
@@ -561,6 +597,32 @@ call `viajante watch NAME` from your own cron job or agent, at a low frequency
 (a few times a day at most, never in a tight loop): Google rate-limits, and
 after a limit viajante pauses Google searches on the machine for minutes.
 
+## Hidden-city (opt-in, Skiplagged)
+
+`viajante hidden-city JFK-LHR:2026-11-15` (add `--return DATE` for a round trip) searches Skiplagged only and is
+never mixed with Google evidence. Its cards are USD: omit `--currency` or pass `USD`. Another keep that matches
+no owned card is `currency_mismatch`, with the owned quote stamped, not a silent empty result. A hidden-city fare
+is not a legal fare until you confirm it on the `booking_url`; viajante does not scrape Skiplagged.
+
+## Awards, points, and stay arithmetic (local)
+
+These run locally and never call a provider. They may run during a search.
+
+- `viajante awards --offer award.json --cash 1200 --currency USD` compares a named award offer with cash, using the
+  local transfer table. There are no live seats.
+- `viajante points --program aeroplan --points 70000` reads the local card-to-program transfer table for an award.
+- MCP `plan_stay_blocks` groups consecutive nights with identical people, not just identical headcounts.
+- MCP `split_stay_costs` divides each chosen stay among its occupants by nights, with exact cents. Uncovered roster
+  nights are `unallocated_nights`. Both need a confirmed roster and a named currency. Neither fetches prices or
+  converts currency.
+
+## Checking a draft answer (verify_answer)
+
+Pass a draft reply to MCP `verify_answer` before sending it. It checks that amounts, currencies, codes, dates, and
+links in the draft come from searches recorded in this process. It checks provenance only: it does not open links,
+confirm availability, or judge travel feasibility. A failed verdict lists claims no search owns (`unowned_claims`,
+or `no_search_recorded` when nothing was searched).
+
 ## Saving results and handling errors
 
 Search commands print tables. Add `--save FILE` to write JSON as well:
@@ -584,6 +646,9 @@ parsed fields. The report types and JSON fields are defined in
 | `markup_drift` | The response could not be read in the expected page or `ds:1` format. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |
+
+Clocks are 24-hour `HH:MM`. Booking fetch failures dump `booking-last-failure.html` and `.txt` into the state
+directory; do not commit them.
 
 Do not treat a failed search as a price or availability result. If a site
 blocks a request, avoid repeated retries. Report persistent parsing problems
@@ -722,13 +787,6 @@ search at a time. See the signatures in
 
 ### MCP client compatibility
 
-The `tools/list` and `instructions` sizes quoted in the changelog and PR were measured
-over a real stdio session as the client sees them:
-`ListToolsResult.model_dump_json(by_alias=True, exclude_none=True)` and
-`len(initialize.instructions.encode())`. A different serializer gives different
-absolute bytes (a raw compact-JSON measure read 30615 before and 33303 after) but
-the same roughly 2.7 KB difference.
-
 - **Annotations and titles.** All 22 tools carry a title and annotations
   (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`),
   except `watch_price`, which writes (it saves the watch and records the
@@ -776,7 +834,7 @@ the same roughly 2.7 KB difference.
   Claude Code: `claude mcp add --transport http viajante http://127.0.0.1:8000/mcp`.
 
 To diagnose installation drift, run `viajante --version` or call MCP
-`get_runtime_info` (both available in 1.4.0+). Hotel JSON includes the executing
+`get_runtime_info`. Hotel JSON includes the executing
 `viajante_version`. An npm MCP and a separately installed uv CLI can differ.
 Unpinned `uvx` may reuse an old installed tool. Use `uv tool upgrade viajante`
 for that installation, or refresh an explicitly published version:
