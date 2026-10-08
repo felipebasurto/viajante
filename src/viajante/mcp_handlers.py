@@ -757,9 +757,9 @@ def search_hotels_tool(
 
 @_cached
 def search_hotel_rooms_tool(
-    hotel_id: Optional[int],
     check_in: str,
     check_out: str,
+    hotel_id: Optional[int] = None,
     *,
     hotel_name: Optional[str] = None,
     city: Optional[str] = None,
