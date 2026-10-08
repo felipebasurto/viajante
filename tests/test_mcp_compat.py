@@ -607,6 +607,13 @@ class GuideTests(_StateDir):
         )
         self.assertNotIn("Long round-trip date sweeps", self._flat(INSTRUCTIONS))
 
+    def test_guide_names_every_registered_tool(self) -> None:
+        # The guide is the only full tool reference; a tool it omits is undiscoverable.
+        server = mcp_server.build_server()
+        names = [tool.name for tool in asyncio.run(server.list_tools())]
+        missing = [name for name in names if name not in GUIDE]
+        self.assertEqual(missing, [])
+
     def test_guide_lists_get_guide_among_tools_that_may_run_during_a_search(self) -> None:
         text = self._flat(GUIDE)
         self.assertIn("Also get_guide, which returns this guide", text)
