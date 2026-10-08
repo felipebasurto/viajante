@@ -279,6 +279,10 @@ add new prose labels to any result.
 - The server needs `mcp>=2.3.0` (MCP SDK 2.x, `MCPServer`). Loopback HTTP passes
   `transport_security` to `run()` explicitly. It has no auth, binds loopback by default, is never hosted, and has no
   `remotes` in `server.json`.
+- Freshness hints (SEP-2549): `tools/list`, `resources/*`, `resources/templates/list` and
+  `server/discover` carry `ttl_ms` 3600000 and `cache_scope` `public`. They are fixed for
+  a running server and no answer depends on the caller. Tool results have no hint in the
+  protocol and get none here. Do not put caller-specific data in these results.
 - Keep the server instructions and `viajante://guide` consistent with each other and
   with this file.
 

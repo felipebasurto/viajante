@@ -634,6 +634,23 @@ class GuideTests(_StateDir):
 
 
 @NEEDS_SDK
+class CacheHintTests(_StateDir):
+    def test_catalog_and_guide_are_public_for_an_hour_and_tool_results_carry_no_hint(self) -> None:
+        server = mcp_server.build_server()
+
+        async def calls(session):
+            listed = await session.list_tools()
+            guide = await session.read_resource("viajante://guide")
+            called = await session.call_tool("get_runtime_info", {})
+            return listed, guide, called
+
+        listed, guide, called = _session_call(server, calls)
+        self.assertEqual((listed.ttl_ms, listed.cache_scope), (3_600_000, "public"))
+        self.assertEqual((guide.ttl_ms, guide.cache_scope), (3_600_000, "public"))
+        self.assertFalse(hasattr(called, "ttl_ms"))
+
+
+@NEEDS_SDK
 class GuideSurfaceTests(_StateDir):
     def test_guide_is_a_markdown_resource_and_a_tool(self) -> None:
         server = mcp_server.build_server()

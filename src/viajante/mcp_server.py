@@ -73,6 +73,10 @@ _DEADLINE_DOC = """
         queries are error code deadline (not loaded, not empty). See get_guide."""
 
 _HELP = INSTRUCTIONS
+# The catalog and the guide are fixed for a running server, and no result depends on who
+# asks, so a client may keep them an hour and share them. Tool results are not cacheable
+# in the protocol and get no hint.
+_STATIC_TTL_MS = 3_600_000
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8000
 _TOOL_ERROR_PREFIX = "Error executing tool {name}: "
@@ -508,7 +512,20 @@ def build_server():
                 )
             return await super().call_tool(name, arguments, context)
 
-    server = ViajanteServer("viajante", instructions=_HELP)
+    from mcp.server.caching import CacheHint
+
+    static = CacheHint(ttl_ms=_STATIC_TTL_MS, scope="public")
+    cache_hints = {
+        method: static
+        for method in (
+            "server/discover",
+            "tools/list",
+            "resources/list",
+            "resources/read",
+            "resources/templates/list",
+        )
+    }
+    server = ViajanteServer("viajante", instructions=_HELP, cache_hints=cache_hints)
 
     # Client-visible types that differ from the handler's annotation. tools/list pins these:
     # the deadline and room_rates validators are strict, and the balances list has no item type.
