@@ -83,6 +83,9 @@ immediately instead of queueing. Lookups, local stay arithmetic, `price_history`
 verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
 
+Loopback HTTP passes `transport_security` explicitly, because the SDK only does that itself from 1.23 and this
+package supports 1.14.1 and later.
+
 MCP client compatibility lives at the adapter edge. `mcp_server.py` registers each
 tool with a title and read-only annotations (`openWorldHint` only for tools that go
 through the search runner). `mcp_errors.py` turns a handler `ValueError` into the
@@ -144,7 +147,8 @@ slot for them.
   a recognized empty result shape remains provider-empty.
 - `google_flights_rpc.py` owns compact-provider decoding. The public-page path
   passes its decoded `data` array to the same `parse_shopping_data` function
-  used by the RPC adapter; it does not invent a `wrb.fr` wrapper.
+  used by the RPC adapter; it does not invent a `wrb.fr` wrapper. Retained RPC shopping constraints put occupancy at index 6 as
+  `[adults, children, infants_in_seat, infants_on_lap]`.
 
 ### 3. The public-page sweep
 
@@ -404,7 +408,7 @@ improvement loops.
   confirm the room and terms on the provider.
 - **Unconfirmed money fields stay out.** Google base/tax/fee breakdown
   (`record[6][2][44]`) needs provider evidence. Caller-named exchange rates
-  need a design decision; neither is part of this release.
+  need a design decision; neither is implemented.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.
