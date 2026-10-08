@@ -30,6 +30,7 @@ add new prose labels to any result.
 - Public sweep GET concurrency: `src/viajante/sweep_config.py`
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
+- Reject-only Google consent cookies kept across CLI processes (`google-consent.json`): `src/viajante/consent.py`
 - Route specs, metro and nearby expand, trip include/exclude: `src/viajante/flight_routes.py`
 - Flight post-filters (clocks, layover, via, overnight, bag requirements): `src/viajante/flight_filters.py`
 - Offer normalization, LCC buffer, flight ranking, per-query recommendation: `src/viajante/flight_offers.py`
@@ -307,6 +308,10 @@ add new prose labels to any result.
 - JSON output only with `--save`. Browser state and failure dumps live under
   `VIAJANTE_STATE_DIR`, `$XDG_STATE_HOME/viajante`, or `~/.local/state/viajante`,
   never in the checkout. Writes are temp-file then rename.
+- `google-consent.json` in that state dir holds only the Google-domain cookies a
+  declined consent (reject) left behind. Accepted consent is never stored. It
+  expires after 30 days and is ignored when unreadable. Do not extend it to accept
+  or non-Google cookies.
 - Do not commit `booking-last-failure.html` / `.txt`, scraped caches, CSVs, personal
   trip scripts or routes, reservation data, browser session files, or paths from a
   private repository. An origin-specific fare table is not allowed.
