@@ -246,13 +246,20 @@ browser UA. Flight pages block images, media, and fonts; Booking.com blocks imag
 
 ### Split tickets (opt-in)
 
-The CLI rejects `--split-tickets` combined with `--arrive-before`, `--depart-after`,
-`--depart-window`, `--max-duration`, `--min-layover`, `--max-layover`, `--via`,
-`--exclude-via`, `--no-overnight`, `--require-overnight`, `--exclude-airports`,
-`--include-airports`, or a non-zero `--baggage-buffer` before any search runs.
-These filters do not yet apply to split itineraries. `--split-via` and
-`--split-min-connection` are the split connection controls. `--top` also caps
-split pairings in the requested currency.
+The named filters apply to split itineraries too, on evidence each itinerary owns.
+A hub split (one way, through a hub) is one journey: `--depart-window`,
+`--depart-after` and `--arrive-before` read its first departure and last arrival;
+`--max-duration` reads each ticket; `--min-layover`, `--max-layover`, `--via`,
+`--exclude-via`, `--no-overnight` and `--require-overnight` read the hub connection
+(`--via` and `--exclude-via` name hubs, as `--split-via` does); `--exclude-airports`
+checks origin, hub and destination; `--include-airports` checks the destination.
+A mixed pair (a round trip sold as two tickets) has no connection, so each ticket is
+its own journey for the clock and duration filters, and a connection filter drops
+every mixed pair. An unknown clock cannot prove a named bound, as in the one-way
+search. Dropped pairs are counted under `rejected.filter`. `--split-via` and
+`--split-min-connection` remain the split connection controls. `--baggage-buffer`
+is added to each pair's ranking, never to its total. `--top` also caps split
+pairings in the requested currency.
 
 `--split-tickets` adds separately ticketed alternatives built only from real
 one-way quotes. It costs extra searches, so it is off by default and capped. Hub splits use two

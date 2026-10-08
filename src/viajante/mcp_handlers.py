@@ -46,6 +46,7 @@ from viajante.explore import (
 from viajante.flight_filters import (
     parse_depart_window,
     parse_named_clock,
+    parse_offer_filters,
     parse_overnight_airports,
     parse_via_airports,
 )
@@ -80,6 +81,7 @@ from viajante.split import (
     validate_split_request,
     with_carrier_filters,
 )
+from viajante.split_filters import SplitFilters
 from viajante.stays import plan_stay_blocks, split_stay_costs
 from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
@@ -302,6 +304,18 @@ def search_split_tickets_tool(
     currency: Optional[str] = None,
     country: Optional[str] = None,
     proxy: Optional[str] = None,
+    depart_window: Optional[str] = None,
+    arrive_before: Optional[str] = None,
+    depart_after: Optional[str] = None,
+    max_duration: Optional[float] = None,
+    min_layover: Optional[float] = None,
+    max_layover: Optional[float] = None,
+    exclude_via: Optional[str] = None,
+    no_overnight: Optional[str] = None,
+    require_overnight: Optional[str] = None,
+    exclude_airports: Optional[str] = None,
+    include_airports: Optional[str] = None,
+    baggage_buffer: Optional[int] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         [route],
@@ -336,9 +350,26 @@ def search_split_tickets_tool(
         leg_max_stops=leg_max_stops,
         top=top,
     )
+    split_filters = SplitFilters(
+        offer=parse_offer_filters(
+            max_layover_hours=max_layover,
+            min_layover_hours=min_layover,
+            max_duration_hours=max_duration,
+            depart_window=parse_depart_window(depart_window),
+            arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
+            depart_after=parse_named_clock(depart_after, role="depart-after"),
+            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+            no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
+            require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
+        ),
+        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports") or (),
+        include_airports=parse_via_airports(include_airports, role="include-airports") or (),
+    )
     report = _with_search_lock(
         lambda: search_split_tickets(
             split_query,
+            filters=split_filters,
+            baggage_buffer=baggage_buffer or 0,
             via=via_codes,
             max_hubs=max_hubs,
             min_connection_hours=min_connection_hours,

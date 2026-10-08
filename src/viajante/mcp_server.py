@@ -737,9 +737,10 @@ def build_server():
         not retry. Currency as in search_flights. Every itinerary says split_ticket true and
         connection_protected false. A missed connection between tickets is not rebooked, and
         bags may need re-checking. Each ticket is confirmed on its own google_flights_url.
-        min_connection_hours (default 3) is a planning default, not provider evidence. total
-        is null unless every part shares one currency. Not for multi-city. Full rules:
-        get_guide.
+        Clock, duration, layover, via, overnight, and airport filters apply to the itinerary:
+        via and exclude_via name hubs. min_connection_hours (default 3) is a planning default,
+        not provider evidence. total is null unless every part shares one currency. Not for
+        multi-city. Full rules: get_guide.
         """
 
     @tool("Look up airports", lookup_airports_tool, network=False, envelope=False)

@@ -906,7 +906,14 @@ class MixedOneWayTests(unittest.TestCase):
 
 
 class SplitCliTests(unittest.TestCase):
-    def test_split_rejects_unsupported_filters_before_any_search(self):
+    def test_split_accepts_the_baggage_buffer(self):
+        code, _out, err, _flights, _seen = self._run(
+            ["flights", ROUTE, "--split-tickets", "--split-via", "LAX", "--baggage-buffer", "10"]
+        )
+        self.assertNotIn("does not support", err)
+        self.assertNotEqual(code, 1, err)
+
+    def test_split_accepts_the_named_filters_and_applies_them(self):
         flags = (
             ("--arrive-before", "09:00"),
             ("--depart-after", "10:00"),
@@ -915,22 +922,19 @@ class SplitCliTests(unittest.TestCase):
             ("--min-layover", "1"),
             ("--max-layover", "4"),
             ("--via", "LAX"),
-            ("--exclude-via", "LAX"),
+            ("--exclude-via", "SFO"),
             ("--no-overnight", "LAX"),
-            ("--require-overnight", "LAX"),
-            ("--exclude-airports", "LAX"),
+            ("--require-overnight", "SFO"),
+            ("--exclude-airports", "SFO"),
             ("--include-airports", "NRT"),
-            ("--baggage-buffer", "10"),
         )
         for flag, value in flags:
             with self.subTest(flag=flag):
-                code, _out, err, flights, seen = self._run(
+                code, _out, err, _flights, _seen = self._run(
                     ["flights", ROUTE, "--split-tickets", "--split-via", "LAX", flag, value]
                 )
-                self.assertEqual(code, 1)
-                self.assertIn(flag, err)
-                flights.assert_not_called()
-                self.assertEqual(seen, {})
+                self.assertNotIn("does not support", err)
+                self.assertNotEqual(code, 1, err)
 
     def test_top_caps_split_output_and_saved_pairings(self):
         table = _hub_table()
@@ -1051,6 +1055,17 @@ class SplitMcpTests(unittest.TestCase):
             ),
         ) as split:
             return search_split_tickets_tool(route, **kwargs), split
+
+    def test_named_filters_reach_the_split_search_over_mcp(self) -> None:
+        payload, _split = self._call(
+            ROUTE, FakeSearch(_hub_table()), via="LAX", depart_after="09:00"
+        )
+        self.assertEqual(payload["itineraries"], [])
+        self.assertGreaterEqual(payload["rejected"].get("filter", 0), 1)
+        payload, _split = self._call(
+            ROUTE, FakeSearch(_hub_table()), via="LAX", depart_after="07:00"
+        )
+        self.assertEqual(len(payload["itineraries"]), 1)
 
     def test_a_recorded_cooldown_is_a_rate_limited_envelope_with_its_retry_fields(self) -> None:
         now = time.time()

@@ -189,6 +189,10 @@ add new prose labels to any result.
   summed only in one shared currency. Hub connections need proven airport and
   timing (UTC via catalogue zones). Caps: `MAX_SPLIT_HUBS` = 5, `MAX_VIA` = 5.
   The search stops at a recorded cooldown. Details: [docs/usage.md](docs/usage.md#split-tickets-opt-in).
+- Named filters apply to split itineraries from owned evidence only. A hub split reads its
+  journey clocks, each ticket duration, and the hub connection; `via` and `exclude_via` name
+  hubs. A mixed pair has no connection, so any connection filter drops it. Unknown clocks
+  never prove a named bound. `src/viajante/split_filters.py`.
 - Hidden-city is Skiplagged-only and never mixed with Google evidence. Its keep is
   USD or omitted. Do not invent a beyond city.
 - `compare_awards`, `lookup_transfers`, `validate_itinerary`, `plan_stay_blocks`,

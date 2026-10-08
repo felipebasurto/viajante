@@ -39,6 +39,8 @@ from viajante.models import (
 from viajante.parsers import normalize_clock
 from viajante.quote import first_origin_iata, resolve_quote_currency
 from viajante.ratelimit import rate_limit_advice, rate_limit_status
+from viajante.split_filters import SplitFilters
+from viajante.split_filters import passes as split_passes
 from viajante.temporal import local_instant
 
 # A planning default for a self-transfer, not provider evidence. Border control, bag
@@ -148,6 +150,11 @@ class SplitItinerary:
         if self.currency is None:
             return None
         return _money(sum(part.offer.price for part in self.parts), self.currency)
+
+    @property
+    def baggage_buffer_total(self) -> int:
+        """The parts' baggage buffers added up: a ranking add-on, never part of ``total``."""
+        return sum(part.offer.baggage_buffer for part in self.parts)
 
     @property
     def savings(self) -> Optional[float]:
@@ -525,7 +532,7 @@ def _rank(
             groups[code],
             key=lambda row: (
                 row.timing_proven is False,
-                row.total or 0.0,
+                (row.total or 0.0) + row.baggage_buffer_total,
                 row.connection_minutes or 0,
             ),
         )
@@ -662,6 +669,8 @@ def search_split_tickets(
     proxy: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     search: SearchFn = search_flights,
+    filters: Optional[SplitFilters] = None,
+    baggage_buffer: int = 0,
 ) -> SplitReport:
     """Search split tickets for one one-way (via hubs) or one round-trip (mixed one-ways).
 
@@ -683,7 +692,16 @@ def search_split_tickets(
     )
     currency = resolve_quote_currency(currency, first_origin_iata(query))
     report_progress = progress or (lambda _: None)
-    shop = dict(fetch=fetch, currency=currency, country=country, proxy=proxy, progress=progress)
+    if baggage_buffer < 0:
+        raise ValueError("baggage_buffer must not be negative")
+    shop = dict(
+        fetch=fetch,
+        currency=currency,
+        country=country,
+        proxy=proxy,
+        progress=progress,
+        baggage_buffer=baggage_buffer,
+    )
 
     packaged_searched = packaged is None
     if packaged is None:
@@ -772,6 +790,10 @@ def search_split_tickets(
             for row in itineraries
             if row.currency == currency and row.total is not None and row.total <= query.price_cap
         ]
+    if filters is not None and filters.named:
+        kept = [row for row in itineraries if split_passes(row, filters)]
+        rejected["filter"] += len(itineraries) - len(kept)
+        itineraries = kept
     ranked, omitted = _rank(itineraries, currency, top)
     leg_total = len(legs)
     ok = sum(row["status"] == "ok" for row in legs)

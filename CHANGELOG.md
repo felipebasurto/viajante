@@ -46,6 +46,9 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   `playwright` 1.63.0, `ruff` 0.16.10, `selectolax` 1.0.0, `pydantic` 2.14.0,
   `curl-cffi` 0.16.3, `filelock` 4.0.12 and the rest of the lock. `pyee` stays at
   13.x, the newest that `playwright` 1.63 allows.
+- Split tickets take the same named clock, duration, layover, via, overnight, and airport
+  filters as the one-way search, judged on each ticket and the hub connection (see
+  `split_filters.py`). The baggage buffer adds to the ranking of a pair, never to its total.
 - Freshness hints: the tool catalog, the resources and `server/discover` carry a one-hour
   public `ttl_ms`, so a client can reuse them. Tool results carry none, as the protocol
   has no hint for them.

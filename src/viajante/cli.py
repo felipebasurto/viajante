@@ -46,6 +46,7 @@ from viajante.explore import (
     validate_explore_window,
 )
 from viajante.flight_filters import (
+    OfferFilters,
     parse_depart_window,
     parse_named_clock,
     parse_overnight_airports,
@@ -102,6 +103,7 @@ from viajante.split import (
     validate_split_request,
     with_carrier_filters,
 )
+from viajante.split_filters import SplitFilters
 from viajante.storage import reports_payload, write_json_atomic
 from viajante.trip import (
     search_trip,
@@ -338,28 +340,6 @@ def _split_query_from_args(
             "--split-tickets takes exactly one one-way route or one --trip rt route "
             "(not --nearby, multi-city, or several routes)"
         )
-    unsupported = (
-        "via",
-        "exclude_via",
-        "no_overnight",
-        "require_overnight",
-        "exclude_airports",
-        "include_airports",
-        "depart_window",
-        "arrive_before",
-        "depart_after",
-        "max_layover",
-        "min_layover",
-        "max_duration",
-        "baggage_buffer",
-    )
-    for field in unsupported:
-        value = getattr(args, field, None)
-        if value is not None and (field != "baggage_buffer" or value != 0):
-            flag = "--" + field.replace("_", "-")
-            raise ValueError(
-                f"--split-tickets does not support {flag}; search without --split-tickets"
-            )
     query = with_carrier_filters(
         queries[0],
         airlines=shop["airlines"],  # type: ignore[arg-type]
@@ -376,6 +356,27 @@ def _split_query_from_args(
         top=args.top,
     )
     return query
+
+
+def _split_filters_from_shop(shop: dict[str, object]) -> SplitFilters:
+    """The same named filters the one-way search applies, carried into split itineraries."""
+    offer = OfferFilters(
+        max_layover_hours=shop["max_layover_hours"],  # type: ignore[arg-type]
+        min_layover_hours=shop["min_layover_hours"],  # type: ignore[arg-type]
+        max_duration_hours=shop["max_duration_hours"],  # type: ignore[arg-type]
+        depart_window=shop["depart_window"],  # type: ignore[arg-type]
+        arrive_before=shop["arrive_before"],  # type: ignore[arg-type]
+        depart_after=shop["depart_after"],  # type: ignore[arg-type]
+        via=shop["via"],  # type: ignore[arg-type]
+        exclude_via=shop["exclude_via"],  # type: ignore[arg-type]
+        no_overnight=shop["no_overnight"],  # type: ignore[arg-type]
+        require_overnight=shop["require_overnight"],  # type: ignore[arg-type]
+    )
+    return SplitFilters(
+        offer=offer,
+        exclude_airports=shop["exclude_airports"] or (),  # type: ignore[arg-type]
+        include_airports=shop["include_airports"] or (),  # type: ignore[arg-type]
+    )
 
 
 def _run_flights(args: argparse.Namespace) -> int:
@@ -410,6 +411,8 @@ def _run_flights(args: argparse.Namespace) -> int:
                 split_query,
                 packaged=report,
                 top=args.top,
+                filters=_split_filters_from_shop(shop),
+                baggage_buffer=args.baggage_buffer or 0,
                 via=_split_via(args),
                 max_hubs=args.split_max_hubs,
                 min_connection_hours=_split_min_connection(args),
