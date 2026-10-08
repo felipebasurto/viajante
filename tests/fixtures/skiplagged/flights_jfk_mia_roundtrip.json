@@ -1,0 +1,348 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "# Flight search results (JFK → MIA)\n\n- Departure: 2026-11-17\n- Return: 2026-11-22\n- Sorted by: Lowest price first\n- Showing 8 of 131 results (more available)\n\n[Open search on Skiplagged](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp)\n\n| Price | Duration | Stops | Type | Airlines | Segments | Booking |\n| --- | --- | --- | --- | --- | --- | --- |\n| $289 | Outbound: 3h 13m<br/>Return: 2h 55m | Nonstop | Skiplagging | American Airlines, Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 06:00:00-05:00 → 2026-11-17 09:13:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA688,DL2428~) |\n| $289 | Outbound: 3h 18m<br/>Return: 2h 55m | Nonstop | Skiplagging | American Airlines, Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 07:29:00-05:00 → 2026-11-17 10:47:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2017,DL2428~) |\n| $289 | Outbound: 3h 14m<br/>Return: 2h 55m | Nonstop | Skiplagging | American Airlines, Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 12:00:00-05:00 → 2026-11-17 15:14:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3060,DL2428~) |\n| $289 | Outbound: 3h 26m<br/>Return: 2h 55m | Nonstop | Skiplagging | American Airlines, Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 15:59:00-05:00 → 2026-11-17 19:25:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA1186,DL2428~) |\n| $289 | Outbound: 3h 21m<br/>Return: 2h 55m | Nonstop | Skiplagging | American Airlines, Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 17:33:00-05:00 → 2026-11-17 20:54:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA475,DL2428~) |\n| $289 | Outbound: 3h 24m<br/>Return: 2h 55m | Nonstop | Skiplagging | American Airlines, Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 19:00:00-05:00 → 2026-11-17 22:24:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3021,DL2428~) |\n| $289 | Outbound: 3h 15m<br/>Return: 2h 55m | Nonstop | Skiplagging | American Airlines, Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 21:30:00-05:00 → 2026-11-18 00:45:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA1063,DL2428~) |\n| $309 | Outbound: 3h 16m<br/>Return: 2h 55m | Nonstop | Skiplagging | Delta Air Lines | Outbound:<br/>JFK → MIA (2026-11-17 07:00:00-05:00 → 2026-11-17 10:16:00-05:00)<br/><br/>Return:<br/>MIA → JFK (2026-11-22 07:19:00-05:00 → 2026-11-22 10:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL1528,DL2428~) |"
+    }
+  ],
+  "structuredContent": {
+    "searchUrl": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp",
+    "flights": [
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=AA688,DL2428~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T06:00:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T09:13:00-05:00"
+        },
+        "duration": "3h 13m",
+        "layovers": 0,
+        "price": {
+          "amount": 289,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA688,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=AA2017,DL2428~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T07:29:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T10:47:00-05:00"
+        },
+        "duration": "3h 18m",
+        "layovers": 0,
+        "price": {
+          "amount": 289,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2017,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=AA3060,DL2428~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T12:00:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T15:14:00-05:00"
+        },
+        "duration": "3h 14m",
+        "layovers": 0,
+        "price": {
+          "amount": 289,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3060,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=AA1186,DL2428~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T15:59:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T19:25:00-05:00"
+        },
+        "duration": "3h 26m",
+        "layovers": 0,
+        "price": {
+          "amount": 289,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA1186,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=AA475,DL2428~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T17:33:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T20:54:00-05:00"
+        },
+        "duration": "3h 21m",
+        "layovers": 0,
+        "price": {
+          "amount": 289,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA475,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=AA3021,DL2428~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T19:00:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T22:24:00-05:00"
+        },
+        "duration": "3h 24m",
+        "layovers": 0,
+        "price": {
+          "amount": 289,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3021,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=AA1063,DL2428~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T21:30:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-18T00:45:00-05:00"
+        },
+        "duration": "3h 15m",
+        "layovers": 0,
+        "price": {
+          "amount": 289,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA1063,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-2026-11-22-trip=DL1528,DL2428~",
+        "airlines": "Delta Air Lines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T07:00:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T10:16:00-05:00"
+        },
+        "duration": "3h 16m",
+        "layovers": 0,
+        "price": {
+          "amount": 309,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17/2026-11-22?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL1528,DL2428~",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ],
+        "returnFlight": {
+          "airlines": "Delta Air Lines",
+          "departure": {
+            "airport": "MIA",
+            "dateTime": "2026-11-22T07:19:00-05:00"
+          },
+          "arrival": {
+            "airport": "JFK",
+            "dateTime": "2026-11-22T10:14:00-05:00"
+          },
+          "duration": "2h 55m",
+          "layovers": 0,
+          "attributes": [
+            "hidden-city",
+            "nonstop"
+          ]
+        }
+      }
+    ],
+    "pagination": {
+      "totalAvailable": 131,
+      "currentlyShowing": 8,
+      "offset": 0,
+      "limit": 8,
+      "hasMoreResults": true
+    }
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "# Flight search results (JFK → MIA)\n\n- Departure: 2026-11-17\n- Sorted by: Lowest price first\n- Showing 8 of 121 results (more available)\n\n[Open search on Skiplagged](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp)\n\n| Price | Duration | Stops | Type | Airlines | Segments | Booking |\n| --- | --- | --- | --- | --- | --- | --- |\n| $149 | 3h 18m | Nonstop | Skiplagging | American Airlines | Outbound:<br/>JFK → MIA (2026-11-17 07:29:00-05:00 → 2026-11-17 10:47:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2017~) |\n| $149 | 3h 14m | Nonstop | Skiplagging | American Airlines | Outbound:<br/>JFK → MIA (2026-11-17 12:00:00-05:00 → 2026-11-17 15:14:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3060~) |\n| $156 | 12h 30m | 1 stop | — | American Airlines | Outbound:<br/>JFK → BNA (2026-11-17 08:29:00-05:00 → 2026-11-17 10:18:00-06:00)<br/>Layover in BNA – 7h 15m<br/>BNA → MIA (2026-11-17 17:33:00-06:00 → 2026-11-17 20:59:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4350-AA2003) |\n| $156 | 16h 26m | 1 stop | — | American Airlines | Outbound:<br/>JFK → BNA (2026-11-17 15:59:00-05:00 → 2026-11-17 17:48:00-06:00)<br/>Layover in BNA – 11h 12m<br/>BNA → MIA (2026-11-18 05:00:00-06:00 → 2026-11-18 08:25:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4356-AA3109) |\n| $156 | 17h 28m | 1 stop | — | American Airlines | Outbound:<br/>JFK → BNA (2026-11-17 15:59:00-05:00 → 2026-11-17 17:48:00-06:00)<br/>Layover in BNA – 12h 15m<br/>BNA → MIA (2026-11-18 06:03:00-06:00 → 2026-11-18 09:27:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4356-AA3666) |\n| $156 | 19h 2m | 1 stop | — | American Airlines | Outbound:<br/>JFK → BNA (2026-11-17 13:23:00-05:00 → 2026-11-17 15:06:00-06:00)<br/>Layover in BNA – 13h 54m<br/>BNA → MIA (2026-11-18 05:00:00-06:00 → 2026-11-18 08:25:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4343-AA3109) |\n| $156 | 18h 58m | 1 stop | — | American Airlines | Outbound:<br/>JFK → BNA (2026-11-17 15:59:00-05:00 → 2026-11-17 17:48:00-06:00)<br/>Layover in BNA – 13h 42m<br/>BNA → MIA (2026-11-18 07:30:00-06:00 → 2026-11-18 10:57:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4356-AA2042) |\n| $156 | 20h 4m | 1 stop | — | American Airlines | Outbound:<br/>JFK → BNA (2026-11-17 13:23:00-05:00 → 2026-11-17 15:06:00-06:00)<br/>Layover in BNA – 14h 57m<br/>BNA → MIA (2026-11-18 06:03:00-06:00 → 2026-11-18 09:27:00-05:00) | [Book](https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4343-AA3666) |"
+    }
+  ],
+  "structuredContent": {
+    "searchUrl": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp",
+    "flights": [
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA2017~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T07:29:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T10:47:00-05:00"
+        },
+        "duration": "3h 18m",
+        "layovers": 0,
+        "price": {
+          "amount": 149,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2017~",
+        "attributes": [
+          "hidden-city",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA3060~",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T12:00:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T15:14:00-05:00"
+        },
+        "duration": "3h 14m",
+        "layovers": 0,
+        "price": {
+          "amount": 149,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3060~",
+        "attributes": [
+          "hidden-city",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA4350-AA2003",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T08:29:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-17T20:59:00-05:00"
+        },
+        "duration": "12h 30m",
+        "layovers": 1,
+        "price": {
+          "amount": 156,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4350-AA2003",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA4356-AA3109",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T15:59:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-18T08:25:00-05:00"
+        },
+        "duration": "16h 26m",
+        "layovers": 1,
+        "price": {
+          "amount": 156,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4356-AA3109",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA4356-AA3666",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T15:59:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-18T09:27:00-05:00"
+        },
+        "duration": "17h 28m",
+        "layovers": 1,
+        "price": {
+          "amount": 156,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4356-AA3666",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA4343-AA3109",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T13:23:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-18T08:25:00-05:00"
+        },
+        "duration": "19h 2m",
+        "layovers": 1,
+        "price": {
+          "amount": 156,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4343-AA3109",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA4356-AA2042",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T15:59:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-18T10:57:00-05:00"
+        },
+        "duration": "18h 58m",
+        "layovers": 1,
+        "price": {
+          "amount": 156,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4356-AA2042",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-MIA-2026-11-17-trip=AA4343-AA3666",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T13:23:00-05:00"
+        },
+        "arrival": {
+          "airport": "MIA",
+          "dateTime": "2026-11-18T09:27:00-05:00"
+        },
+        "duration": "20h 4m",
+        "layovers": 1,
+        "price": {
+          "amount": 156,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/MIA/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA4343-AA3666",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      }
+    ],
+    "pagination": {
+      "totalAvailable": 121,
+      "currentlyShowing": 8,
+      "offset": 0,
+      "limit": 8,
+      "hasMoreResults": true
+    }
+  }
+}
