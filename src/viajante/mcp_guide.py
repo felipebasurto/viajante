@@ -203,7 +203,9 @@ search_flights on a hub or leisure trunk, the caller may run it once
 sequentially. Do not mix evidence. Skip when bags were named.
 Skiplagged cards are USD; omit currency or pass USD. Do not copy a
 Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
-currency_mismatch (owned quote stamped), not no_results. No FX.
+currency_mismatch (owned quote stamped), not no_results. No FX. Never run it for explore, dates,
+flex, multi-city or an unproven destination. Hidden-city tickets can violate airline contracts:
+lead with hidden_city true rows and confirm on booking_url; Viajante does not book.
 
 ## Split tickets
 
@@ -227,6 +229,13 @@ rows that were all rejected are no_results with filtered_out; only provider-empt
 provider_empty (every leg empty, whatever the packaged fare was). coverage is heuristic:
 it never proves other hubs or dates have no fare.
 observed_at is the search time, null when every fetch was a recorded cooldown.
+Hubs: max_hubs defaults to 3 (at most 5); 2 queries per hub, 3 with allow_overnight, and mixed
+one-ways use 2. A mixed one-way pair takes the cheapest outbound and the cheapest return that
+departs after the outbound lands; otherwise timing_proven is false. A pair without an owned
+arrival date is timing_proven false and is used only when no proven pair exists in its currency.
+Ticket queries carry occupancy, cabin, bags and carrier filters; clock, layover, via and overnight
+filters do not apply per ticket. min_connection_hours (default 3) is a planning default, not
+evidence.
 
 ## Local tools
 
@@ -261,6 +270,11 @@ filtered_out (an answered not_among_offers stays ok); check_failed carries the f
 not_loaded; incomplete_identity is failed and blocked. Caller-typed values are not recorded as
 owned evidence. It is not a booking guarantee; the price is confirmed only on the provider's own
 page.
+
+recheck_offer's query defaults to the offer's evidence query and is replayed. Its price_cap is not
+sent: a break is listed in filter_violations, which also checks max_stops, airlines and
+exclude_airlines. filters_replayed lists what rode the request. A hand-built offer also needs query
+adults, cabin, max_stops and currency.
 
 ## Hotel finalist details
 
@@ -332,6 +346,21 @@ arrival margin; a latest check-out time alone does not prove a flight is reachab
 Keep warnings in the final response. Browser access denial is not a broken URL
 or provider throttling: name the actual limitation and use available permitted
 read-only evidence; never ask for permission the user already granted.
+
+Hotel search fields. The hotel request carries adults and rooms only, so never state a room
+split. priced_adults is the party Google priced. resolved_place and place_bounds say where Google
+searched; neighbors outside place_bounds are not the named place. place_types and class_label say
+what a property is (a hotel search also returns hostels). entire_home=true asks for a house or
+villa; those offers carry sleeps, bedrooms and beds, and hotels do not. lodging_evidence_conflict
+marks explicit room labels that contradict an entire-unit label; lodging_kind and
+property_type_evidence then stay unknown. stays batches up to 8 location/check_in/check_out
+objects; adults and rooms default to the top-level values, and each stay is one query.
+property_matrix lists each property's total per stay, sorted by name and never by price; a null
+cell means that property was not among that stay's returned offers, which is not proof it is
+unavailable. Skiplagged room rates
+(search_hotel_rooms) carry occupancy_limit, refundable, free_cancellation and taxes_and_fees as
+listed; a hotel name must match exactly, and no match is no_results, never a guess. search_trip's
+stay dates default to the flights' window.
 
 ## Currency, bags and locale
 

@@ -56,11 +56,8 @@ _PROGRESS_INTERVAL_SECONDS = 0.25
 _INDEXED_PROGRESS = re.compile(r"^\s*\[(\d+)/(\d+)\]")
 DEADLINE_ENV = "VIAJANTE_MCP_DEADLINE_SECONDS"
 _DEADLINE_DOC = """
-        deadline_seconds (positive, optional) stops starting new queries after that
-        many seconds and returns what finished: coverage.complete is false,
-        coverage.stopping_reason is "deadline", and each unfinished query has error
-        code "deadline" (not loaded; never read it as empty or no results). Partial
-        results are not cached. Unset uses VIAJANTE_MCP_DEADLINE_SECONDS, else none."""
+        deadline_seconds stops starting queries after that many seconds; unfinished
+        queries are error code deadline (not loaded, not empty). See get_guide."""
 
 _HELP = INSTRUCTIONS
 _DEFAULT_HOST = "127.0.0.1"
@@ -314,6 +311,23 @@ def _compact_json(text: str) -> str:
         return text
 
 
+def _unlabelled(node: Any) -> Any:
+    """Drop the titles pydantic generates for every field; they only repeat the field name."""
+    if isinstance(node, list):
+        return [_unlabelled(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    out: dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "title" and isinstance(value, str):
+            continue
+        if key == "properties" and isinstance(value, dict):
+            out[key] = {name: _unlabelled(prop) for name, prop in value.items()}
+        else:
+            out[key] = _unlabelled(value)
+    return out
+
+
 def _compact_blocks(result: Any) -> Any:
     """Re-serialize JSON text blocks without indentation. Keys and values are untouched."""
     if isinstance(result, tuple):
@@ -366,11 +380,6 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
     _ROOM_RATES = Annotated[bool, BeforeValidator(_room_rates_flag)]
 
     class ToolEnvelope(BaseModel):
-        """Top-level fields on every tool result except lookup_airports (a bare list).
-
-        Read these first. Every other key of the tool's payload rides alongside them.
-        """
-
         model_config = ConfigDict(extra="allow")
 
         status: Literal[STATUSES]
@@ -393,6 +402,17 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
             options["transport_security"] = _loopback_security(host)
 
     class ViajanteServer(FastMCP):
+        async def list_tools(self):
+            return [
+                tool.model_copy(
+                    update={
+                        "inputSchema": _unlabelled(tool.inputSchema),
+                        "outputSchema": _unlabelled(tool.outputSchema),
+                    }
+                )
+                for tool in await super().list_tools()
+            ]
+
         async def call_tool(self, name, arguments):
             # The SDK rejects missing or mistyped arguments before any handler runs, with
             # pydantic text. Give those the same JSON body as a handler's ValueError.
@@ -514,38 +534,15 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         proxy: str | None = None,
         deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
-        """Search Google Flights for named routes and dates.
-
-        Use search_dates for the cheapest week and search_flex for ±N days.
-        Each routes entry is ORIGIN-DEST:YYYY-MM-DD. fetch=detail requires the
-        browser extra and Chromium in the MCP environment.
-        A named metro code (LON, NYC, PAR, TYO; lookup_airports lists members)
-        on a one-way or rt route searches each member airport. Only a named
-        metro code expands; JFK stays JFK. A call that would send more than 18
-        provider queries is rejected before anything is fetched.
-        Currency is currency or inferred from a named origin's owned country.
-        If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unproven country, dest, or currency (city with
-        several airports, Europe, unnamed origin, two currencies) must not be
-        guessed. Optional country is Google gl (origin market); omit when
-        unset. Unnamed baggage_buffer is 0. A positive carry_on rides the
-        request and is verified against the page's bag-filter echo; named bags
-        stay refused (no provable echo).
-        Do not invent a bag fee. max_stops is 0, 1, or 2.
-        After a named hub or leisure trunk returns, the caller may run
-        search_hidden_city once with the same route and date. Sequential; do
-        not mix payloads. Skip if bags were named. Omit hidden-city currency
-        (Skiplagged cards are USD); do not copy this Google quote currency.
-        A successful query may carry recommendation (none when the provider
-        returned nothing): a pick that meets the named requirements
-        (relaxed_requirements names any it relaxed), a varied shortlist, and
-        highlights/tradeoffs from returned fields only.
-        It is evidence for your judgment; offers are unchanged. Check
-        relaxed_requirements before presenting a pick as a match. A query
-        with empty_reason filtered_out (envelope status no_results when every
-        query is filtered_out) that still has a recommendation means the pick
-        is a relaxed one, not an exact match: the named filters removed every
-        offer.
+        """Google Flights search for named routes and dates. Each routes entry is
+        ORIGIN-DEST:YYYY-MM-DD. Use search_dates for the cheapest week and search_flex for
+        +/-N days. fetch=detail needs the browser extra and Chromium. Currency is currency, or
+        inferred from a named origin's owned country; if unproven, ask. Viajante does not
+        convert. Do not invent a bag fee. max_stops is 0, 1 or 2. Metro codes (LON, NYC)
+        expand on one-way and rt routes. A successful query may carry recommendation:
+        evidence, not a verdict. Check relaxed_requirements before calling it a match. After a
+        named hub or leisure trunk, search_hidden_city may run once with the same route and
+        date, never when bags were named. Rules and wording: get_guide.
         """
         return dict(await run_mcp_tool(search_flights_tool, **locals()))
 
@@ -610,17 +607,11 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         proxy: str | None = None,
         deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
-        """Cheapest-per-day calendar for a named route (up to 31 days).
-
-        Use this for the cheapest week. Use search_flex for ±N around one date.
-        route is ORIGIN-DEST and start/end are ISO dates. This HTTP calendar
-        has no fetch mode; if blocked, do not use a separate browser as MCP
-        recovery or evidence. Stop that calendar; do not follow with flex or
-        search_flights.
-        Currency is currency or inferred from a named origin's owned country.
-        If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Optional country is Google gl (origin market);
-        omit when unset. Unnamed baggage_buffer is 0.
+        """Cheapest-per-day calendar for one named route, up to 31 days. route is ORIGIN-DEST;
+        start and end are ISO dates. Use search_flex for +/-N around one date. This calendar
+        is HTTP only and has no fetch mode. If it returns blocked, stop: do not switch to a
+        browser or follow with search_flex or search_flights. Currency and country as in
+        search_flights. Viajante does not convert.
         """
         return dict(await run_mcp_tool(search_dates_tool, **locals()))
 
@@ -666,15 +657,11 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         proxy: str | None = None,
         deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
-        """Flex window (±N), then one shopping search on the cheapest day.
-
-        Use search_dates for a cheapest-week calendar. Do not brute-force a date matrix.
-        Currency is currency or inferred from a named origin's owned country.
-        If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 0. Optional country is
-        Google gl (origin market); omit when unset. A flex calendar miss
-        (error markup_drift, empty days) is not no_results: do not invent a
-        cheapest week; a named-date search_flights is allowed.
+        """Flex window of +/-N days around one date, then one shopping search on the cheapest
+        day. route is ORIGIN-DEST; around is an ISO date. Use search_dates for a cheapest-week
+        calendar; do not brute-force a date matrix. Currency and country as in search_flights.
+        A calendar miss (error markup_drift, empty days) is not no_results: do not invent a
+        cheapest week. A named-date search_flights is allowed.
         """
         return dict(await run_mcp_tool(search_flex_tool, **locals()))
 
@@ -720,12 +707,10 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         proxy: str | None = None,
         deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
-        """Destinations from one origin, then a priced shortlist.
-
-        Currency is currency or inferred from a named origin's owned country.
-        If unknown, ask. Viajante does not convert. The calling agent may
-        convert for the user. Unnamed baggage_buffer is 0. Optional country is
-        Google gl (origin market); omit when unset.
+        """Destinations from one origin, then a priced shortlist. Give start (ISO date) or month,
+        not both. Needs the browser extra; one adult in economy only. Currency and country as
+        in search_flights. Viajante does not convert. A destination without a price is
+        not_loaded, not a usable row.
         """
         return dict(await run_mcp_tool(search_explore_tool, **locals()))
 
@@ -748,48 +733,19 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         max_distance_km: float | None = None,
         deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
-        """Hotel search. Currency is required (no origin airport) except source
-        skiplagged, whose quotes are USD (omit currency or pass USD).
-
-        Quotes are in the requested ISO 4217 currency as the provider returned
-        them. Viajante does not convert. The calling agent may convert for the
-        user. Do not invent ISO 4217 from vibe. Google offers carry owned
-        latitude, longitude, and review_count: weigh location and how many
-        reviews back a rating yourself; the list is price order, not advice.
-
-        location is one named place. Ask when it is a typo, a region, or has
-        several candidate towns; never substitute a nearby town. total_price is
-        a total-stay quote, not per person. Matching priced_adults proves the
-        quoted adult party; unknown occupancy needs verification. The request
-        carries adults and rooms only, so do not state a room
-        split. Vacation rentals (entire_home=true) carry sleeps, bedrooms and
-        beds; hotels do not. priced_adults is the party Google priced. place_types
-        and class_label say what a property is (a hotel search returns hostels).
-        resolved_place and place_bounds say where Google searched; neighbors
-        outside place_bounds are not the named place. entire_home=true is how a
-        house or villa is requested.
-
-        stays batches several stays in one call instead of location/check_in/
-        check_out: up to 8 objects with location, check_in, check_out and
-        optional adults and rooms (defaults come from the top-level values).
-        Use it for a headcount that changes by night: one stay per block of
-        identical people, using plan_stay_blocks after each roster change. Equal
-        headcounts alone do not identify the same block. Results come back as
-        one query per stay, and
-        property_matrix lists each property with its total per stay (null where it was
-        not among that stay's returned offers, which is not proof it is unavailable;
-        raise top to see more). Rows are sorted by name, never by price.
-
-        near is a point you name, {lat, lng}; each offer then carries distance_km, its
-        straight-line distance to it. No point is assumed. max_distance_km is
-        optional, requires near, and excludes distant or unlocated offers before
-        top. A location query or property title does not prove centrality. Generic
-        hostel descriptions do not prove a private room for the quoted price.
-        lodging_evidence_conflict marks explicit room/entire-home contradictions;
-        lodging_kind and property_type_evidence then stay unknown.
-        Unknown evidence is a candidate, not proof of compliance. link_context
-        and applied.url_context distinguish stay, property, location and none;
-        only stay reproduces dates and occupancy, never availability.
+        """Hotel search. Quotes are total-stay prices, not per person. Currency is required (no
+        origin airport), except source skiplagged, whose quotes are USD. Quotes come back in
+        the requested currency as the provider returned them. Viajante does not convert and
+        never invents ISO 4217. location is one named place: ask when it is a typo, a region,
+        or several candidate towns. The request carries adults and rooms only; do not state a
+        room split. Google offers are in price order, not advice: weigh location, latitude and
+        longitude, and review_count yourself. stays batches up to 8
+        location/check_in/check_out objects in one call. property_matrix lists each property's
+        total per stay, null where it was not returned (not proof of unavailability), sorted
+        by name. near is a point you name, {lat, lng}; max_distance_km needs it.
+        entire_home=true asks for a house or villa; those offers carry sleeps, bedrooms and
+        beds. lodging_evidence_conflict marks contradictory room or unit labels. Full rules:
+        get_guide.
         """
         return dict(await run_mcp_tool(search_hotels_tool, **locals()))
 
@@ -803,20 +759,14 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         adults: int = 2,
         rooms: int = 1,
     ) -> dict:
-        """Room rates for one Skiplagged hotel, for 1-3 finalists.
-
-        Name the hotel by hotel_id (the provider_id of a search_hotels offer with
-        source skiplagged) or by hotel_name plus city. A name must match exactly
-        (case, accents and punctuation ignored); no match or several matches come
-        back as no_results listing what Skiplagged returned, never a guess. Use the
-        name form for a Google finalist: a Google price for a hostel can be a bed in
-        a dormitory, and these rates say what the room is.
-        Each rate carries the provider's occupancy_limit, refundable,
-        free_cancellation and taxes_and_fees as listed. Quotes are USD and are not
-        converted. total_price is the whole stay for the party and rooms searched.
-        occupancy_limit is the provider's number for that room type; it is not proof
-        that your party fits across several rooms. Rates come in provider order, not
-        ranked. Skiplagged only: do not mix these rows with Google or Booking prices.
+        """Room rates for one Skiplagged hotel, for 1-3 finalists. Name it by hotel_id (the
+        provider_id of a skiplagged search_hotels offer) or by hotel_name plus city. A name
+        must match exactly (case, accents and punctuation ignored); no match or several
+        matches is no_results, never a guess. Use the name form for a Google finalist: a
+        Google hostel price can be a dorm bed, and these rates say what the room is. Rates are
+        USD, not converted, in provider order. total_price is the whole stay for the party and
+        rooms searched. occupancy_limit is per room type and is not proof that a party fits
+        across rooms. Skiplagged only: do not mix these rows with Google or Booking prices.
         """
         return dict(await run_mcp_tool(search_hotel_rooms_tool, **locals()))
 
@@ -863,14 +813,12 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         nearby: bool = False,
         deadline_seconds: _DeadlineSeconds = None,
     ) -> dict:
-        """Flights then hotel. Currency follows the flight origin or an explicit code.
-
-        If unknown, ask. Viajante does not convert. The calling agent may convert
-        for the user. Unnamed baggage_buffer is 0. A positive carry_on rides
-        the request (verified by the page's bag-filter echo); named bags stay
-        refused. The same currency is passed to hotels. Optional
-        country is Google gl (origin market); omit when unset. The flights
-        queries carry the same recommendation block as search_flights.
+        """Flights then one hotel stay, under one lock. Currency follows the flight origin or an
+        explicit code; if unproven, ask. Viajante does not convert. The same currency goes to
+        the hotel. Stay dates default to the flights' window. Unnamed baggage_buffer is 0. A
+        positive carry_on is verified on the page; named bags are refused. Flight queries
+        carry the same recommendation block as search_flights. trip_total is omitted if either
+        side missed.
         """
         return dict(await run_mcp_tool(search_trip_tool, **locals()))
 
@@ -902,38 +850,18 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         country: str | None = None,
         proxy: str | None = None,
     ) -> dict:
-        """Opt-in separately ticketed itineraries built from real one-way quotes.
-
-        route is one ORIGIN-DEST:YYYY-MM-DD (one-way: a self-transfer via a hub,
-        origin to hub on one ticket and hub to destination on another) or, with
-        trip="rt", ORIGIN-DEST:OUT:BACK (the cheapest outbound one-way plus the
-        cheapest return one-way, compared with the packaged round-trip). It runs the
-        packaged search itself (returned as packaged_report) and then a capped number
-        of extra searches: max_hubs (default 3, or every named via airport; at
-        most 5) hubs of 2 queries, 3 with allow_overnight; mixed one-ways use 2.
-        via is a comma-separated list of up to 5 connection airports to try;
-        unnamed, hubs are the layover airports seen in the packaged results. It stops at a
-        recorded rate limit (rate_limited true): do not retry.
-        Currency is currency or inferred from a named origin's owned country. If
-        unknown, ask.
-        Every itinerary says split_ticket true, connection_protected false, and
-        self_transfer true for a hub. A missed connection between tickets is not
-        rebooked by either airline and bags may need to be re-checked: tell the
-        user, and have them confirm each part on its own google_flights_url.
-        min_connection_hours (default 3) is a planning default, not provider
-        evidence. total is summed only when every part is in one owned currency,
-        otherwise it is null. vs_packaged is present only when the split and the best
-        packaged offer share a currency and carries a non-negative savings (split
-        cheaper) or extra_cost (split dearer). Itineraries rank within one currency;
-        top applies to the requested currency; other currencies and unknown totals
-        keep at most 3 rows each (omitted_other_currency counts the rest). Hub
-        tickets must meet at the hub airport; mixed one-ways need the return to
-        leave after the outbound lands, else timing_proven is false and
-        timing_note says so. Gaps are measured in UTC through the segment
-        timezone, or the airport catalogue when the segment has none; a missing
-        timezone or a nonexistent or ambiguous
-        local time (a DST change) leaves the timing unproven, never a number.
-        Nothing is split out of a round-trip price, estimated, or converted. Not for multi-city.
+        """Opt-in separately ticketed itineraries built from real one-way quotes. route is
+        ORIGIN-DEST:DATE (one-way: self-transfer via a hub) or, with trip="rt",
+        ORIGIN-DEST:OUT:BACK (cheapest outbound plus cheapest return one-way). It runs the
+        packaged search first (packaged_report), then up to max_hubs hubs (default 3, at most
+        5): 2 queries per hub, 3 with allow_overnight. via lists up to 5 connection airports;
+        unnamed, hubs are the packaged layover airports. It stops at a recorded rate limit: do
+        not retry. Currency as in search_flights. Every itinerary says split_ticket true and
+        connection_protected false. A missed connection between tickets is not rebooked, and
+        bags may need re-checking. Each ticket is confirmed on its own google_flights_url.
+        min_connection_hours (default 3) is a planning default, not provider evidence. total
+        is null unless every part shares one currency. Not for multi-city. Full rules:
+        get_guide.
         """
         return dict(await run_mcp_tool(search_split_tickets_tool, **locals()))
 
@@ -950,19 +878,13 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         top: int = DEFAULT_TOP,
         currency: str | None = None,
     ) -> dict:
-        """Search Skiplagged for a named route. Opt-in. Does not mix Google Flights.
-
-        route is ORIGIN-DEST. After search_flights on a named common route
-        (hub or leisure trunk, or Google looking like a through-fare), call
-        this once with the same route and date. Sequential. Skip explore,
-        dates, flex, multi-city, unproven dests, and named bags. Hidden-city
-        tickets can violate airline contracts. Lead with hidden_city true
-        rows; confirm the fare on booking_url (do not scrape). Viajante does
-        not book. Currency is an optional keep of owned card ISO 4217.
-        Skiplagged cards are USD; omit currency or pass USD. Do not copy a
-        Google/origin quote keep (GBP, JPY, …). A keep that matches no owned card is
-        currency_mismatch (owned quote stamped), not no_results. Does not
-        infer from origin or convert.
+        """Skiplagged search for a named route. Opt-in; never mixed with Google Flights. Run it
+        once after search_flights on a named common route and date. Skip it for named bags,
+        explore, dates, flex, multi-city and unproven destinations. Hidden-city tickets can
+        violate airline contracts. Lead with hidden_city true rows and confirm on booking_url;
+        Viajante does not book. currency is an optional keep of the card currency: Skiplagged
+        cards are USD, so omit it or pass USD. A keep that matches no card is
+        currency_mismatch. Nothing is converted.
         """
         return dict(await run_mcp_tool(search_hidden_city_tool, **locals()))
 
@@ -996,15 +918,12 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         constraints: dict,
         currency: str | None = None,
     ) -> dict:
-        """Validate selected v2 flight offers locally without fetching.
-
-        Each leg must preserve its exact query and one selected offer. Pass legs
-        in travel order: arrival_deadline and chronological read that order.
-        The result is tri-state: unknown evidence never becomes pass.
-        arrival_deadline is an ISO date and time; an explicit offset is compared
-        in UTC, and a naive time is local at the arrival airport. Ambiguous or
-        missing timezones stay unknown. chronological checks owned segment
-        instants. min_stay_days and max_stay_days use owned journey dates.
+        """Validate selected v2 flight offers locally, without fetching. Pass legs in travel
+        order, each with its exact query and one selected offer. The result is tri-state:
+        unknown evidence never becomes pass. arrival_deadline is an ISO date and time: an
+        explicit offset is compared in UTC, a naive time is local at the arrival airport.
+        chronological checks owned segment instants. min_stay_days and max_stay_days use owned
+        journey dates.
         """
         return dict(await run_lookup_tool(validate_itinerary_tool, **locals()))
 
@@ -1019,33 +938,14 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         allow_loose_match: bool = False,
         allow_substitute: bool = False,
     ) -> dict:
-        """Re-check an earlier flight offer with one fresh Google Flights search.
-
-        offer is an offer from a prior search_flights result (or a {query, offer}
-        row), or enough of one: price plus legs[].segments[] with flight_number,
-        origin, destination and departure clock for every segment. query
-        defaults to the offer's evidence query and is replayed (cabin, stops,
-        bags, airline and alliance filters); a price_cap in it is not sent but
-        reported in filter_violations when the fresh offer breaks it. A
-        hand-built offer also needs query adults, cabin and max_stops, and
-        currency. Matches by flight numbers plus departure times. Returns
-        exactly one outcome: same_price, price_changed, not_found,
-        multiple_matches (more than one identical fresh offer: candidates are
-        listed, no price verdict), incomplete_identity (the offer lacks a full
-        segment identity: no search was sent), check_failed, or substituted
-        (only with allow_substitute). allow_loose_match accepts carrier plus
-        departure times when flight numbers are absent (loose_match true).
-        allow_substitute reports a close same-carrier alternative as
-        substituted; by default it is only listed as closest_candidate on a
-        not_found. Positive outcomes always rest on a fresh provider match.
-        check_failed (check_completed false, with reason and error: blocked,
-        rate_limited, incomplete_offers, ...) means the check could not be
-        completed, not that the offer is gone; do not retry a rate limit.
-        currency must be the offer's own: a different one is refused (no
-        conversion). Caller-typed values are not recorded as owned evidence.
-        Read the envelope first: only empty_reason provider_empty means Google
-        returned nothing; check_failed is not_loaded, never "gone".
-        Not a booking guarantee: confirm the price on the provider's own page.
+        """Re-check an earlier flight offer with one fresh Google Flights search (never the
+        replay cache). offer is a prior search_flights offer, or a {query, offer} row, or
+        enough of one: price plus every segment's flight_number, origin, destination and
+        departure clock. query defaults to the offer's evidence query and is replayed (cabin,
+        stops, bags, airline filters). A price_cap is not sent; a break is reported in
+        filter_violations. Read the outcome: check_failed means the check did not run, never
+        that the offer is gone. Confirm the price on the provider's page; this is not a
+        booking guarantee. Full rules: get_guide.
         """
         return dict(await run_mcp_tool(recheck_offer_tool, **locals()))
 
@@ -1102,17 +1002,13 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         currency: str | None = None,
         limit: int = 20,
     ) -> dict:
-        """Local: prices this machine observed for a route/date or hotel stay.
-
-        Reads the opt-in log (VIAJANTE_PRICE_HISTORY=1 in the server environment).
-        Each series is one exact query (same dates, passengers, cabin, stops, filters)
-        in one currency, with first_seen, last_seen, lowest, highest and the change
-        since the previous observation. One observation says so and reports no trend.
-        Observations in different currencies are separate series and never compared.
-        route is ORIGIN-DEST; date matches a departure, return, check-in or check-out
-        date; location names a hotel stay. No forecast, no estimate. A log that cannot
-        be read gives read_error and series null (unknown, not empty). May run during
-        a search.
+        """Local read of prices this machine observed (opt-in: VIAJANTE_PRICE_HISTORY=1 in the
+        server environment). One exact query in one currency is a series: first_seen,
+        last_seen, lowest, highest, and the change since the previous observation. One
+        observation reports no trend. Currencies are never merged or converted, and nothing is
+        forecast. route is ORIGIN-DEST; date matches a departure, return, check-in or
+        check-out; location names a hotel stay. An unreadable log gives read_error and series
+        null: unknown, not empty. May run during a search.
         """
         return dict(await run_lookup_tool(price_history_tool, **locals()))
 
@@ -1122,19 +1018,13 @@ def build_server(*, host: Optional[str] = None, port: Optional[int] = None):
         kind: str | None = None,
         params: dict | None = None,
     ) -> dict:
-        """Re-run a saved flight or hotel search once and report the change.
-
-        With no name: list saved watches (watches null and status failed when the
-        saved file cannot be read; never an empty list for an unreadable file). With
-        name, kind (flight or hotel, as in price_history) and params (the
-        search_flights / search_hotels arguments): validate, save, then run it.
-        Saving under an existing name replaces that watch. With only a name: run the
-        saved search. Saving a watch and recording the
-        observation write to this machine's state directory. The run records its
-        observation even when the global opt-in is off, and reports the change versus
-        the last observation of the same query in the same currency. A cached replay
-        or a failed or rate-limited search records nothing. No scheduler, no
-        notification.
+        """Re-run a saved flight or hotel search and report the change. With no arguments, list
+        saved watches (watches null and status failed when the file cannot be read). With
+        name, kind (flight or hotel) and params (the search_flights or search_hotels
+        arguments): validate, save, then run. Saving under an existing name replaces that
+        watch. With only name, run the saved search. The run records an observation even when
+        the history opt-in is off. A cached or rate-limited run records nothing. No scheduler
+        and no notification: do not call it in a loop.
         """
         return dict(await run_mcp_tool(watch_price_tool, **locals()))
 
