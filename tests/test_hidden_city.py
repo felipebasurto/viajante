@@ -151,6 +151,18 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
         )
         self.assertEqual(kept, ())
 
+    def test_hidden_city_is_unknown_when_no_leg_carries_attributes(self) -> None:
+        result = copy.deepcopy(_fixture("flights_jfk_mia_oneway"))
+        for card in result["structuredContent"]["flights"]:
+            card.pop("attributes", None)
+        offers = parse_skiplagged_offers(
+            result, origin="JFK", destination="MIA", departure_date=NOV_17
+        )
+        self.assertTrue(offers)
+        self.assertEqual({offer.hidden_city for offer in offers}, {None})
+        self.assertIsNone(offers[0].to_dict()["hidden_city"])
+        self.assertEqual(offers[0].warnings, ())
+
     def test_one_bad_card_does_not_drop_priced_neighbors(self) -> None:
         result = copy.deepcopy(_fixture("flights_jfk_den_oneway"))
         cards = result["structuredContent"]["flights"]

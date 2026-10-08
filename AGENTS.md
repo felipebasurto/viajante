@@ -47,7 +47,7 @@ add new prose labels to any result.
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
 - Flags: `src/viajante/cli.py`; printed tables and exit codes: `src/viajante/cli_report.py`
-- Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py`, `src/viajante/mcp_handlers.py`
+- Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py` (descriptions, client-type overrides), `src/viajante/mcp_handlers.py` (parameters and defaults; the client schema is derived from these signatures)
 - MCP result envelope: `src/viajante/envelope.py`
 - MCP input-error JSON body: `src/viajante/mcp_errors.py`
 - MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
@@ -65,7 +65,7 @@ add new prose labels to any result.
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
 - Opt-in split tickets: `src/viajante/split.py`
-- Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`
+- Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`; captured responses: `tests/fixtures/skiplagged/`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
 - Offline evidence-bound itinerary validation and UTC civil-time resolution: `src/viajante/validate.py`, `src/viajante/temporal.py`
@@ -89,7 +89,7 @@ add new prose labels to any result.
   `search_split_tickets`, `search_hidden_city`, `compare_awards`,
   `lookup_transfers`, `validate_itinerary`, `recheck_offer`, `plan_stay_blocks`,
   `split_stay_costs`, `verify_answer`, `price_history`, `watch_price`,
-  `get_runtime_info`, `get_guide`. Signatures: `src/viajante/mcp_server.py`.
+  `get_runtime_info`, `get_guide`. Signatures: `src/viajante/mcp_handlers.py` (derived into the client schema by `mcp_server.py`).
 - Library: `get_flights` (a route spec or trip objects; turning prose into a
   route is the caller's job), the `search_*` functions, `get_hotel_details`, and
   `validate_itinerary`.
@@ -127,7 +127,9 @@ add new prose labels to any result.
 - Currency is `--currency` / MCP `currency`, or inferred from a named origin
   airport's owned country (JFK USD, LHR GBP, NRT JPY, GRU BRL). If it is not
   proven, ask or error. Google and Booking hotels require a named currency.
-  Skiplagged hotels and hidden-city cards are USD.
+  Skiplagged hotels and hidden-city cards are USD. A hidden-city card's
+  `hidden_city` comes only from Skiplagged's `attributes`; without them it is null
+  (unknown), never false.
 - Viajante never converts. The MCP caller does FX. A keep that matches no owned
   card is `currency_mismatch`, with the owned quote stamped, never `no_results`.
 - Ask or error when country, destination, or currency is not proven: a city with

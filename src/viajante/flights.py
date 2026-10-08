@@ -24,12 +24,8 @@ from viajante.flight_filters import (
     parse_code_list,
     parse_offer_filters,
 )
-from viajante.flight_filters import parse_depart_window as parse_depart_window
-from viajante.flight_filters import parse_named_clock as parse_named_clock
-from viajante.flight_filters import parse_overnight_airports as parse_overnight_airports
-from viajante.flight_filters import parse_via_airports as parse_via_airports
-from viajante.flight_offers import FlightSort as FlightSort
 from viajante.flight_offers import (
+    FlightSort,
     _offer_sort_key,
     _rank_offers,
     _recommend,
@@ -42,13 +38,13 @@ from viajante.flight_routes import (
     _is_route_spec,
     _overlay_carrier_filters,
     _progress_label,
+    as_trips,
     drop_excluded_airport_trips,
+    expand_nearby_trips,
     keep_included_dest_trips,
     overlay_trip_fields,
+    parse_flight_plan,
 )
-from viajante.flight_routes import as_trips as as_trips
-from viajante.flight_routes import expand_nearby_trips as expand_nearby_trips
-from viajante.flight_routes import parse_flight_plan as parse_flight_plan
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     GoogleFlightsMarkupError,

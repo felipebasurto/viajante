@@ -45,7 +45,7 @@ class HiddenCityOffer:
     stops_count: Optional[int] = None
     layover_city: Optional[str] = None
     ticketed_destination: Optional[str] = None
-    hidden_city: bool = False
+    hidden_city: Optional[bool] = False
     return_date: Optional[date] = None
     booking_url: Optional[str] = None
     warnings: Tuple[str, ...] = ()

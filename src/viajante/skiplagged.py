@@ -330,10 +330,21 @@ def _leg_airport(leg: Any) -> Optional[str]:
     return None
 
 
-def _attribute_tokens(value: Any) -> set[str]:
+def _attribute_tokens(value: Any) -> Optional[set[str]]:
     if not isinstance(value, list):
-        return set()
+        return None
     return {str(item).strip().casefold() for item in value}
+
+
+def _hidden_city(card: Mapping[str, Any], return_leg: Any) -> Optional[bool]:
+    """True or False from the legs' ``attributes``; None when no leg carries them."""
+    legs = [card, return_leg] if isinstance(return_leg, dict) else [card]
+    seen = [
+        tokens for leg in legs if (tokens := _attribute_tokens(leg.get("attributes"))) is not None
+    ]
+    if not seen:
+        return None
+    return any("hidden-city" in tokens for tokens in seen)
 
 
 def _stops(card: Mapping[str, Any]) -> Optional[int]:
@@ -364,9 +375,6 @@ def _offer_from_card(
     row_origin = _leg_airport(card.get("departure")) or origin
     row_dest = _leg_airport(card.get("arrival")) or destination
     return_leg = card.get("returnFlight")
-    hidden_tokens = _attribute_tokens(card.get("attributes"))
-    if isinstance(return_leg, dict):
-        hidden_tokens |= _attribute_tokens(return_leg.get("attributes"))
     deep_link = card.get("deepLink")
     deep_link = deep_link.strip() if isinstance(deep_link, str) and deep_link.strip() else None
     fragment = urlparse(deep_link).fragment if deep_link else ""
@@ -385,7 +393,7 @@ def _offer_from_card(
         layover_city=layover_by_trip.get(fragment),
         # Not in the captured payload: no field names the beyond city. Stays null.
         ticketed_destination=None,
-        hidden_city="hidden-city" in hidden_tokens,
+        hidden_city=_hidden_city(card, return_leg),
         return_date=return_date,
         booking_url=deep_link,
     )

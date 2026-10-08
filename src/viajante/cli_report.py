@@ -862,7 +862,7 @@ def _print_hidden_city_report(report: HiddenCityReport) -> None:
         return
     print(f"{'price':>12}  {'hidden':<7}  airline")
     for offer in report.offers:
-        flag = "yes" if offer.hidden_city else "no"
+        flag = {True: "yes", False: "no"}.get(offer.hidden_city, "unknown")
         airline = offer.airline or "?"
         extra = ""
         if offer.ticketed_destination:
