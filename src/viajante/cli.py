@@ -496,11 +496,22 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
         index += 2
 
 
+VERIFY_BAGGAGE_LINE = "\nVerify checked baggage on Google Flights before booking."
+
+
+def _nearby_suffix(label: Optional[str]) -> str:
+    return f"; {label}" if label else ""
+
+
+def _stay_label(report: DateCalendarReport | FlexSearchReport) -> str:
+    if report.trip == "rt" and report.nights is not None:
+        night_word = "night" if report.nights == 1 else "nights"
+        return f"  (rt, {report.nights} {night_word})"
+    return ""
+
+
 def _query_header(query: Trip) -> str:
-    nearby = ""
-    label = getattr(query, "nearby_label", None)
-    if label:
-        nearby = f"; {label}"
+    nearby = _nearby_suffix(getattr(query, "nearby_label", None))
     if isinstance(query, RoundTrip):
         return (
             f"\n=== {query.origin} -> {query.destination}  "
@@ -630,7 +641,7 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
             _print_google_flights_url(query_url, indent="  ")
     _print_best_pairs(report, sort)
     if any_success:
-        print("\nVerify checked baggage on Google Flights before booking.")
+        print(VERIFY_BAGGAGE_LINE)
 
 
 def _format_hotel_filter_gloss(query: HotelQuery) -> str:
@@ -1173,11 +1184,8 @@ def _run_trip(args: argparse.Namespace) -> int:
 
 
 def _print_dates_report(report: DateCalendarReport) -> None:
-    stay = ""
-    if report.trip == "rt" and report.nights is not None:
-        night_word = "night" if report.nights == 1 else "nights"
-        stay = f"  (rt, {report.nights} {night_word})"
-    nearby = f"; {report.nearby_label}" if report.nearby_label else ""
+    stay = _stay_label(report)
+    nearby = _nearby_suffix(report.nearby_label)
     print(
         f"\n=== {report.origin} -> {report.destination}  "
         f"{report.start_date.isoformat()} .. {report.end_date.isoformat()}{stay}{nearby} ==="
@@ -1214,11 +1222,11 @@ def _print_dates_report(report: DateCalendarReport) -> None:
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare, currency))
     if any_price:
-        print("\nVerify checked baggage on Google Flights before booking.")
+        print(VERIFY_BAGGAGE_LINE)
 
 
 def _print_explore_report(report: ExploreReport) -> None:
-    nearby = f"; {report.nearby_label}" if report.nearby_label else ""
+    nearby = _nearby_suffix(report.nearby_label)
     print(
         f"\n=== From {report.origin}  {report.start_date.isoformat()}  "
         f"({report.days}-day stay; dests priced on this date){nearby} ==="
@@ -1246,7 +1254,7 @@ def _print_explore_report(report: ExploreReport) -> None:
         _print_google_flights_url(row.google_flights_url)
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare, currency))
-    print("\nVerify checked baggage on Google Flights before booking.")
+    print(VERIFY_BAGGAGE_LINE)
 
 
 def _print_airports(query: str) -> int:
@@ -1348,6 +1356,26 @@ def _add_cabin_flag(parser: argparse.ArgumentParser) -> None:
         default="economy",
         choices=list(get_args(FlightCabin)),
         help="Cabin class (default economy)",
+    )
+
+
+def _add_trip_flag(parser: argparse.ArgumentParser, *, metavar: str, help_text: str) -> None:
+    parser.add_argument(
+        "--trip",
+        default="one-way",
+        type=normalize_trip_kind,
+        metavar=metavar,
+        help=help_text,
+    )
+
+
+def _add_nights_flag(parser: argparse.ArgumentParser, *, help_text: str) -> None:
+    parser.add_argument(
+        "--nights",
+        type=int,
+        default=None,
+        metavar="N",
+        help=help_text,
     )
 
 
@@ -1832,11 +1860,8 @@ def _flex_exit_code(report: FlexSearchReport) -> int:
 
 
 def _print_flex_report(report: FlexSearchReport) -> None:
-    stay = ""
-    if report.trip == "rt" and report.nights is not None:
-        night_word = "night" if report.nights == 1 else "nights"
-        stay = f"  (rt, {report.nights} {night_word})"
-    nearby = f"; {report.nearby_label}" if report.nearby_label else ""
+    stay = _stay_label(report)
+    nearby = _nearby_suffix(report.nearby_label)
     print(
         f"\n=== {report.origin} -> {report.destination}  around {report.around.isoformat()} "
         f"±{report.flex_days}  {report.start_date.isoformat()} .. {report.end_date.isoformat()}"
@@ -1870,7 +1895,7 @@ def _print_flex_report(report: FlexSearchReport) -> None:
         _print_google_flights_url(report.google_flights_url, indent="  ")
     if report.stops_compare is not None:
         print(format_stops_compare(report.stops_compare, report.currency))
-    print("\nVerify checked baggage on Google Flights before booking.")
+    print(VERIFY_BAGGAGE_LINE)
 
 
 def _run_flex(args: argparse.Namespace) -> int:
@@ -2240,12 +2265,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
     )
     _add_max_stops_flag(flights)
-    flights.add_argument(
-        "--trip",
-        default="one-way",
-        type=normalize_trip_kind,
+    _add_trip_flag(
+        flights,
         metavar="{one-way,rt,multi}",
-        help=(
+        help_text=(
             "Trip kind (default one-way). rt/round-trip and multi POST one package. "
             "Sugar without --trip stays two one-ways. "
             "Open-jaw --trip rt is two ORIGIN-DEST:DATE routes (one package). "
@@ -2396,12 +2419,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Hotel check-out (YYYY-MM-DD). Default: latest flight date when a return exists",
     )
-    trip.add_argument(
-        "--trip",
-        default="one-way",
-        type=normalize_trip_kind,
+    _add_trip_flag(
+        trip,
         metavar="{one-way,rt,multi}",
-        help=(
+        help_text=(
             "Trip kind (default one-way). rt/round-trip POSTs one package. "
             "Sugar without --trip stays two one-ways."
         ),
@@ -2461,23 +2482,18 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help=f"Last departure date (YYYY-MM-DD); window cap is {MAX_DATE_WINDOW_DAYS} days",
     )
-    dates.add_argument(
-        "--trip",
-        default="one-way",
-        type=normalize_trip_kind,
+    _add_trip_flag(
+        dates,
         metavar="{one-way,rt}",
-        help=(
+        help_text=(
             "Trip kind (default one-way). rt/round-trip is one packaged stay per "
             "departure day and needs --nights. --nights without --trip is rt. "
             "multi is not supported."
         ),
     )
-    dates.add_argument(
-        "--nights",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Stay length in nights for a round-trip calendar. Implies --trip rt.",
+    _add_nights_flag(
+        dates,
+        help_text="Stay length in nights for a round-trip calendar. Implies --trip rt.",
     )
     _add_max_stops_flag(dates)
     _add_flight_query_flags(dates)
@@ -2524,22 +2540,17 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help=f"Days either side of --around (1–{MAX_FLEX_DAYS}; window cap {MAX_DATE_WINDOW_DAYS})",
     )
-    flex.add_argument(
-        "--trip",
-        default="one-way",
-        type=normalize_trip_kind,
+    _add_trip_flag(
+        flex,
         metavar="{one-way,rt}",
-        help=(
+        help_text=(
             "Trip kind (default one-way). rt/round-trip needs --nights. "
             "--nights without --trip is rt. multi is not supported."
         ),
     )
-    flex.add_argument(
-        "--nights",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Stay length in nights for a packaged round-trip. Implies --trip rt.",
+    _add_nights_flag(
+        flex,
+        help_text="Stay length in nights for a packaged round-trip. Implies --trip rt.",
     )
     _add_max_stops_flag(flex)
     _add_flight_query_flags(flex)
