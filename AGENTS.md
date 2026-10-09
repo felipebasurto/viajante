@@ -329,6 +329,9 @@ add new prose labels to any result.
 
 ## Install and version
 
+- Primary agent install is `npx -y @viajante/mcp` (needs `uv` and Python 3.10+). The
+  no-Node form is `uvx --from viajante[mcp] viajante-mcp`. Keep `README.md`, `llms.txt`,
+  `mcp_guide.py`, the skill, and the landing page's copy-message on that same order.
 - Check `viajante --version` or MCP `get_runtime_info` before using a new feature.
   Hotel JSON carries `viajante_version`. An npm MCP and a separately installed uv
   tool can run different versions; an unpinned `uvx` may reuse an old install.
