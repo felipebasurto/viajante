@@ -190,7 +190,7 @@ class AppliedFiltersTests(unittest.TestCase):
         applied = build_applied_filters(query(), currency="EUR")
         params = parse_qs(urlparse(applied.url).query)
 
-        self.assertEqual(applied.chips, ("oos=1",))
+        self.assertEqual(applied.chips, ("fc=2",))
         self.assertEqual(
             params,
             {
@@ -203,7 +203,7 @@ class AppliedFiltersTests(unittest.TestCase):
                 "selected_currency": ["EUR"],
                 "lang": ["en"],
                 "order": ["price"],
-                "nflt": ["oos=1"],
+                "nflt": ["fc=2"],
             },
         )
 
@@ -220,11 +220,11 @@ class AppliedFiltersTests(unittest.TestCase):
 
         self.assertEqual(
             applied.chips,
-            ("oos=1", "privacy_type=3", "ht_id=201"),
+            ("fc=2", "privacy_type=3", "ht_id=201"),
         )
         self.assertEqual(
             parse_qs(urlparse(applied.url).query)["nflt"],
-            ["oos=1;privacy_type=3;ht_id=201"],
+            ["fc=2;privacy_type=3;ht_id=201"],
         )
 
     def test_applied_filters_follow_lang_and_currency_args(self) -> None:

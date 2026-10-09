@@ -409,7 +409,7 @@ def _format_cancellation_evidence(
     if evidence is CancellationEvidence.NON_REFUNDABLE:
         return "Cancellation: non-refundable"
     if query.free_cancellation and (
-        "oos=1" in applied.chips or "free_cancellation=1" in applied.chips
+        "fc=2" in applied.chips or "free_cancellation=1" in applied.chips
     ):
         return "Cancellation: filter applied; card silent"
     return "Cancellation: unknown"

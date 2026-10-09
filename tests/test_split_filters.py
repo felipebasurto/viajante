@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 
 import _isolate  # noqa: F401
-from test_split import DAY, FakeSearch, _hub_table, _offer, _packaged_via, _segment
+from test_split import DAY, NEXT, FakeSearch, _hub_table, _offer, _packaged_via, _segment
 from viajante.flight_filters import OfferFilters
 from viajante.models import FlightQuery, RawJourneyLeg
 from viajante.split import SplitItinerary, SplitPart, _rank, search_split_tickets
@@ -69,6 +69,34 @@ class HubFilterTests(unittest.TestCase):
         # The hub connection is the same day, so no overnight at LAX.
         self.assertEqual(_kept(SplitFilters(OfferFilters(no_overnight=("LAX",)))), 1)
         self.assertEqual(_kept(SplitFilters(OfferFilters(require_overnight=("LAX",)))), 0)
+
+    def test_any_overnight_matches_every_hub(self) -> None:
+        # The same-day LAX connection has no overnight stop, so "any" means no overnight here.
+        self.assertEqual(_kept(SplitFilters(OfferFilters(no_overnight=("any",)))), 1)
+        self.assertEqual(_kept(SplitFilters(OfferFilters(require_overnight=("any",)))), 0)
+
+    def test_any_overnight_drops_a_real_overnight_hub_connection(self) -> None:
+        table = _hub_table()
+        table[("JFK", "LAX", DAY)] = [
+            _offer(200.0, (_segment("JFK", "LAX", "18:00", "21:30"),), airline="A")
+        ]
+        table[("LAX", "NRT", NEXT)] = [
+            _offer(450.0, (_segment("LAX", "NRT", "11:00", "19:00", on=NEXT),), airline="C")
+        ]
+
+        def kept(filters: SplitFilters) -> int:
+            report = search_split_tickets(
+                FlightQuery("JFK", "NRT", DAY),
+                packaged=_packaged_via("LAX"),
+                allow_overnight=True,
+                search=FakeSearch(table),
+                filters=filters,
+            )
+            return len(report.itineraries)
+
+        self.assertEqual(kept(SplitFilters()), 1)
+        self.assertEqual(kept(SplitFilters(OfferFilters(no_overnight=("any",)))), 0)
+        self.assertEqual(kept(SplitFilters(OfferFilters(require_overnight=("any",)))), 1)
 
     def test_airports_exclude_any_named_airport_and_include_the_destination(self) -> None:
         self.assertEqual(_kept(SplitFilters(exclude_airports=("LAX",))), 0)

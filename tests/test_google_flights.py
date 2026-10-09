@@ -1751,9 +1751,7 @@ class _MultiRow:
     def wait_for(self, **_):
         # A wait only resolves when the fake DOM carries one of its selectors.
         dom = self._page.dom_selectors
-        if dom is not None and not any(
-            part.strip() in dom for part in self._selector.split(",")
-        ):
+        if dom is not None and not any(part.strip() in dom for part in self._selector.split(",")):
             raise TimeoutError(f"never attached: {self._selector}")
         return None
 

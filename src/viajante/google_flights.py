@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import contextlib
+import math
 import re
 import threading
 import time
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
@@ -409,9 +411,46 @@ RPC_THROTTLE_STATUS = 13
 def _retry_after_seconds(response: Any) -> Optional[float]:
     headers = getattr(response, "headers", None) or {}
     try:
-        return float(headers.get("retry-after") or headers.get("Retry-After"))
+        value = float(headers.get("retry-after") or headers.get("Retry-After"))
     except (TypeError, ValueError):
         return None
+    return value if math.isfinite(value) else None
+
+
+def _settle_batch(
+    out: Sequence[SweepHttpResponse | None],
+    sent: Sequence[bool],
+    jobs: Sequence[SweepPost],
+    *,
+    deadline: bool,
+) -> list[SweepHttpResponse]:
+    """Answered jobs stay as they are; the rest are stamped as not loaded."""
+    settled: list[SweepHttpResponse] = []
+    for index, (item, job) in enumerate(zip(out, jobs, strict=True)):
+        if item is not None:
+            settled.append(item)
+        elif deadline:
+            settled.append(
+                SweepHttpResponse(
+                    0,
+                    "",
+                    job.url,
+                    deadline=True,
+                    request_sent=sent[index],
+                    attempts=1 if sent[index] else 0,
+                )
+            )
+        else:
+            settled.append(
+                SweepHttpResponse(
+                    SWEEP_TRANSPORT_STATUS,
+                    "TimeoutError: batch wait exceeded",
+                    job.url,
+                    request_sent=sent[index],
+                    attempts=1 if sent[index] else 0,
+                )
+            )
+    return settled
 
 
 class _CooldownClient:
@@ -521,7 +560,6 @@ class ChromeSweepClient:
         self._loop = asyncio.new_event_loop()
         self._session: Any = None
         self._error: Optional[BaseException] = None
-        self._consent_ok = False
         self._consent_lock: Any = None
         ready = threading.Event()
         session_kw: dict[str, Any] = {
@@ -570,7 +608,17 @@ class ChromeSweepClient:
             coro.close()
             raise
         future = self._asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return wait_for_future(future, max(timeout + 5.0, 10.0))
+        try:
+            return wait_for_future(future, max(timeout + 5.0, 10.0))
+        except FutureTimeout:
+            # Stop the requests still queued on the loop; nothing should run unawaited.
+            future.cancel()
+            raise
+
+    def _batch_timeout(self, count: int, timeout: float) -> float:
+        """A batch runs in waves of ``streams`` requests, so its wait grows with the waves."""
+        streams = getattr(self, "_streams", _SWEEP_STREAMS)
+        return timeout * math.ceil(count / streams)
 
     async def _dismiss_consent(
         self,
@@ -580,8 +628,6 @@ class ChromeSweepClient:
     ) -> bool:
         async with self._consent_lock:
             _raise_if_cancelled(cancel_event)
-            if self._consent_ok:
-                return True
             parsed = _consent_reject_form(response.text, str(response.url))
             if parsed is None:
                 return False
@@ -590,11 +636,11 @@ class ChromeSweepClient:
                 action, data=fields, timeout=timeout, allow_redirects=True
             )
             _raise_if_cancelled(cancel_event)
-            self._consent_ok = not _is_consent_interstitial(str(save.url))
+            dismissed = not _is_consent_interstitial(str(save.url))
             # Only a declined consent is kept, so the next process skips this round trip.
-            if self._consent_ok and is_reject_form(fields):
+            if dismissed and is_reject_form(fields):
                 save_consent_cookies(self._session)
-            return self._consent_ok
+            return dismissed
 
     async def _exchange(
         self,
@@ -702,24 +748,14 @@ class ChromeSweepClient:
             return list(
                 self._submit(
                     self._apost_many(jobs, timeout, out, cancel_event, sent=sent),
-                    timeout=timeout,
+                    timeout=self._batch_timeout(len(jobs), timeout),
                 )
             )
         except SearchDeadline:
             # Responses that already arrived are real; only the rest were not loaded.
-            return [
-                item
-                if item is not None
-                else SweepHttpResponse(
-                    0,
-                    "",
-                    job.url,
-                    deadline=True,
-                    request_sent=sent[index],
-                    attempts=1 if sent[index] else 0,
-                )
-                for index, (item, job) in enumerate(zip(out, jobs, strict=True))
-            ]
+            return _settle_batch(out, sent, jobs, deadline=True)
+        except FutureTimeout:
+            return _settle_batch(out, sent, jobs, deadline=False)
 
     def get_many(self, urls: Sequence[str], *, timeout: float) -> list[SweepHttpResponse]:
         if not urls:
@@ -733,23 +769,13 @@ class ChromeSweepClient:
             return list(
                 self._submit(
                     self._apost_many(jobs, timeout, out, cancel_event, get=True, sent=sent),
-                    timeout=timeout,
+                    timeout=self._batch_timeout(len(jobs), timeout),
                 )
             )
         except SearchDeadline:
-            return [
-                item
-                if item is not None
-                else SweepHttpResponse(
-                    0,
-                    "",
-                    job.url,
-                    deadline=True,
-                    request_sent=sent[index],
-                    attempts=1 if sent[index] else 0,
-                )
-                for index, (item, job) in enumerate(zip(out, jobs, strict=True))
-            ]
+            return _settle_batch(out, sent, jobs, deadline=True)
+        except FutureTimeout:
+            return _settle_batch(out, sent, jobs, deadline=False)
 
     async def _apost_many(
         self,

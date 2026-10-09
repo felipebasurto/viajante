@@ -19,7 +19,7 @@ from viajante.google_hotels_rpc import (
     parse_hotels_page,
 )
 from viajante.hotels import _run_search
-from viajante.models import HotelQuery, HotelQuerySuccess
+from viajante.models import HotelQuery, HotelQuerySuccess, SearchErrorCode
 
 QUERY = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
 
@@ -396,6 +396,28 @@ class GoogleHotelsFetchTests(unittest.TestCase):
             rated, build_applied_filters(rated, currency="CZK"), 24
         )
         self.assertEqual([card.title for card in page.cards], ["Cheap"])
+
+    def test_a_failed_widening_page_is_recorded_and_a_server_error_is_replayed(self) -> None:
+        cheap = _wrap_wrb(_search_payload(_hotel_record(title="Cheap", rating=2.0)))
+        good = _wrap_wrb(_search_payload(_hotel_record(title="Good", rating=4.6)))
+        url = "https://www.google.com/travel/search"
+        rated = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), min_rating=4.5)
+
+        def fetch(*responses: SweepHttpResponse):
+            client = _ScriptedHotelClient([SweepHttpResponse(200, cheap, url), *responses])
+            return GoogleHotelsSource(client=client, currency="CZK").fetch(
+                rated, build_applied_filters(rated, currency="CZK"), 24
+            )
+
+        blocked = fetch(SweepHttpResponse(429, "", url))
+        self.assertEqual([error.code for error in blocked.page_errors], [SearchErrorCode.BLOCKED])
+        drift = fetch(SweepHttpResponse(200, "junk", url))
+        self.assertEqual(
+            [error.code for error in drift.page_errors], [SearchErrorCode.MARKUP_DRIFT]
+        )
+        recovered = fetch(SweepHttpResponse(500, "", url), SweepHttpResponse(200, good, url))
+        self.assertEqual([card.title for card in recovered.cards], ["Cheap", "Good"])
+        self.assertEqual(recovered.page_errors, ())
 
     def test_relevance_page_leaves_the_sort_slot_empty(self) -> None:
         self.assertEqual(build_hotels_inner(QUERY, currency="CZK")[1][4][0][4], 3)

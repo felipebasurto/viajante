@@ -12,7 +12,7 @@ import _isolate  # noqa: F401
 from viajante.airports import airport_geo
 from viajante.cli import main
 from viajante.cli_report import _print_explore_report
-from viajante.explore import search_explore
+from viajante.explore import month_window, search_explore
 from viajante.flight_filters import parse_depart_window, parse_named_clock
 from viajante.flight_offers import _normalize_offer
 from viajante.google_flights import NoFlightsFound, RawFlightCard, google_flights_url
@@ -35,6 +35,7 @@ from viajante.models import (
     RawJourneyLeg,
     RawLayover,
     RawSegment,
+    SearchErrorCode,
 )
 from viajante.tfs import encode_explore_tfs
 
@@ -1537,6 +1538,44 @@ class TypicalExploreDestTests(unittest.TestCase):
         by_iata = {row.iata: row for row in report.destinations}
         self.assertEqual(by_iata["OPO"].price, 80.0)
         self.assertIsNone(by_iata["LIS"].price)
+
+
+class MonthWindowTests(unittest.TestCase):
+    def test_the_current_month_starts_today_and_a_future_month_starts_on_day_one(self) -> None:
+        today = date(2026, 10, 9)
+        self.assertEqual(month_window("2026-10", today=today), (date(2026, 10, 9), 23))
+        self.assertEqual(month_window("2026-11", today=today), (date(2026, 11, 1), 30))
+
+    def test_a_malformed_month_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "YYYY-MM"):
+            month_window("2026-13")
+
+
+class FailedBatchExploreTests(unittest.TestCase):
+    def test_a_failed_batch_is_recorded_per_destination_not_resent(self) -> None:
+        class FailingBatch(FakeExploreSource):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.batch_calls = 0
+
+            def fetch_many(self, trips):
+                self.batch_calls += 1
+                raise TimeoutError("Timeout 35000ms exceeded")
+
+        source = FailingBatch(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("LIS", "Lisbon", "Portugal"),
+            ),
+            prices={"OPO": (_card(price="€80"),)},
+        )
+        report = search_explore("NRT", date(2026, 9, 1), days=7, top=2, source=source)
+        self.assertEqual(source.batch_calls, 1)
+        self.assertEqual(source.fetched_queries, [])
+        self.assertEqual(len(report.pricing_errors), 2)
+        self.assertTrue(
+            all(row.error.code == SearchErrorCode.FETCH_FAILED for row in report.pricing_errors)
+        )
 
 
 class StopsCompareExploreShopTests(unittest.TestCase):

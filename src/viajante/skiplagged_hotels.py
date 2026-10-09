@@ -40,7 +40,6 @@ from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import (
     SKIPLAGGED_MCP_URL,
     RpcPost,
-    SkiplaggedError,
     SkiplaggedRateLimited,
     _call_mcp,
     _rpc_post,
@@ -65,6 +64,10 @@ _HOTELS_HEADING = re.compile(r"^\s*#\s*Hotels\s+in\s+(.+?)\s*$", re.IGNORECASE |
 
 class SkiplaggedNoHotels(Exception):
     """The city did not match, or the city has no stays for these dates."""
+
+
+class SkiplaggedRejected(Exception):
+    """Skiplagged answered this request with a tool error. Asking again cannot change it."""
 
 
 class SkiplaggedAmbiguousName(Exception):
@@ -119,7 +122,7 @@ def _check_error(result: Any) -> None:
         message = _text(result).strip() or "Skiplagged hotel tool error"
         if "no matching city" in message.casefold():
             raise SkiplaggedNoHotels(message)
-        raise SkiplaggedError(message)
+        raise SkiplaggedRejected(message)
 
 
 def _table_rows(text: str) -> dict[str, dict[str, Any]]:
@@ -345,6 +348,8 @@ def skiplagged_failure(exc: BaseException) -> SearchError:
         )
     if isinstance(exc, (SkiplaggedNoHotels, SkiplaggedAmbiguousName)):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
+    if isinstance(exc, SkiplaggedRejected):
+        return SearchError(code=SearchErrorCode.REJECTED, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):
         return SearchError(
             code=SearchErrorCode.MARKUP_DRIFT, message="Skiplagged hotel parse missed."

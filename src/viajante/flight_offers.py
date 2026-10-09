@@ -85,6 +85,29 @@ def _bag_evidence(
     return (baggage_buffer if needs_verify else 0), needs_verify
 
 
+def _package_totals(legs: Sequence[RawJourneyLeg]) -> tuple[Optional[int], Optional[float]]:
+    stops = [parse_stops_count(leg.stops) for leg in legs]
+    hours = [parse_duration_hours(leg.duration) for leg in legs]
+    stops_count = max(stops) if None not in stops else None
+    total = sum(hours) if None not in hours else None
+    return stops_count, total
+
+
+def _package_stops_text(count: Optional[int]) -> Optional[str]:
+    if count is None:
+        return None
+    if count == 0:
+        return "Nonstop"
+    return f"{count} stop" if count == 1 else f"{count} stops"
+
+
+def _package_duration_text(hours: Optional[float]) -> Optional[str]:
+    if hours is None:
+        return None
+    minutes = round(hours * 60)
+    return f"{minutes // 60} hr {minutes % 60} min"
+
+
 def _normalize_offer(
     raw: RawFlightCard,
     max_stops: int,
@@ -134,14 +157,24 @@ def _normalize_offer(
         and layover_hours > max_layover_hours
     ):
         return None
+    # The summary layover is the longest connection, so a minimum must read every known one.
+    known_layovers = [
+        layover.hours for leg in raw.legs for layover in leg.layovers if layover.hours is not None
+    ]
+    shortest_layover = min(known_layovers) if known_layovers else layover_hours
     if (
         min_layover_hours is not None
         and stops_count
         and stops_count > 0
-        and layover_hours is not None
-        and layover_hours < min_layover_hours
+        and shortest_layover is not None
+        and shortest_layover < min_layover_hours
     ):
         return None
+    packaged = len(raw.legs) > 1
+    if packaged:
+        # Stops and duration describe the whole package: the worst leg's stops, the summed
+        # leg time. An unknown leg makes the total unknown; the outbound alone is not the trip.
+        stops_count, duration_hours = _package_totals(raw.legs)
     airline = raw.airline or ""
     requested = bags is not None or carry_on is not None
     buffer, needs_verify = _bag_evidence(
@@ -164,12 +197,12 @@ def _normalize_offer(
         arrival=normalize_clock(raw.arrival) or raw.arrival,
         price_text=price_text,
         price=price,
-        duration=raw.duration,
+        duration=_package_duration_text(duration_hours) if packaged else raw.duration,
         duration_hours=duration_hours,
-        stops=raw.stops,
+        stops=_package_stops_text(stops_count) if packaged else raw.stops,
         stops_count=stops_count,
-        layover_city=raw.layover_city,
-        layover_hours=layover_hours,
+        layover_city=None if packaged else raw.layover_city,
+        layover_hours=None if packaged else layover_hours,
         flight_numbers=raw.flight_numbers,
         booking_token=raw.booking_token,
         baggage_buffer=buffer,

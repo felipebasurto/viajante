@@ -150,10 +150,21 @@ class ConsentStateTests(unittest.TestCase):
         with patch("viajante.consent.write_json_atomic", side_effect=OSError("disk full")):
             self.assertEqual(save_consent_cookies(session, now=NOW), 0)
 
+    def test_a_later_interstitial_is_dismissed_again(self) -> None:
+        reject_page = _Response(url=INTERSTITIAL, text=_form(set_eom="true", set_sc="false"))
+        client = ChromeSweepClient.__new__(ChromeSweepClient)
+        client._consent_lock = asyncio.Lock()
+        client._session = _ConsentSession([("SOCS", "reject-value", ".google.com")])
+        with patch("viajante.consent.time") as clock:
+            clock.time.return_value = NOW
+            self.assertTrue(asyncio.run(client._dismiss_consent(reject_page, timeout=5)))
+            self.assertTrue(asyncio.run(client._dismiss_consent(reject_page, timeout=5)))
+        # The first dismissal does not cover a second interstitial later in the process.
+        self.assertEqual(len(client._session.posts), 2)
+
     def test_declined_consent_is_persisted_and_reused_by_a_new_client(self) -> None:
         reject_page = _Response(url=INTERSTITIAL, text=_form(set_eom="true", set_sc="false"))
         client = ChromeSweepClient.__new__(ChromeSweepClient)
-        client._consent_ok = False
         client._consent_lock = asyncio.Lock()
         client._session = _ConsentSession([("SOCS", "reject-value", ".google.com")])
 
@@ -171,7 +182,6 @@ class ConsentStateTests(unittest.TestCase):
     def test_accepted_consent_is_never_persisted(self) -> None:
         accept_page = _Response(url=INTERSTITIAL, text=_form(set_eom="true", set_sc="true"))
         client = ChromeSweepClient.__new__(ChromeSweepClient)
-        client._consent_ok = False
         client._consent_lock = asyncio.Lock()
         client._session = _ConsentSession([("SOCS", "accept-value", ".google.com")])
 

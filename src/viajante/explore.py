@@ -75,14 +75,23 @@ def validate_explore_window(start: date, days: int, *, today: Optional[date] = N
         raise ValueError(f"start date is in the past: {start.isoformat()}")
 
 
-def month_window(value: str, *, flag: str = "month") -> tuple[date, int]:
-    """First day of YYYY-MM and that month's length in days."""
+def month_window(
+    value: str, *, flag: str = "month", today: Optional[date] = None
+) -> tuple[date, int]:
+    """First day of YYYY-MM and that month's length in days.
+
+    The current month starts today: its earlier days are in the past and cannot be searched.
+    """
     try:
         year_text, month_text = value.split("-", 1)
         start = date(int(year_text), int(month_text), 1)
     except ValueError as exc:
         raise ValueError(f"{flag} must look like YYYY-MM") from exc
-    return start, calendar.monthrange(start.year, start.month)[1]
+    length = calendar.monthrange(start.year, start.month)[1]
+    check = today or date.today()
+    if (start.year, start.month) == (check.year, check.month):
+        return check, length - check.day + 1
+    return start, length
 
 
 def _rank_explore_destinations(
@@ -277,8 +286,10 @@ def search_explore(
             try:
                 checkpoint()
                 batch = fetch_batch(shops)
-            except Exception:
-                batch = None
+            except Exception as exc:
+                # Every destination carries the batch failure; a serial resend would send each
+                # request a second time with no record of the first.
+                batch = [exc] * len(shops)
         priced: list[ExploreDestination] = []
         pricing_errors: list[QueryFailure] = []
         succeeded = empty = 0

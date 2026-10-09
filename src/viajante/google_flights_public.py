@@ -137,6 +137,44 @@ def _carrier_catalog_tokens(data: object) -> set[str] | None:
     return {row[0] for row in rows if isinstance(row, list) and row and isinstance(row[0], str)}
 
 
+def _replay_response(first: object, response: SweepHttpResponse) -> SweepHttpResponse:
+    """A replayed page is attempt 2 only when its first attempt was sent. An unsent page's
+    replay is its first send, so its diagnostics must not claim a second attempt."""
+    if isinstance(first, SweepHttpResponse):
+        first_sent = first.request_sent
+    else:
+        first_sent = bool((getattr(first, "diagnostics", None) or {}).get("request_sent"))
+    return replace(response, attempts=2) if first_sent and response.request_sent else response
+
+
+def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlightCard:
+    """One round-trip package: the outbound card carrying the return leg's fare and carriers.
+
+    The fare, token and bag evidence come from the return card, since that card priced the
+    package. Carriers come from both legs, so an exclusion on either leg still applies.
+    """
+    sides = (outbound, returned)
+    if any(side.airline_codes is None and not side.airline for side in sides):
+        # One leg's carrier is unknown, so the package carrier is unknown too.
+        codes, airline = None, ""
+    else:
+        codes = None
+        if all(side.airline_codes is not None for side in sides):
+            codes = tuple(dict.fromkeys(outbound.airline_codes + returned.airline_codes))
+        airline = ", ".join(dict.fromkeys(side.airline for side in sides if side.airline))
+    return replace(
+        outbound,
+        airline=airline,
+        airline_codes=codes,
+        price=returned.price,
+        booking_token=returned.booking_token,
+        checked_bags=returned.checked_bags,
+        carry_on=returned.carry_on,
+        legs=(outbound.legs[0], returned.legs[0]),
+        flight_numbers=tuple((outbound.flight_numbers or ()) + (returned.flight_numbers or ())),
+    )
+
+
 class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
     """Read server-rendered ds:1 data; complete RTs with owned outbound selections."""
 
@@ -412,18 +450,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     )
                 for returned in returns:
                     if self._matches_leg(returned, trip.legs[1]):
-                        complete.append(
-                            replace(
-                                outbound,
-                                price=returned.price,
-                                booking_token=returned.booking_token,
-                                legs=(outbound.legs[0], returned.legs[0]),
-                                flight_numbers=tuple(
-                                    (outbound.flight_numbers or ())
-                                    + (returned.flight_numbers or ())
-                                ),
-                            )
-                        )
+                        complete.append(_package_card(outbound, returned))
             except SearchDeadline:
                 if not complete:
                     raise
@@ -513,8 +540,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         for slot, response in zip(retry, retried, strict=True):
             # An unsent sibling's replay is its first send. Only a page that
             # was sent, failed, and was sent again is attempt 2.
-            already_sent = first[slot].request_sent and response.request_sent
-            out[slot] = replace(response, attempts=2) if already_sent else response
+            out[slot] = _replay_response(first[slot], response)
         return out, client
 
     @staticmethod
@@ -743,11 +769,14 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         for index, url, response in zip(pending, urls, responses, strict=True):
             try:
                 cards = self._parse_response(response, url, trips[index])
-                if not all(self._matches_leg(card, trips[index].legs[0]) for card in cards):
+                matched = tuple(
+                    card for card in cards if self._matches_leg(card, trips[index].legs[0])
+                )
+                if not matched:
                     raise GoogleFlightsMarkupError(
                         "Public-page rows did not prove the requested route, date and stops."
                     )
-                results[index] = cards
+                results[index] = matched
             except SearchDeadline as exc:
                 results[index] = exc
             except Exception as exc:
@@ -768,14 +797,17 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 for index, url, response in zip(replay, retry_urls, retried, strict=True):
                     try:
                         cards = self._parse_response(
-                            replace(response, attempts=2), url, trips[index]
+                            _replay_response(results[index], response), url, trips[index]
                         )
-                        if not all(self._matches_leg(card, trips[index].legs[0]) for card in cards):
+                        matched = tuple(
+                            card for card in cards if self._matches_leg(card, trips[index].legs[0])
+                        )
+                        if not matched:
                             raise GoogleFlightsMarkupError(
                                 "Public-page rows did not prove the requested "
                                 "route, date and stops."
                             )
-                        results[index] = cards
+                        results[index] = matched
                     except SearchDeadline as exc:
                         results[index] = exc
                     except Exception as exc:

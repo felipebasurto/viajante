@@ -458,6 +458,20 @@ class SkiplaggedNameLookupTests(unittest.TestCase):
         self.assertIn("25584", str(ctx.exception))
         self.assertIn("99", str(ctx.exception))
 
+    def test_a_tool_error_reply_is_settled_and_not_retried(self) -> None:
+        calls: list = []
+        rejected = {"isError": True, "content": [{"type": "text", "text": "hotel 99 is delisted"}]}
+        sleeps: list = []
+        report = search_hotel_rooms(
+            99,
+            *self.DAY,
+            rpc=_routing_rpc(_search_result(), rejected, calls),
+            sleep=sleeps.append,
+        )
+        self.assertEqual([params["name"] for params in calls], ["sk_hotel_details"])
+        self.assertEqual(report.error.code, SearchErrorCode.REJECTED)
+        self.assertEqual(sleeps, [])
+
     def test_search_hotel_rooms_by_name_resolves_then_fetches_the_rates(self) -> None:
         calls: list = []
         report = search_hotel_rooms(

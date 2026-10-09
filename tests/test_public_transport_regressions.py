@@ -31,9 +31,13 @@ from viajante.google_flights import (
     _multi_row_index,
     parse_flight_cards,
 )
-from viajante.google_flights_public import GoogleFlightsMarkupError, PublicGoogleFlightsHttpSource
-from viajante.google_flights_rpc import RawFlightCard, raw_rpc_error_status
-from viajante.models import FlightLeg, FlightQuery, MultiCity
+from viajante.google_flights_public import (
+    GoogleFlightsMarkupError,
+    PublicGoogleFlightsHttpSource,
+    _package_card,
+)
+from viajante.google_flights_rpc import RawFlightCard, _wrb_chunk_objects, raw_rpc_error_status
+from viajante.models import FlightLeg, FlightQuery, MultiCity, RawJourneyLeg
 from viajante.ratelimit import rate_limit_status
 from viajante.runtime import get_runtime_info
 
@@ -45,6 +49,47 @@ def _mixed_rpc_body(*statuses: int) -> str:
     rows = [["wrb.fr", None, json.dumps([None])]]
     rows.extend(["wrb.fr", None, None, None, None, [status]] for status in statuses)
     return ")]}'\n\n" + json.dumps(rows)
+
+
+class WrbChunkTests(unittest.TestCase):
+    def test_a_bare_chunk_does_not_hide_the_length_prefixed_chunks_after_it(self) -> None:
+        body = '[["a"]]\n7\n[["b"]]'
+        self.assertEqual(list(_wrb_chunk_objects(body)), [[["a"]], [["b"]]])
+
+
+class RoundTripPackageCarrierTests(unittest.TestCase):
+    def _card(self, airline: str, codes: tuple[str, ...] | None, price: str) -> RawFlightCard:
+        return RawFlightCard(
+            airline=airline,
+            airline_codes=codes,
+            departure="08:00",
+            arrival="10:00",
+            price=price,
+            duration="2 h",
+            stops="Nonstop",
+            legs=(RawJourneyLeg(departure="08:00", arrival="10:00"),),
+        )
+
+    def test_the_return_carrier_is_checked_against_the_exclusion(self) -> None:
+        outbound = self._card("Iberia", ("IB",), "100 €")
+        returned = self._card("Air Europa", ("UX",), "200 €")
+        package = _package_card(outbound, returned)
+        self.assertEqual(package.airline_codes, ("IB", "UX"))
+        self.assertEqual(package.airline, "Iberia, Air Europa")
+        self.assertFalse(_passes_airline_filters(package, airlines=None, exclude_airlines=("UX",)))
+
+    def test_a_return_with_unknown_carriers_cannot_prove_an_exclusion(self) -> None:
+        outbound = self._card("Iberia", ("IB",), "100 €")
+        package = _package_card(outbound, self._card("", None, "200 €"))
+        self.assertIsNone(package.airline_codes)
+        self.assertFalse(_passes_airline_filters(package, airlines=None, exclude_airlines=("UX",)))
+
+    def test_the_package_fare_and_bags_come_from_the_return_card(self) -> None:
+        outbound = replace(self._card("Iberia", ("IB",), "100 €"), checked_bags=2)
+        returned = replace(self._card("Iberia", ("IB",), "260 €"), checked_bags=0)
+        package = _package_card(outbound, returned)
+        self.assertEqual(package.price, "260 €")
+        self.assertEqual(package.checked_bags, 0)
 
 
 class _ExplorePage:

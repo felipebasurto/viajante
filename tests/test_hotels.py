@@ -154,6 +154,47 @@ class HotelLoopPacingTests(unittest.TestCase):
 
 
 class PureHotelLogicTests(unittest.TestCase):
+    def test_a_price_quoted_in_another_iso_code_is_never_labelled_with_the_requested_one(
+        self,
+    ) -> None:
+        mixed = FakeSource(
+            [
+                HotelPage(
+                    cards=(
+                        card(title="Foreign", total_price="CZK 3,000"),
+                        card(title="Own", total_price="€ 120"),
+                    )
+                )
+            ]
+        )
+        report = _run_search(
+            (query(),),
+            top=8,
+            source=mixed,
+            sleep=lambda _seconds: None,
+            random_gen=Random(3),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
+        )
+        result = report.queries[0]
+        self.assertEqual([offer.title for offer in result.offers], ["Own"])
+
+        all_foreign = FakeSource(
+            [HotelPage(cards=(card(title="Foreign", total_price="CZK 3,000"),))]
+        )
+        report = _run_search(
+            (query(),),
+            top=8,
+            source=all_foreign,
+            sleep=lambda _seconds: None,
+            random_gen=Random(3),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
+        )
+        failure = report.queries[0]
+        self.assertIsInstance(failure, HotelQueryFailure)
+        self.assertEqual(failure.error.code, SearchErrorCode.CURRENCY_MISMATCH)
+
     def test_normalize_card_preserves_raw_values_and_parses_details(self) -> None:
         normalized = _normalize_card(card())
 
@@ -379,7 +420,7 @@ class HotelOrchestrationTests(unittest.TestCase):
         self.assertTrue(all(call[1] is first_applied for call in source.fetch_calls))
         self.assertEqual(
             first_applied.chips,
-            ("oos=1", "privacy_type=3", "ht_id=201"),
+            ("fc=2", "privacy_type=3", "ht_id=201"),
         )
         self.assertTrue(all(call[2] == 24 for call in source.fetch_calls))
         self.assertEqual(sleeps, expected_backoffs)

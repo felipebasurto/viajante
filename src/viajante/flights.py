@@ -9,12 +9,10 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple
 
-from viajante.browser import chromium_installed, playwright_available
 from viajante.control import (
     SearchDeadline,
     checkpoint,
     controlled,
-    current_control,
     interruptible_sleep,
 )
 from viajante.flight_evidence import _report_with_evidence, _stamp_google_flights_urls
@@ -33,7 +31,7 @@ from viajante.flight_offers import (
     compare_nonstop_vs_one_stop,
     validate_sort,
 )
-from viajante.flight_packages import _attach_missing_legs, _passes_packaged_filters
+from viajante.flight_packages import _passes_packaged_filters
 from viajante.flight_routes import (
     _is_route_spec,
     _overlay_carrier_filters,
@@ -73,7 +71,6 @@ from viajante.models import (
     normalize_country,
 )
 from viajante.orchestration import (
-    BROWSER_INSTALL_HINT,
     MAX_ATTEMPTS,
     inter_query_delay_seconds,
     retry_backoff_seconds,
@@ -82,7 +79,7 @@ from viajante.orchestration import (
 )
 from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
-from viajante.ratelimit import cooldown_until
+from viajante.ratelimit import NOT_SENT, cooldown_until
 from viajante.storage import default_state_dir
 
 DEFAULT_TOP = 8
@@ -103,20 +100,6 @@ def resolve_fetch_mode(fetch: FetchMode) -> Literal["sweep", "detail"]:
     if fetch in ("auto", "sweep"):
         return "sweep"
     raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
-
-
-def _needs_detail_fallback(result: QueryResult) -> bool:
-    if isinstance(result, QuerySuccess):
-        return result.raw_count == 0
-    if not isinstance(result, QueryFailure) or result.error.rate_limited:
-        return False
-    if result.error.code == SearchErrorCode.NO_RESULTS:
-        return True
-    if result.error.code == SearchErrorCode.BLOCKED:
-        return False
-    if result.error.code == SearchErrorCode.FETCH_FAILED:
-        return True
-    return False
 
 
 def classify_failure(exc: BaseException) -> SearchError:
@@ -229,9 +212,10 @@ def _run_search(
             candidates = sorted(eligible, key=lambda offer: _offer_sort_key(offer, sort))
             eligible = []
             for start in range(0, len(candidates), top):
-                completed = _attach_missing_legs(trip, candidates[start : start + top], source)
                 eligible.extend(
-                    offer for offer in completed if _passes_packaged_filters(offer, trip, filters)
+                    offer
+                    for offer in candidates[start : start + top]
+                    if _passes_packaged_filters(offer, trip, filters)
                 )
                 if len(_rank_offers(eligible, top=top, sort=sort)) >= top:
                     break
@@ -336,10 +320,24 @@ def _run_search(
                 fetch_ms=None,
             )
 
+    blocked: Optional[SearchError] = None
     for index, trip in enumerate(trips):
+        if blocked is not None:
+            # Google refused the earlier query: send nothing more, and say so per trip.
+            results.append(
+                _stamp(
+                    QueryFailure(
+                        query=trip, error=replace(blocked, message=NOT_SENT + blocked.message)
+                    )
+                )
+            )
+            continue
         report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
-        results.append(_search_one(trip))
-        if index + 1 < len(trips):
+        result = _search_one(trip)
+        results.append(result)
+        if isinstance(result, QueryFailure) and result.error.code == SearchErrorCode.BLOCKED:
+            blocked = result.error
+        if index + 1 < len(trips) and blocked is None:
             sleep(inter_query_delay(random_gen))
     searched_at = now()
     return _report_with_evidence(
@@ -645,35 +643,5 @@ def search_flights(
         retry_backoff=backoff,
     )
     backend: FetchBackend = planned
-    if (
-        planned == "sweep"
-        and getattr(source, "transport", None) != "public_page"
-        and playwright_available()
-    ):
-        retry_indexes = [
-            index for index, result in enumerate(report.queries) if _needs_detail_fallback(result)
-        ]
-        control = current_control()
-        if control is not None and control.expired():
-            if retry_indexes:
-                control.mark_cut()
-            retry_indexes = []
-        if retry_indexes and not chromium_installed():
-            report_progress(BROWSER_INSTALL_HINT)
-            retry_indexes = []
-        if retry_indexes:
-            report_progress("sweep empty/markup/block; falling back to detail")
-            retry_trips = tuple(trips[index] for index in retry_indexes)
-            detail_report = execute(
-                retry_trips,
-                source=GoogleFlightsSource(default_state_dir(), currency=currency, country=country),
-                inter_query_delay=inter_query_delay_seconds,
-                fetch_backend="detail",
-            )
-            merged = list(report.queries)
-            for index, detail_result in zip(retry_indexes, detail_report.queries, strict=True):
-                merged[index] = detail_result
-            report = replace(report, queries=tuple(merged))
-            backend = "sweep_then_detail"
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     return replace(report, fetch_backend=backend, fetch_ms=fetch_ms)

@@ -75,6 +75,11 @@ def parse_price(price_text: str | None) -> float | None:
     prefix = _CURRENCY_PREFIX.search(cleaned[: match.start()])
     if prefix:
         iso = prefix.group(1).upper()
+    else:
+        # The RPC price text puts the code after the amount ("45.125 KWD").
+        suffix = cleaned[match.end() :]
+        if re.fullmatch(r"[A-Za-z]{3}", suffix):
+            iso = suffix.upper()
     try:
         return _parse_grouped_number(num, three_decimal=iso in _THREE_DEC_CURRENCIES)
     except ValueError:

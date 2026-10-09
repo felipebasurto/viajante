@@ -20,6 +20,7 @@ from viajante.models import (
 )
 from viajante.skiplagged import (
     SkiplaggedShapeError,
+    _offer_from_card,
     parse_skiplagged_offers,
     search_hidden_city,
 )
@@ -364,6 +365,70 @@ class HiddenCitySearchTests(unittest.TestCase):
         source = getsource(module)
         self.assertNotIn("viajante.google_flights", source)
         self.assertNotIn("viajante.flights", source)
+
+
+class HiddenCityRoundTripFieldTests(unittest.TestCase):
+    def _card(
+        self,
+        *,
+        layovers: int,
+        duration: str,
+        airlines: str,
+        return_layovers: int,
+        return_duration: str,
+        return_airlines: str,
+    ) -> dict:
+        return {
+            "price": {"amount": 289, "currency": "USD"},
+            "layovers": layovers,
+            "duration": duration,
+            "airlines": airlines,
+            "deepLink": "https://skiplagged.com/flights/JFK/LAX#trip=abc",
+            "returnFlight": {
+                "layovers": return_layovers,
+                "duration": return_duration,
+                "airlines": return_airlines,
+            },
+        }
+
+    def _offer(self, card: dict, layovers: dict | None = None):
+        return _offer_from_card(
+            card,
+            origin="JFK",
+            destination="LAX",
+            departure_date=FUTURE,
+            return_date=FUTURE + timedelta(days=5),
+            layover_by_trip={"abc": "ORD"} if layovers is None else layovers,
+        )
+
+    def test_directions_that_agree_keep_the_trip_values(self) -> None:
+        offer = self._offer(
+            self._card(
+                layovers=0,
+                duration="5h",
+                airlines="DL",
+                return_layovers=0,
+                return_duration="5h",
+                return_airlines="DL",
+            )
+        )
+        self.assertEqual((offer.stops_count, offer.duration, offer.airline), (0, "5h", "DL"))
+
+    def test_a_connecting_return_makes_the_outbound_values_unknown(self) -> None:
+        offer = self._offer(
+            self._card(
+                layovers=0,
+                duration="5h",
+                airlines="DL",
+                return_layovers=1,
+                return_duration="12h",
+                return_airlines="AA",
+            )
+        )
+        self.assertIsNone(offer.stops_count)
+        self.assertIsNone(offer.duration)
+        self.assertIsNone(offer.airline)
+        self.assertIsNone(offer.layover_city)
 
 
 class HiddenCityCliTests(unittest.TestCase):

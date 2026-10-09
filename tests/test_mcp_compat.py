@@ -358,6 +358,19 @@ class InvalidParameterTests(_StateDir):
                 self.assertNotIn("input_value", text)
                 self.assertNotIn("errors.pydantic.dev", text)
 
+    def test_a_handler_argument_check_gets_the_same_prefix_as_a_schema_error(self) -> None:
+        async def calls(session):
+            return await session.call_tool(
+                "search_flights", {"routes": ["JFK-LHR:2001-01-01"], "max_stops": 1}
+            )
+
+        result = _session_call(self.server, calls)
+        self.assertTrue(result.is_error)
+        text = _text(result)
+        prefix = "Error executing tool search_flights: "
+        self.assertTrue(text.startswith(prefix + "{"), text)
+        self.assertEqual(json.loads(text[len(prefix) :])["error"]["code"], "invalid_parameter")
+
     def test_several_bad_arguments_are_listed_and_field_needs_a_single_parameter(self) -> None:
         async def calls(session):
             return await session.call_tool("search_dates", {"route": "JFK-LHR"})

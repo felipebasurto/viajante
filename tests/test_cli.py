@@ -1016,7 +1016,7 @@ def _sample_hotel_report(
     currency: str = "EUR",
 ) -> HotelSearchReport:
     query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
-    applied = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+    applied = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
     return HotelSearchReport(
         searched_at=datetime(2026, 8, 10, 9, 0, 0),
         currency=currency,
@@ -1253,7 +1253,7 @@ class HotelCliTests(unittest.TestCase):
             date(2026, 12, 7),
             free_cancellation=False,
         )
-        applied_free = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+        applied_free = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
         applied_open = AppliedHotelFilters(chips=(), url="https://example.test")
         free_offer = _sample_hotel_offer()
         open_offer = HotelOffer(
@@ -1322,7 +1322,7 @@ class HotelCliTests(unittest.TestCase):
             date(2026, 12, 7),
             free_cancellation=False,
         )
-        applied = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+        applied = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 10, 9, 0, 0),
             queries=(
@@ -1493,7 +1493,7 @@ class HotelCliTests(unittest.TestCase):
             output = buffer.getvalue()
             lowered = output.casefold()
             self.assertIn("free cancellation required", lowered)
-            self.assertIn("booking chips: oos=1", lowered)
+            self.assertIn("booking chips: fc=2", lowered)
 
     def test_non_refundable_opt_out_filter_gloss(self) -> None:
         query = HotelQuery(
@@ -1549,7 +1549,7 @@ class HotelCliTests(unittest.TestCase):
             self.assertIn("2026-12-07", output)
             self.assertIn("3 night", output)
             self.assertIn("free cancellation required", output.casefold())
-            self.assertIn("booking chips: oos=1", output.casefold())
+            self.assertIn("booking chips: fc=2", output.casefold())
             self.assertIn("420 € total stay", output)
             self.assertIn("rating 8.9", output)
             self.assertIn("Old Town Apartment", output)
@@ -1585,7 +1585,7 @@ class HotelCliTests(unittest.TestCase):
             entire_home=True,
         )
         applied = AppliedHotelFilters(
-            chips=("oos=1", "privacy_type=3", "ht_id=201"),
+            chips=("fc=2", "privacy_type=3", "ht_id=201"),
             url="https://example.test",
         )
         report = HotelSearchReport(
@@ -1620,7 +1620,7 @@ class HotelCliTests(unittest.TestCase):
             self.assertIn("lodging: entire home", output)
             self.assertIn("booking chips:", output)
 
-    def test_silent_cancellation_when_oos_filter_applied(self) -> None:
+    def test_silent_cancellation_when_fc_filter_applied(self) -> None:
         silent = HotelOffer(
             title="Quiet Stay",
             address="Prague 1",
@@ -1661,7 +1661,7 @@ class HotelCliTests(unittest.TestCase):
 
     def test_failure_output_and_exit_code(self) -> None:
         query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
-        applied = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+        applied = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 10, 9, 0, 0),
             queries=(
@@ -1684,7 +1684,7 @@ class HotelCliTests(unittest.TestCase):
             output = buffer.getvalue()
             self.assertIn("ERROR:", output)
             self.assertIn("free cancellation required", output.casefold())
-            self.assertIn("booking chips: oos=1", output.casefold())
+            self.assertIn("booking chips: fc=2", output.casefold())
             self.assertNotIn("verify the final total stay", output.casefold())
 
     def test_save_only_when_requested(self) -> None:

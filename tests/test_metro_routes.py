@@ -13,6 +13,7 @@ from viajante.cli import main
 from viajante.flight_routes import (
     drop_excluded_airport_trips,
     expand_nearby_trips,
+    keep_included_dest_trips,
     nearby_notes,
     parse_flight_plan,
 )
@@ -36,6 +37,20 @@ BACK = date(2026, 11, 14)
 
 def _pairs(trips) -> list[tuple[str, str]]:
     return [(trip.origin, trip.destination) for trip in trips]
+
+
+class IncludeAirportsReturnTests(unittest.TestCase):
+    def test_a_named_destination_keeps_its_return_leg_of_the_same_trip(self) -> None:
+        trips = parse_flight_plan(["JFK-LHR:2026-12-03:2026-12-10"], max_stops=1)
+        kept = keep_included_dest_trips(trips, ("LHR",))
+        self.assertEqual(
+            [(trip.origin, trip.destination) for trip in kept],
+            [("JFK", "LHR"), ("LHR", "JFK")],
+        )
+
+    def test_a_round_trip_to_another_airport_is_dropped_on_both_legs(self) -> None:
+        trips = parse_flight_plan(["JFK-LHR:2026-12-03:2026-12-10"], max_stops=1)
+        self.assertEqual(keep_included_dest_trips(trips, ("LGW",)), ())
 
 
 class MetroPlanTests(unittest.TestCase):

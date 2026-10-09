@@ -94,7 +94,6 @@ def hidden(origin, destination, departure_date, **kwargs):
     )
 
 flights.GoogleFlightsHttpSource = FlightSource
-flights.playwright_available = lambda: False
 hotels.GoogleHotelsSource = HotelSource
 details.search_hotel_rooms = rooms
 handlers.search_hidden_city = hidden

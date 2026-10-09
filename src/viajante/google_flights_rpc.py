@@ -146,11 +146,11 @@ def _wrb_chunk_objects(text: str):
                 idx = newline + 1 + size
                 continue
         try:
-            obj, _ = decoder.raw_decode(body, idx)
+            obj, end = decoder.raw_decode(body, idx)
         except json.JSONDecodeError:
             break
         yield obj
-        return
+        idx = end
 
 
 def first_wrb_data(

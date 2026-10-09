@@ -66,6 +66,12 @@ STOPS_CASES = [
 
 
 class ParserTests(unittest.TestCase):
+    def test_a_trailing_iso_code_sets_three_decimal_currencies(self) -> None:
+        # The RPC price text is "<amount> <CODE>"; a KWD fare of 45.125 must not read as 45125.
+        self.assertEqual(parse_price("45.125 KWD"), 45.125)
+        self.assertEqual(parse_price("1,045.125 KWD"), 1045.125)
+        self.assertEqual(parse_price("KWD 45.125"), 45.125)
+
     def test_parse_price(self) -> None:
         for text, want in PRICE_CASES:
             with self.subTest(text=text):

@@ -36,6 +36,11 @@ class CentsPerPointTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cents_per_point(100, 100, taxes=float("inf"))
 
+    def test_taxes_cannot_exceed_the_cash_price_they_are_part_of(self) -> None:
+        with self.assertRaises(ValueError):
+            cents_per_point(100.0, 1000, taxes=150.0)
+        self.assertEqual(cents_per_point(100.0, 1000, taxes=100.0), 0.0)
+
 
 class AwardOfferTests(unittest.TestCase):
     def test_estimated_stays_estimated(self) -> None:

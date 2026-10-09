@@ -62,7 +62,8 @@ def build_applied_filters(
 ) -> AppliedHotelFilters:
     chips: list[str] = []
     if query.free_cancellation:
-        chips.append("oos=1")
+        # Booking's free-cancellation filter is fc=2; oos=1 is "only show available properties".
+        chips.append("fc=2")
     if query.entire_home:
         chips.extend(("privacy_type=3", "ht_id=201"))
 

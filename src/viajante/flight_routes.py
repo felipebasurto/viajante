@@ -527,7 +527,25 @@ def keep_included_dest_trips(
     allowed = _named_iata(include_airports)
     if not allowed:
         return tuple(trips)
-    return tuple(trip for trip in trips if trip_dest_in_include_list(trip, allowed))
+    # The return leg of a kept trip (ORIGIN-DEST:OUT:BACK sugar) stays with that trip, since
+    # it leaves the included destination; dropping it would lose the return with no note.
+    included = {_ends(trip) for trip in trips if trip_dest_in_include_list(trip, allowed)}
+    return tuple(
+        trip
+        for trip in trips
+        if trip_dest_in_include_list(trip, allowed) or _is_return_of(trip, included)
+    )
+
+
+def _ends(trip: Trip) -> Optional[Tuple[str, str]]:
+    if isinstance(trip, MultiCity):
+        return None
+    return (trip.origin, trip.destination)
+
+
+def _is_return_of(trip: Trip, included: set) -> bool:
+    ends = _ends(trip)
+    return ends is not None and (ends[1], ends[0]) in included
 
 
 def _overlay_carrier_filters(

@@ -113,10 +113,15 @@ class DatePriceRow:
     empty_reason: Optional[EmptyReason] = None
     page_errors: Tuple[SearchError, ...] = ()
     scope_bound: bool = False
+    # The day's cheapest eligible fare before any buffer: the summary and typical base. Not
+    # serialized; price is the row's winner.
+    day_fare: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.empty_reason is not None and self.status != "empty":
             raise ValueError("empty_reason applies only to empty rows")
+        if (self.status != "ok" or self.price is None) and self.day_fare is not None:
+            raise ValueError("empty/error rows omit the day fare")
         _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
         if (self.status != "ok" or self.price is None) and self.typical is not None:
             raise ValueError("empty/error rows omit typical")
@@ -183,10 +188,16 @@ class DateCalendarReport:
     def __post_init__(self) -> None:
         _store_naive_utc(self)
         _store_nearby_label(self)
+        # A row built without its day fare (by hand, not by a search) carries only its price.
         object.__setattr__(
             self,
             "summary",
-            owned_calendar_summary([(row.departure_date, row.price) for row in self.days]),
+            owned_calendar_summary(
+                [
+                    (row.departure_date, row.price if row.day_fare is None else row.day_fare)
+                    for row in self.days
+                ]
+            ),
         )
         typical = None if self.summary is None else self.summary.median_price
         object.__setattr__(

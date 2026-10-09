@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Tuple
 
 from viajante.flight_filters import (
+    OVERNIGHT_ANY,
     OfferFilters,
     _clock_minutes,
     _passes_clock_bound,
@@ -77,6 +78,10 @@ def _clocks_pass(departure: str | None, arrival: str | None, offer: OfferFilters
     )
 
 
+def _names_hub(codes: Tuple[str, ...] | None, hub: str) -> bool:
+    return codes is not None and (OVERNIGHT_ANY in codes or hub in codes)
+
+
 def _hub_connection_passes(itinerary: SplitItinerary, offer: OfferFilters) -> bool:
     hub = itinerary.hub
     if offer.min_layover_hours is not None or offer.max_layover_hours is not None:
@@ -91,13 +96,9 @@ def _hub_connection_passes(itinerary: SplitItinerary, offer: OfferFilters) -> bo
         return False
     if offer.exclude_via is not None and hub in offer.exclude_via:
         return False
-    if offer.no_overnight is not None and hub in offer.no_overnight and itinerary.overnight_at_hub:
+    if _names_hub(offer.no_overnight, hub) and itinerary.overnight_at_hub:
         return False
-    if (
-        offer.require_overnight is not None
-        and hub in offer.require_overnight
-        and not itinerary.overnight_at_hub
-    ):
+    if _names_hub(offer.require_overnight, hub) and not itinerary.overnight_at_hub:
         return False
     return True
 

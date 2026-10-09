@@ -137,6 +137,12 @@ multi-city offers apply local filters to all returned journeys before selecting
 `--top`. Missing packaged journeys cannot prove named local filters or complete
 itinerary validation.
 
+With the default `ranked` sort, a connection more than three times as long as the
+fastest nonstop (or the fastest offer when none is nonstop) is left out of `offers`.
+A recommendation's comparison always leaves those connections out, whatever the sort,
+and `recommendation.slow_connections_hidden` counts them when a recommendation is
+built. Other sorts keep every connection in `offers`.
+
 `--bags N` and `--carry-on` ask Google Flights to price baggage. A baggage
 buffer is your own ranking allowance, not a provider fee. The list of low-cost
 carriers is partial, so absence from the list does not mean bags are included.

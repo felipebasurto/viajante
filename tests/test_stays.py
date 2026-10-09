@@ -156,10 +156,18 @@ class StayToolTests(unittest.TestCase):
         self.assertEqual(payload["person_nights"], 29)
         self.assertEqual([b["headcount"] for b in payload["blocks"]], [5, 6, 7, 4, 3])
 
+    def test_a_caller_typed_stay_total_is_never_confirmed(self) -> None:
+        invented = [dict(STAYS[0], total=987.65)]
+        split_stay_costs_tool(invented, ROSTER, "EUR")
+        verdict = evidence.verify_answer("The hotel costs EUR 987.65.")
+        self.assertFalse(verdict["ok"], verdict)
+
     def test_split_output_is_recorded_so_verify_answer_owns_the_shares(self) -> None:
         split_stay_costs_tool(STAYS, ROSTER, "EUR", fee_per_person_night=2)
-        verdict = evidence.verify_answer("Chuspi pays EUR 71.28 and the group EUR 645.68.")
+        verdict = evidence.verify_answer("Chuspi pays EUR 71.28.")
         self.assertTrue(verdict["ok"], verdict)
+        # The group figure is the sum of the caller's own stay totals: not owned, not confirmed.
+        self.assertFalse(evidence.verify_answer("The group pays EUR 645.68.")["ok"])
         invented = evidence.verify_answer("Chuspi pays EUR 99.99.")
         self.assertFalse(invented["ok"])
 

@@ -13,6 +13,7 @@ from viajante.flight_evidence import _stamp_offer_evidence
 from viajante.flight_filters import OfferFilters, owned_clock, parse_code_list, parse_offer_filters
 from viajante.flight_offers import (
     FlightSort,
+    _cheapest_by_fare,
     _cheapest_by_ranked,
     _rank_offers,
     compare_nonstop_vs_one_stop,
@@ -496,7 +497,15 @@ def _date_calendar_for_seed(
     try:
         checkpoint()
         days = _sweep_per_day(
-            client, seed, start, end, stay, report_progress, filters, baggage_buffer
+            client,
+            seed,
+            start,
+            end,
+            stay,
+            report_progress,
+            filters,
+            baggage_buffer,
+            by_fare=sort in ("fare", "price"),
         )
     except Exception as exc:
         error = classify_failure(exc)
@@ -671,15 +680,16 @@ def cheapest_priced_day(
     rows: Sequence[DatePriceRow],
     around: date,
 ) -> Optional[DatePriceRow]:
-    """Cheapest owned calendar day. Ties: closer to around, then earlier date."""
+    """Cheapest owned calendar day by fare plus buffer. Ties: closer to around, then earlier."""
     priced = [row for row in rows if row.status == "ok" and row.price is not None and row.price > 0]
     if not priced:
         return None
 
     def sort_key(row: DatePriceRow) -> tuple[float, int, date]:
-        price = row.price if row.price is not None else 0.0
+        # The same metric that picked the row's winner: fare plus the named buffer.
+        cost = (row.price or 0.0) + (row.baggage_buffer or 0)
         delta = abs((row.departure_date - around).days)
-        return (price, delta, row.departure_date)
+        return (cost, delta, row.departure_date)
 
     return min(priced, key=sort_key)
 
@@ -716,11 +726,21 @@ def _flex_report_for_seed(
     returning: Optional[date] = None
     error: Optional[SearchError] = None
     typical: Optional[float] = None
+    day_fare: Optional[float] = None
     shop: FlightQuery | RoundTrip | None = None
+    cards_by_day: dict[date, tuple[RawFlightCard, ...]] = {}
     try:
         checkpoint()
         days = _sweep_per_day(
-            client, seed, start, end, stay, report_progress, filters, baggage_buffer
+            client,
+            seed,
+            start,
+            end,
+            stay,
+            report_progress,
+            filters,
+            baggage_buffer,
+            cards_by_day=cards_by_day,
         )
     except Exception as exc:
         error = classify_failure(exc)
@@ -728,7 +748,12 @@ def _flex_report_for_seed(
     else:
         if any(row.error is not None for row in days):
             error = next(row.error for row in days if row.error is not None)
-        typical = typical_from_daily_prices([row.price for row in days])
+        typical = typical_from_daily_prices(
+            [
+                _day_minimum_fare(cards_by_day.get(row.departure_date), seed, row, stay, filters)
+                for row in days
+            ]
+        )
         winner = cheapest_priced_day(days, around)
         if winner is None:
             report_progress("no priced day in flex window; no fare")
@@ -740,12 +765,8 @@ def _flex_report_for_seed(
             shop = _day_trip(seed, chosen, stay)
             report_progress(f"chosen {chosen.isoformat()}; pricing that day")
             backend = "calendar_then_sweep"
-            try:
-                checkpoint()
-                cards = client.fetch(shop)
-            except Exception as exc:
-                error = classify_failure(exc)
-                cards = ()
+            # The sweep already fetched this day; a second fetch would repeat the same pages.
+            cards = cards_by_day.get(chosen, ())
             eligible = offers_from_cards(cards, shop, filters, baggage_buffer=baggage_buffer)
             ranked = _rank_offers(eligible, top=top, sort=sort)
             if typical is not None:
@@ -753,8 +774,10 @@ def _flex_report_for_seed(
             else:
                 offers = ranked
             compare = compare_nonstop_vs_one_stop(eligible)
-    fare = min((offer.price for offer in offers), default=None)
-    label = vs_typical(fare, typical) if fare is not None else None
+            # The typical is built from each day's cheapest eligible fare, so the label uses that
+            # same base, not the shown offers (top may hide the cheapest bare fare).
+            day_fare = min((offer.price for offer in eligible), default=None)
+    label = vs_typical(day_fare, typical) if day_fare is not None else None
     url_trip = shop or _day_trip(seed, chosen or around, stay)
     searched_at = datetime.now(timezone.utc)
     if offers:
@@ -936,9 +959,11 @@ def _row_from_day_cards(
     returning: Optional[date],
     filters: OfferFilters,
     baggage_buffer: int,
+    *,
+    by_fare: bool = False,
 ) -> DatePriceRow:
     offers = offers_from_cards(cards, query, filters, baggage_buffer=baggage_buffer)
-    best = _cheapest_by_ranked(offers)
+    best = _cheapest_by_fare(offers) if by_fare else _cheapest_by_ranked(offers)
     if best is None:
         return DatePriceRow(
             departure_date=cursor,
@@ -958,6 +983,7 @@ def _row_from_day_cards(
         duration_hours=best.duration_hours,
         departure=owned_clock(best.departure),
         arrival=owned_clock(best.arrival),
+        day_fare=min(offer.price for offer in offers),
     )
 
 
@@ -982,6 +1008,20 @@ def _row_from_day_error(
     )
 
 
+def _day_minimum_fare(
+    cards: Optional[Sequence[RawFlightCard]],
+    seed: FlightQuery | RoundTrip,
+    row: DatePriceRow,
+    nights: Optional[int],
+    filters: OfferFilters,
+) -> Optional[float]:
+    """The day's cheapest eligible fare, before any buffer: the basis of the flex typical."""
+    if not cards:
+        return None
+    offers = offers_from_cards(cards, _day_trip(seed, row.departure_date, nights), filters)
+    return min((offer.price for offer in offers), default=None)
+
+
 def _sweep_per_day(
     source: DaySource,
     seed: FlightQuery | RoundTrip,
@@ -991,6 +1031,9 @@ def _sweep_per_day(
     progress: Callable[[str], None],
     filters: OfferFilters,
     baggage_buffer: int,
+    cards_by_day: Optional[dict[date, tuple[RawFlightCard, ...]]] = None,
+    *,
+    by_fare: bool = False,
 ) -> tuple[DatePriceRow, ...]:
     day_queries: list[tuple[date, FlightQuery | RoundTrip]] = []
     cursor = start
@@ -1003,7 +1046,11 @@ def _sweep_per_day(
         returning = _return_for(day, nights)
         if isinstance(result, BaseException):
             return _row_from_day_error(day, result, returning)
-        row = _row_from_day_cards(day, day_query, result, returning, filters, baggage_buffer)
+        if cards_by_day is not None:
+            cards_by_day[day] = tuple(result)
+        row = _row_from_day_cards(
+            day, day_query, result, returning, filters, baggage_buffer, by_fare=by_fare
+        )
         if getattr(source, "transport", None) == "public_page":
             page_error, scope_bound = source.metadata_for(day_query)
             row = replace(

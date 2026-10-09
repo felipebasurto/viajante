@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 import threading
 import time
 from dataclasses import replace
@@ -98,6 +99,20 @@ class _HotelSource(Protocol):
     def reset(self) -> None: ...
 
     def close(self) -> None: ...
+
+
+_ISO_TOKEN = re.compile(r"\b[A-Z]{3}\b")
+
+
+def _named_other_currency(price_text: str, currency: str) -> Optional[str]:
+    """An ISO 4217 code in a price text that is not the requested one, else None.
+
+    Symbols are not read: "$" or "kr" alone cannot prove a code, so they never mismatch.
+    """
+    for token in _ISO_TOKEN.findall(price_text):
+        if token != currency:
+            return token
+    return None
 
 
 def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
@@ -336,10 +351,25 @@ def _run_search(
             try:
                 checkpoint()
                 page = source.fetch(query, applied, fetch_limit)
+                others = [_named_other_currency(raw.total_price, currency) for raw in page.cards]
+                if page.cards and all(others):
+                    # Every priced card names another ISO code: there is no owned quote in the
+                    # requested currency, and viajante never converts.
+                    other = others[0]
+                    outcome = HotelQueryFailure(
+                        query=query,
+                        applied=applied,
+                        error=SearchError(
+                            code=SearchErrorCode.CURRENCY_MISMATCH,
+                            message=f"Hotel prices are quoted in {other}, not {currency}. "
+                            "Viajante does not convert.",
+                        ),
+                    )
+                    break
                 normalized = tuple(
                     _with_distance(offer, near)
-                    for raw in page.cards
-                    if (offer := _normalize_card(raw)) is not None
+                    for raw, other in zip(page.cards, others, strict=True)
+                    if other is None and (offer := _normalize_card(raw)) is not None
                 )
                 eligible = tuple(
                     offer

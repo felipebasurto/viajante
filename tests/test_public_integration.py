@@ -437,6 +437,29 @@ class SweepDiagnosticsTests(unittest.TestCase):
         self.assertFalse(responses[3].request_sent)
         self.assertEqual(responses[3].attempts, 0)
 
+    def test_a_mixed_one_way_page_gives_the_same_rows_through_fetch_and_fetch_many(self) -> None:
+        # One board: a proven HAN-SIN card and a card from another origin. fetch keeps the
+        # proven card; fetch_many must keep it too, not fail the whole day.
+        good = _card("HAN", "SIN", OUT, "08:00", "VN100", "€100")
+        stray = _card("SGN", "SIN", OUT, "09:00", "VN200", "€90")
+        query = FlightQuery("HAN", "SIN", OUT, adults=2, max_stops=0)
+
+        class Client:
+            def get(self, url, *, timeout):
+                return SweepHttpResponse(200, "<html></html>", url)
+
+            def get_many(self, urls, *, timeout):
+                return [SweepHttpResponse(200, "<html></html>", url) for url in urls]
+
+        source = PublicGoogleFlightsHttpSource(
+            currency="EUR", client=Client(), sleep=lambda _: None
+        )
+        with patch.object(source, "_parse_response", return_value=(good, stray)):
+            single = source.fetch(query)
+            batched = source.fetch_many([query])[0]
+        self.assertEqual([card.flight_numbers for card in single], [good.flight_numbers])
+        self.assertEqual([card.flight_numbers for card in batched], [good.flight_numbers])
+
     def test_batch_replay_marks_the_retried_attempt(self) -> None:
         class Client:
             def __init__(self) -> None:
@@ -625,13 +648,14 @@ class FlexShopReplayTests(unittest.TestCase):
             currency="EUR",
             baggage_buffer=0,
         )
-        self.assertEqual(source.fetched[-1].cabin, "business")
-        self.assertEqual(source.fetched[-1].max_stops, 2)
-        self.assertEqual(source.fetched[-1].adults, 2)
-        self.assertEqual(source.fetched[-1].children, 1)
-        self.assertEqual(source.fetched[-1].return_date, date(2099, 1, 20))
-        self.assertEqual(source.fetched[0].cabin, "business")
-        self.assertEqual(source.fetched[0].max_stops, 2)
+        # The chosen day is priced from the sweep, so every request carries the same party,
+        # cabin, stops and five-night stay; no separate shop request is sent.
+        for query in source.fetched:
+            self.assertEqual(query.cabin, "business")
+            self.assertEqual(query.max_stops, 2)
+            self.assertEqual(query.adults, 2)
+            self.assertEqual(query.children, 1)
+            self.assertEqual((query.return_date - query.departure_date).days, 5)
         self.assertEqual(report.trip, "rt")
 
     def test_flex_shop_applies_every_named_filter(self) -> None:

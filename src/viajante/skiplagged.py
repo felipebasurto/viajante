@@ -381,6 +381,20 @@ def _offer_from_card(
     fragment = urlparse(deep_link).fragment if deep_link else ""
     airline = card.get("airlines")
     duration = card.get("duration")
+    stops_count = _stops(card)
+    layover_city = layover_by_trip.get(fragment)
+    if isinstance(return_leg, dict):
+        # The card's own fields describe the outbound. A round-trip value is reported only
+        # when the return agrees; the layover city belongs to the outbound alone when the
+        # return is nonstop.
+        if _stops(return_leg) != stops_count:
+            stops_count = None
+        if return_leg.get("duration") != duration:
+            duration = None
+        if return_leg.get("airlines") != airline:
+            airline = None
+        if _stops(return_leg) != 0:
+            layover_city = None
     return HiddenCityOffer(
         origin=row_origin,
         destination=row_dest,
@@ -390,8 +404,8 @@ def _offer_from_card(
         evidence="confirmed",
         airline=airline.strip() if isinstance(airline, str) and airline.strip() else None,
         duration=duration if isinstance(duration, str) and duration else None,
-        stops_count=_stops(card),
-        layover_city=layover_by_trip.get(fragment),
+        stops_count=stops_count,
+        layover_city=layover_city,
         # Not in the captured payload: no field names the beyond city. Stays null.
         ticketed_destination=None,
         hidden_city=_hidden_city(card, return_leg),

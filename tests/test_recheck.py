@@ -15,9 +15,7 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers
 from viajante.cli import main
-from viajante.flight_packages import _attach_missing_legs
 from viajante.google_flights import note_rate_limited
-from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
     FlightOffer,
     FlightQuery,
@@ -181,23 +179,6 @@ def _round_trip_previous(price: float = 900.0) -> dict:
         "evidence_id": "gf_rt",
     }
     return row
-
-
-def _return_card(price: str) -> RawFlightCard:
-    leg = RawJourneyLeg(departure="10:00", arrival="13:00", segments=(BACK,))
-    return RawFlightCard(None, "10:00", "13:00", None, None, price, legs=(leg,))
-
-
-class _ReturnShop:
-    """Source whose follow-up shop for the next journey fails or answers as told."""
-
-    def __init__(self, answer: object) -> None:
-        self.answer = answer
-
-    def fetch_selected(self, trip: object, selections: list) -> list:
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return [self.answer for _ in selections]
 
 
 class OutcomeTests(unittest.TestCase):
@@ -894,29 +875,6 @@ class RoundTwoBugTests(unittest.TestCase):
 class IncompleteJourneyTests(unittest.TestCase):
     """A fresh round trip without its return must never read as a finished 'gone'."""
 
-    def _outbound_only(self, answer: object) -> SearchReport:
-        offer = _offer(900.0, (OUTBOUND,))
-        attached = _attach_missing_legs(RT_QUERY, (offer,), _ReturnShop(answer))
-        self.assertEqual(len(attached[0].legs), 1)
-        return _report(*attached, query=RT_QUERY)
-
-    def _assert_failed(self, result: dict) -> None:
-        self.assertEqual(result["outcome"], "check_failed")
-        self.assertFalse(result["check_completed"])
-        self.assertEqual(result["reason"], "incomplete_offers")
-        self.assertEqual(result["error"]["code"], "incomplete_offers")
-        self.assertIsNone(result["current"])
-        self.assertTrue(any("could not be completed" in note for note in result["notes"]))
-
-    def test_a_failed_follow_up_shop_is_a_failed_check(self) -> None:
-        report = self._outbound_only(RuntimeError("follow-up shop failed"))
-        self._assert_failed(recheck_offer(_round_trip_previous(), search=_Stub(report)))
-
-    def test_tied_returns_at_the_package_price_are_a_failed_check(self) -> None:
-        tied = [_return_card("$900"), _return_card("$900")]
-        report = self._outbound_only(tied)
-        self._assert_failed(recheck_offer(_round_trip_previous(), search=_Stub(report)))
-
     def test_an_identical_match_elsewhere_still_wins(self) -> None:
         report = _report(
             _offer(900.0, (OUTBOUND,)),
@@ -1194,7 +1152,7 @@ class EnvelopeTests(unittest.TestCase):
 
     def test_incomplete_offers_is_failed_and_partial(self) -> None:
         offer = _offer(900.0, (OUTBOUND,))
-        attached = _attach_missing_legs(RT_QUERY, (offer,), _ReturnShop(RuntimeError("down")))
+        attached = (offer,)
         report = _report(*attached, query=RT_QUERY)
         result = self._run(report, _round_trip_previous())
         self.assertEqual(result["outcome"], "check_failed")

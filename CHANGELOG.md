@@ -68,6 +68,14 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   `models_common`, `models_flights`, `models_hotels`, ...). `viajante.models`
   still exports every name; serialized JSON is unchanged.
 
+- A round-trip package's `stops_count`, `stops`, `duration` and `duration_hours`
+  describe the whole trip: the worst leg's stops and the summed leg time. A
+  package with an unknown leg reports `null` for them. They used to describe the
+  outbound alone. The recommendation's `shortest` label uses the same totals.
+- A packaged round trip reports `layover_city` and `layover_hours` as `null`. They used
+  to hold the outbound's layover next to the package's stops and duration totals. The
+  layovers of every journey are in `legs[].layovers`.
+
 ### Fixed
 
 - A nonstop (or otherwise narrowed) search that Google answers with a rendered
@@ -84,11 +92,71 @@ changelog and removed. Their full text remains in git history up to commit 6ee0f
   a tool error result is `fetch_failed` with its message, instead of being
   guessed through fallback keys.
 
+- Booking's default free-cancellation requirement sends `fc=2`, Booking's
+  free-cancellation filter. It sent `oos=1`, which is "only show available
+  properties".
+- A failed widening page on Google Hotels (`min_rating`) is recorded in
+  `page_errors` as blocked, markup drift, or rejected, instead of reading as
+  filtered out. An HTTP 5xx is a fetch failure, retried once.
+- A hotel price that names another ISO code is not labelled with the requested
+  currency. When every priced card does so, the query is `currency_mismatch`.
+- `get_hotel_details` answers inconclusively for a stored search whose room-rate
+  city cannot be proven, instead of an invalid-parameter error.
+- `min_layover` checks every connection, not only the longest one.
+- Named `no_overnight` / `require_overnight` `any` applies to hub splits.
+- Mixed round-trip splits apply named filters before choosing the cheapest pair.
+  Hub split legs apply clock and duration bounds before their top ten.
+- Public round-trip packages keep both legs' carriers, so an excluded return
+  carrier drops the package. Fare and bag evidence come from the return card.
+- Skiplagged round-trip hidden-city offers report stops, duration, airline and
+  layover city only when both directions agree.
+- A `Retry-After` value is finite and capped at 30 minutes. An out-of-range
+  cooldown record is ignored instead of breaking later searches.
+- The Google consent interstitial is dismissed each time it appears, not once per
+  process.
+- A timed-out Google batch cancels its queued requests and keeps the pages that
+  arrived. Its wait grows with the number of waves.
+- The sequential detail path stops after a block and sends nothing more.
+- An Explore batch failure is recorded per destination, not resent one by one.
+- `parse_price` reads a trailing ISO code, so KWD and BHD fares are not 1000
+  times too high.
+- `explore --month` for the current month starts today.
+- Flex picks its day by fare plus buffer, reuses the sweep's day cards instead of
+  fetching the chosen day again, and bases its typical fare on each day's minimum.
+- One-way public-page batches keep the matching cards, as the single-query path
+  does.
+- Curaçao, Sint Maarten and Panama origins no longer infer a cash currency; pass
+  `--currency`.
+- `split_stay_costs` records only the computed figures in the evidence ledger. The
+  caller's own stay totals are not confirmed by `verify_answer`.
+- `watch_price` validation neither replays a cached search nor takes a ledger
+  slot.
+- A handler's argument error carries the `Error executing tool <name>:` prefix,
+  like a schema error.
+- Progress that moves into a phase with a smaller total is no longer dropped for
+  the rest of the search.
+- A Skiplagged room-rate tool error is rejected once, not retried.
+- `search_dates` with `sort="price"` (or `"fare"`) shows each day's cheapest fare and
+  the buffer of that same offer, so the rows sort by the fare they show. The default and
+  `sort="ranked"` still show the day's ranked winner.
+- Flex `vs_typical` compares the chosen day's cheapest eligible fare, the same base as
+  `typical`. It used to compare the cheapest offer shown, so a bag buffer that kept the
+  cheapest fare out of `top` changed the label.
+- Award cents per point refuses taxes above the cash price that includes them. It used
+  to return a negative CPP.
+- `search_dates` summary (`min`, `median`, `max`, `cheapest_date`) and each row's `typical`
+  use every day's cheapest eligible fare before any buffer, whatever the sort, the same
+  base as flex `typical`. Before, they used the row's ranked winner, so a day whose
+  cheapest fare carried a buffer could show a higher minimum and a different median.
+  Rows still show their winner's fare in `price`; only `typical` and the row label can change.
+
 ### Removed
 
 - The unreachable unsigned RPC transport, the legacy RPC calendar and automatic
   typical path, unused carrier shopping helpers, and the never-set offer
   `cheapest_date` / `cheapest` fields.
+- The sweep-to-detail fallback for empty or failed flight queries. The public
+  sweep never reached it, and AGENTS.md forbids that path.
 
 ## [1.4.7] - 2026-10-08
 

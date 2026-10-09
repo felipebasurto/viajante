@@ -58,6 +58,8 @@ def cents_per_point(
     if taxes is not None and (not math.isfinite(taxes) or taxes < 0):
         raise ValueError("taxes must be a non-negative number")
     outlay = 0.0 if taxes is None else taxes
+    if outlay > cash_price:
+        raise ValueError("taxes cannot exceed cash_price, which includes them")
     return round((cash_price - outlay) / points * 100.0, 2)
 
 

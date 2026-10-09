@@ -17,6 +17,7 @@ from viajante import mcp_handlers
 from viajante.cli import main
 from viajante.cli_report import _print_split_report
 from viajante.evidence import clear, verify_answer
+from viajante.flight_filters import OfferFilters
 from viajante.mcp_handlers import search_split_tickets_tool
 from viajante.models import (
     FlightOffer,
@@ -40,6 +41,7 @@ from viajante.split import (
     layover_hubs,
     search_split_tickets,
 )
+from viajante.split_filters import SplitFilters
 
 
 def _calm(day: date) -> date:
@@ -713,6 +715,51 @@ class ViaTests(unittest.TestCase):
         self.assertEqual(report.rejected, {"airport_mismatch": 1})
 
 
+class _TopAfterFilters(FakeSearch):
+    """Filters on depart_after, then takes the top, as search_flights does before --top."""
+
+    def __call__(self, trips, **kwargs) -> SearchReport:
+        report = super().__call__(trips, **kwargs)
+        bound = kwargs.get("depart_after")
+        queries = []
+        for row in report.queries:
+            if isinstance(row, QuerySuccess):
+                offers = [
+                    offer
+                    for offer in row.offers
+                    if bound is None or _clock(offer.departure) >= bound
+                ]
+                row = _ok(row.query, offers[: kwargs["top"]])
+            queries.append(row)
+        return _report(queries, self.currency)
+
+
+def _clock(text: str) -> int:
+    hours, minutes = text.split(":")
+    return int(hours) * 60 + int(minutes)
+
+
+class LegFilterPushdownTests(unittest.TestCase):
+    def test_a_clock_bound_is_applied_before_each_ticket_takes_its_top_ten(self) -> None:
+        # Ten cheap JFK-LAX tickets leave at 06:00 and fail depart_after 10:00. The eleventh,
+        # dearer, leaves at 10:30 and makes the connection. Filtering only after the search
+        # would keep the top ten and lose the pair.
+        table = _hub_table()
+        table[("JFK", "LAX", DAY)] = [
+            _offer(100.0 + index, (_segment("JFK", "LAX", "06:00", "09:00"),), airline="A")
+            for index in range(10)
+        ] + [_offer(300.0, (_segment("JFK", "LAX", "10:30", "11:30"),), airline="B")]
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            search=_TopAfterFilters(table),
+            filters=SplitFilters(OfferFilters(depart_after=10 * 60)),
+        )
+        self.assertEqual([row.hub for row in report.itineraries], ["LAX"])
+        self.assertEqual(report.itineraries[0].parts[0].offer.airline, "B")
+
+
 class MixedOneWayTests(unittest.TestCase):
     def _table(self) -> dict:
         return {
@@ -748,6 +795,28 @@ class MixedOneWayTests(unittest.TestCase):
         self.assertIs(row["self_transfer"], False)
         self.assertIs(row["connection_protected"], False)
         self.assertNotIn("hub", row)
+
+    def test_a_named_filter_applies_before_the_cheapest_pair_is_chosen(self) -> None:
+        # The cheapest outbound leaves at 11:00, so depart_after 12:00 drops it; the dearer
+        # 13:00 outbound must still pair with the return instead of the whole pair vanishing.
+        table = {
+            ("JFK", "NRT", DAY): [
+                _offer(280.0, (_segment("JFK", "NRT", "11:00", "15:00"),), airline="B"),
+                _offer(300.0, (_segment("JFK", "NRT", "13:00", "17:00"),), airline="A"),
+            ],
+            ("NRT", "JFK", BACK): [
+                _offer(250.0, (_segment("NRT", "JFK", "13:00", "12:00", on=BACK),), airline="D"),
+            ],
+        }
+        report = search_split_tickets(
+            RoundTrip("JFK", "NRT", DAY, BACK),
+            packaged=self._packaged(),
+            search=FakeSearch(table),
+            filters=SplitFilters(OfferFilters(depart_after=12 * 60)),
+        )
+        self.assertEqual([row.total for row in report.itineraries], [550.0])
+        # Only the 280 + 250 pair fails: one candidate pair dropped by the named filter.
+        self.assertEqual(report.rejected.get("filter"), 1)
 
     def test_split_dearer_than_round_trip_shows_negative_savings(self) -> None:
         report = search_split_tickets(

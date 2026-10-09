@@ -171,17 +171,25 @@ class ProgressRelay:
                 return
             indexed = _INDEXED_PROGRESS.match(message)
             floor = 0.0 if self._value is None else self._value
+            total = self._total
             if indexed:
-                self._total = float(indexed.group(2))
                 value = max(float(indexed.group(1)), floor + 0.001)
+                new_total = float(indexed.group(2))
+                if self._total is None or new_total != self._total:
+                    # A new phase whose total cannot hold the value reports without a total,
+                    # rather than dropping every later line against the old one.
+                    total = new_total if value <= new_total else None
+                else:
+                    total = new_total
             elif self._value is None:
                 value = 0.0
             else:
                 value = floor + 0.001
-            if self._total is not None and value > self._total:
+            if total is not None and value > total:
                 return
             self._value = value
-            self._pending = (value, self._total, message)
+            self._total = total
+            self._pending = (value, total, message)
             wait = self._sent_at + self._interval - time.monotonic()
             if wait <= 0:
                 self._send_locked()
@@ -364,7 +372,11 @@ def _tool_error_text(name: str, exc: Exception) -> str:
             cause.errors(include_url=False, include_context=False, include_input=False)
         )
         return _TOOL_ERROR_PREFIX.format(name=name) + body
-    return str(cause)
+    text = str(cause)
+    if text.startswith('{"error"'):
+        # A handler's own argument check raises the same JSON body; it gets the same prefix.
+        return _TOOL_ERROR_PREFIX.format(name=name) + text
+    return text
 
 
 def _error_result(text: str) -> Any:
@@ -526,14 +538,6 @@ def build_server():
         )
     }
     server = ViajanteServer("viajante", instructions=_HELP, cache_hints=cache_hints)
-
-    # Client-visible types that differ from the handler's annotation. tools/list pins these:
-    # the deadline and room_rates validators are strict, and the balances list has no item type.
-    overrides: dict[str, object] = {
-        "deadline_seconds": _DeadlineSeconds,
-        "room_rates": _ROOM_RATES,
-        "balances": Optional[list],
-    }
 
     # Client-visible types that differ from the handler's annotation. tools/list pins these:
     # the deadline and room_rates validators are strict, and the balances list has no item type.

@@ -47,6 +47,12 @@ def _read_rate_limit(file: str) -> Optional[dict]:
             return None
     except (OSError, ValueError, TypeError, KeyError):
         return None
+    # A record that is not finite, or claims longer than the cap, would crash every later
+    # search (year out of range) or hold the provider off for good. Treat it as unreadable.
+    if not math.isfinite(state["at"]) or not math.isfinite(state["until"]):
+        return None
+    if not 0 <= state["until"] - state["at"] <= RATE_LIMIT_MAX_COOLDOWN_SECONDS:
+        return None
     # Records written before these fields existed stay readable: their provenance is
     # unknown rather than guessed.
     state = dict(state)
@@ -100,9 +106,11 @@ def note_rate_limited(
     previous = _read_rate_limit(file)
     if previous is not None and previous["until"] > current:
         return previous
+    if retry_after is not None and not math.isfinite(retry_after):
+        retry_after = None
     cooldown = RATE_LIMIT_COOLDOWN_SECONDS
     if retry_after is not None and retry_after > 0:
-        cooldown = retry_after
+        cooldown = min(retry_after, RATE_LIMIT_MAX_COOLDOWN_SECONDS)
     elif previous is not None and current < previous["until"] + previous.get("cooldown_s", 0):
         cooldown = min(RATE_LIMIT_MAX_COOLDOWN_SECONDS, previous["cooldown_s"] * 2)
     state = {

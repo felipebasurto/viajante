@@ -147,6 +147,9 @@ def _cached(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         validate_deadline_seconds(kwargs.get("deadline_seconds"))
+        if _VALIDATE_ONLY.get():
+            # Argument checks only: no replay, no ledger slot, and the lock stops the call.
+            return fn(*args, **kwargs)
         # A complete result does not depend on how long the caller was willing to wait.
         keyed = sorted((k, v) for k, v in kwargs.items() if k != "deadline_seconds")
         key = (fn.__name__, repr((args, keyed)))
@@ -1003,6 +1006,21 @@ def plan_stay_blocks_tool(roster: Mapping[str, Sequence[str]]) -> Mapping[str, o
     return stamp_local(dict(plan_stay_blocks(roster).to_dict()))
 
 
+def _computed_stay_output(payload: Mapping[str, object]) -> dict:
+    """What the split computed. The caller's stay totals and the echoed grand total are left
+    out, so verify_answer cannot confirm a figure the caller typed in."""
+    computed = {key: value for key, value in payload.items() if key != "total"}
+    stays = computed.get("stays")
+    if isinstance(stays, list):
+        computed["stays"] = [
+            {key: value for key, value in stay.items() if key != "total"}
+            if isinstance(stay, dict)
+            else stay
+            for stay in stays
+        ]
+    return computed
+
+
 def split_stay_costs_tool(
     stays: Sequence[Mapping[str, object]],
     roster: Mapping[str, Sequence[str]],
@@ -1015,7 +1033,9 @@ def split_stay_costs_tool(
         stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
     )
     payload = dict(report.to_dict())
-    return _owned(stamp_local(payload, partial=bool(payload.get("unallocated_nights"))))
+    result = stamp_local(payload, partial=bool(payload.get("unallocated_nights")))
+    _owned(_computed_stay_output(result))
+    return result
 
 
 def validate_itinerary_tool(

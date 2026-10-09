@@ -216,7 +216,6 @@ class RecordingGateTests(_State):
         with (
             patch("viajante.flights._run_search", return_value=report),
             patch("viajante.flights.GoogleFlightsHttpSource", MagicMock()),
-            patch("viajante.flights.playwright_available", return_value=False),
         ):
             search_flights([query], fetch="sweep", currency="USD")
             search_flights([query], fetch="sweep", currency="USD", top=DEFAULT_TOP, sort="ranked")

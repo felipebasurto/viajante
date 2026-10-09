@@ -93,6 +93,28 @@ def _card(price: str = "$128", airline: str = "Delta") -> RawFlightCard:
     )
 
 
+class ValidateOnlyLedgerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        evidence.clear()
+        self.addCleanup(evidence.clear)
+
+    def test_argument_check_takes_no_ledger_slot_and_no_cache_replay(self) -> None:
+        calls = []
+
+        @mcp_handlers._cached
+        def fake_search(value: int) -> dict:
+            # Argument checks run first; the lock is where a validate-only call stops.
+            mcp_handlers._with_search_lock(lambda: calls.append(value))
+            return {"status": "ok", "value": value}
+
+        mcp_handlers._CACHE.clear()
+        fake_search(1)  # a real search, cached and recorded once
+        before = len(evidence._ledger)
+        mcp_handlers.check_search_params(fake_search, {"value": 1})
+        self.assertEqual(len(evidence._ledger), before)
+        self.assertEqual(calls, [1])
+
+
 class _FlightSource:
     """Scripted per-destination responses; an Exception value is raised."""
 
@@ -122,7 +144,6 @@ def _flights(
     queries = tuple(FlightQuery("JFK", dest, DAY, max_stops=1) for dest in responses)
     with (
         patch("viajante.flights.GoogleFlightsHttpSource", return_value=_FlightSource(responses)),
-        patch("viajante.flights.chromium_installed", return_value=False),
     ):
         report = search_flights(queries, top=3, fetch="sweep", currency="USD", **kwargs)
     return stamp_search(reports_payload(report), now=NOW)
@@ -301,7 +322,6 @@ class FlightEmptyReasonTests(_StateDirCase):
             patch(
                 "viajante.flights.GoogleFlightsHttpSource", return_value=_FlightSource(responses)
             ),
-            patch("viajante.flights.chromium_installed", return_value=False),
         ):
             report = search_flights(queries, top=3, fetch="sweep", currency="USD")
         payload = stamp_search(reports_payload(report), now=start + 60)

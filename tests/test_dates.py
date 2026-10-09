@@ -540,6 +540,55 @@ class DateSearchTests(unittest.TestCase):
             [date(2026, 9, 3), date(2026, 9, 1), date(2026, 9, 2)],
         )
 
+    def test_price_sort_shows_each_day_cheapest_fare_not_its_ranked_winner(self) -> None:
+        # Day 1's cheapest fare is a 100 LCC that costs 160 with the bag buffer, so its ranked
+        # winner is the 120 legacy fare. Sorting by price must show and place it at 100.
+        source = FakeDaySource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 100.0),
+                CompactCalendarDay(date(2026, 9, 2), 110.0),
+            ),
+            cards={
+                date(2026, 9, 1): (
+                    _card(airline="Ryanair", price="€100"),
+                    _card(airline="Iberia", price="€120"),
+                ),
+                date(2026, 9, 2): (_card(airline="Iberia", price="€110"),),
+            },
+        )
+        priced = search_dates(
+            "JFK",
+            "LHR",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            sort="price",
+            baggage_buffer=60,
+            source=source,
+        )
+        self.assertEqual(
+            [row.departure_date for row in priced.days],
+            [date(2026, 9, 1), date(2026, 9, 2)],
+        )
+        self.assertEqual(priced.days[0].price, 100.0)
+        self.assertEqual(priced.days[0].airline, "Ryanair")
+        self.assertEqual(priced.days[0].baggage_buffer, 60)
+        ranked = search_dates(
+            "JFK",
+            "LHR",
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            sort="ranked",
+            baggage_buffer=60,
+            source=source,
+        )
+        self.assertEqual(
+            [row.departure_date for row in ranked.days],
+            [date(2026, 9, 2), date(2026, 9, 1)],
+        )
+        self.assertEqual(ranked.days[1].price, 120.0)
+        self.assertEqual(ranked.days[1].airline, "Iberia")
+        self.assertEqual(ranked.days[1].baggage_buffer, 0)
+
     def test_unknown_sort_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             search_dates(
@@ -549,6 +598,40 @@ class DateSearchTests(unittest.TestCase):
                 date(2026, 9, 2),
                 sort="fastest",  # type: ignore[arg-type]
             )
+
+    def test_summary_and_typical_use_each_days_cheapest_fare_under_the_default_sort(self) -> None:
+        # Day 1's cheapest fare is a 100 LCC (160 with the buffer), so its ranked winner is the
+        # 120 legacy fare. The summary and typical are fare statistics on the same base as flex
+        # (each day's cheapest fare), whatever the row sort. The row still shows its winner.
+        source = FakeDaySource(
+            (
+                CompactCalendarDay(date(2026, 9, 1), 120.0),
+                CompactCalendarDay(date(2026, 9, 2), 110.0),
+                CompactCalendarDay(date(2026, 9, 3), 130.0),
+            ),
+            cards={
+                date(2026, 9, 1): (
+                    _card(airline="Ryanair", price="€100"),
+                    _card(airline="Iberia", price="€120"),
+                ),
+                date(2026, 9, 2): (_card(airline="Iberia", price="€110"),),
+                date(2026, 9, 3): (_card(airline="Iberia", price="€130"),),
+            },
+        )
+        report = search_dates(
+            "JFK",
+            "LHR",
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            baggage_buffer=60,
+            source=source,
+        )
+        assert report.summary is not None
+        self.assertEqual(report.summary.min_price, 100.0)
+        self.assertEqual(report.summary.cheapest_date, date(2026, 9, 1))
+        self.assertEqual(report.summary.median_price, 110.0)
+        self.assertEqual(report.days[0].price, 120.0)
+        self.assertEqual(report.days[0].typical, 110.0)
 
     def test_round_trip_calendar_fills_return_dates_and_does_not_invent_fares(self) -> None:
         source = FakeDaySource(
@@ -1280,6 +1363,19 @@ class FlexWindowTests(unittest.TestCase):
         self.assertEqual(start, date(2026, 8, 20))
         self.assertEqual(end, date(2026, 8, 24))
 
+    def test_flex_day_uses_the_same_fare_plus_buffer_as_its_winner(self) -> None:
+        # Day A's winner is a 150 fare with no buffer (its 100 LCC costs 160 with the bag
+        # buffer). Day B's only fare is 120 + 60 = 180. The bare fare would pick B.
+        rows = (
+            DatePriceRow(departure_date=date(2026, 9, 11), price=150.0, status="ok"),
+            DatePriceRow(
+                departure_date=date(2026, 9, 12), price=120.0, status="ok", baggage_buffer=60
+            ),
+        )
+        winner = cheapest_priced_day(rows, date(2026, 9, 12))
+        assert winner is not None
+        self.assertEqual(winner.departure_date, date(2026, 9, 11))
+
     def test_cheapest_day_breaks_ties_toward_the_anchor(self) -> None:
         rows = (
             DatePriceRow(departure_date=date(2026, 9, 9), price=100.0, status="ok"),
@@ -1330,7 +1426,9 @@ class FlexSearchTests(unittest.TestCase):
         self.assertEqual(report.trip, "rt")
         self.assertEqual(report.nights, 7)
         self.assertEqual(report.locale, "en")
-        self.assertEqual(source.fetch_calls, 8)  # seven priced days, then one shop
+        self.assertEqual(
+            source.fetch_calls, 7
+        )  # seven priced days; the chosen day is not refetched
         self.assertEqual(report.fetch_backend, "calendar_then_sweep")
         self.assertEqual(report.offers[0].price, 350.0)
         self.assertEqual(report.typical, 440.0)
@@ -1338,6 +1436,41 @@ class FlexSearchTests(unittest.TestCase):
         self.assertEqual(report.offers[0].typical, 440.0)
         self.assertEqual(report.offers[0].vs_typical, "below")
         self.assertTrue(source.closed)
+
+    def test_flex_typical_and_label_share_the_day_minimum_base(self) -> None:
+        # Chosen day 12: a 100 LCC (160 with the buffer) and a 120 legacy fare. top=1 shows
+        # only the 120. The typical is the median of day minima (100, 122, 125, 130, 140, 150),
+        # 127.5. The label must compare the day's 100 minimum, not the shown 120.
+        source = FakeDaySource(
+            (
+                CompactCalendarDay(date(2026, 9, 9), 122.0),
+                CompactCalendarDay(date(2026, 9, 10), 150.0),
+                CompactCalendarDay(date(2026, 9, 11), 130.0),
+                CompactCalendarDay(date(2026, 9, 12), 120.0),
+                CompactCalendarDay(date(2026, 9, 13), 125.0),
+                CompactCalendarDay(date(2026, 9, 14), None),
+                CompactCalendarDay(date(2026, 9, 15), 140.0),
+            ),
+            cards={
+                date(2026, 9, 12): (
+                    _card(airline="Ryanair", price="€100"),
+                    _card(airline="Iberia", price="€120"),
+                ),
+            },
+        )
+        report = search_flex(
+            "JFK",
+            "LHR",
+            date(2026, 9, 12),
+            3,
+            top=1,
+            baggage_buffer=60,
+            source=source,
+        )
+        self.assertEqual(report.chosen_date, date(2026, 9, 12))
+        self.assertEqual(report.offers[0].price, 120.0)
+        self.assertEqual(report.typical, 127.5)
+        self.assertEqual(report.vs_typical, "below")
 
     def test_empty_window_does_not_invent(self) -> None:
         source = FakeDaySource(
@@ -1423,7 +1556,7 @@ class ShopFilterTests(unittest.TestCase):
             carry_on=1,
         )
         self.assertEqual([offer.price for offer in report.offers], [80.0, 90.0])
-        self.assertEqual(source.fetch_calls, 4)
+        self.assertEqual(source.fetch_calls, 3)
         self.assertEqual(source.fetched_queries[-1].bags, 1)
         self.assertEqual(source.fetched_queries[-1].carry_on, 1)
 
@@ -2035,7 +2168,7 @@ class ShopFilterTests(unittest.TestCase):
             infants_in_seat=1,
             infants_on_lap=1,
         )
-        self.assertEqual(source.fetch_calls, 4)
+        self.assertEqual(source.fetch_calls, 3)
         seed = source.fetched_queries[-1]
         shop = source.fetched_queries[-1]
         self.assertEqual(seed.children, 1)
@@ -2383,7 +2516,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertIsInstance(off, FlexSearchReport)
         self.assertEqual((off.origin, off.destination), ("BOS", "LHR"))
         self.assertIsNone(off.nearby_label)
-        self.assertEqual(off_source.fetch_calls, 8)
+        self.assertEqual(off_source.fetch_calls, 7)
 
         on_source = _flex_shop_source(_card(price="€90"))
         reports = search_flex(
@@ -2397,7 +2530,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertTrue(all(row.origin == "BOS" for row in reports))
         self.assertTrue(all(row.nearby_label for row in reports))
         self.assertNotIn("nearby_label", reports[0].to_dict())
-        self.assertEqual(on_source.fetch_calls, len(reports) * 8)  # seven days, one shop each
+        self.assertEqual(on_source.fetch_calls, len(reports) * 7)  # seven days, no second shop
         self.assertEqual({query.destination for query in on_source.fetched_queries}, dests)
 
     def test_flex_nearby_unknown_city_does_not_invent_codes(self) -> None:
@@ -2415,7 +2548,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertIsInstance(report, FlexSearchReport)
         self.assertEqual((report.origin, report.destination), ("MAD", "BCN"))
         self.assertIsNone(report.nearby_label)
-        self.assertEqual(source.fetch_calls, 4)
+        self.assertEqual(source.fetch_calls, 3)
 
 
 class ExcludeAirportsDateFlexTests(unittest.TestCase):
@@ -2494,7 +2627,7 @@ class ExcludeAirportsDateFlexTests(unittest.TestCase):
         kept = search_flex("BOS", "HND", date(2026, 9, 12), 3, source=unnamed, baggage_buffer=0)
         self.assertEqual(kept.destination, "HND")
         self.assertTrue(kept.offers)
-        self.assertEqual(unnamed.fetch_calls, 8)
+        self.assertEqual(unnamed.fetch_calls, 7)
 
     def test_flex_nearby_does_not_sneak_excluded_code_back(self) -> None:
         source = _flex_shop_source(_card(price="€90"))
@@ -2615,7 +2748,7 @@ class IncludeAirportsDateFlexTests(unittest.TestCase):
         kept = search_flex("BOS", "KIX", date(2026, 9, 12), 3, source=unnamed, baggage_buffer=0)
         self.assertEqual(kept.destination, "KIX")
         self.assertTrue(kept.offers)
-        self.assertEqual(unnamed.fetch_calls, 8)
+        self.assertEqual(unnamed.fetch_calls, 7)
 
     def test_flex_nearby_keeps_owned_same_city_already_in_list(self) -> None:
         source = _flex_shop_source(_card(price="€90"))
