@@ -29,7 +29,7 @@ add new prose labels to any result.
 - Public Flights page GETs and selected round-trip return pages: `src/viajante/google_flights_public.py`
 - Public Explore catalog Chromium run (the page's own catalog request, captured): `src/viajante/google_flights_explore_browser.py`; its gate and failure rules stay in `google_flights_public.py`
 - Public sweep GET concurrency: `src/viajante/sweep_config.py`
-- Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
+- Shared shopping-data decode (`parse_shopping_data`; `parse_shopping_body` is for the `wrb.fr` bench corpus only; no shopping RPC is encoded or sent): `src/viajante/google_flights_rpc.py`
 - Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`; browser detail source and its CSS card parser: `src/viajante/google_flights_detail.py`
 - Reject-only Google consent cookies kept across CLI processes (`google-consent.json`): `src/viajante/consent.py`
 - Route specs, metro and nearby expand, trip include/exclude: `src/viajante/flight_routes.py`
