@@ -58,7 +58,8 @@ history up to commit 6ee0fb7.
   A failed widening page is recorded in `page_errors`. A price in another ISO
   code is not relabelled; when every card does so the query is
   `currency_mismatch`. `get_hotel_details` answers inconclusively when a room
-  city cannot be proven.
+  city cannot be proven. A negated free-cancellation phrase after the words
+  ("free cancellation not available") is unknown; 1.4.7 read it as free.
 - **Filters:** `min_layover` checks every connection. `no_overnight` /
   `require_overnight` `any` applies to hub splits. Mixed round-trip splits
   filter before choosing the cheapest pair. Round-trip packages keep both legs'
