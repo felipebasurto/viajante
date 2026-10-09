@@ -1065,8 +1065,10 @@ def split_stay_costs_tool(
     )
     payload = stamp_local(dict(report.to_dict()), partial=bool(report.unallocated_nights))
     # Shares are arithmetic on caller totals: evidence only when a search owns every input.
-    inputs = [stay.total for stay in report.stays] + [report.fee_per_person_night or 0]
-    return record(payload) if owns_amounts(filter(None, inputs), report.currency) else payload
+    inputs = [stay.total for stay in report.stays]
+    if report.fee_per_person_night is not None:
+        inputs.append(report.fee_per_person_night)
+    return record(payload) if owns_amounts(inputs, report.currency) else payload
 
 
 def validate_itinerary_tool(
