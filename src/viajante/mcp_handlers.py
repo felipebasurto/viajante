@@ -32,6 +32,7 @@ from viajante.envelope import stamp_local, stamp_recheck, stamp_search, stamp_sp
 from viajante.evidence import (
     failure_codes,
     find_offer,
+    owns_amounts,
     record,
     selected_reference,
     selection_records,
@@ -43,19 +44,21 @@ from viajante.explore import (
     search_explore,
     validate_explore_window,
 )
-from viajante.flights import (
-    DEFAULT_TOP,
-    FlightSort,
-    as_trips,
-    expand_nearby_trips,
+from viajante.flight_filters import (
     parse_depart_window,
-    parse_flight_plan,
     parse_named_clock,
+    parse_offer_filters,
     parse_overnight_airports,
     parse_via_airports,
-    search_flights,
-    validate_flight_search_args,
 )
+from viajante.flight_offers import FlightSort
+from viajante.flight_routes import (
+    _overlay_carrier_filters,
+    as_trips,
+    expand_nearby_trips,
+    parse_flight_plan,
+)
+from viajante.flights import DEFAULT_TOP, search_flights, validate_flight_search_args
 from viajante.hotels import (
     HotelSourceName,
     resolve_hotel_currency,
@@ -82,8 +85,8 @@ from viajante.split import (
     DEFAULT_MIN_CONNECTION_HOURS,
     search_split_tickets,
     validate_split_request,
-    with_carrier_filters,
 )
+from viajante.split_filters import SplitFilters
 from viajante.stays import plan_stay_blocks, split_stay_costs
 from viajante.storage import reports_payload
 from viajante.trip import search_trip, stay_window_from_trips
@@ -93,6 +96,41 @@ _SEARCH_LOCK = threading.Lock()
 CACHE_SECONDS = 300.0
 _CACHE: dict[tuple[str, str], tuple[float, dict, dict]] = {}
 _SELECTION_CONTEXT = threading.local()
+
+
+_SPLIT_NOT_OFFER_KEYS = frozenset({"via", "exclude_airports", "include_airports"})
+
+
+def _shop_filters(
+    *,
+    depart_window: Optional[str] = None,
+    arrive_before: Optional[str] = None,
+    depart_after: Optional[str] = None,
+    max_duration: Optional[float] = None,
+    min_layover: Optional[float] = None,
+    max_layover: Optional[float] = None,
+    via: Optional[str] = None,
+    exclude_via: Optional[str] = None,
+    no_overnight: Optional[str] = None,
+    require_overnight: Optional[str] = None,
+    exclude_airports: Optional[str] = None,
+    include_airports: Optional[str] = None,
+) -> dict[str, object]:
+    """Parse the raw shop filter strings the flight-shaped tools share, under one set of names."""
+    return dict(
+        depart_window=parse_depart_window(depart_window),
+        arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
+        depart_after=parse_named_clock(depart_after, role="depart-after"),
+        max_duration_hours=max_duration,
+        min_layover_hours=min_layover,
+        max_layover_hours=max_layover,
+        via=parse_via_airports(via),
+        exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
+        no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
+        require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
+        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
+        include_airports=parse_via_airports(include_airports, role="include-airports"),
+    )
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -149,6 +187,9 @@ def _cached(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         validate_deadline_seconds(kwargs.get("deadline_seconds"))
+        if _VALIDATE_ONLY.get():
+            # Argument checks only: no replay, no ledger slot, and the lock stops the call.
+            return fn(*args, **kwargs)
         # A complete result does not depend on how long the caller was willing to wait.
         keyed = sorted((k, v) for k, v in kwargs.items() if k != "deadline_seconds")
         key = (fn.__name__, repr((args, keyed)))
@@ -245,19 +286,19 @@ def search_flights_tool(
         alliances=parse_alliances(alliance),
         exclude_alliances=parse_alliances(exclude_alliance),
     )
-    search = dict(
-        depart_window=parse_depart_window(depart_window),
-        arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-        depart_after=parse_named_clock(depart_after, role="depart-after"),
-        max_duration_hours=max_duration,
-        min_layover_hours=min_layover,
-        max_layover_hours=max_layover,
-        via=parse_via_airports(via),
-        exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-        no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-        require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-        include_airports=parse_via_airports(include_airports, role="include-airports"),
+    search = _shop_filters(
+        depart_window=depart_window,
+        arrive_before=arrive_before,
+        depart_after=depart_after,
+        max_duration=max_duration,
+        min_layover=min_layover,
+        max_layover=max_layover,
+        via=via,
+        exclude_via=exclude_via,
+        no_overnight=no_overnight,
+        require_overnight=require_overnight,
+        exclude_airports=exclude_airports,
+        include_airports=include_airports,
     )
     validate_flight_search_args(top=top, sort=sort, fetch=fetch, **search)
     report = _with_search_lock(
@@ -306,6 +347,18 @@ def search_split_tickets_tool(
     currency: Optional[str] = None,
     country: Optional[str] = None,
     proxy: Optional[str] = None,
+    depart_window: Optional[str] = None,
+    arrive_before: Optional[str] = None,
+    depart_after: Optional[str] = None,
+    max_duration: Optional[float] = None,
+    min_layover: Optional[float] = None,
+    max_layover: Optional[float] = None,
+    exclude_via: Optional[str] = None,
+    no_overnight: Optional[str] = None,
+    require_overnight: Optional[str] = None,
+    exclude_airports: Optional[str] = None,
+    include_airports: Optional[str] = None,
+    baggage_buffer: Optional[int] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         [route],
@@ -324,8 +377,8 @@ def search_split_tickets_tool(
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     if len(trips) != 1:
         raise ValueError("split tickets take one one-way route or one round-trip (trip='rt')")
-    split_query = with_carrier_filters(
-        trips[0],
+    (split_query,) = _overlay_carrier_filters(
+        (trips[0],),
         airlines=parse_airline_codes(airlines),
         exclude_airlines=parse_airline_codes(exclude_airlines),
         alliances=parse_alliances(alliance),
@@ -340,9 +393,32 @@ def search_split_tickets_tool(
         leg_max_stops=leg_max_stops,
         top=top,
     )
+    # The hub list is `via`; the offer filters judge the journey and the hub connection.
+    shop = _shop_filters(
+        depart_window=depart_window,
+        arrive_before=arrive_before,
+        depart_after=depart_after,
+        max_duration=max_duration,
+        min_layover=min_layover,
+        max_layover=max_layover,
+        exclude_via=exclude_via,
+        no_overnight=no_overnight,
+        require_overnight=require_overnight,
+        exclude_airports=exclude_airports,
+        include_airports=include_airports,
+    )
+    split_filters = SplitFilters(
+        offer=parse_offer_filters(
+            **{k: v for k, v in shop.items() if k not in _SPLIT_NOT_OFFER_KEYS}
+        ),
+        exclude_airports=shop["exclude_airports"] or (),  # type: ignore[arg-type]
+        include_airports=shop["include_airports"] or (),  # type: ignore[arg-type]
+    )
     report = _with_search_lock(
         lambda: search_split_tickets(
             split_query,
+            filters=split_filters,
+            baggage_buffer=baggage_buffer or 0,
             via=via_codes,
             max_hubs=max_hubs,
             min_connection_hours=min_connection_hours,
@@ -757,9 +833,9 @@ def search_hotels_tool(
 
 @_cached
 def search_hotel_rooms_tool(
-    hotel_id: Optional[int],
     check_in: str,
     check_out: str,
+    hotel_id: Optional[int] = None,
     *,
     hotel_name: Optional[str] = None,
     city: Optional[str] = None,
@@ -987,8 +1063,12 @@ def split_stay_costs_tool(
     report = split_stay_costs(
         stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
     )
-    payload = dict(report.to_dict())
-    return _owned(stamp_local(payload, partial=bool(payload.get("unallocated_nights"))))
+    payload = stamp_local(dict(report.to_dict()), partial=bool(report.unallocated_nights))
+    # Shares are arithmetic on caller totals: evidence only when a search owns every input.
+    inputs = [stay.total for stay in report.stays]
+    if report.fee_per_person_night is not None:
+        inputs.append(report.fee_per_person_night)
+    return record(payload) if owns_amounts(inputs, report.currency) else payload
 
 
 def validate_itinerary_tool(

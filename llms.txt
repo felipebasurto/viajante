@@ -5,44 +5,30 @@ Fetch locale is English. User prompts may be any language. No implied home hub.
 
 ## Install (agents)
 
-```json
-{
-  "mcpServers": {
-    "viajante": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/felipebasurto/viajante.git[mcp]",
-        "viajante-mcp"
-      ]
-    }
-  }
-}
-```
-
-After PyPI publishes, `--from viajante[mcp]`. Sweep and Google Hotels need no Chromium.
-Detail scrape and Booking.com need both extras in the **same** uvx environment:
+Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.10+.
 
 ```json
 {
   "mcpServers": {
     "viajante": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/felipebasurto/viajante.git[mcp,browser]",
-        "viajante-mcp"
-      ]
+      "command": "npx",
+      "args": ["-y", "@viajante/mcp"]
     }
   }
 }
 ```
+
+`@viajante/mcp` runs the PyPI package at its own version, with the browser extra.
+Sweep and Google Hotels need no Chromium. Detail scrape, Booking.com, and
+`search_explore` need it, installed once from the same environment:
 
 ```bash
-uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' playwright install chromium
+uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium
 ```
 
-Installing `viajante[browser]` elsewhere does not update the uvx environment.
+No Node: `"command": "uvx", "args": ["--from", "viajante[mcp]", "viajante-mcp"]`
+(no browser extra). Installing `viajante[browser]` elsewhere does not update the
+uvx environment.
 
 ## Tools
 
@@ -107,7 +93,7 @@ One search at a time in the MCP process. Every tool has a title and annotations;
 open-world for the search tools, `recheck_offer`, `watch_price`, and `get_hotel_details`
 (`room_rates` false still runs during a search). `watch_price` writes. Bad input fails the call with
 JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
-after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=1.14.1`.
+after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=2.3.0`.
 
 A cancelled call frees the lock. `deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
 partial result: `coverage.complete=false`, `coverage.stopping_reason="deadline"`,

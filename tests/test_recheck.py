@@ -15,9 +15,7 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers
 from viajante.cli import main
-from viajante.flights import _attach_missing_legs
 from viajante.google_flights import note_rate_limited
-from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
     FlightOffer,
     FlightQuery,
@@ -181,23 +179,6 @@ def _round_trip_previous(price: float = 900.0) -> dict:
         "evidence_id": "gf_rt",
     }
     return row
-
-
-def _return_card(price: str) -> RawFlightCard:
-    leg = RawJourneyLeg(departure="10:00", arrival="13:00", segments=(BACK,))
-    return RawFlightCard(None, "10:00", "13:00", None, None, price, legs=(leg,))
-
-
-class _ReturnShop:
-    """Source whose follow-up shop for the next journey fails or answers as told."""
-
-    def __init__(self, answer: object) -> None:
-        self.answer = answer
-
-    def fetch_selected(self, trip: object, selections: list) -> list:
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return [self.answer for _ in selections]
 
 
 class OutcomeTests(unittest.TestCase):
@@ -894,29 +875,6 @@ class RoundTwoBugTests(unittest.TestCase):
 class IncompleteJourneyTests(unittest.TestCase):
     """A fresh round trip without its return must never read as a finished 'gone'."""
 
-    def _outbound_only(self, answer: object) -> SearchReport:
-        offer = _offer(900.0, (OUTBOUND,))
-        attached = _attach_missing_legs(RT_QUERY, (offer,), _ReturnShop(answer))
-        self.assertEqual(len(attached[0].legs), 1)
-        return _report(*attached, query=RT_QUERY)
-
-    def _assert_failed(self, result: dict) -> None:
-        self.assertEqual(result["outcome"], "check_failed")
-        self.assertFalse(result["check_completed"])
-        self.assertEqual(result["reason"], "incomplete_offers")
-        self.assertEqual(result["error"]["code"], "incomplete_offers")
-        self.assertIsNone(result["current"])
-        self.assertTrue(any("could not be completed" in note for note in result["notes"]))
-
-    def test_a_failed_follow_up_shop_is_a_failed_check(self) -> None:
-        report = self._outbound_only(RuntimeError("follow-up shop failed"))
-        self._assert_failed(recheck_offer(_round_trip_previous(), search=_Stub(report)))
-
-    def test_tied_returns_at_the_package_price_are_a_failed_check(self) -> None:
-        tied = [_return_card("$900"), _return_card("$900")]
-        report = self._outbound_only(tied)
-        self._assert_failed(recheck_offer(_round_trip_previous(), search=_Stub(report)))
-
     def test_an_identical_match_elsewhere_still_wins(self) -> None:
         report = _report(
             _offer(900.0, (OUTBOUND,)),
@@ -1058,6 +1016,64 @@ class MalformedInputTests(unittest.TestCase):
             recheck_offer(_previous(OUTBOUND), search=stub, now=after)
         self.assertEqual(len(stub.calls), 1)
 
+    def test_a_clockless_departure_day_is_judged_at_the_origin_not_the_host_zone(self) -> None:
+        if not hasattr(time, "tzset"):
+            self.skipTest("this platform cannot change the process time zone")
+        # At this instant it is 06:00 on 2026-10-09 at JFK: 2026-10-08 is over there, and
+        # 2026-10-09 is not, whatever zone the host runs in.
+        now = datetime(2026, 10, 9, 10, 0, tzinfo=timezone.utc)
+        saved = os.environ.get("TZ")
+        try:
+            for zone in ("Pacific/Pago_Pago", "Pacific/Kiritimati"):
+                os.environ["TZ"] = zone
+                time.tzset()
+                with self.subTest(zone=zone):
+                    over = _segment("JFK", "LHR", None, None, day=date(2026, 10, 8))
+                    with self.assertRaisesRegex(ValueError, "in the past"):
+                        recheck_offer(
+                            _previous(over),
+                            search=_Stub(_report(_offer(500.0, (over,)))),
+                            now=now,
+                        )
+                    open_day = _segment("JFK", "LHR", None, None, day=date(2026, 10, 9))
+                    recheck_offer(
+                        _previous(open_day),
+                        search=_Stub(_report(_offer(500.0, (open_day,)))),
+                        now=now,
+                    )
+        finally:
+            if saved is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = saved
+            time.tzset()
+
+    def test_ambiguous_departure_is_past_only_after_both_folds(self) -> None:
+        # JFK 01:30 on 2026-11-01 is 05:30Z and again at 06:30Z. 02:30 on
+        # 2026-03-08 does not exist (the clock jumps 02:00 to 03:00).
+        def at(day: date, clock: str, moment: datetime) -> dict:
+            segment = _segment("JFK", "LHR", clock, "12:00", "BA178", day=day)
+            return recheck_offer(
+                _previous(segment), search=_Stub(_report(_offer(500.0, (segment,)))), now=moment
+            )
+
+        fold = date(2026, 11, 1)
+        with self.assertRaisesRegex(ValueError, "in the past"):
+            at(fold, "01:30", datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc))
+        self.assertEqual(
+            at(fold, "01:30", datetime(2026, 11, 1, 6, 0, tzinfo=timezone.utc))["outcome"],
+            "same_price",
+        )
+        self.assertEqual(
+            at(fold, "01:30", datetime(2026, 11, 1, 5, 0, tzinfo=timezone.utc))["outcome"],
+            "same_price",
+        )
+        gap = date(2026, 3, 8)
+        self.assertEqual(
+            at(gap, "02:30", datetime(2026, 3, 8, 12, 0, tzinfo=timezone.utc))["outcome"],
+            "same_price",
+        )
+
     def test_country_not_reapplied_is_noted(self) -> None:
         stub = _Stub(_report(_offer(500.0, (OUTBOUND,))))
         bare = recheck_offer(_previous(OUTBOUND), search=stub)
@@ -1194,7 +1210,7 @@ class EnvelopeTests(unittest.TestCase):
 
     def test_incomplete_offers_is_failed_and_partial(self) -> None:
         offer = _offer(900.0, (OUTBOUND,))
-        attached = _attach_missing_legs(RT_QUERY, (offer,), _ReturnShop(RuntimeError("down")))
+        attached = (offer,)
         report = _report(*attached, query=RT_QUERY)
         result = self._run(report, _round_trip_previous())
         self.assertEqual(result["outcome"], "check_failed")

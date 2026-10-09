@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 import threading
 import time
 from dataclasses import replace
@@ -19,7 +20,6 @@ from viajante.booking import (
 )
 from viajante.browser import playwright_available
 from viajante.control import checkpoint, controlled, interruptible_sleep
-from viajante.flights import DEFAULT_TOP
 from viajante.google_flights import SweepTransportError
 from viajante.google_hotels import (
     GoogleHotelsSource,
@@ -53,6 +53,7 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
+from viajante.models_common import DEFAULT_TOP, ISO_4217_CODES
 from viajante.orchestration import (
     MAX_ATTEMPTS,
     NON_RETRIABLE_CODES,
@@ -71,13 +72,14 @@ from viajante.parsers import (
     parse_unit_hints,
 )
 from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
-from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
+from viajante.ratelimit import cooldown_until
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged_hotels import (
     SKIPLAGGED_HOTEL_CURRENCY,
     SkiplaggedHotelsSource,
     SkiplaggedNoHotels,
     SkiplaggedParseMiss,
+    skiplagged_failure,
     validate_search_party,
 )
 from viajante.skiplagged_hotels import (
@@ -97,6 +99,21 @@ class _HotelSource(Protocol):
     def reset(self) -> None: ...
 
     def close(self) -> None: ...
+
+
+_ISO_TOKEN = re.compile(r"\b[A-Z]{3}\b")
+
+
+def _named_other_currency(price_text: str, currency: str) -> Optional[str]:
+    """An ISO 4217 code in a price text that is not the requested one, else None.
+
+    Symbols are not read: "$" or "kr" alone cannot prove a code, so they never mismatch.
+    A word that is not a code (TAX, PER, VAT) is not one either.
+    """
+    for token in _ISO_TOKEN.findall(price_text):
+        if token != currency and token in ISO_4217_CODES:
+            return token
+    return None
 
 
 def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
@@ -256,30 +273,17 @@ def _sorted_deduplicated_offers(
     return tuple(deduplicated)
 
 
-def _rank_offers(
-    offers: Sequence[HotelOffer],
-    top: int,
-) -> Tuple[HotelOffer, ...]:
-    if top <= 0:
-        raise ValueError("top must be positive")
-    return _sorted_deduplicated_offers(offers)[:top]
+def _gives_up(exc: BaseException, failure: SearchError) -> bool:
+    """True when another attempt cannot change the outcome: a non-retriable code, or a
+    Booking results timeout or sweep transport error (the page will not appear on retry)."""
+    return failure.code in NON_RETRIABLE_CODES or isinstance(
+        exc, (BookingResultsTimeout, SweepTransportError)
+    )
 
 
 def _classify_hotel_failure(exc: BaseException) -> SearchError:
-    if isinstance(exc, SkiplaggedRateLimited):
-        return SearchError(
-            code=SearchErrorCode.BLOCKED,
-            message=str(exc),
-            rate_limited=True,
-            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
-        )
-    if isinstance(exc, SkiplaggedNoHotels):
-        return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
-    if isinstance(exc, SkiplaggedParseMiss):
-        return SearchError(
-            code=SearchErrorCode.MARKUP_DRIFT,
-            message="Skiplagged hotel parse missed.",
-        )
+    if isinstance(exc, (SkiplaggedRateLimited, SkiplaggedNoHotels, SkiplaggedParseMiss)):
+        return skiplagged_failure(exc)
     if isinstance(exc, EmptyHotelResults):
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
@@ -348,21 +352,32 @@ def _run_search(
             try:
                 checkpoint()
                 page = source.fetch(query, applied, fetch_limit)
+                others = [_named_other_currency(raw.total_price, currency) for raw in page.cards]
+                if page.cards and all(others):
+                    # Every priced card names another ISO code: there is no owned quote in the
+                    # requested currency, and viajante never converts.
+                    other = others[0]
+                    outcome = HotelQueryFailure(
+                        query=query,
+                        applied=applied,
+                        error=SearchError(
+                            code=SearchErrorCode.CURRENCY_MISMATCH,
+                            message=f"Hotel prices are quoted in {other}, not {currency}. "
+                            "Viajante does not convert.",
+                        ),
+                    )
+                    break
                 normalized = tuple(
                     _with_distance(offer, near)
-                    for raw in page.cards
-                    if (offer := _normalize_card(raw)) is not None
+                    for raw, other in zip(page.cards, others, strict=True)
+                    if other is None and (offer := _normalize_card(raw)) is not None
                 )
                 eligible = tuple(
                     offer
                     for offer in normalized
                     if _is_eligible(offer, query) and _within_radius(offer, near, max_distance_km)
                 )
-                rank_limit = max(top, len(eligible))
-                ranked = _rank_offers(
-                    eligible,
-                    top=rank_limit,
-                )
+                ranked = _sorted_deduplicated_offers(eligible)
                 outcome = HotelQuerySuccess(
                     query=query,
                     applied=(replace(applied, url=page.search_url) if page.search_url else applied),
@@ -377,9 +392,7 @@ def _run_search(
             except Exception as exc:
                 failure = _classify_hotel_failure(exc)
                 source.reset()
-                if failure.code in NON_RETRIABLE_CODES or isinstance(
-                    exc, (BookingResultsTimeout, SweepTransportError)
-                ):
+                if _gives_up(exc, failure):
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     sleep(retry_backoff_seconds(attempt, random_gen))
@@ -424,33 +437,35 @@ def resolve_hotel_currency(source: str, currency: Optional[str]) -> str:
     return resolve_quote_currency(currency, None, missing=HOTEL_CURRENCY_REQUIRED)
 
 
-def _skiplagged_currency_mismatch(
-    queries: Sequence[HotelQuery], currency: str
+def _failed_report(
+    queries: Sequence[HotelQuery],
+    error: SearchError,
+    *,
+    build_filters: Callable[..., AppliedHotelFilters],
+    currency: str,
+    provider: HotelProvider,
+    fetch_backend: Literal["booking", "google", "skiplagged"],
+    near: Optional[Tuple[float, float]],
+    max_distance_km: Optional[float],
 ) -> HotelSearchReport:
-    error = SearchError(
-        code=SearchErrorCode.CURRENCY_MISMATCH,
-        message=(
-            f"Skiplagged hotel quotes are {SKIPLAGGED_HOTEL_CURRENCY}; {currency} was named. "
-            "Viajante does not convert. Omit currency or pass USD."
-        ),
-    )
+    """Every query failed before any fetch: no provider was asked."""
     return HotelSearchReport(
         searched_at=datetime.now(timezone.utc),
         queries=tuple(
             HotelQueryFailure(
                 query=query,
-                applied=build_skiplagged_filters(
-                    query, html_lang=FETCH_LANGUAGE, currency=SKIPLAGGED_HOTEL_CURRENCY
-                ),
+                applied=build_filters(query, html_lang=FETCH_LANGUAGE, currency=currency),
                 error=error,
             )
             for query in queries
         ),
         locale=FETCH_LANGUAGE,
-        currency=SKIPLAGGED_HOTEL_CURRENCY,
-        provider="skiplagged",
-        fetch_backend="skiplagged",
+        currency=currency,
+        provider=provider,
+        fetch_backend=fetch_backend,
         fetch_ms=0,
+        near=near,
+        max_distance_km=max_distance_km,
     )
 
 
@@ -495,8 +510,19 @@ def search_hotels(
     validate_hotel_search_args(queries, top=top, source=source)
     currency = resolve_hotel_currency(source, currency)
     if source == "skiplagged" and currency != SKIPLAGGED_HOTEL_CURRENCY:
-        return replace(
-            _skiplagged_currency_mismatch(queries, currency),
+        return _failed_report(
+            queries,
+            SearchError(
+                code=SearchErrorCode.CURRENCY_MISMATCH,
+                message=(
+                    f"Skiplagged hotel quotes are {SKIPLAGGED_HOTEL_CURRENCY}; "
+                    f"{currency} was named. Viajante does not convert. Omit currency or pass USD."
+                ),
+            ),
+            build_filters=build_skiplagged_filters,
+            currency=SKIPLAGGED_HOTEL_CURRENCY,
+            provider="skiplagged",
+            fetch_backend="skiplagged",
             near=near,
             max_distance_km=max_distance_km,
         )
@@ -514,25 +540,13 @@ def search_hotels(
         fetch_backend = "skiplagged"
     else:
         if not playwright_available():
-            failure = classify_failure(ModuleNotFoundError("No module named 'playwright'"))
-            now = datetime.now(timezone.utc)
-            return HotelSearchReport(
-                searched_at=now,
-                queries=tuple(
-                    HotelQueryFailure(
-                        query=query,
-                        applied=build_booking_filters(
-                            query, html_lang=FETCH_LANGUAGE, currency=currency
-                        ),
-                        error=failure,
-                    )
-                    for query in queries
-                ),
-                locale=FETCH_LANGUAGE,
+            return _failed_report(
+                queries,
+                classify_failure(ModuleNotFoundError("No module named 'playwright'")),
+                build_filters=build_booking_filters,
                 currency=currency,
                 provider="booking.com",
                 fetch_backend="booking",
-                fetch_ms=0,
                 near=near,
                 max_distance_km=max_distance_km,
             )
@@ -550,8 +564,7 @@ def search_hotels(
             sleep=interruptible_sleep,
             random_gen=random.Random(),
             now=lambda: datetime.now(timezone.utc),
-            html_lang=hotel_source.config.html_lang,  # type: ignore[attr-defined]
-            currency=hotel_source.config.currency,  # type: ignore[attr-defined]
+            currency=currency,
             progress=progress,
             provider=provider,
             applied_filters=applied_filters,

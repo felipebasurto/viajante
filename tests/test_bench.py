@@ -6,8 +6,9 @@ import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import date
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import _isolate  # noqa: F401
 from viajante.bench import (
@@ -28,6 +29,7 @@ from viajante.bench import (
 )
 from viajante.cli import main
 from viajante.flights import DEFAULT_TOP
+from viajante.models import FlightQuery, QueryFailure, QuerySuccess, SearchError, SearchErrorCode
 from viajante.quote import resolve_baggage_buffer
 
 
@@ -119,6 +121,19 @@ class BenchReportTests(unittest.TestCase):
         self.assertIn("sweep_ms: 1800\n", text)
         self.assertTrue(text.startswith("gate: ok\n"))
 
+    def test_refused_sweep_is_named_by_status_not_timed(self) -> None:
+        text = format_report(
+            BenchReport(
+                gate="ok",
+                tests_ms=531,
+                parse_ms=12,
+                score_ms=543,
+                sweep_status="rate_limited",
+            )
+        )
+        self.assertIn("sweep_status: rate_limited\n", text)
+        self.assertNotIn("sweep_ms", text)
+
     def test_fail_block_has_no_score(self) -> None:
         text = format_report(BenchReport(gate="fail", detail="ruff check failed"))
         self.assertEqual(text, "gate: fail\n")
@@ -182,6 +197,31 @@ class BenchCliTests(unittest.TestCase):
         ):
             self.assertIsNone(maybe_live_sweep())
             search.assert_not_called()
+
+    def test_live_sweep_reports_a_refused_sweep_as_its_status(self) -> None:
+        refused = QueryFailure(
+            query=FlightQuery("JFK", "LHR", date(2030, 1, 1)),
+            error=SearchError(code=SearchErrorCode.BLOCKED, message="Not sent.", rate_limited=True),
+        )
+        with (
+            patch.dict("os.environ", {LIVE_ENV: "1"}),
+            patch("viajante.bench.search_flights", return_value=MagicMock(queries=(refused,))),
+        ):
+            self.assertEqual(maybe_live_sweep(), (None, "rate_limited"))
+
+    def test_live_sweep_times_a_sweep_google_answered(self) -> None:
+        answered = QuerySuccess(
+            query=FlightQuery("JFK", "LHR", date(2030, 1, 1)),
+            raw_count=0,
+            eligible_count=0,
+            offers=(),
+        )
+        with (
+            patch.dict("os.environ", {LIVE_ENV: "1"}),
+            patch("viajante.bench.search_flights", return_value=MagicMock(queries=(answered,))),
+            patch("viajante.bench.time.perf_counter", side_effect=[1.0, 1.25]),
+        ):
+            self.assertEqual(maybe_live_sweep(), (250, "ok"))
 
     def test_bench_help_lists_the_command(self) -> None:
         buffer = io.StringIO()

@@ -20,14 +20,20 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from viajante.flights import DEFAULT_TOP, search_flights
-from viajante.google_flights import NoFlightsFound, parse_flight_cards, parse_http_flight_cards
+from viajante.google_flights import (
+    NoFlightsFound,
+)
+from viajante.google_flights_detail import (
+    parse_flight_cards,
+    parse_http_flight_cards,
+)
 from viajante.google_flights_rpc import (
     EmptyShoppingResults,
     ShoppingRejected,
     parse_shopping_body,
 )
 from viajante.history import ENV_RECORD
-from viajante.models import FlightQuery
+from viajante.models import FlightQuery, QueryFailure
 from viajante.quote import resolve_baggage_buffer
 
 LIVE_ENV = "VIAJANTE_BENCH_LIVE"
@@ -102,6 +108,7 @@ class BenchReport:
     parse_ms: Optional[int] = None
     score_ms: Optional[int] = None
     sweep_ms: Optional[int] = None
+    sweep_status: Optional[str] = None
     detail: str = ""
 
 
@@ -252,6 +259,8 @@ def format_report(report: BenchReport) -> str:
         lines.append(f"tests_ms: {report.tests_ms}")
         lines.append(f"parse_ms: {report.parse_ms}")
         lines.append(f"score_ms: {report.score_ms}")
+        if report.sweep_status is not None:
+            lines.append(f"sweep_status: {report.sweep_status}")
         if report.sweep_ms is not None:
             lines.append(f"sweep_ms: {report.sweep_ms}")
     return "\n".join(lines) + "\n"
@@ -303,7 +312,8 @@ def run_gate(root: Path) -> tuple[bool, str, Optional[int]]:
     return True, "", tests_ms
 
 
-def maybe_live_sweep() -> Optional[int]:
+def maybe_live_sweep() -> Optional[tuple[Optional[int], str]]:
+    """One live sweep: (elapsed ms, "ok") when Google answered, else (None, why it did not)."""
     if os.environ.get(LIVE_ENV) != "1":
         return None
     query = FlightQuery(
@@ -313,8 +323,14 @@ def maybe_live_sweep() -> Optional[int]:
         max_stops=0,
     )
     started = time.perf_counter()
-    search_flights((query,), top=1, fetch="sweep", baggage_buffer=0)
-    return _ms_since(started)
+    report = search_flights((query,), top=1, fetch="sweep", baggage_buffer=0)
+    elapsed = _ms_since(started)
+    result = report.queries[0]
+    if isinstance(result, QueryFailure):
+        error = result.error
+        status = "rate_limited" if error.rate_limited else error.code.value
+        return None, status
+    return elapsed, "ok"
 
 
 def run_bench(*, root: Optional[Path] = None) -> int:
@@ -344,9 +360,10 @@ def run_bench(*, root: Optional[Path] = None) -> int:
         return 1
 
     sweep_ms: Optional[int] = None
+    sweep_status: Optional[str] = None
     if os.environ.get(LIVE_ENV) == "1":
         try:
-            sweep_ms = maybe_live_sweep()
+            sweep_ms, sweep_status = maybe_live_sweep() or (None, None)
         except Exception as exc:
             print(f"warning: live sweep skipped: {exc}", file=sys.stderr)
 
@@ -357,6 +374,7 @@ def run_bench(*, root: Optional[Path] = None) -> int:
         parse_ms=parse_ms,
         score_ms=tests_ms + parse_ms,
         sweep_ms=sweep_ms,
+        sweep_status=sweep_status,
     )
     print(format_report(report), end="")
     return 0

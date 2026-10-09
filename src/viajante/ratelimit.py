@@ -1,4 +1,9 @@
-"""Per-provider cooldown state: one recorded rate limit pauses that provider machine-wide."""
+"""Per-provider cooldown state: one recorded rate limit pauses that provider machine-wide.
+
+The state file lives in the shared state directory, so every viajante install on the
+machine honours it. Each record names the viajante version and the endpoint that wrote
+it, so a stale install's limit can be told apart from this one's.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,9 @@ import math
 import time
 from datetime import datetime, timezone
 from typing import Mapping, Optional
+from urllib.parse import urlsplit
 
+from viajante.runtime import package_version
 from viajante.storage import default_state_dir, write_json_atomic
 
 GOOGLE_RATE_LIMIT_FILE = "google-rate-limit.json"
@@ -25,32 +32,58 @@ _COOLDOWN_BASES = {
     "heuristic_rpc_13",
     "unknown",
 }
-_COOLDOWN_CAUSES = {"http_429", "rpc_13", "unknown"}
+_CAUSE_OF_BASIS = {
+    "provider_retry_after": "http_429",
+    "heuristic_http_429": "http_429",
+    "heuristic_rpc_13": "rpc_13",
+    "unknown": "unknown",
+}
 
 
-def _read_rate_limit(file: str) -> Optional[dict]:
+def _read_rate_limit(file: str, now: float) -> Optional[dict]:
     try:
         state = json.loads((default_state_dir() / file).read_text(encoding="utf-8"))
         if not all(isinstance(state[k], (int, float)) for k in ("at", "until")):
             return None
-        # Older state files predate these diagnostic fields. Keep them readable
-        # and identify their provenance as unknown rather than guessing.
-        state = dict(state)
-        if state.get("basis") not in _COOLDOWN_BASES:
-            state["basis"] = "unknown"
-        if state.get("cause") not in _COOLDOWN_CAUSES:
-            state["cause"] = "unknown"
-        return state
-    except (OSError, ValueError, TypeError, KeyError):
+        at, until = float(state["at"]), float(state["until"])
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
         return None
+    # A stamp more than one cap from now would hold the provider off for good or overflow the
+    # clock format. NaN and inf fail these comparisons too; the span check bounds `at`.
+    cap = RATE_LIMIT_MAX_COOLDOWN_SECONDS
+    if not now - cap <= until <= now + cap:
+        return None
+    if not 0 <= until - at <= cap:
+        return None
+    # Records written before these fields existed stay readable: their provenance is
+    # unknown rather than guessed.
+    state = dict(state)
+    # isinstance first: an unhashable basis (a list or dict) would make the set lookup raise.
+    if not isinstance(state.get("basis"), str) or state["basis"] not in _COOLDOWN_BASES:
+        state["basis"] = "unknown"
+    if state.get("cause") not in _CAUSE_OF_BASIS.values():
+        state["cause"] = "unknown"
+    for key in ("viajante_version", "endpoint"):
+        if not isinstance(state.get(key), str):
+            state[key] = None
+    # A cooldown length that is not a number in range is unknown: 0, as for records without one.
+    if not (isinstance(state.get("cooldown_s"), (int, float)) and 0 <= state["cooldown_s"] <= cap):
+        state["cooldown_s"] = 0
+    return state
+
+
+def endpoint_label(endpoint: str) -> str:
+    """Host and path only: a scheme, query, or fragment never reaches the state file."""
+    parts = urlsplit(endpoint if "//" in endpoint else f"//{endpoint}")
+    return f"{parts.netloc}{parts.path}"
 
 
 def rate_limit_status(
     now: Optional[float] = None, *, file: str = GOOGLE_RATE_LIMIT_FILE
 ) -> Optional[dict]:
     """The recorded cooldown for this machine while it runs, else None."""
-    state = _read_rate_limit(file)
     current = time.time() if now is None else now
+    state = _read_rate_limit(file, current)
     return state if state is not None and state["until"] > current else None
 
 
@@ -61,6 +94,7 @@ def note_rate_limited(
     file: str = GOOGLE_RATE_LIMIT_FILE,
     basis: Optional[str] = None,
     cause: Optional[str] = None,
+    endpoint: Optional[str] = None,
 ) -> dict:
     """Record a real rate limit in the state dir so the next search in any process waits."""
     if basis is None:
@@ -71,22 +105,18 @@ def note_rate_limited(
         )
     if basis not in _COOLDOWN_BASES:
         raise ValueError(f"invalid cooldown basis: {basis!r}")
-    if cause is None:
-        cause = {
-            "provider_retry_after": "http_429",
-            "heuristic_http_429": "http_429",
-            "heuristic_rpc_13": "rpc_13",
-            "unknown": "unknown",
-        }[basis]
-    if cause not in _COOLDOWN_CAUSES:
+    cause = _CAUSE_OF_BASIS[basis] if cause is None else cause
+    if cause not in _CAUSE_OF_BASIS.values():
         raise ValueError(f"invalid cooldown cause: {cause!r}")
     current = time.time() if now is None else now
-    previous = _read_rate_limit(file)
+    previous = _read_rate_limit(file, current)
     if previous is not None and previous["until"] > current:
         return previous
+    if retry_after is not None and not math.isfinite(retry_after):
+        retry_after = None
     cooldown = RATE_LIMIT_COOLDOWN_SECONDS
     if retry_after is not None and retry_after > 0:
-        cooldown = retry_after
+        cooldown = min(retry_after, RATE_LIMIT_MAX_COOLDOWN_SECONDS)
     elif previous is not None and current < previous["until"] + previous.get("cooldown_s", 0):
         cooldown = min(RATE_LIMIT_MAX_COOLDOWN_SECONDS, previous["cooldown_s"] * 2)
     state = {
@@ -95,10 +125,25 @@ def note_rate_limited(
         "cooldown_s": cooldown,
         "basis": basis,
         "cause": cause,
+        "viajante_version": package_version(),
+        "endpoint": endpoint_label(endpoint) if endpoint else None,
     }
     with contextlib.suppress(OSError):
         write_json_atomic(state, default_state_dir() / file)
     return state
+
+
+def _provenance(state: Mapping[str, object]) -> str:
+    version = state.get("viajante_version")
+    current = package_version()
+    source = f"viajante {version}" if version else "a viajante that does not record its version"
+    where = f" from {state['endpoint']}" if state.get("endpoint") else ""
+    if version == current:
+        return f"; recorded by {source}{where}"
+    return (
+        f"; recorded by {source}{where}, not by this viajante {current} "
+        "(another install on this machine may have caused it)"
+    )
 
 
 def rate_limit_advice(
@@ -118,7 +163,7 @@ def rate_limit_advice(
     else:
         observation = f"{provider} is rate-limiting this machine"
     return (
-        f"{prefix}{observation} ({reason} at {clock(state['at'])} UTC). "
+        f"{prefix}{observation} ({reason} at {clock(state['at'])} UTC{_provenance(state)}). "
         f"Viajante pauses {provider} {PAUSE_PHRASE} {clock(state['until'])} UTC (~{minutes} min). "
         "Tell the user to wait; do not retry or switch fetch mode."
     )

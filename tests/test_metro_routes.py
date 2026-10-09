@@ -10,16 +10,20 @@ from unittest.mock import MagicMock, patch
 import _isolate  # noqa: F401
 from viajante import mcp_handlers
 from viajante.cli import main
-from viajante.flights import (
+from viajante.flight_routes import (
     drop_excluded_airport_trips,
     expand_nearby_trips,
+    keep_included_dest_trips,
     nearby_notes,
     parse_flight_plan,
 )
+from viajante.flights import search_flights
 from viajante.google_flights import RawFlightCard
+from viajante.history import flight_observations
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
+    FlightQuery,
     HotelOffer,
     HotelQuery,
     HotelQuerySuccess,
@@ -36,6 +40,20 @@ BACK = date(2026, 11, 14)
 
 def _pairs(trips) -> list[tuple[str, str]]:
     return [(trip.origin, trip.destination) for trip in trips]
+
+
+class IncludeAirportsReturnTests(unittest.TestCase):
+    def test_a_named_destination_keeps_its_return_leg_of_the_same_trip(self) -> None:
+        trips = parse_flight_plan(["JFK-LHR:2026-12-03:2026-12-10"], max_stops=1)
+        kept = keep_included_dest_trips(trips, ("LHR",))
+        self.assertEqual(
+            [(trip.origin, trip.destination) for trip in kept],
+            [("JFK", "LHR"), ("LHR", "JFK")],
+        )
+
+    def test_a_round_trip_to_another_airport_is_dropped_on_both_legs(self) -> None:
+        trips = parse_flight_plan(["JFK-LHR:2026-12-03:2026-12-10"], max_stops=1)
+        self.assertEqual(keep_included_dest_trips(trips, ("LGW",)), ())
 
 
 class MetroPlanTests(unittest.TestCase):
@@ -236,6 +254,47 @@ class MetroSurfaceTests(unittest.TestCase):
                 )
             flights.assert_not_called()
             locked.assert_not_called()
+
+    def test_metro_label_reaches_query_json_and_not_the_history_key(self) -> None:
+        day = self.FUTURE
+        back = day + timedelta(days=4)
+        expanded = parse_flight_plan([f"LON-MAD:{day.isoformat()}"], max_stops=1)
+        self.assertEqual(expanded[0].to_dict()["nearby_label"], "metro LON")
+        direct = parse_flight_plan([f"LHR-MAD:{day.isoformat()}"], max_stops=1)
+        self.assertNotIn("nearby_label", direct[0].to_dict())
+        blank = FlightQuery("LHR", "MAD", day, nearby_label="   ")
+        self.assertIsNone(blank.nearby_label)
+        self.assertNotIn("nearby_label", blank.to_dict())
+        packaged = parse_flight_plan(
+            [f"MAD-NYC:{day.isoformat()}:{back.isoformat()}"], trip="rt", max_stops=1
+        )
+        self.assertIsInstance(packaged[0], RoundTrip)
+        self.assertEqual(packaged[0].to_dict()["nearby_label"], "metro NYC")
+
+        codes = ("LHR", "LGW", "STN", "LTN", "LCY", "SEN")
+        source = _FaresByOrigin({code: "€100" for code in codes})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights(expanded, fetch="sweep", currency="EUR", baggage_buffer=0)
+        data = report.to_dict()
+        self.assertEqual(
+            {row["query"]["nearby_label"] for row in data["queries"]},
+            {"metro LON"},
+        )
+        row = data["queries"][0]
+        evidence_query = row["offers"][0]["evidence"]["query"]
+        self.assertEqual(evidence_query["nearby_label"], "metro LON")
+        shown = {key: value for key, value in row["query"].items() if key != "google_flights_url"}
+        self.assertEqual(shown, evidence_query)
+
+        labeled = flight_observations(report, {})
+        direct_source = _FaresByOrigin({"LHR": "€100"})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=direct_source):
+            direct_report = search_flights(direct, fetch="sweep", currency="EUR", baggage_buffer=0)
+        plain = flight_observations(direct_report, {})
+        metro_lhr = next(item for item in labeled if item["query"]["origin"] == "LHR")
+        self.assertEqual(metro_lhr["query"]["nearby_label"], "metro LON")
+        self.assertNotIn("nearby_label", plain[0]["query"])
+        self.assertEqual(metro_lhr["query_key"], plain[0]["query_key"])
 
     def test_lon_nyc_alone_sends_18_provider_queries(self) -> None:
         day = self.FUTURE.isoformat()

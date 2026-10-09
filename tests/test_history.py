@@ -25,7 +25,8 @@ from viajante.cli import main
 from viajante.control import SearchCancelled, SearchControl, active
 from viajante.envelope import ENVELOPE_KEYS
 from viajante.evidence import _Owned
-from viajante.flights import DEFAULT_TOP, as_trips, parse_flight_plan, search_flights
+from viajante.flight_routes import as_trips, parse_flight_plan
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.hotels import search_hotels
 from viajante.mcp_errors import structured_error
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
@@ -48,7 +49,7 @@ from viajante.models import (
     SearchErrorCode,
     SearchReport,
 )
-from viajante.storage import exclusive_lock
+from viajante.storage import UnreadableStateError, exclusive_lock
 
 DEPART = date.today() + timedelta(days=60)
 T0 = datetime(2026, 10, 6, 9, 0, 0, tzinfo=timezone.utc)
@@ -215,7 +216,6 @@ class RecordingGateTests(_State):
         with (
             patch("viajante.flights._run_search", return_value=report),
             patch("viajante.flights.GoogleFlightsHttpSource", MagicMock()),
-            patch("viajante.flights.playwright_available", return_value=False),
         ):
             search_flights([query], fetch="sweep", currency="USD")
             search_flights([query], fetch="sweep", currency="USD", top=DEFAULT_TOP, sort="ranked")
@@ -392,11 +392,11 @@ class UnreadableFileTests(_State):
         self.assertEqual(payload["read_error"], "permission denied accessing price history")
         self.assertIn("not an empty history", payload["note"])
         self.assertIsNone(payload["stored_entries"])
-        with self.assertRaises(history.HistoryReadError):
+        with self.assertRaises(UnreadableStateError):
             history.read_observations(strict=True)
 
     def test_clear_refuses_and_keeps_the_file(self) -> None:
-        with self.assertRaises(history.HistoryReadError):
+        with self.assertRaises(UnreadableStateError):
             history.clear_history()
         self.path.chmod(0o600)
         self.assertEqual(self.path.read_bytes(), self.before)
@@ -564,7 +564,7 @@ class WatchTests(_State):
     def test_history_becoming_unreadable_after_a_good_append(self) -> None:
         self.run_watch(500.0, kind="flight", params=self.params())
         mcp_handlers._CACHE.clear()
-        denied = history.HistoryReadError(13, "Permission denied", "/secret/path/history")
+        denied = UnreadableStateError("permission denied accessing price history")
         with patch("viajante.watch.read_observations", side_effect=denied):
             result = self.run_watch(450.0, at=T0 + timedelta(days=1))
         self.assertEqual(result["recorded"], 1)
@@ -809,11 +809,11 @@ class _Raw(_State):
         )
         self.assertIn("read_error", listing)
         self.assertNotIn(str(self.state), json.dumps(listing))
-        with self.assertRaises(watch.WatchesReadError):
+        with self.assertRaises(UnreadableStateError):
             watch.save_watch("c", "flight", {"routes": [f"JFK-LHR:{DEPART.isoformat()}"]})
-        with self.assertRaises(watch.WatchesReadError):
+        with self.assertRaises(UnreadableStateError):
             watch.remove_watch("a")
-        with self.assertRaises(watch.WatchesReadError):
+        with self.assertRaises(UnreadableStateError):
             watch.watch_price_tool("a")
         self.assertEqual(self.path.read_bytes(), self.before)
 
@@ -856,9 +856,9 @@ class UnreadableWatchesTests(_Raw):
         listing = watch.watch_price_tool()
         self.assertIsNone(listing["watches"])
         self.assertEqual(listing["read_error"], "permission denied accessing saved watches")
-        with self.assertRaises(watch.WatchesReadError):
+        with self.assertRaises(UnreadableStateError):
             watch.save_watch("c", "flight", {"routes": [f"JFK-LHR:{DEPART.isoformat()}"]})
-        with self.assertRaises(watch.WatchesReadError):
+        with self.assertRaises(UnreadableStateError):
             watch.remove_watch("a")
         self.path.chmod(0o600)
         self.assertEqual(self.path.read_bytes(), self.before)
@@ -931,7 +931,7 @@ class ConcurrencyTests(_State):
 
 
 class EnvelopeTests(_State):
-    DENIED = history.HistoryReadError(13, "Permission denied", "/secret/path/history")
+    DENIED = UnreadableStateError("permission denied accessing price history")
 
     def params(self) -> dict:
         return {"routes": [f"JFK-LHR:{DEPART.isoformat()}"], "currency": "USD"}

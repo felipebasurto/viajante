@@ -7,21 +7,9 @@ from datetime import date, datetime, timezone
 from typing import Mapping, Optional
 
 from viajante.airports import airport_geo, canonical_city_name, lookup_airports, metro_of
-from viajante.envelope import stamp_local, stamp_search
+from viajante.envelope import ENVELOPE_KEYS, stamp_local, stamp_search
 from viajante.hotels import _raw_distance_km
 from viajante.skiplagged_hotels import _normalized_name, search_hotel_rooms
-
-_ENVELOPE = (
-    "status",
-    "completeness",
-    "empty_reason",
-    "empty_note",
-    "error_code",
-    "retry_after",
-    "retry_after_seconds",
-    "observed_at",
-    "observed_at_basis",
-)
 
 # ponytail: airports within 100 km (the metro table's radius) are one place.
 # Homonyms farther apart stay separate. Upgrade: subdivision codes.
@@ -78,15 +66,16 @@ def _age(payload, now):
     except ValueError:
         return None
     current = now or datetime.now(timezone.utc)
-    current = (
-        current.replace(tzinfo=timezone.utc)
-        if current.tzinfo is None
-        else current.astimezone(timezone.utc)
+    return max(0, int((_as_utc(current) - _as_utc(then)).total_seconds()))
+
+
+def _as_utc(value: datetime) -> datetime:
+    """A naive time is UTC, as the search reports are stamped."""
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
     )
-    then = (
-        then.replace(tzinfo=timezone.utc) if then.tzinfo is None else then.astimezone(timezone.utc)
-    )
-    return max(0, int((current - then).total_seconds()))
 
 
 def _point(value) -> Optional[tuple[float, float]]:
@@ -154,7 +143,7 @@ def _city_decision(result, offer):
     location = result["query"]["location"].strip()
     parts = [part.strip() for part in location.split(",")]
     if len(parts) > 2 or not parts[0]:
-        raise ValueError("room rates require an unambiguous city; use City or City, ISO country")
+        return None, "room rates require an unambiguous city; use City or City, ISO country"
     city = parts[0]
     country = parts[1].upper() if len(parts) == 2 else None
     hits = [
@@ -164,15 +153,14 @@ def _city_decision(result, offer):
         and (country is None or airport.country == country)
     ]
     if not hits:
-        raise ValueError("room rates require an unambiguous city; use City or City, ISO country")
+        # The stored search named a city the catalogue cannot place: inconclusive, not caller error.
+        return None, "room rates require an unambiguous city; use City or City, ISO country"
     groups = _places(hits)
     point = _point(offer)
     if len(groups) == 1:
         resolved = result.get("resolved_place")
         if resolved and _city_label(resolved) not in (_city_label(city), _city_label(location)):
-            raise ValueError(
-                "resolved place differs from the named city; room-rate city is unproven"
-            )
+            return None, "resolved place differs from the named city; room-rate city is unproven"
         return f"{hits[0].city}, {country}" if country else hits[0].city, point
     if point and len(_near_places(hits, groups, point)) == 1:
         return location, point
@@ -189,7 +177,7 @@ def _require_bool(room_rates) -> None:
 
 
 def _lift(detail: dict, stamped: dict) -> dict:
-    for key in _ENVELOPE:
+    for key in ENVELOPE_KEYS:
         detail[key] = stamped[key]
     return detail
 
@@ -284,8 +272,10 @@ def get_hotel_details(
     if owned_id is not None:
         try:
             hotel_id = int(owned_id)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Skiplagged finalist has no usable provider id") from exc
+        except (TypeError, ValueError):
+            detail["room_rates_status"] = "inconclusive"
+            detail["reason"] = "Skiplagged finalist has no usable provider id"
+            return stamp_local(detail, partial=True, error_code="no_provider_id")
         named: Mapping[str, str] = {}
     else:
         hotel_id = None

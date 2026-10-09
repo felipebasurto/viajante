@@ -12,7 +12,8 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 import viajante
-from viajante.cli import _format_clock, _join_cancellation_rows, _print_report, main
+from viajante.cli import main
+from viajante.cli_report import _format_clock, _join_cancellation_rows, _print_report
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -67,8 +68,6 @@ def _offer(
     typical: Optional[float] = None,
     vs_typical: Optional[VsTypical] = None,
     vs_typical_pct: Optional[int] = None,
-    cheapest_date: Optional[date] = None,
-    cheapest: Optional[float] = None,
     checked_bags: Optional[int] = None,
     carry_on: Optional[int] = None,
     flight_numbers: Optional[tuple[str, ...]] = None,
@@ -91,8 +90,6 @@ def _offer(
         typical=typical,
         vs_typical=vs_typical,
         vs_typical_pct=vs_typical_pct,
-        cheapest_date=cheapest_date,
-        cheapest=cheapest,
         checked_bags=checked_bags,
         carry_on=carry_on,
         flight_numbers=flight_numbers,
@@ -145,7 +142,7 @@ class RecommendationPrintTests(unittest.TestCase):
             ),
         )
         text = _rendered(report)
-        self.assertIn("[recommended, cheapest, fastest]", text)
+        self.assertIn("[top_score, lowest_price, shortest]", text)
         self.assertIn("Relaxed requirements: max_stops", text)
         self.assertIn("Fare rules (refund, change) not shown", text)
         self.assertIn("Note: No offer met every stated requirement", text)
@@ -402,6 +399,24 @@ class CliTests(unittest.TestCase):
             self.assertEqual(main(["flights", ROUTE, "--baggage-buffer", "-1"]), 1)
             search.assert_not_called()
 
+    def test_layover_and_via_errors_name_the_cli_flags(self) -> None:
+        cases = {
+            ("--max-layover", "-1"): "--max-layover must not be negative",
+            ("--min-layover", "3", "--max-layover", "1"): (
+                "--min-layover must be at or below --max-layover"
+            ),
+            ("--via", "DXB", "--exclude-via", "DXB"): (
+                "--via and --exclude-via must not share a code"
+            ),
+        }
+        with patch("viajante.cli.search_flights") as search:
+            for flags, message in cases.items():
+                with self.subTest(flags=flags), redirect_stderr(io.StringIO()) as err:
+                    route = f"JFK-LHR:{FUTURE_DATE.isoformat()}"
+                    self.assertEqual(main(["flights", route, *flags]), 1)
+                    self.assertIn(message, err.getvalue())
+            search.assert_not_called()
+
     def test_past_dates_are_rejected_before_starting_chromium(self) -> None:
         with patch("viajante.cli.search_flights") as search:
             code = main(["flights", f"JFK-LHR:{PAST_DATE.isoformat()}"])
@@ -413,6 +428,91 @@ class CliTests(unittest.TestCase):
             with patch("viajante.cli._print_report"):
                 main(["flights", f"JFK-LHR:{date.today().isoformat()}"])
             search.assert_called_once()
+
+    def test_non_finite_layover_bounds_are_rejected_before_searching(self) -> None:
+        with patch("viajante.cli.search_flights") as search:
+            for value in ("nan", "inf", "-inf"):
+                with self.subTest(value=value):
+                    self.assertEqual(main(["flights", ROUTE, "--max-layover", value]), 1)
+            self.assertEqual(main(["flights", ROUTE, "--min-layover", "nan"]), 1)
+            self.assertEqual(main(["flights", ROUTE, "--max-duration", "inf"]), 1)
+            search.assert_not_called()
+
+    def test_hidden_city_rejects_bad_currency_before_search(self) -> None:
+        with patch("viajante.cli.search_hidden_city") as search:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = main(["hidden-city", ROUTE, "--currency", "XX"])
+            self.assertEqual(code, 1)
+            self.assertIn("error:", err.getvalue())
+            search.assert_not_called()
+
+    def test_hidden_city_rejects_same_airport_pair_before_search(self) -> None:
+        with patch("viajante.cli.search_hidden_city") as search:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = main(["hidden-city", f"AAA-AAA:{FUTURE_DATE.isoformat()}"])
+            self.assertEqual(code, 1)
+            self.assertIn("must differ", err.getvalue())
+            search.assert_not_called()
+
+    def test_hotels_skiplagged_limits_are_rejected_before_search(self) -> None:
+        out_date = (FUTURE_DATE + timedelta(days=2)).isoformat()
+        with patch("viajante.cli.search_hotels") as search:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(
+                    main(
+                        [
+                            "hotels",
+                            "Paris",
+                            FUTURE_DATE.isoformat(),
+                            out_date,
+                            "--currency",
+                            "EUR",
+                            "--source",
+                            "skiplagged",
+                            "--adults",
+                            "20",
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    main(
+                        [
+                            "hotels",
+                            "Paris",
+                            FUTURE_DATE.isoformat(),
+                            out_date,
+                            "--currency",
+                            "EUR",
+                            "--source",
+                            "skiplagged",
+                            "--entire-home",
+                        ]
+                    ),
+                    1,
+                )
+            self.assertIn("error:", err.getvalue())
+            search.assert_not_called()
+
+    def test_hotels_past_check_in_is_rejected_before_search(self) -> None:
+        with patch("viajante.cli.search_hotels") as search:
+            self.assertEqual(
+                main(
+                    [
+                        "hotels",
+                        "Paris",
+                        PAST_DATE.isoformat(),
+                        FUTURE_DATE.isoformat(),
+                        "--currency",
+                        "EUR",
+                    ]
+                ),
+                1,
+            )
+            search.assert_not_called()
 
 
 class ReportRenderingTests(unittest.TestCase):
@@ -463,22 +563,6 @@ class ReportRenderingTests(unittest.TestCase):
         silent = _rendered(_report(_offer(price=289.0)))
         self.assertNotIn("typical", silent)
 
-    def test_typical_label_prints_cheapest_owned_day_when_present(self) -> None:
-        output = _rendered(
-            _report(
-                _offer(
-                    price=289.0,
-                    typical=340.0,
-                    vs_typical="below",
-                    vs_typical_pct=-15,
-                    cheapest_date=date(2026, 9, 16),
-                    cheapest=300.0,
-                )
-            )
-        )
-        self.assertIn("below typical 340 USD (−15%)", output)
-        self.assertIn("cheapest 2026-09-16 300 USD", output)
-
     def test_non_eur_currency_does_not_print_euro_glyph(self) -> None:
         output = _rendered(
             _report(
@@ -487,15 +571,12 @@ class ReportRenderingTests(unittest.TestCase):
                     typical=340.0,
                     vs_typical="below",
                     vs_typical_pct=-15,
-                    cheapest_date=date(2026, 9, 16),
-                    cheapest=300.0,
                 ),
                 currency="USD",
             )
         )
         self.assertIn("289 USD", output)
         self.assertIn("below typical 340 USD (−15%)", output)
-        self.assertIn("cheapest 2026-09-16 300 USD", output)
         self.assertNotIn("€", output)
         self.assertNotIn("cheapest", _rendered(_report(_offer(price=289.0))))
 
@@ -1038,7 +1119,7 @@ def _sample_hotel_report(
     currency: str = "EUR",
 ) -> HotelSearchReport:
     query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
-    applied = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+    applied = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
     return HotelSearchReport(
         searched_at=datetime(2026, 8, 10, 9, 0, 0),
         currency=currency,
@@ -1275,7 +1356,7 @@ class HotelCliTests(unittest.TestCase):
             date(2026, 12, 7),
             free_cancellation=False,
         )
-        applied_free = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+        applied_free = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
         applied_open = AppliedHotelFilters(chips=(), url="https://example.test")
         free_offer = _sample_hotel_offer()
         open_offer = HotelOffer(
@@ -1344,7 +1425,7 @@ class HotelCliTests(unittest.TestCase):
             date(2026, 12, 7),
             free_cancellation=False,
         )
-        applied = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+        applied = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 10, 9, 0, 0),
             queries=(
@@ -1515,7 +1596,7 @@ class HotelCliTests(unittest.TestCase):
             output = buffer.getvalue()
             lowered = output.casefold()
             self.assertIn("free cancellation required", lowered)
-            self.assertIn("booking chips: oos=1", lowered)
+            self.assertIn("booking chips: fc=2", lowered)
 
     def test_non_refundable_opt_out_filter_gloss(self) -> None:
         query = HotelQuery(
@@ -1571,7 +1652,7 @@ class HotelCliTests(unittest.TestCase):
             self.assertIn("2026-12-07", output)
             self.assertIn("3 night", output)
             self.assertIn("free cancellation required", output.casefold())
-            self.assertIn("booking chips: oos=1", output.casefold())
+            self.assertIn("booking chips: fc=2", output.casefold())
             self.assertIn("420 € total stay", output)
             self.assertIn("rating 8.9", output)
             self.assertIn("Old Town Apartment", output)
@@ -1607,7 +1688,7 @@ class HotelCliTests(unittest.TestCase):
             entire_home=True,
         )
         applied = AppliedHotelFilters(
-            chips=("oos=1", "privacy_type=3", "ht_id=201"),
+            chips=("fc=2", "privacy_type=3", "ht_id=201"),
             url="https://example.test",
         )
         report = HotelSearchReport(
@@ -1642,7 +1723,7 @@ class HotelCliTests(unittest.TestCase):
             self.assertIn("lodging: entire home", output)
             self.assertIn("booking chips:", output)
 
-    def test_silent_cancellation_when_oos_filter_applied(self) -> None:
+    def test_silent_cancellation_when_fc_filter_applied(self) -> None:
         silent = HotelOffer(
             title="Quiet Stay",
             address="Prague 1",
@@ -1683,7 +1764,7 @@ class HotelCliTests(unittest.TestCase):
 
     def test_failure_output_and_exit_code(self) -> None:
         query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
-        applied = AppliedHotelFilters(chips=("oos=1",), url="https://example.test")
+        applied = AppliedHotelFilters(chips=("fc=2",), url="https://example.test")
         report = HotelSearchReport(
             searched_at=datetime(2026, 8, 10, 9, 0, 0),
             queries=(
@@ -1706,7 +1787,7 @@ class HotelCliTests(unittest.TestCase):
             output = buffer.getvalue()
             self.assertIn("ERROR:", output)
             self.assertIn("free cancellation required", output.casefold())
-            self.assertIn("booking chips: oos=1", output.casefold())
+            self.assertIn("booking chips: fc=2", output.casefold())
             self.assertNotIn("verify the final total stay", output.casefold())
 
     def test_save_only_when_requested(self) -> None:

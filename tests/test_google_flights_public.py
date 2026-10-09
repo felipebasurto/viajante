@@ -11,11 +11,18 @@ import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
 from viajante.envelope import stamp_search
-from viajante.google_flights import SweepHttpResponse
+from viajante.google_flights import (
+    SWEEP_RETRY_BACKOFF_SECONDS,
+    GoogleFlightsBlocked,
+    SweepHttpResponse,
+    reset_shared_chrome_sweep_client,
+    shared_chrome_sweep_client,
+)
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
     GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
+    _validate_capabilities,
 )
 from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import FlightQuery, MultiCity, RawJourneyLeg, RawSegment, RoundTrip
@@ -204,18 +211,13 @@ class PublicFlightsSourceTests(unittest.TestCase):
                     source._verify_context(html, query)
 
     def test_airline_and_alliance_filters_pass_capability_preflight(self) -> None:
-        class NoNetwork:
-            def get(self, *args, **kwargs):
-                raise AssertionError("preflight only")
-
-        source = PublicGoogleFlightsHttpSource(currency="EUR", client=NoNetwork())
         for query in (
             FlightQuery("HAN", "SIN", OUT, airlines=("BA",)),
             FlightQuery("HAN", "SIN", OUT, exclude_airlines=("BA",)),
             FlightQuery("HAN", "SIN", OUT, alliances=("star",)),
         ):
             with self.subTest(query=query):
-                source._validate_capabilities(query)
+                _validate_capabilities(query)
 
     def test_round_trip_replaces_outbound_package_reference_with_provider_total(self) -> None:
         source = _source()
@@ -240,6 +242,43 @@ class PublicFlightsSourceTests(unittest.TestCase):
         self.assertEqual(offers[0].price, "€340")
         self.assertEqual(len(offers[0].legs), 2)
         self.assertEqual(offers[0].legs[1].segments[0].flight_number, "TA202")
+        self.assertTrue(source.scope_bound)
+
+    def test_single_round_trip_reads_its_return_pages_in_one_multiplexed_batch(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.gets: list[str] = []
+                self.batches: list[list[str]] = []
+
+            def get(self, url, *, timeout):
+                self.gets.append(url)
+                return SweepHttpResponse(200, "outbound", url)
+
+            def get_many(self, urls, *, timeout):
+                self.batches.append(list(urls))
+                return [SweepHttpResponse(200, "return", url) for url in urls]
+
+            def close(self) -> None:
+                return None
+
+        outbound = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
+        returned = _card("SIN", "HAN", BACK, "09:00", "TA202", "€340")
+        client = Client()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        query = RoundTrip("HAN", "SIN", OUT, BACK, adults=2, max_stops=0)
+
+        def parse(response, url, trip=None):
+            return (outbound,) if response.text == "outbound" else (returned,)
+
+        with (
+            patch.object(source, "_parse_response", side_effect=parse),
+            patch.object(PublicGoogleFlightsHttpSource, "_selected_echo", return_value=True),
+        ):
+            offers = source.fetch(query)
+        self.assertEqual(len(client.gets), 1)
+        self.assertEqual(len(client.batches), 1)
+        self.assertEqual(len(client.batches[0]), 1)
+        self.assertEqual([offer.price for offer in offers], ["€340"])
         self.assertTrue(source.scope_bound)
 
     def test_equal_priced_return_options_are_preserved(self) -> None:
@@ -270,9 +309,7 @@ class PublicFlightsSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "Selected outbound echo was not proven"):
                 source.fetch(query)
 
-    def test_public_transport_is_get_only_and_disables_automatic_typical(self) -> None:
-        source = _source()
-        self.assertFalse(source.automatic_typical)
+    def test_public_transport_is_get_only(self) -> None:
         query = FlightQuery("HAN", "SIN", OUT, adults=2, max_stops=0)
         good = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
 
@@ -287,9 +324,8 @@ class PublicFlightsSourceTests(unittest.TestCase):
         client = GetOnly()
         source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
         with patch("viajante.google_flights_public.parse_shopping_page", return_value=(good,)):
-            cards, days = source.fetch_with_calendar(query, OUT, BACK)
+            cards = source.fetch(query)
         self.assertEqual(cards, (good,))
-        self.assertEqual(days, ())
         self.assertEqual(len(client.urls), 1)
         self.assertIn("/travel/flights?", client.urls[0])
         self.assertFalse(hasattr(client, "post"))
@@ -711,3 +747,107 @@ class PublicPackageEmptyTests(unittest.TestCase):
         with patch.object(source, "_read_page", side_effect=[((outbound,), ""), NoFlightsFound()]):
             with self.assertRaises(GoogleFlightsMarkupError):
                 source.fetch(query)
+
+
+class SweepPolicyPinTests(unittest.TestCase):
+    """The public client's replay policy, counted in GETs: a block is never repeated."""
+
+    QUERY = FlightQuery("HAN", "SIN", OUT, adults=2, max_stops=0)
+
+    class _Pages:
+        """Answers each GET with one page; ``get_many`` is one batch."""
+
+        def __init__(self, page) -> None:
+            self.page = page
+            self.gets = 0
+            self.batches = 0
+
+        def get(self, url, *, timeout):
+            self.gets += 1
+            return self.page(url)
+
+        def get_many(self, urls, *, timeout):
+            self.batches += 1
+            return [self.get(url, timeout=timeout) for url in urls]
+
+    def test_a_consent_wall_is_one_attempt_on_both_paths(self) -> None:
+        consent = "https://consent.google.com/m?continue=https://www.google.com/travel"
+        sleeps: list[float] = []
+        single = self._Pages(lambda url: SweepHttpResponse(200, "<html></html>", consent))
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            PublicGoogleFlightsHttpSource(currency="EUR", client=single, sleep=sleeps.append).fetch(
+                self.QUERY
+            )
+        self.assertIsNone(caught.exception.status)
+        batch = self._Pages(lambda url: SweepHttpResponse(200, "<html></html>", consent))
+        result = PublicGoogleFlightsHttpSource(
+            currency="EUR", client=batch, sleep=sleeps.append
+        ).fetch_many([self.QUERY])[0]
+        self.assertIsInstance(result, GoogleFlightsBlocked)
+        self.assertEqual((single.gets, batch.gets, sleeps), (1, 1, []))
+
+    def test_a_tiny_shell_is_one_get_alone_and_one_replay_in_a_batch(self) -> None:
+        sleeps: list[float] = []
+        single = self._Pages(lambda url: SweepHttpResponse(200, "<div>loading</div>", url))
+        with self.assertRaises(GoogleFlightsMarkupError):
+            PublicGoogleFlightsHttpSource(currency="EUR", client=single, sleep=sleeps.append).fetch(
+                self.QUERY
+            )
+        self.assertEqual((single.gets, sleeps), (1, []))
+        batch = self._Pages(lambda url: SweepHttpResponse(200, "<div>loading</div>", url))
+        result = PublicGoogleFlightsHttpSource(
+            currency="EUR", client=batch, sleep=sleeps.append
+        ).fetch_many([self.QUERY])[0]
+        self.assertIsInstance(result, GoogleFlightsMarkupError)
+        self.assertEqual((batch.gets, batch.batches, sleeps), (2, 2, [SWEEP_RETRY_BACKOFF_SECONDS]))
+
+    def test_a_403_in_one_batch_is_one_get_many_and_no_sibling_replay(self) -> None:
+        good = _card("HAN", "SIN", OUT, "08:00", "VN100", "€100")
+        urls_seen: list[str] = []
+
+        def page(url: str) -> SweepHttpResponse:
+            urls_seen.append(url)
+            status = 403 if len(urls_seen) == 2 else 200
+            return SweepHttpResponse(status, _context() if status == 200 else "", url)
+
+        client = self._Pages(page)
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client, sleep=lambda _: None)
+        with (
+            patch.object(PublicGoogleFlightsHttpSource, "_verify_context"),
+            patch("viajante.google_flights_public.parse_shopping_page", return_value=(good,)),
+        ):
+            results = source.fetch_many([self.QUERY, self.QUERY, self.QUERY])
+        self.assertEqual((client.batches, client.gets), (1, 3))
+        self.assertEqual(
+            [type(results[i]).__name__ for i in range(3)],
+            ["tuple", "GoogleFlightsBlocked", "tuple"],
+        )
+        self.assertEqual(results[1].status, 403)
+
+    def test_two_sources_with_one_proxy_share_a_client_and_a_new_proxy_closes_it(self) -> None:
+        made: list[object] = []
+        closed: list[object] = []
+
+        class FakeChrome:
+            def __init__(self, *, proxy: str | None = None) -> None:
+                self.proxy = proxy
+                made.append(self)
+
+            def close(self) -> None:
+                closed.append(self)
+
+        def client_for(proxy: str):
+            return PublicGoogleFlightsHttpSource(currency="EUR", proxy=proxy)._ensure_client()
+
+        with patch("viajante.google_flights.ChromeSweepClient", FakeChrome):
+            reset_shared_chrome_sweep_client()
+            try:
+                first = client_for("http://one.example:8080")
+                self.assertIs(client_for("http://one.example:8080"), first)
+                self.assertEqual((len(made), closed), (1, []))
+                second = client_for("http://two.example:8080")
+                self.assertIsNot(second, first)
+                self.assertEqual(closed, [first])
+                self.assertIs(shared_chrome_sweep_client(proxy="http://two.example:8080"), second)
+            finally:
+                reset_shared_chrome_sweep_client()

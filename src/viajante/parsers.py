@@ -7,13 +7,17 @@ import re
 from viajante.models import CancellationEvidence, LodgingKind, PropertyTypeEvidence
 
 _PRICE_NUMBER = re.compile(r"([\d.,']+)")
-_CURRENCY_PREFIX = re.compile(r"([A-Za-z]{3})")
 _THREE_DEC_CURRENCIES = frozenset({"BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"})
+_THREE_DEC_CODE = re.compile(
+    r"(?<![A-Za-z])(?:" + "|".join(sorted(_THREE_DEC_CURRENCIES)) + r")(?![A-Za-z])",
+    re.IGNORECASE,
+)
 _APOSTROPHE_GROUPS = re.compile(r"^-?\d{1,3}(?:'\d{3})+(?:[.,]\d{1,2})?$")
 _DURATION_DAYS = re.compile(r"(\d+)\s*(?:days?|d)\b")
 _DURATION_HOURS = re.compile(r"(\d+)\s*(?:h|hr|hrs|hours?)\b")
 _DURATION_MINUTES = re.compile(r"(\d+)\s*(?:min|mins|minutes?|m)\b")
 _DIGITS = re.compile(r"(\d+)")
+_DIGIT = re.compile(r"\d")
 
 
 def _parse_grouped_number(num: str, *, three_decimal: bool) -> float:
@@ -68,14 +72,11 @@ def parse_price(price_text: str | None) -> float | None:
     if cleaned.startswith("-"):
         num = f"-{num}"
     leftover = (cleaned[: match.start()] + cleaned[match.end() :]).replace("-", "")
-    if re.search(r"\d", leftover):
+    if _DIGIT.search(leftover):
         return None
-    iso = None
-    prefix = _CURRENCY_PREFIX.search(cleaned[: match.start()])
-    if prefix:
-        iso = prefix.group(1).upper()
+    three_decimal = _THREE_DEC_CODE.search(price_text) is not None
     try:
-        return _parse_grouped_number(num, three_decimal=iso in _THREE_DEC_CURRENCIES)
+        return _parse_grouped_number(num, three_decimal=three_decimal)
     except ValueError:
         return None
 
@@ -189,7 +190,12 @@ def parse_rating(rating_text: str | None) -> float | None:
     return None
 
 
-_FREE_CANCEL = re.compile(r"(?<!\bno\s)free\s+cancell?ation")
+_FREE_CANCEL = re.compile(r"free\s+cancell?ation")
+# Negated before ("no free cancellation") or after ("free cancellation not available").
+_NEGATED_FREE_CANCEL = re.compile(
+    r"\b(?:no|not|non|without)[\s-]+free\s+cancell?ation"
+    r"|free\s+cancell?ation\s+(?:is\s+|are\s+)?(?:not|unavailable|isn['’]?t|aren['’]?t)\b"
+)
 _NON_REFUNDABLE = re.compile(
     r"non[\s-]?refundable|"
     r"no\s+cancell?ation(?!\s+(?:fees?|charges?|costs?))"
@@ -202,6 +208,8 @@ def parse_cancellation_evidence(card_text: str | None) -> CancellationEvidence:
     text = card_text.replace("\xa0", " ").lower()
     if _NON_REFUNDABLE.search(text):
         return CancellationEvidence.NON_REFUNDABLE
+    if _NEGATED_FREE_CANCEL.search(text):
+        return CancellationEvidence.UNKNOWN
     if _FREE_CANCEL.search(text):
         return CancellationEvidence.FREE
     return CancellationEvidence.UNKNOWN

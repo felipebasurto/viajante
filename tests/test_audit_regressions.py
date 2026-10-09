@@ -18,14 +18,15 @@ from unittest.mock import MagicMock, patch
 import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers, skiplagged
 from viajante.explore import search_explore
-from viajante.flights import (
-    NO_OFFER_FILTERS,
-    OfferFilters,
-    _normalize_offer,
-    _run_search,
-    search_flights,
+from viajante.flight_filters import NO_OFFER_FILTERS, OfferFilters
+from viajante.flight_offers import _normalize_offer
+from viajante.flights import _run_search, search_flights
+from viajante.google_flights import (
+    GoogleFlightsBlocked,
 )
-from viajante.google_flights import GoogleFlightsBlocked, GoogleFlightsSource
+from viajante.google_flights_detail import (
+    GoogleFlightsSource,
+)
 from viajante.google_flights_rpc import CompactExplorePlace, RawFlightCard
 from viajante.models import (
     FlightLeg,
@@ -210,101 +211,10 @@ class ItineraryEvidenceRegressions(unittest.TestCase):
 
 
 class PackagedFilterRegressions(unittest.TestCase):
-    def test_same_priced_outbounds_are_not_deduplicated_before_return_filtering(self):
-        query = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
-        source = _Source(
-            tuple(
-                _card(price="$500", legs=(_direct(number=number),)) for number in ("EA100", "EA101")
-            )
-        )
-        seen = []
-
-        def selected(_trip, selections):
-            rows = []
-            for slices in selections:
-                number = slices[0][-1]
-                seen.append(number)
-                returning = (
-                    _connecting_return(query.return_date)
-                    if number == "100"
-                    else _direct("LHR", "JFK", on=query.return_date)
-                )
-                rows.append((_card(price="$500", legs=(returning,)),))
-            return rows
-
-        source.fetch_selected = selected
-        report = _search(query, source, filters=OfferFilters(exclude_via=("BOS",)))
-        self.assertEqual(seen, ["100", "101"])
-        self.assertEqual(len(report.queries[0].offers), 1)
-        self.assertEqual(report.queries[0].offers[0].legs[1].stops, "Nonstop")
-
-    def test_return_followups_stop_when_top_has_valid_completed_offers(self):
-        query = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
-        source = _Source(
-            tuple(_card(price=f"${price}", legs=(_direct(),)) for price in (100, 200, 300))
-        )
-        seen = []
-
-        def selected(_trip, selections):
-            seen.extend(selections)
-            return [
-                (_card(legs=(_direct("LHR", "JFK", on=query.return_date),)),) for _ in selections
-            ]
-
-        source.fetch_selected = selected
-        report = _search(query, source)
-        self.assertEqual(len(seen), 1)
-        self.assertEqual(len(report.queries[0].offers[0].legs), 2)
-
-    def test_invalid_return_is_removed_before_top_and_next_candidate_fills_it(self):
-        query = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
-        bad = _card(price="$500", legs=(_direct(number="EA100"),))
-        good = _card(price="$600", legs=(_direct(number="EA101"),))
-        filters = (
-            OfferFilters(exclude_via=("BOS",)),
-            OfferFilters(no_overnight=("any",)),
-            OfferFilters(max_layover_hours=2),
-            OfferFilters(min_layover_hours=11),
-            OfferFilters(max_duration_hours=3),
-            OfferFilters(depart_window=(0, 12 * 60)),
-            OfferFilters(depart_after=9 * 60, arrive_before=12 * 60),
-        )
-        for named in filters:
-            with self.subTest(filters=named):
-                source = _Source((bad, good))
-
-                def selected(_trip, selections, named=named):
-                    rows = []
-                    for slices in selections:
-                        number = slices[0][-1]
-                        returning = (
-                            _connecting_return(query.return_date)
-                            if number == "100"
-                            else _direct("LHR", "JFK", on=query.return_date)
-                        )
-                        # A late return arrival violates this particular clock bound.
-                        if number == "100" and named.arrive_before is not None:
-                            returning = replace(returning, arrival="23:00")
-                        rows.append(
-                            (_card(price="$500" if number == "100" else "$600", legs=(returning,)),)
-                        )
-                    return rows
-
-                source.fetch_selected = selected
-                report = _search(query, source, filters=named)
-                result = report.queries[0]
-                self.assertEqual([offer.price for offer in result.offers], [600])
-                self.assertEqual(result.eligible_count, 1)
-                self.assertEqual(result.raw_count, 2)
-                self.assertEqual(len(result.offers[0].legs), 2)
-
     def test_required_via_and_overnight_can_be_owned_by_return(self):
         query = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
-        source = _Source((_card(price="$500", legs=(_direct(),)),))
-        source.fetch_selected = lambda _trip, selections: [
-            (_card(price="$500", legs=(_connecting_return(query.return_date),)),)
-            for _ in selections
-        ]
+        package = _card(price="$500", legs=(_direct(), _connecting_return(query.return_date)))
+        source = _Source((package,))
         report = _search(
             query, source, filters=OfferFilters(via=("BOS",), require_overnight=("BOS",))
         )

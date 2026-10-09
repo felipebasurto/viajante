@@ -12,13 +12,9 @@ from typing import Callable, Optional, Sequence, Tuple
 
 from viajante.airports import get_airport, metro_of
 from viajante.control import controlled
-from viajante.flights import (
-    DEFAULT_TOP,
-    FlightSort,
-    metro_codes_in_label,
-    overlay_trip_fields,
-    search_flights,
-)
+from viajante.flight_offers import FlightSort
+from viajante.flight_routes import metro_codes_in_label, overlay_trip_fields
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.hotels import HotelSourceName, search_hotels
 from viajante.models import (
     FETCH_LANGUAGE,
@@ -34,7 +30,7 @@ from viajante.models import (
     TripTotal,
     format_money,
 )
-from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
+from viajante.quote import first_origin_iata, resolve_quote_currency
 
 
 def trip_date_span(query: Trip) -> tuple[date, date]:
@@ -98,7 +94,7 @@ def _owned_flight_fare(
     flights: SearchReport,
     hotel_queries: Sequence[HotelQuery],
 ) -> Optional[float]:
-    overlapping: list[QuerySuccess] = []
+    by_route: dict[tuple[str, tuple[tuple[str, str, date], ...]], float] = {}
     for result in flights.queries:
         start, end = trip_date_span(result.query)
         if not any(
@@ -110,18 +106,11 @@ def _owned_flight_fare(
         fare = _cheapest_fare(result)
         if fare is None:
             return None
-        overlapping.append(result)
-    if not overlapping:
-        return None
-    by_route: dict[tuple[str, tuple[tuple[str, str, date], ...]], float] = {}
-    for result in overlapping:
-        fare = _cheapest_fare(result)
-        assert fare is not None
         key = _fare_group_key(result.query)
         current = by_route.get(key)
         if current is None or fare < current:
             by_route[key] = fare
-    return sum(by_route.values())
+    return sum(by_route.values()) if by_route else None
 
 
 def _owned_hotel_stay(
@@ -210,7 +199,6 @@ def search_trip(
             "hotel occupancy is adults-only. Use search_flights, then search_hotels."
         )
     currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
-    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     flights = search_flights(
         overlay_trip_fields(
             trips,

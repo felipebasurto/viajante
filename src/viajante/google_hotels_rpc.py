@@ -213,7 +213,7 @@ def _as_hotel_record(obj: object) -> Optional[list[Any]]:
 def _stay_total(record: list[Any]) -> Optional[str]:
     try:
         pair = record[6][2][9]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     if not isinstance(pair, list) or not pair:
         return None
@@ -238,7 +238,7 @@ def _stay_total(record: list[Any]) -> Optional[str]:
 def _nightly_pair(record: list[Any]) -> Optional[list[Any]]:
     try:
         pair = record[6][2][1]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     if (
         isinstance(pair, list)
@@ -290,7 +290,7 @@ def _resolved_place(record: list[Any]) -> Optional[str]:
     # The place Google resolved the query text to, not the property's own town.
     try:
         name = record[6][1][18][1]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     return name.strip() if isinstance(name, str) and name.strip() else None
 
@@ -298,7 +298,7 @@ def _resolved_place(record: list[Any]) -> Optional[str]:
 def _place_bounds(record: list[Any]) -> Optional[tuple[float, float, float, float]]:
     try:
         (south, west), (north, east) = record[6][1][16]
-    except (IndexError, TypeError, ValueError):
+    except (IndexError, KeyError, TypeError, ValueError):
         return None
     values = (south, west, north, east)
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
@@ -310,7 +310,7 @@ def _place_types(record: list[Any]) -> tuple[str, ...]:
     # Google's own type tags (hotel, hostel, villa, ...); only the flagged ones.
     try:
         tags = record[2][31][0]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return ()
     if not isinstance(tags, list):
         return ()
@@ -325,7 +325,7 @@ def _place_types(record: list[Any]) -> tuple[str, ...]:
 def _class_label(record: list[Any]) -> Optional[str]:
     try:
         label = record[3][0]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     return label.strip() if isinstance(label, str) and label.strip() else None
 
@@ -333,7 +333,7 @@ def _class_label(record: list[Any]) -> Optional[str]:
 def _priced_adults(record: list[Any]) -> Optional[int]:
     try:
         adults = record[6][1][13][0]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     if isinstance(adults, int) and not isinstance(adults, bool) and adults > 0:
         return adults
@@ -343,7 +343,7 @@ def _priced_adults(record: list[Any]) -> Optional[int]:
 def _coordinates(record: list[Any]) -> dict[str, Optional[float]]:
     try:
         lat, lng = record[2][0]
-    except (IndexError, TypeError, ValueError):
+    except (IndexError, KeyError, TypeError, ValueError):
         return {"latitude": None, "longitude": None}
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lat, lng)):
         return {"latitude": None, "longitude": None}
@@ -355,7 +355,7 @@ def _coordinates(record: list[Any]) -> dict[str, Optional[float]]:
 def _review_count(record: list[Any]) -> Optional[int]:
     try:
         count = record[7][0][1]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
         return count
@@ -365,7 +365,7 @@ def _review_count(record: list[Any]) -> Optional[int]:
 def _address(record: list[Any]) -> Optional[str]:
     try:
         node: Any = record[2][1]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     while isinstance(node, list) and node:
         node = node[0]
@@ -377,7 +377,7 @@ def _address(record: list[Any]) -> Optional[str]:
 def _rating(record: list[Any]) -> Optional[str]:
     try:
         score = record[7][0][0]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     if isinstance(score, (int, float)) and 0 <= float(score) <= 5:
         return f"{float(score):g}"
@@ -388,7 +388,7 @@ def _details(record: list[Any]) -> str:
     parts: list[str] = []
     try:
         text = record[11][0]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         text = None
     if isinstance(text, str) and text.strip():
         parts.append(text.strip())
@@ -404,7 +404,7 @@ def _unit_details(record: list[Any]) -> str:
     parts: list[str] = []
     try:
         chips = record[10][3][1]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         chips = None
     if isinstance(chips, list):
         for chip in chips:
@@ -417,7 +417,7 @@ def _unit_details(record: list[Any]) -> str:
 def _link(record: list[Any]) -> Optional[str]:
     try:
         entity = record[20]
-    except (IndexError, TypeError):
+    except (IndexError, KeyError, TypeError):
         return None
     if (
         isinstance(entity, str)

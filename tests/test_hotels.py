@@ -5,7 +5,6 @@ import unittest
 from datetime import date, datetime
 from pathlib import Path
 from random import Random
-from types import SimpleNamespace
 from typing import List, Sequence, Tuple, Union
 from unittest.mock import patch
 
@@ -16,8 +15,8 @@ from viajante.google_hotels_rpc import EmptyHotelResults, HotelsParseMiss
 from viajante.hotels import (
     _is_eligible,
     _normalize_card,
-    _rank_offers,
     _run_search,
+    _sorted_deduplicated_offers,
     search_hotels,
 )
 from viajante.models import (
@@ -50,7 +49,6 @@ class FakeSource:
         self.fetch_calls: List[Tuple[HotelQuery, AppliedHotelFilters, int]] = []
         self.reset_calls = 0
         self.closed = False
-        self.config = SimpleNamespace(html_lang="en", currency="EUR")
 
     def fetch(
         self,
@@ -156,6 +154,70 @@ class HotelLoopPacingTests(unittest.TestCase):
 
 
 class PureHotelLogicTests(unittest.TestCase):
+    def test_a_price_quoted_in_another_iso_code_is_never_labelled_with_the_requested_one(
+        self,
+    ) -> None:
+        mixed = FakeSource(
+            [
+                HotelPage(
+                    cards=(
+                        card(title="Foreign", total_price="CZK 3,000"),
+                        card(title="Own", total_price="€ 120"),
+                    )
+                )
+            ]
+        )
+        report = _run_search(
+            (query(),),
+            top=8,
+            source=mixed,
+            sleep=lambda _seconds: None,
+            random_gen=Random(3),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
+        )
+        result = report.queries[0]
+        self.assertEqual([offer.title for offer in result.offers], ["Own"])
+
+        all_foreign = FakeSource(
+            [HotelPage(cards=(card(title="Foreign", total_price="CZK 3,000"),))]
+        )
+        report = _run_search(
+            (query(),),
+            top=8,
+            source=all_foreign,
+            sleep=lambda _seconds: None,
+            random_gen=Random(3),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
+        )
+        failure = report.queries[0]
+        self.assertIsInstance(failure, HotelQueryFailure)
+        self.assertEqual(failure.error.code, SearchErrorCode.CURRENCY_MISMATCH)
+
+    def test_uppercase_price_words_are_not_read_as_a_currency_mismatch(self) -> None:
+        # TAX and PER are uppercase words, not ISO 4217 codes: a page of them is not a mismatch.
+        words = FakeSource(
+            [
+                HotelPage(
+                    cards=(
+                        card(title="Tax", total_price="$1,234 TAX included"),
+                        card(title="Night", total_price="$123 PER NIGHT"),
+                    )
+                )
+            ]
+        )
+        report = _run_search(
+            (query(),),
+            top=8,
+            source=words,
+            sleep=lambda _seconds: None,
+            random_gen=Random(3),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="USD",
+        )
+        self.assertNotIsInstance(report.queries[0], HotelQueryFailure)
+
     def test_normalize_card_preserves_raw_values_and_parses_details(self) -> None:
         normalized = _normalize_card(card())
 
@@ -255,7 +317,7 @@ class PureHotelLogicTests(unittest.TestCase):
         )
 
     def test_rank_deduplicates_normalized_identity_and_sorts_ties(self) -> None:
-        ranked = _rank_offers(
+        ranked = _sorted_deduplicated_offers(
             (
                 offer(title="Beta", total_price=200, rating_score=None),
                 offer(title="alpha", total_price=200, rating_score=8.5),
@@ -267,12 +329,9 @@ class PureHotelLogicTests(unittest.TestCase):
                 ),
                 offer(title="Cheap", total_price=150, rating_score=7.0),
             ),
-            top=3,
         )
 
         self.assertEqual([row.title for row in ranked], ["Cheap", "ALPHA", "Beta"])
-        with self.assertRaises(ValueError):
-            _rank_offers((), top=0)
 
 
 class EnglishHotelEvidenceSeamTests(unittest.TestCase):
@@ -384,7 +443,7 @@ class HotelOrchestrationTests(unittest.TestCase):
         self.assertTrue(all(call[1] is first_applied for call in source.fetch_calls))
         self.assertEqual(
             first_applied.chips,
-            ("oos=1", "privacy_type=3", "ht_id=201"),
+            ("fc=2", "privacy_type=3", "ht_id=201"),
         )
         self.assertTrue(all(call[2] == 24 for call in source.fetch_calls))
         self.assertEqual(sleeps, expected_backoffs)
@@ -547,7 +606,7 @@ class HotelOrchestrationTests(unittest.TestCase):
         self.assertEqual((result.raw_count, result.eligible_count), (1, 0))
         self.assertEqual(result.offers, ())
 
-    def test_run_search_uses_rank_offers_for_full_eligible_count(self) -> None:
+    def test_run_search_counts_deduplicated_eligible_offers(self) -> None:
         source = FakeSource(
             [
                 HotelPage(
@@ -560,23 +619,18 @@ class HotelOrchestrationTests(unittest.TestCase):
             ]
         )
 
-        with patch(
-            "viajante.hotels._rank_offers",
-            wraps=_rank_offers,
-        ) as rank_offers:
-            report = _run_search(
-                (query(),),
-                top=1,
-                source=source,
-                sleep=lambda _: None,
-                random_gen=Random(0),
-                now=lambda: datetime(2026, 8, 10, 10, 0, 0),
-                currency="EUR",
-            )
+        report = _run_search(
+            (query(),),
+            top=1,
+            source=source,
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="EUR",
+        )
 
         result = report.queries[0]
         assert isinstance(result, HotelQuerySuccess)
-        rank_offers.assert_called_once()
         self.assertEqual(result.eligible_count, 2)
         self.assertEqual([row.title for row in result.offers], ["One"])
 
@@ -675,7 +729,6 @@ class HotelOrchestrationTests(unittest.TestCase):
 
     def test_search_google_uses_google_source(self) -> None:
         source = FakeSource([HotelPage(cards=())])
-        source.config = SimpleNamespace(html_lang="en", currency="EUR")
         with (
             patch("viajante.hotels.GoogleHotelsSource", return_value=source),
             patch("viajante.hotels.BookingHotelsSource") as booking,

@@ -15,11 +15,10 @@ import time
 import unicodedata
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
 from viajante.airports import canonical_city_name, lookup_airports
-from viajante.control import checkpoint, controlled, interruptible_sleep
+from viajante.control import SearchDeadline, checkpoint, controlled, interruptible_sleep
 from viajante.models import (
     FETCH_LANGUAGE,
     AppliedHotelFilters,
@@ -31,12 +30,16 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
-from viajante.orchestration import MAX_ATTEMPTS, retry_backoff_seconds
+from viajante.orchestration import (
+    MAX_ATTEMPTS,
+    NON_RETRIABLE_CODES,
+    classify_failure,
+    retry_backoff_seconds,
+)
 from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import (
     SKIPLAGGED_MCP_URL,
     RpcPost,
-    SkiplaggedError,
     SkiplaggedRateLimited,
     _call_mcp,
     _rpc_post,
@@ -61,6 +64,10 @@ _HOTELS_HEADING = re.compile(r"^\s*#\s*Hotels\s+in\s+(.+?)\s*$", re.IGNORECASE |
 
 class SkiplaggedNoHotels(Exception):
     """The city did not match, or the city has no stays for these dates."""
+
+
+class SkiplaggedRejected(Exception):
+    """Skiplagged answered this request with a tool error. Asking again cannot change it."""
 
 
 class SkiplaggedAmbiguousName(Exception):
@@ -115,7 +122,7 @@ def _check_error(result: Any) -> None:
         message = _text(result).strip() or "Skiplagged hotel tool error"
         if "no matching city" in message.casefold():
             raise SkiplaggedNoHotels(message)
-        raise SkiplaggedError(message)
+        raise SkiplaggedRejected(message)
 
 
 def _table_rows(text: str) -> dict[str, dict[str, Any]]:
@@ -140,6 +147,16 @@ def _table_rows(text: str) -> dict[str, dict[str, Any]]:
     return rows
 
 
+def _priced_in_usd(card: Mapping[str, Any]) -> bool:
+    """False when the structured price names a currency other than USD.
+
+    The structured ``price`` is a nightly rate; the stay total comes from the table.
+    """
+    price = card.get("price")
+    currency = price.get("currency") if isinstance(price, dict) else None
+    return not isinstance(currency, str) or currency.strip().upper() == SKIPLAGGED_HOTEL_CURRENCY
+
+
 def parse_search_page(result: Any) -> HotelPage:
     _check_error(result)
     structured = result.get("structuredContent") if isinstance(result, dict) else None
@@ -158,6 +175,8 @@ def parse_search_page(result: Any) -> HotelPage:
         name = card.get("name")
         if row is None or not isinstance(name, str) or not name.strip():
             continue
+        if not _priced_in_usd(card):
+            continue  # The table's "$" total is only owned when the card says USD.
         amenities = card.get("amenities")
         stars = card.get("rating")
         parsed.append(
@@ -191,7 +210,6 @@ class SkiplaggedHotelsSource:
     def __init__(self, *, rpc: RpcPost = _rpc_post, url: str = SKIPLAGGED_MCP_URL) -> None:
         self._rpc = rpc
         self._url = url
-        self.config = SimpleNamespace(html_lang=FETCH_LANGUAGE, currency=SKIPLAGGED_HOTEL_CURRENCY)
 
     def fetch(self, query: HotelQuery, applied: AppliedHotelFilters, limit: int) -> HotelPage:
         del applied
@@ -288,7 +306,10 @@ def parse_rooms_report(
     detail = result.get("structuredContent") if isinstance(result, dict) else None
     if not isinstance(detail, dict):
         raise SkiplaggedParseMiss("hotel details had no structured content")
-    rates = tuple(rate for row in detail.get("rooms") or [] if (rate := _rate(row)) is not None)
+    rows = detail.get("rooms") or []
+    if not isinstance(rows, list):
+        raise SkiplaggedParseMiss("hotel details rooms were not a list")
+    rates = tuple(rate for row in rows if (rate := _rate(row)) is not None)
     if not rates:
         raise SkiplaggedNoHotels("Skiplagged listed no bookable room rates for these dates.")
     place = detail.get("location") if isinstance(detail.get("location"), dict) else {}
@@ -318,7 +339,9 @@ def parse_rooms_report(
     )
 
 
-def _failure(exc: BaseException) -> SearchError:
+def skiplagged_failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, SearchDeadline):
+        return classify_failure(exc)
     if isinstance(exc, SkiplaggedRateLimited):
         return SearchError(
             code=SearchErrorCode.BLOCKED,
@@ -328,6 +351,8 @@ def _failure(exc: BaseException) -> SearchError:
         )
     if isinstance(exc, (SkiplaggedNoHotels, SkiplaggedAmbiguousName)):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
+    if isinstance(exc, SkiplaggedRejected):
+        return SearchError(code=SearchErrorCode.REJECTED, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):
         return SearchError(
             code=SearchErrorCode.MARKUP_DRIFT, message="Skiplagged hotel parse missed."
@@ -543,12 +568,8 @@ def search_hotel_rooms(
             report = replace(report, requested_name=hotel_name)
             break
         except Exception as exc:  # noqa: BLE001 - typed into the report below
-            error = _failure(exc)
-            if error.code in (
-                SearchErrorCode.NO_RESULTS,
-                SearchErrorCode.MARKUP_DRIFT,
-                SearchErrorCode.BLOCKED,
-            ):
+            error = skiplagged_failure(exc)
+            if error.code in NON_RETRIABLE_CODES:
                 break
             if attempt + 1 < MAX_ATTEMPTS:
                 sleep(retry_backoff_seconds(attempt, random_gen))

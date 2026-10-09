@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viajante"
-version = "1.4.7"
+version = "1.5.0"
 description = "Flight and hotel search for the terminal, Python, and AI assistants."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,8 +23,8 @@ Documentation = "https://github.com/felipebasurto/viajante/blob/main/docs/usage.
 Issues = "https://github.com/felipebasurto/viajante/issues"
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.14.1,<2"]
-browser = ["playwright==1.60.0"]
+mcp = ["mcp>=2.3.0,<3"]
+browser = ["playwright==1.63.0"]
 
 [project.scripts]
 viajante = "viajante.cli:main"
@@ -46,8 +46,8 @@ select = ["E", "F", "I", "B"]
 
 [dependency-groups]
 dev = [
-    "mcp>=1.14.1,<2",
-    "playwright==1.60.0",
+    "mcp>=2.3.0,<3",
+    "playwright==1.63.0",
     "pre-commit>=4.3.0",
-    "ruff==0.15.12",
+    "ruff==0.16.10",
 ]

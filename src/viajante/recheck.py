@@ -20,10 +20,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from viajante.airports import airport_geo
-from viajante.carriers import parse_airline_codes, parse_alliances
-from viajante.flights import _clock_minutes, _passes_airline_filters, search_flights
+from viajante.carriers import _passes_airline_filters, parse_airline_codes, parse_alliances
+from viajante.flights import search_flights
 from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
     FlightLeg,
@@ -36,10 +37,12 @@ from viajante.models import (
     Trip,
     normalize_currency,
 )
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import normalize_clock, parse_stops_count
 from viajante.ratelimit import NOT_SENT
 from viajante.storage import write_json_atomic
-from viajante.temporal import local_instant
+from viajante.temporal import _zone_instants
+from viajante.validate import _mapping
 
 SCHEMA_VERSION = 1
 # ponytail: a one-way shop returns every card in one request, so compare them all. A packaged
@@ -67,12 +70,6 @@ class _Segment:
     day: Optional[str]
     origin: Optional[str]
     destination: Optional[str]
-
-
-def _mapping(value: object, *, role: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{role} must be an object")
-    return value
 
 
 def _text(value: object) -> Optional[str]:
@@ -337,15 +334,22 @@ def _unwrap(offer: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _departed(day: date, clock: Optional[str], origin: str, now: datetime) -> bool:
-    """True when the journey has left. Uses the origin's owned timezone when it has one."""
+    """True when the journey has left. Uses the origin's owned timezone when it has one.
+
+    An ambiguous civil time has left only when every fold has. One fold still
+    ahead, or a wall time that does not exist, is not proof that it has left.
+    With no clock, the day has left only once it is over at the origin.
+    """
     minutes = _clock_minutes(clock)
     geo = airport_geo(origin)
-    if minutes is not None and geo is not None:
+    if geo is None:
+        return day < now.astimezone().date()
+    if minutes is not None:
         civil = datetime.combine(day, time(minutes // 60, minutes % 60))
-        instant = local_instant(civil, geo[0])
-        if instant is not None:
-            return instant <= now
-    return day < now.astimezone().date()
+        instants = _zone_instants(civil, geo[0])
+        if instants:
+            return all(instant <= now for instant in instants)
+    return day < now.astimezone(ZoneInfo(geo[0])).date()
 
 
 def _same_query_identity(left: Trip, right: Trip) -> bool:

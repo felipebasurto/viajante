@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import io
 import json
+import subprocess
 import sys
 import threading
 import types
@@ -50,9 +51,11 @@ class McpHandlerTests(unittest.TestCase):
         mcp_handlers._CACHE.clear()
 
     def test_handlers_do_not_import_the_sdk(self) -> None:
-        text = Path("src/viajante/mcp_handlers.py").read_text(encoding="utf-8")
-        self.assertNotIn("from mcp", text)
-        self.assertNotIn("import mcp", text)
+        code = (
+            "import sys, viajante.mcp_handlers;"
+            "sys.exit(any(m == 'mcp' or m.startswith('mcp.') for m in sys.modules))"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
 
     def test_lookup_airports_returns_dicts(self) -> None:
         rows = lookup_airports_tool("NRT", limit=3)
@@ -740,7 +743,7 @@ class McpHandlerTests(unittest.TestCase):
     def test_search_hotel_rooms_forwards_party_and_rejects_past_check_in(self) -> None:
         fake = _report(provider="skiplagged", rates=())
         with patch("viajante.mcp_handlers.search_hotel_rooms", return_value=fake) as search:
-            search_hotel_rooms_tool(25584, FUTURE, FUTURE_OUT, adults=5, rooms=2)
+            search_hotel_rooms_tool(FUTURE, FUTURE_OUT, hotel_id=25584, adults=5, rooms=2)
         self.assertEqual(search.call_args.args[0], 25584)
         self.assertEqual(
             search.call_args.kwargs,
@@ -748,7 +751,7 @@ class McpHandlerTests(unittest.TestCase):
         )
         with patch("viajante.mcp_handlers.search_hotel_rooms") as search:
             with self.assertRaises(ValueError):
-                search_hotel_rooms_tool(25584, "2020-01-01", "2020-01-04")
+                search_hotel_rooms_tool("2020-01-01", "2020-01-04", hotel_id=25584)
         search.assert_not_called()
 
     def test_search_hotels_unnamed_currency_is_ok_only_for_skiplagged(self) -> None:
@@ -1031,16 +1034,10 @@ class _FakeFastMCP:
 
 
 def _sdk_module_names() -> tuple[str, ...]:
-    return ("mcp", "mcp.server", "mcp.server.fastmcp", "mcp.types")
+    return ("mcp", "mcp.server", "mcp.server.mcpserver", "mcp.server.caching", "mcp.types")
 
 
 class McpServerImportTests(unittest.TestCase):
-    def test_mcp_server_keeps_fastmcp_off_module_import(self) -> None:
-        text = Path("src/viajante/mcp_server.py").read_text(encoding="utf-8")
-        self.assertFalse(text.startswith("from mcp") or text.startswith("import mcp"))
-        self.assertNotIn("\nfrom mcp", text)
-        self.assertNotIn("\nimport mcp", text)
-
     def test_help_does_not_import_fastmcp(self) -> None:
         from viajante.mcp_server import main
 
@@ -1067,16 +1064,20 @@ class McpServerImportTests(unittest.TestCase):
             self.assertNotIn(name, sys.modules)
         fake_mcp = types.ModuleType("mcp")
         fake_server = types.ModuleType("mcp.server")
-        fake_fastmcp = types.ModuleType("mcp.server.fastmcp")
-        fake_fastmcp.FastMCP = _FakeFastMCP
+        fake_fastmcp = types.ModuleType("mcp.server.mcpserver")
+        fake_fastmcp.MCPServer = _FakeFastMCP
         fake_types = types.ModuleType("mcp.types")
         fake_types.ToolAnnotations = lambda **kw: kw
+        fake_caching = types.ModuleType("mcp.server.caching")
+        fake_caching.CacheHint = lambda **kw: kw
         fake_mcp.server = fake_server
         fake_mcp.types = fake_types
-        fake_server.fastmcp = fake_fastmcp
+        fake_server.mcpserver = fake_fastmcp
+        fake_server.caching = fake_caching
         sys.modules["mcp"] = fake_mcp
         sys.modules["mcp.server"] = fake_server
-        sys.modules["mcp.server.fastmcp"] = fake_fastmcp
+        sys.modules["mcp.server.mcpserver"] = fake_fastmcp
+        sys.modules["mcp.server.caching"] = fake_caching
         sys.modules["mcp.types"] = fake_types
 
         def _drop_fakes() -> None:

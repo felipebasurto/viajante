@@ -1,0 +1,421 @@
+{
+  "name": "sk_flights_search",
+  "description": "Search Skiplagged for flights between specific locations with filtering options for passengers, fare class, stops, airlines, and timing preferences",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "origin": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Departure location - prefer IATA code"
+      },
+      "destination": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Arrival location - prefer IATA code"
+      },
+      "departureDate": {
+        "type": "string"
+      },
+      "returnDate": {
+        "$ref": "#/properties/departureDate"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 12,
+        "description": "Maximum number of flights to return (default: 12, max: 100)"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 99,
+        "default": 0,
+        "description": "Number of flights to skip for pagination (default: 0)"
+      },
+      "sort": {
+        "type": "string",
+        "enum": [
+          "price",
+          "duration",
+          "value"
+        ],
+        "default": "value",
+        "description": "Sort flights by price (cheapest first), duration (shortest first), or value (best price/time ratio, default)"
+      },
+      "adults": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9,
+        "default": 1,
+        "description": "Number of adult passengers (default: 1, max: 9)"
+      },
+      "children": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 8,
+        "default": 0,
+        "description": "Number of child passengers (default: 0, max: 8)"
+      },
+      "infantsLap": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4,
+        "default": 0,
+        "description": "Number of lap infants (default: 0, max: 4)"
+      },
+      "infantsSeat": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4,
+        "default": 0,
+        "description": "Number of seat infants (default: 0, max: 4)"
+      },
+      "fareClass": {
+        "type": "string",
+        "enum": [
+          "basic-economy",
+          "economy",
+          "premium",
+          "business",
+          "first"
+        ],
+        "default": "economy",
+        "description": "Fare class preference (default: economy)"
+      },
+      "includeHiddenCity": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include hidden city flights (default: true)"
+      },
+      "includeVirtualInterlining": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include virtual interlining flights (default: true)"
+      },
+      "includeStandard": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include standard flights (default: true)"
+      },
+      "maxStops": {
+        "type": "string",
+        "enum": [
+          "none",
+          "one",
+          "many"
+        ],
+        "description": "Maximum number of stops (none=nonstop, one=1 stop, many=2+ stops)"
+      },
+      "preferredAirlines": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Array of preferred airline codes (e.g., ['UA', 'DL'])"
+      },
+      "excludedAirlines": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Array of excluded airline codes (e.g., ['F9', 'NK'])"
+      },
+      "departureTimeEarliest": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1439,
+        "description": "Earliest departure time in minutes from midnight (0-1439)"
+      },
+      "departureTimeLatest": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1439,
+        "description": "Latest departure time in minutes from midnight (0-1439)"
+      },
+      "arrivalTimeEarliest": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1439,
+        "description": "Earliest arrival time in minutes from midnight (0-1439)"
+      },
+      "arrivalTimeLatest": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1439,
+        "description": "Latest arrival time in minutes from midnight (0-1439)"
+      },
+      "maxFlightDuration": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Maximum total flight duration in minutes"
+      },
+      "maxLayoverDuration": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Maximum layover duration in minutes"
+      },
+      "departureAirports": {
+        "anyOf": [
+          {
+            "anyOf": [
+              {
+                "not": {}
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Array of specific departure airport codes to include (when origin city has multiple airports)"
+      },
+      "arrivalAirports": {
+        "anyOf": [
+          {
+            "anyOf": [
+              {
+                "not": {}
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Array of specific arrival airport codes to include (when destination city has multiple airports)"
+      }
+    },
+    "required": [
+      "origin",
+      "destination",
+      "departureDate"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "searchUrl": {
+        "type": "string",
+        "format": "uri",
+        "description": "Complete search URL with all parameters"
+      },
+      "flights": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "FlightCard"
+            },
+            "id": {
+              "type": "string",
+              "description": "Flight result card identifier; not a user identifier"
+            },
+            "airlines": {
+              "type": "string"
+            },
+            "departure": {
+              "type": "object",
+              "properties": {
+                "airport": {
+                  "type": "string"
+                },
+                "dateTime": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "airport",
+                "dateTime"
+              ],
+              "additionalProperties": false
+            },
+            "arrival": {
+              "type": "object",
+              "properties": {
+                "airport": {
+                  "type": "string"
+                },
+                "dateTime": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "airport",
+                "dateTime"
+              ],
+              "additionalProperties": false
+            },
+            "duration": {
+              "type": "string"
+            },
+            "layovers": {
+              "type": "number"
+            },
+            "price": {
+              "type": "object",
+              "properties": {
+                "amount": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "amount",
+                "currency"
+              ],
+              "additionalProperties": false
+            },
+            "deepLink": {
+              "type": "string",
+              "format": "uri"
+            },
+            "attributes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "returnFlight": {
+              "type": "object",
+              "properties": {
+                "airlines": {
+                  "type": "string"
+                },
+                "departure": {
+                  "type": "object",
+                  "properties": {
+                    "airport": {
+                      "type": "string"
+                    },
+                    "dateTime": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "airport",
+                    "dateTime"
+                  ],
+                  "additionalProperties": false
+                },
+                "arrival": {
+                  "type": "object",
+                  "properties": {
+                    "airport": {
+                      "type": "string"
+                    },
+                    "dateTime": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "airport",
+                    "dateTime"
+                  ],
+                  "additionalProperties": false
+                },
+                "duration": {
+                  "type": "string"
+                },
+                "layovers": {
+                  "type": "number"
+                },
+                "attributes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "airlines",
+                "departure",
+                "arrival",
+                "duration"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "airlines",
+            "departure",
+            "arrival",
+            "duration",
+            "price",
+            "deepLink"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "pagination": {
+        "type": "object",
+        "properties": {
+          "totalAvailable": {
+            "type": "integer",
+            "description": "Total number of flights available"
+          },
+          "currentlyShowing": {
+            "type": "integer",
+            "description": "Number of flights in this result set"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Current result offset for pagination"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum results per page"
+          },
+          "hasMoreResults": {
+            "type": "boolean",
+            "description": "Whether additional results are available"
+          }
+        },
+        "required": [
+          "totalAvailable",
+          "currentlyShowing",
+          "offset",
+          "limit",
+          "hasMoreResults"
+        ],
+        "additionalProperties": false,
+        "description": "Result pagination information"
+      }
+    },
+    "required": [
+      "searchUrl",
+      "flights",
+      "pagination"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "openWorldHint": true
+  }
+}

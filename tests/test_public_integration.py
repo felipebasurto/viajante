@@ -17,16 +17,19 @@ from viajante.dates import search_dates, search_flex
 from viajante.google_flights import (
     ChromeSweepClient,
     GoogleFlightsBlocked,
-    GoogleFlightsSource,
     SweepHttpResponse,
     SweepPost,
+)
+from viajante.google_flights_detail import (
+    GoogleFlightsSource,
 )
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
     GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
+    _validate_capabilities,
 )
-from viajante.google_flights_rpc import CompactCalendarDay, RawFlightCard
+from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -437,6 +440,29 @@ class SweepDiagnosticsTests(unittest.TestCase):
         self.assertFalse(responses[3].request_sent)
         self.assertEqual(responses[3].attempts, 0)
 
+    def test_a_mixed_one_way_page_gives_the_same_rows_through_fetch_and_fetch_many(self) -> None:
+        # One board: a proven HAN-SIN card and a card from another origin. fetch keeps the
+        # proven card; fetch_many must keep it too, not fail the whole day.
+        good = _card("HAN", "SIN", OUT, "08:00", "VN100", "€100")
+        stray = _card("SGN", "SIN", OUT, "09:00", "VN200", "€90")
+        query = FlightQuery("HAN", "SIN", OUT, adults=2, max_stops=0)
+
+        class Client:
+            def get(self, url, *, timeout):
+                return SweepHttpResponse(200, "<html></html>", url)
+
+            def get_many(self, urls, *, timeout):
+                return [SweepHttpResponse(200, "<html></html>", url) for url in urls]
+
+        source = PublicGoogleFlightsHttpSource(
+            currency="EUR", client=Client(), sleep=lambda _: None
+        )
+        with patch.object(source, "_parse_response", return_value=(good, stray)):
+            single = source.fetch(query)
+            batched = source.fetch_many([query])[0]
+        self.assertEqual([card.flight_numbers for card in single], [good.flight_numbers])
+        self.assertEqual([card.flight_numbers for card in batched], [good.flight_numbers])
+
     def test_batch_replay_marks_the_retried_attempt(self) -> None:
         class Client:
             def __init__(self) -> None:
@@ -457,8 +483,6 @@ class SweepDiagnosticsTests(unittest.TestCase):
 class _DaySource:
     """Public-style per-day source answering fetch_many with scripted outcomes."""
 
-    automatic_typical = False
-
     def __init__(self, results: list[object]) -> None:
         self.results = results
         self.trips: list[object] = []
@@ -471,30 +495,22 @@ class _DaySource:
     def fetch(self, trip):
         raise AssertionError("per-day fetch is not used when fetch_many exists")
 
-    def fetch_calendar(self, trip, start, end):
-        raise AssertionError("public transport never makes a calendar RPC")
-
     def close(self) -> None:
         self.closed = True
 
 
-class _CalendarShop:
-    """Compact-calendar rows plus one captured fresh shop for the chosen day."""
+class _DayShop:
+    """Public-style day source: only the chosen day is priced, every query is recorded."""
 
-    def __init__(self, days: tuple[CompactCalendarDay, ...], cards) -> None:
-        self.days = days
+    def __init__(self, chosen: date, cards) -> None:
+        self.chosen = chosen
         self.cards = cards
-        self.calendar_queries: list[object] = []
         self.fetched: list[object] = []
         self.closed = False
 
-    def fetch_calendar(self, query, start, end):
-        self.calendar_queries.append(query)
-        return self.days
-
     def fetch(self, query):
         self.fetched.append(query)
-        return self.cards
+        return self.cards if query.departure_date == self.chosen else ()
 
     def close(self) -> None:
         self.closed = True
@@ -564,8 +580,6 @@ class DatesDeadlineCancelTests(unittest.TestCase):
         progress_lines: list[str] = []
 
         class Transport:
-            automatic_typical = False
-
             def fetch_round_trip_window(self, trips, on_day):
                 for index, trip in enumerate(trips):
                     if index == 2:
@@ -616,16 +630,8 @@ class DatesDeadlineCancelTests(unittest.TestCase):
 
 
 class FlexShopReplayTests(unittest.TestCase):
-    def _shop_source(self, *cards: RawFlightCard) -> _CalendarShop:
-        chosen = date(2099, 1, 15)
-        return _CalendarShop(
-            (
-                CompactCalendarDay(date(2099, 1, 14), 180.0),
-                CompactCalendarDay(chosen, 90.0),
-                CompactCalendarDay(date(2099, 1, 16), 140.0),
-            ),
-            cards,
-        )
+    def _shop_source(self, *cards: RawFlightCard) -> _DayShop:
+        return _DayShop(date(2099, 1, 15), cards)
 
     def test_flex_shop_replays_cabin_stops_stay_and_party(self) -> None:
         card = RawFlightCard("Iberia", "08:00", "09:20", "1 hr", "Nonstop", "€90")
@@ -645,14 +651,14 @@ class FlexShopReplayTests(unittest.TestCase):
             currency="EUR",
             baggage_buffer=0,
         )
-        self.assertEqual(source.fetched[0].cabin, "business")
-        self.assertEqual(source.fetched[0].max_stops, 2)
-        self.assertEqual(source.fetched[0].adults, 2)
-        self.assertEqual(source.fetched[0].children, 1)
-        self.assertEqual(source.fetched[0].return_date, date(2099, 1, 20))
-        seed = source.calendar_queries[0]
-        self.assertEqual(seed.cabin, "business")
-        self.assertEqual(seed.max_stops, 2)
+        # The chosen day is priced from the sweep, so every request carries the same party,
+        # cabin, stops and five-night stay; no separate shop request is sent.
+        for query in source.fetched:
+            self.assertEqual(query.cabin, "business")
+            self.assertEqual(query.max_stops, 2)
+            self.assertEqual(query.adults, 2)
+            self.assertEqual(query.children, 1)
+            self.assertEqual((query.return_date - query.departure_date).days, 5)
         self.assertEqual(report.trip, "rt")
 
     def test_flex_shop_applies_every_named_filter(self) -> None:
@@ -914,9 +920,7 @@ class DetailCapabilityTests(unittest.TestCase):
             adults=2,
         )
         with self.assertRaisesRegex(GoogleFlightsUnsupported, "--fetch detail"):
-            PublicGoogleFlightsHttpSource._validate_capabilities(
-                PublicGoogleFlightsHttpSource(currency="EUR", client=object()), trip
-            )
+            _validate_capabilities(trip)
 
 
 if __name__ == "__main__":

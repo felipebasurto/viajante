@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import Optional
 
 from viajante.control import SearchDeadline, note_cut
@@ -42,6 +41,7 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
+from viajante.ratelimit import rate_limit_status
 
 HTTP_TIMEOUT_SECONDS = 30
 
@@ -63,6 +63,28 @@ def build_applied_filters(
     )
 
 
+def _server_error(status: int) -> bool:
+    # 503 is a challenge page in practice and is classified as a block before this check.
+    return 500 <= status < 600 and status != 503
+
+
+def _transient(response: SweepHttpResponse) -> bool:
+    return response.status == SWEEP_TRANSPORT_STATUS or _server_error(response.status)
+
+
+def _widening_block(exc: HotelsBlocked) -> SearchError:
+    until = None
+    if exc.rate_limited:
+        state = rate_limit_status()
+        until = state["until"] if state else None
+    return SearchError(
+        code=SearchErrorCode.BLOCKED,
+        message=str(exc),
+        rate_limited=exc.rate_limited,
+        retry_until=until,
+    )
+
+
 class GoogleHotelsSource:
     """Sweep source: compact AtySUc parse. No Chromium."""
 
@@ -79,7 +101,6 @@ class GoogleHotelsSource:
         self._injected_client = client
         self._timeout = timeout
         self._cooldown = COOLDOWN_UNCHECKED
-        self.config = SimpleNamespace(html_lang=html_lang, currency=currency)
 
     def fetch(
         self,
@@ -99,7 +120,7 @@ class GoogleHotelsSource:
             )
             posts.append(SweepPost(url, body, HOTELS_POST_HEADERS))
         responses = dispatch_posts(client, posts, timeout=self._timeout)
-        lost = [i for i, r in enumerate(responses) if r.status == SWEEP_TRANSPORT_STATUS]
+        lost = [i for i, r in enumerate(responses) if _transient(r)]
         if lost:
             # One replay on a fresh session; a second transport failure is final (the
             # hotel loop does not retry it).
@@ -127,7 +148,14 @@ class GoogleHotelsSource:
                         code=SearchErrorCode.FETCH_FAILED, message=str(exc), timeout=exc.timeout
                     )
                 )
-            except (HotelsBlocked, HotelsParseMiss, EmptyHotelResults, HotelsRejected):
+            except HotelsBlocked as exc:
+                page_errors.append(_widening_block(exc))
+            except HotelsParseMiss as exc:
+                page_errors.append(SearchError(code=SearchErrorCode.MARKUP_DRIFT, message=str(exc)))
+            except HotelsRejected as exc:
+                page_errors.append(SearchError(code=SearchErrorCode.REJECTED, message=str(exc)))
+            except EmptyHotelResults:
+                # A relevance page with no priced stays is an answer, not a failure.
                 continue
         params = hotel_navigation_params(query, currency=self._currency, html_lang=self._html_lang)
         return HotelPage(
@@ -159,7 +187,14 @@ class GoogleHotelsSource:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
             raise HotelsBlocked(message, rate_limited=True)
         if response.status in {403, 429, 503} or _looks_blocked(f"{response.text} {response.url}"):
-            raise HotelsBlocked(f"Google Hotels HTTP {response.status} from {url}")
+            # A multiplexed job never sent because a sibling was 429'd carries the
+            # status but no advice; it is still a rate limit, not a content block.
+            raise HotelsBlocked(
+                f"Google Hotels HTTP {response.status} from {url}",
+                rate_limited=response.status == 429,
+            )
+        if _server_error(response.status):
+            raise SweepTransportError(f"Google Hotels HTTP {response.status} from {url}")
         if response.status >= 400:
             raise HotelsParseMiss(f"hotel HTTP {response.status}")
         return parse_hotels_page(response.text)

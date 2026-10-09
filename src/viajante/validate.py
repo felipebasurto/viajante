@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Mapping, Optional, Sequence
 
-from viajante.flights import _clock_minutes, _overnight_from_owned_clocks
+from viajante.flight_filters import _overnight_from_owned_clocks
 from viajante.models import ConstraintCheck, ItineraryValidationReport, normalize_currency
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import parse_stops_count
 from viajante.temporal import local_instant, segment_instant
 
@@ -193,8 +194,18 @@ def _evidence_check(legs: Sequence[Mapping[str, object]]) -> ConstraintCheck:
         if value is None:
             return _status("evidence", "unknown", "one or more offers lack provenance")
         evidence.append(_mapping(value, role=f"legs[{index}].offer.evidence"))
-    if len({item.get("evidence_id") for item in evidence}) != len(evidence):
+    ids: list[str] = []
+    missing = False
+    for item in evidence:
+        evidence_id = item.get("evidence_id")
+        if not isinstance(evidence_id, str) or not evidence_id.strip():
+            missing = True
+            continue
+        ids.append(evidence_id)
+    if len(set(ids)) != len(ids):
         return _status("evidence", "fail", "the same owned offer was selected more than once")
+    if missing:
+        return _status("evidence", "unknown", "one or more offers lack provenance")
     return _status("evidence", "pass", "every selected offer has distinct owned provenance")
 
 
@@ -799,9 +810,17 @@ def validate_itinerary(
                 status, detail = "unknown", "offer provenance is missing"
                 break
             evidence = _mapping(evidence_value, role="offer.evidence")
-            if evidence.get("url_kind") == "none":
+            kind = evidence.get("url_kind")
+            url_key = "offer_url" if kind == "booking" else "query_url"
+            url = evidence.get(url_key)
+            owned = isinstance(url, str) and bool(url.strip())
+            if kind in ("query", "booking") and owned:
+                continue
+            if kind in ("query", "booking", "none"):
                 status, detail = "fail", "an offer has no owned query or booking URL"
                 break
+            status, detail = "unknown", "URL evidence is missing"
+            break
         checks.append(_status("require_reproducible", status, detail))
 
     if "chronological" in scenario and _boolean(scenario["chronological"], role="chronological"):

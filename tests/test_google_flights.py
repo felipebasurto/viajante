@@ -6,54 +6,40 @@ import os
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import _isolate  # noqa: F401
-from viajante.dates import search_flex
-from viajante.flights import _normalize_offer, classify_failure, search_flights
+from viajante.flight_offers import _normalize_offer
 from viajante.google_flights import (
-    EMPTY_STATE_TEXT,
-    SWEEP_RETRY_BACKOFF_SECONDS,
-    SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
-    GoogleFlightsHttpSource,
     GoogleFlightsMarkupError,
-    GoogleFlightsRejected,
-    GoogleFlightsSource,
     NoFlightsFound,
-    SweepHttpResponse,
-    SweepPost,
-    SweepTransportError,
     _consent_reject_form,
     _is_consent_interstitial,
     build_itinerary_url,
     build_search_params,
     build_search_url,
-    extract_main_html,
-    fetch_search_html,
     google_flights_url,
     looks_blocked,
+)
+from viajante.google_flights_detail import (
+    EMPTY_STATE_TEXT,
+    GoogleFlightsSource,
+    extract_main_html,
     parse_flight_cards,
     parse_http_flight_cards,
-    reset_shared_chrome_sweep_client,
-    shared_chrome_sweep_client,
 )
 from viajante.google_flights_public import GoogleFlightsUnsupported
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
     ShoppingRejected,
-    build_search_constraints,
-    build_shopping_inner,
-    build_shopping_request,
     parse_shopping_body,
-    shopping_stop_code,
 )
-from viajante.models import FlightLeg, FlightQuery, MultiCity, RoundTrip, SearchErrorCode
+from viajante.models import FlightLeg, FlightQuery, MultiCity, RoundTrip
 from viajante.tfs import _encode_legs, encode_tfs
 
 GOLDEN_TFS_DIRECT = "GhwSCjIwMjYtMTItMDQoAGoFEgNNQURyBRIDQkNOQgEBSAGYAQI="
@@ -343,7 +329,7 @@ class QueryEncodingTests(unittest.TestCase):
             _encode_legs(trip.legs, adults=1, cabin="economy", trip_kind=3),
         )
 
-    def test_open_jaw_yvr_lhr_lgw_encodes_tfs_and_shopping(self) -> None:
+    def test_open_jaw_yvr_lhr_lgw_encodes_tfs(self) -> None:
         trip = MultiCity(
             (
                 FlightLeg("YVR", "LHR", date(2026, 10, 9)),
@@ -364,21 +350,6 @@ class QueryEncodingTests(unittest.TestCase):
         parsed = parse_qs(urlparse(build_search_url(trip, currency="EUR")).query)
         self.assertEqual(parsed["tfs"], [encoded])
         self.assertEqual(parsed["hl"], ["en"])
-
-        inner = build_shopping_inner(trip)
-        self.assertEqual(inner[1][2], 3)
-        outbound, inbound = inner[1][13]
-        self.assertEqual(outbound[0], [[["YVR", 0]]])
-        self.assertEqual(outbound[1], [[["LHR", 0]]])
-        self.assertEqual(outbound[6], "2026-10-09")
-        self.assertEqual(inbound[0], [[["LGW", 0]]])
-        self.assertEqual(inbound[1], [[["YVR", 0]]])
-        self.assertEqual(inbound[6], "2026-10-13")
-        self.assertEqual(outbound[14], 3)
-        self.assertEqual(inbound[14], 3)
-        url, body = build_shopping_request(trip, currency="EUR")
-        self.assertEqual(parse_qs(urlparse(url).query)["hl"], ["en"])
-        self.assertTrue(body.startswith("f.req="))
 
     def test_html_lang_and_currency_args_reach_url_params(self) -> None:
         params = build_search_params(
@@ -618,48 +589,6 @@ class HttpSweepParseTests(unittest.TestCase):
         self.assertFalse(_is_consent_interstitial("https://www.google.com/sorry/index"))
         self.assertIsNone(_consent_reject_form(html, "https://www.google.com/sorry/index"))
 
-    def test_http_source_uses_fixture_body_not_the_network(self) -> None:
-        html = _http_page(build_results_page(build_card(price="€131", airline="Iberia")))
-        client = _FakeSweepClient(post_text="not shopping", get_text=html)
-        source = GoogleFlightsHttpSource(client=client, currency="EUR")
-        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(cards[0].airline, "Iberia")
-        self.assertEqual(cards[0].price, "€131")
-        self.assertEqual(len(client.gets), 1)
-
-    def test_http_source_raises_blocked_on_sorry_redirect(self) -> None:
-        client = _FakeSweepClient(
-            post_text="not shopping",
-            get_text="<html>sorry</html>",
-            get_url="https://www.google.com/sorry/index?continue=flights",
-        )
-        source = GoogleFlightsHttpSource(client=client, currency="EUR")
-        with self.assertRaises(GoogleFlightsBlocked):
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(len(client.posts), 1)
-        self.assertEqual(len(client.gets), 1)
-
-    def test_html_default_uses_shared_client(self) -> None:
-        client = _FakeSweepClient(get_text="synthetic page")
-        with (
-            patch("viajante.google_flights.cooldown_client", return_value=(None, None)),
-            patch("viajante.google_flights.shared_chrome_sweep_client", return_value=client),
-        ):
-            html, final_url = fetch_search_html("https://www.google.com/travel/flights")
-        self.assertEqual(html, "synthetic page")
-        self.assertEqual(final_url, client.get_url)
-        self.assertEqual(len(client.gets), 1)
-
-    def test_html_default_respects_cooldown_without_creating_tls_session(self) -> None:
-        paused = _FakeSweepClient(get_status=429)
-        with (
-            patch("viajante.google_flights.cooldown_client", return_value=({}, paused)),
-            patch("viajante.google_flights.shared_chrome_sweep_client") as tls,
-            self.assertRaises(GoogleFlightsBlocked),
-        ):
-            fetch_search_html("https://www.google.com/travel/flights")
-        tls.assert_not_called()
-
 
 def _itinerary(
     *,
@@ -702,244 +631,7 @@ def _compact_body(*itineraries: list[object], other: tuple[list[object], ...] = 
     return f")]}}'\n\n{len(raw)}\n{raw}"
 
 
-class _FakeSweepClient:
-    def __init__(
-        self,
-        *,
-        post_text: str = "",
-        post_status: int = 200,
-        post_url: str = "https://www.google.com/_/FlightsFrontendUi/data/shopping",
-        get_text: str = "",
-        get_status: int = 200,
-        get_url: str = "https://www.google.com/travel/flights?hl=en",
-        post_replies: tuple[SweepHttpResponse, ...] = (),
-        get_replies: tuple[SweepHttpResponse, ...] = (),
-    ) -> None:
-        self.post_text = post_text
-        self.post_status = post_status
-        self.post_url = post_url
-        self.get_text = get_text
-        self.get_status = get_status
-        self.get_url = get_url
-        self._post_replies = list(post_replies)
-        self._get_replies = list(get_replies)
-        self.posts: list[str] = []
-        self.gets: list[str] = []
-
-    def post(
-        self,
-        url: str,
-        *,
-        data: str,
-        headers: object,
-        timeout: float,
-    ) -> SweepHttpResponse:
-        self.posts.append(url)
-        self.last_post_data = data
-        if self._post_replies:
-            return self._post_replies.pop(0)
-        return SweepHttpResponse(self.post_status, self.post_text, self.post_url)
-
-    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-        self.gets.append(url)
-        if self._get_replies:
-            return self._get_replies.pop(0)
-        return SweepHttpResponse(self.get_status, self.get_text, self.get_url)
-
-    def close(self) -> None:
-        return None
-
-
 class ShoppingRpcTests(unittest.TestCase):
-    def test_inner_payload_keeps_owned_airport_nesting(self) -> None:
-        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1, adults=2, cabin="business")
-        inner = build_shopping_inner(query)
-        flight = inner[1][13][0]
-        self.assertEqual(flight[0], [[["JFK", 0]]])
-        self.assertEqual(flight[1], [[["LHR", 0]]])
-        self.assertEqual(flight[3], 2)
-        self.assertEqual(flight[6], "2026-09-01")
-        self.assertEqual(inner[1][5], 3)
-        self.assertEqual(inner[1][6], [2, 0, 0, 0])
-        self.assertIsNone(inner[1][7])
-        self.assertIsNone(flight[7])
-
-    def test_occupancy_slot_is_adults_children_seat_lap(self) -> None:
-        query = FlightQuery(
-            "JFK",
-            "LHR",
-            date(2026, 9, 1),
-            adults=2,
-            children=1,
-            infants_in_seat=1,
-            infants_on_lap=1,
-        )
-        inner = build_shopping_inner(query)
-        self.assertEqual(inner[1][6], [2, 1, 1, 1])
-        default = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1)))
-        self.assertEqual(default[1][6], [1, 0, 0, 0])
-
-    def test_bags_pair_fills_constraints_index_10(self) -> None:
-        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), bags=1, carry_on=1)
-        inner = build_shopping_inner(query)
-        self.assertEqual(inner[1][6], [1, 0, 0, 0])
-        self.assertIsNone(inner[1][7])
-        self.assertIsNone(inner[1][8])
-        self.assertIsNone(inner[1][9])
-        self.assertEqual(inner[1][10], [1, 1])
-        checked_only = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1), bags=2))
-        self.assertEqual(checked_only[1][10], [2, 0])
-        self.assertIsNone(checked_only[1][7])
-        carry_only = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1), carry_on=1))
-        self.assertEqual(carry_only[1][10], [0, 1])
-        default = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1)))
-        self.assertIsNone(default[1][7])
-        self.assertIsNone(default[1][10])
-
-    def test_named_price_cap_does_not_guess_constraints_index_7(self) -> None:
-        named = FlightQuery("JFK", "LHR", date(2026, 9, 1), price_cap=200)
-        inner = build_shopping_inner(named)
-        self.assertEqual(named.price_cap, 200)
-        self.assertIsNone(inner[1][7])
-        four = FlightQuery("NRT", "ICN", date(2026, 10, 9), price_cap=400)
-        self.assertEqual(four.price_cap, 400)
-        self.assertIsNone(build_shopping_inner(four)[1][7])
-        unnamed = FlightQuery("JFK", "LHR", date(2026, 9, 1))
-        self.assertIsNone(unnamed.price_cap)
-        self.assertIsNone(build_shopping_inner(unnamed)[1][7])
-
-    def test_airline_include_fills_segment_index_7(self) -> None:
-        query = FlightQuery(
-            "JFK",
-            "LHR",
-            date(2026, 9, 1),
-            airlines=("BA", "KL"),
-        )
-        inner = build_shopping_inner(query)
-        flight = inner[1][13][0]
-        self.assertEqual(flight[7], [None, [["BA"], ["KL"]]])
-        self.assertIsNone(inner[1][7])
-        self.assertIsNone(inner[1][10])
-
-    def test_airline_exclude_fills_segment_index_7(self) -> None:
-        query = FlightQuery("JFK", "LHR", date(2026, 9, 1), exclude_airlines=("DL",))
-        flight = build_shopping_inner(query)[1][13][0]
-        self.assertEqual(flight[7], [1, [["DL"]]])
-
-    def test_alliance_include_and_exclude_use_iata_designators(self) -> None:
-        oneworld = FlightQuery("JFK", "CDG", date(2026, 9, 1), alliances=("oneworld",))
-        self.assertEqual(
-            build_shopping_inner(oneworld)[1][13][0][7],
-            [None, [["*O"]]],
-        )
-        not_star = FlightQuery("JFK", "FRA", date(2026, 9, 1), exclude_alliances=("star",))
-        self.assertEqual(
-            build_shopping_inner(not_star)[1][13][0][7],
-            [1, [["*A"]]],
-        )
-        mixed = FlightQuery(
-            "LHR",
-            "JFK",
-            date(2026, 9, 1),
-            airlines=("BA",),
-            exclude_alliances=("star",),
-        )
-        self.assertEqual(
-            build_shopping_inner(mixed)[1][13][0][7],
-            [None, [["BA"]], [["*A"]]],
-        )
-
-    def test_round_trip_carrier_filter_applies_to_both_segments(self) -> None:
-        trip = RoundTrip(
-            "JFK",
-            "LHR",
-            date(2026, 10, 9),
-            date(2026, 10, 12),
-            airlines=("BA",),
-        )
-        outbound, inbound = build_shopping_inner(trip)[1][13]
-        self.assertEqual(outbound[7], [None, [["BA"]]])
-        self.assertEqual(inbound[7], [None, [["BA"]]])
-
-    def test_shopping_stop_table_is_not_the_tfs_integer(self) -> None:
-        self.assertEqual(shopping_stop_code(0), 1)
-        self.assertEqual(shopping_stop_code(1), 2)
-        self.assertEqual(shopping_stop_code(2), 3)
-        nonstop = build_shopping_inner(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=0))
-        self.assertEqual(nonstop[1][13][0][3], 1)
-        two_stop = build_shopping_inner(
-            RoundTrip("LAX", "NRT", date(2026, 10, 1), date(2026, 10, 20), max_stops=2)
-        )
-        self.assertEqual(two_stop[1][13][0][3], 3)
-        self.assertEqual(two_stop[1][13][1][3], 3)
-        self.assertEqual(
-            FlightLeg("LAX", "NRT", date(2026, 10, 1), max_stops=2).max_stops,
-            2,
-        )
-
-    def test_round_trip_shopping_sets_kind_and_return_classifier(self) -> None:
-        trip = RoundTrip("LAX", "NRT", date(2026, 10, 9), date(2026, 10, 12), max_stops=1)
-        inner = build_shopping_inner(trip)
-        self.assertEqual(inner[1][2], 1)
-        outbound, inbound = inner[1][13]
-        self.assertEqual(outbound[14], 3)
-        self.assertEqual(inbound[14], 1)
-        self.assertEqual(outbound[6], "2026-10-09")
-        self.assertEqual(inbound[6], "2026-10-12")
-
-    def test_multi_city_shopping_kind_keeps_outbound_classifier(self) -> None:
-        trip = MultiCity(
-            (
-                FlightLeg("JFK", "LHR", date(2026, 9, 1)),
-                FlightLeg("LHR", "CDG", date(2026, 9, 3)),
-                FlightLeg("FCO", "JFK", date(2026, 9, 6)),
-            )
-        )
-        constraints = build_search_constraints(trip)
-        self.assertEqual(constraints[2], 3)
-        self.assertEqual([segment[14] for segment in constraints[13]], [3, 3, 3])
-
-    def test_shopping_inner_pins_a_selected_itinerary_on_the_outbound_only(self) -> None:
-        trip = RoundTrip("MAD", "PRG", date(2026, 12, 3), date(2026, 12, 8))
-        selected = [
-            ["MAD", "2026-12-03", "WAW", None, "LO", "434"],
-            ["WAW", "2026-12-03", "PRG", None, "LO", "529"],
-        ]
-        inner = build_shopping_inner(trip, selected_flight=selected)
-        self.assertEqual(inner[1][13][0][8], selected)
-        self.assertIsNone(inner[1][13][1][8])
-
-    def test_selected_flight_lands_on_the_first_segment(self) -> None:
-        pinned = ["tok"]
-        constraints = build_search_constraints(
-            FlightQuery("JFK", "LHR", date(2026, 9, 1)),
-            selected_flight=pinned,
-        )
-        self.assertEqual(constraints[13][0][8], pinned)
-
-    def test_request_body_is_f_req_envelope(self) -> None:
-        query = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=0)
-        url, body = build_shopping_request(query, currency="EUR")
-        parsed = urlparse(url)
-        params = parse_qs(parsed.query)
-        self.assertEqual(params["hl"], ["en"])
-        self.assertEqual(params["curr"], ["EUR"])
-        self.assertNotIn("gl", params)
-        self.assertEqual(params["rt"], ["c"])
-        self.assertTrue(body.startswith("f.req="))
-        envelope = json.loads(unquote(body[len("f.req=") :]))
-        self.assertIsNone(envelope[0])
-        inner = json.loads(envelope[1])
-        self.assertEqual(inner[1][13][0][1], [[["NRT", 0]]])
-
-    def test_currency_and_country_reach_rpc_params(self) -> None:
-        query = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=0)
-        url, _body = build_shopping_request(query, html_lang="en", currency="USD", country="US")
-        params = parse_qs(urlparse(url).query)
-        self.assertEqual(params["hl"], ["en"])
-        self.assertEqual(params["curr"], ["USD"])
-        self.assertEqual(params["gl"], ["US"])
-
     def test_compact_price_text_uses_quote_currency_not_a_euro_glyph(self) -> None:
         item = _itinerary(price=199)
         euro = parse_shopping_body(_compact_body(item), currency="EUR")[0]
@@ -1156,169 +848,6 @@ class ShoppingRpcTests(unittest.TestCase):
     def test_unreadable_body_is_compact_miss(self) -> None:
         with self.assertRaises(CompactParseMiss):
             parse_shopping_body("not a shopping payload", currency="EUR")
-
-    def test_source_uses_compact_post_not_html(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(post_text=_compact_body(_itinerary(price=88, airline="Iberia")))
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(cards[0].airline, "Iberia")
-        self.assertEqual(cards[0].price, "€88")
-        self.assertEqual(len(client.posts), 1)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [])
-
-    def test_source_falls_back_to_html_when_compact_misses(self) -> None:
-        sleeps: list[float] = []
-        html = _http_page(build_results_page(build_card(price="€39", airline="Vueling")))
-        client = _FakeSweepClient(post_text="totally unrelated", get_text=html)
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(cards[0].airline, "Vueling")
-        self.assertEqual(cards[0].price, "€39")
-        self.assertEqual(len(client.posts), 1)
-        self.assertEqual(len(client.gets), 1)
-        self.assertEqual(sleeps, [])
-
-    def test_empty_compact_does_not_download_html(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(post_text=_compact_body())
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        with self.assertRaises(NoFlightsFound):
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(len(client.posts), 2)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-
-    def test_source_raises_blocked_on_shopping_403(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(post_status=403, post_text="no")
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        with self.assertRaises(GoogleFlightsBlocked):
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(len(client.posts), 1)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [])
-
-    def test_source_raises_blocked_on_shopping_429_without_retry(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(post_status=429, post_text="no")
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        with self.assertRaises(GoogleFlightsBlocked) as caught:
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(caught.exception.status, 429)
-        self.assertEqual(len(client.posts), 1)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [])
-
-
-class HttpSweepRetryTests(unittest.TestCase):
-    def test_reset_only_resets_the_owned_shared_session(self) -> None:
-        with patch("viajante.google_flights.reset_shared_chrome_sweep_client") as reset:
-            GoogleFlightsHttpSource(currency="EUR").reset()
-            reset.assert_called_once_with()
-            reset.reset_mock()
-            GoogleFlightsHttpSource(currency="EUR", client=_FakeSweepClient()).reset()
-            reset.assert_not_called()
-
-    def test_retry_backoff_is_under_200ms_not_an_anti_bot_pause(self) -> None:
-        self.assertGreater(SWEEP_RETRY_BACKOFF_SECONDS, 0.0)
-        self.assertLess(SWEEP_RETRY_BACKOFF_SECONDS, 0.2)
-
-    def test_tiny_html_drift_replays_once_and_keeps_compact_cards(self) -> None:
-        sleeps: list[float] = []
-        tiny = _http_page("<div>loading</div>")
-        client = _FakeSweepClient(
-            post_replies=(
-                SweepHttpResponse(200, "not shopping"),
-                SweepHttpResponse(200, _compact_body(_itinerary(price=77, airline="Iberia"))),
-            ),
-            get_replies=(SweepHttpResponse(200, tiny),),
-        )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(cards[0].airline, "Iberia")
-        self.assertEqual(cards[0].price, "€77")
-        self.assertEqual(len(client.posts), 2)
-        self.assertEqual(len(client.gets), 1)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-
-    def test_short_shell_twice_is_blocked_after_one_retry(self) -> None:
-        sleeps: list[float] = []
-        tiny = _http_page("<div>loading</div>")
-        client = _FakeSweepClient(post_text="not shopping", get_text=tiny)
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        with self.assertRaises(GoogleFlightsBlocked):
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(len(client.posts), 2)
-        self.assertEqual(len(client.gets), 2)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-
-    def test_empty_compact_then_cards_replays_on_the_same_client(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(
-            post_replies=(
-                SweepHttpResponse(200, _compact_body()),
-                SweepHttpResponse(200, _compact_body(_itinerary(price=64, airline="Ryanair"))),
-            )
-        )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(cards[0].airline, "Ryanair")
-        self.assertEqual(len(client.posts), 2)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-
-    def test_shopping_503_then_cards_retries_once(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(
-            post_replies=(
-                SweepHttpResponse(503, "upstream"),
-                SweepHttpResponse(200, _compact_body(_itinerary(price=91, airline="Iberia"))),
-            )
-        )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        cards = source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(cards[0].price, "€91")
-        self.assertEqual(len(client.posts), 2)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-
-    def test_shopping_500_retries_once_then_stays_blocked(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(post_status=500, post_text="no")
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        with self.assertRaises(GoogleFlightsBlocked) as caught:
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(caught.exception.status, 500)
-        self.assertEqual(len(client.posts), 2)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-
-    def test_shopping_reject_is_not_retried(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(post_text=_error_response_body())
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        with self.assertRaises(GoogleFlightsRejected):
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(len(client.posts), 1)
-        self.assertEqual(client.gets, [])
-        self.assertEqual(sleeps, [])
-
-    def test_consent_block_is_not_retried(self) -> None:
-        sleeps: list[float] = []
-        client = _FakeSweepClient(
-            post_text="not shopping",
-            get_url="https://consent.google.com/ml",
-            get_text="<html></html>",
-        )
-        source = GoogleFlightsHttpSource(client=client, sleep=sleeps.append, currency="EUR")
-        with self.assertRaises(GoogleFlightsBlocked) as caught:
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertIsNone(caught.exception.status)
-        self.assertEqual(len(client.posts), 1)
-        self.assertEqual(len(client.gets), 1)
-        self.assertEqual(sleeps, [])
 
 
 def _live_leg(
@@ -2188,586 +1717,6 @@ class LiveShapedCompactTests(unittest.TestCase):
         self.assertNotIn("unknown airport", message)
         self.assertNotIn("invalid query", message)
 
-    def test_source_does_not_download_html_after_shopping_reject(self) -> None:
-        client = _FakeSweepClient(post_text=_error_response_body())
-        source = GoogleFlightsHttpSource(client=client, currency="EUR")
-        with self.assertRaises(GoogleFlightsRejected):
-            source.fetch(FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1))
-        self.assertEqual(client.gets, [])
-
-
-def _calendar_rpc_body(rows: list[list[object]]) -> str:
-    data = [None, rows]
-    wrb = [["wrb.fr", None, json.dumps(data, separators=(",", ":"))]]
-    raw = json.dumps(wrb, separators=(",", ":"))
-    return f")]}}'\n\n{len(raw)}\n{raw}"
-
-
-class _MuxFakeSweepClient:
-    """Owned transport: optional post_many for the whole batch."""
-
-    def __init__(
-        self,
-        *,
-        shop_text: str,
-        calendar_text: str = "not-calendar",
-    ) -> None:
-        self.shop_text = shop_text
-        self.calendar_text = calendar_text
-        self.posts: list[str] = []
-        self.gets: list[str] = []
-        self.post_many_calls = 0
-
-    def _response(self, url: str) -> SweepHttpResponse:
-        if "GetCalendar" in url:
-            return SweepHttpResponse(200, self.calendar_text, url)
-        return SweepHttpResponse(200, self.shop_text, url)
-
-    def post(
-        self,
-        url: str,
-        *,
-        data: str,
-        headers: object,
-        timeout: float,
-    ) -> SweepHttpResponse:
-        self.posts.append(url)
-        return self._response(url)
-
-    def post_many(self, jobs, *, timeout: float) -> list[SweepHttpResponse]:
-        self.post_many_calls += 1
-        for job in jobs:
-            self.posts.append(job.url)
-        return [self._response(job.url) for job in jobs]
-
-    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-        self.gets.append(url)
-        return SweepHttpResponse(200, "<html></html>", url)
-
-    def close(self) -> None:
-        return None
-
-
-class _ScriptedMuxClient:
-    """post_many rounds with per-job replies. Happy path still one multiplex call."""
-
-    def __init__(self, rounds: tuple[tuple[SweepHttpResponse, ...], ...]) -> None:
-        self._rounds = [list(round_replies) for round_replies in rounds]
-        self.posts: list[str] = []
-        self.gets: list[str] = []
-        self.post_many_calls = 0
-
-    def post(
-        self,
-        url: str,
-        *,
-        data: str,
-        headers: object,
-        timeout: float,
-    ) -> SweepHttpResponse:
-        job = SimpleNamespace(url=url)
-        return self.post_many((job,), timeout=timeout)[0]
-
-    def post_many(self, jobs, *, timeout: float) -> list[SweepHttpResponse]:
-        self.post_many_calls += 1
-        if not self._rounds:
-            raise AssertionError("unexpected extra post_many round")
-        replies = self._rounds.pop(0)
-        if len(replies) != len(jobs):
-            raise AssertionError(f"post_many got {len(jobs)} jobs, scripted {len(replies)}")
-        for job in jobs:
-            self.posts.append(job.url)
-        return list(replies)
-
-    def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-        self.gets.append(url)
-        return SweepHttpResponse(200, "<html></html>", url)
-
-    def close(self) -> None:
-        return None
-
-
-class _TrackingHttpSource(GoogleFlightsHttpSource):
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        kwargs.setdefault("currency", "EUR")
-        super().__init__(*args, **kwargs)
-        self.reset_calls = 0
-
-    def reset(self) -> None:
-        self.reset_calls += 1
-        super().reset()
-
-
-class SweepRateLimitSessionTests(unittest.TestCase):
-    def _trips(self, n: int) -> tuple[FlightQuery, ...]:
-        return tuple(
-            FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, n + 1)
-        )
-
-    def test_fetch_many_preserves_successes_and_does_not_replay_after_429(self) -> None:
-        shop = _compact_body(_itinerary(price=41, airline="Vueling"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            (
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(429, "slow down"),
-                ),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(3))
-        self.assertEqual(len(results), 3)
-        self.assertFalse(isinstance(results[0], BaseException))
-        self.assertFalse(isinstance(results[1], BaseException))
-        self.assertIsInstance(results[2], GoogleFlightsBlocked)
-        self.assertEqual(results[2].status, 429)
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(len(client.posts), 3)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [])
-
-    def test_fetch_many_happy_path_does_not_sleep_or_reset(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(((SweepHttpResponse(200, shop), SweepHttpResponse(200, shop)),))
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(2))
-        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [])
-
-    def test_fetch_many_403_is_not_retried(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            (
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(403, "no"),
-                    SweepHttpResponse(200, shop),
-                ),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(3))
-        self.assertFalse(isinstance(results[0], BaseException))
-        self.assertIsInstance(results[1], GoogleFlightsBlocked)
-        self.assertEqual(results[1].status, 403)
-        self.assertFalse(isinstance(results[2], BaseException))
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [])
-
-    def test_fetch_many_consent_block_is_not_retried(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            (
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(
-                        200,
-                        "our systems have detected unusual traffic",
-                        "https://consent.google.com/ml",
-                    ),
-                ),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(2))
-        self.assertFalse(isinstance(results[0], BaseException))
-        self.assertIsInstance(results[1], GoogleFlightsBlocked)
-        self.assertIsNone(results[1].status)
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [])
-
-    def test_fetch_many_429_stays_blocked_without_retry(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            ((SweepHttpResponse(429, "slow"), SweepHttpResponse(200, shop)),)
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(2))
-        self.assertIsInstance(results[0], GoogleFlightsBlocked)
-        self.assertEqual(results[0].status, 429)
-        self.assertFalse(isinstance(results[1], BaseException))
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [])
-
-    def test_fetch_many_transport_failure_replays_on_a_fresh_session(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            (
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "ConnectionError: reset"),
-                ),
-                (SweepHttpResponse(200, shop),),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(2))
-        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(source.reset_calls, 1)
-
-    def test_fetch_many_transport_failure_is_not_a_rate_limit(self) -> None:
-        client = _ScriptedMuxClient(
-            (
-                (SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "ReadTimeout: 30s"),),
-                (SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "ReadTimeout: 30s"),),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=lambda _s: None)
-        failure = source.fetch_many(self._trips(1))[0]
-        self.assertIsInstance(failure, SweepTransportError)
-        error = classify_failure(failure)
-        self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
-        self.assertTrue(error.timeout)
-        self.assertFalse(error.rate_limited)
-
-    def _search_with(self, client, *queries: FlightQuery):
-        def source(**kwargs):
-            return _TrackingHttpSource(client=client, sleep=lambda _s: None)
-
-        with (
-            patch("viajante.flights.GoogleFlightsHttpSource", side_effect=source),
-            patch("viajante.flights.chromium_installed", return_value=False),
-        ):
-            return search_flights(queries, top=3, fetch="sweep", currency="USD")
-
-    def test_one_route_transport_timeout_is_one_attempt_not_retried_per_query(self) -> None:
-        down = SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "Timeout: read timed out")
-        client = _ScriptedMuxClient(((down, down),))
-        report = self._search_with(client, *self._trips(1))
-        error = report.queries[0].error
-        self.assertEqual((client.post_many_calls, len(client.posts)), (1, 2))
-        self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
-        self.assertTrue(error.timeout)
-
-    def test_batch_transport_timeout_replays_the_batch_once_and_never_per_query(self) -> None:
-        down = SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "Timeout: read timed out")
-        client = _ScriptedMuxClient(((down,) * 4, (down,) * 4))
-        report = self._search_with(client, *self._trips(2))
-        self.assertEqual((client.post_many_calls, len(client.posts)), (2, 8))
-        self.assertTrue(all(row.error.timeout for row in report.queries))
-
-    def test_flex_calendar_post_that_raises_is_fetch_failed_not_markup_drift(self) -> None:
-        class _Down:
-            def post(self, url, *, data, headers, timeout):
-                raise ConnectionError("dns failure")
-
-            def close(self) -> None:
-                return None
-
-        source = GoogleFlightsHttpSource(client=_Down(), currency="USD")
-        day = date.today() + timedelta(days=30)
-        report = search_flex("JFK", "LHR", day, 1, source=source, currency="USD")
-        self.assertEqual(report.error.code, SearchErrorCode.FETCH_FAILED)
-        self.assertFalse(report.error.timeout)
-
-    def test_a_raising_multiplexed_request_becomes_a_transport_response_not_a_429(self) -> None:
-        client = shared_chrome_sweep_client()
-        self.addCleanup(reset_shared_chrome_sweep_client)
-
-        async def boom(url, data, headers, timeout, cancel_event=None):
-            raise TimeoutError("read timed out")
-
-        client._apost = boom
-        jobs = [SweepPost("https://example.invalid/a", "x", {}) for _ in range(3)]
-        responses = client.post_many(jobs, timeout=1)
-        self.assertEqual({r.status for r in responses}, {SWEEP_TRANSPORT_STATUS})
-        self.assertIn("TimeoutError", responses[0].text)
-
-    def test_fetch_many_5xx_still_replays_on_the_same_session(self) -> None:
-        shop = _compact_body(_itinerary(price=91, airline="Iberia"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            (
-                (SweepHttpResponse(200, shop), SweepHttpResponse(503, "upstream")),
-                (SweepHttpResponse(200, shop),),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(2))
-        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
-        self.assertEqual(results[1][0].price, "€91")
-        self.assertEqual(client.post_many_calls, 2)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [SWEEP_RETRY_BACKOFF_SECONDS])
-
-    def test_fetch_many_with_calendar_preserves_successes_without_429_replay(self) -> None:
-        shop = _compact_body(_itinerary(price=88, airline="Iberia"))
-        calendar = _calendar_rpc_body(
-            [
-                ["2026-09-01", None, [[None, 80], "tok"], 1],
-                ["2026-09-02", None, [[None, 90], "tok"], 1],
-                ["2026-09-03", None, [[None, 100], "tok"], 1],
-            ]
-        )
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            (
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(200, calendar),
-                    SweepHttpResponse(429, "slow"),
-                    SweepHttpResponse(200, calendar),
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(200, calendar),
-                ),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        jobs = tuple(
-            (
-                FlightQuery("JFK", dest, date(2026, 9, 1), max_stops=1),
-                date(2026, 9, 1),
-                date(2026, 9, 3),
-            )
-            for dest in ("NRT", "LHR", "CDG")
-        )
-        results = source.fetch_many_with_calendar(jobs)
-        self.assertEqual(len(results), 3)
-        self.assertFalse(isinstance(results[0][0], BaseException))
-        self.assertEqual(results[0][0][0].airline, "Iberia")
-        self.assertEqual(len(results[0][1]), 3)
-        self.assertIsInstance(results[1][0], GoogleFlightsBlocked)
-        self.assertEqual(results[1][0].status, 429)
-        self.assertFalse(isinstance(results[2][0], BaseException))
-        self.assertEqual(results[2][0][0].airline, "Iberia")
-        self.assertEqual(len(results[2][1]), 3)
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [])
-
-    def test_fetch_many_blocked_and_drift_mixed_batch_does_not_replay(self) -> None:
-        shop = _compact_body(_itinerary(price=88, airline="Iberia"))
-        sleeps: list[float] = []
-        client = _ScriptedMuxClient(
-            (
-                (
-                    SweepHttpResponse(200, shop),
-                    SweepHttpResponse(429, "slow down"),
-                    SweepHttpResponse(200, "not a compact response"),
-                ),
-            )
-        )
-        source = _TrackingHttpSource(client=client, sleep=sleeps.append)
-        results = source.fetch_many(self._trips(3))
-        self.assertFalse(isinstance(results[0], BaseException))
-        self.assertIsInstance(results[1], GoogleFlightsBlocked)
-        self.assertIsInstance(results[2], GoogleFlightsBlocked)
-        self.assertIsNone(results[2].status)
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(len(client.posts), 3)
-        self.assertEqual(len(client.gets), 1)
-        self.assertEqual(source.reset_calls, 0)
-        self.assertEqual(sleeps, [])
-
-
-class SweepClientShapeTests(unittest.TestCase):
-    def setUp(self) -> None:
-        no_cooldown = patch("viajante.google_flights.rate_limit_status", return_value=None)
-        no_cooldown.start()
-        self.addCleanup(no_cooldown.stop)
-
-    def test_fetch_with_calendar_uses_one_multiplex_round(self) -> None:
-        shop = _compact_body(_itinerary(price=88, airline="Iberia"))
-        calendar = _calendar_rpc_body(
-            [
-                ["2026-09-01", None, [[None, 80], "tok"], 1],
-                ["2026-09-02", None, [[None, 90], "tok"], 1],
-                ["2026-09-03", None, [[None, 100], "tok"], 1],
-            ]
-        )
-        client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar)
-        source = GoogleFlightsHttpSource(client=client, currency="EUR")
-        cards, days = source.fetch_with_calendar(
-            FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),
-            date(2026, 9, 1),
-            date(2026, 9, 3),
-        )
-        self.assertEqual(cards[0].airline, "Iberia")
-        self.assertEqual(len(days), 3)
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(len(client.posts), 2)
-
-    def test_fetch_many_multiplexes_calendar_day_fanout(self) -> None:
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        client = _MuxFakeSweepClient(shop_text=shop)
-        source = GoogleFlightsHttpSource(client=client, currency="EUR")
-        trips = tuple(
-            FlightQuery("JFK", "LHR", date(2026, 9, day), max_stops=1) for day in range(1, 8)
-        )
-        results = source.fetch_many(trips)
-        self.assertEqual(len(results), 7)
-        self.assertTrue(all(not isinstance(item, BaseException) for item in results))
-        self.assertEqual(results[0][0].airline, "Vueling")
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(len(client.posts), 7)
-
-    def test_fetch_many_with_calendar_uses_one_multiplex_round(self) -> None:
-        shop = _compact_body(_itinerary(price=88, airline="Iberia"))
-        calendar = _calendar_rpc_body(
-            [
-                ["2026-09-01", None, [[None, 80], "tok"], 1],
-                ["2026-09-02", None, [[None, 90], "tok"], 1],
-                ["2026-09-03", None, [[None, 100], "tok"], 1],
-            ]
-        )
-        client = _MuxFakeSweepClient(shop_text=shop, calendar_text=calendar)
-        source = GoogleFlightsHttpSource(client=client, currency="EUR")
-        jobs = tuple(
-            (
-                FlightQuery("JFK", dest, date(2026, 9, 1), max_stops=1),
-                date(2026, 9, 1),
-                date(2026, 9, 3),
-            )
-            for dest in ("NRT", "LHR", "CDG")
-        )
-        results = source.fetch_many_with_calendar(jobs)
-        self.assertEqual(len(results), 3)
-        cards, days = results[0]
-        self.assertFalse(isinstance(cards, BaseException))
-        self.assertEqual(cards[0].airline, "Iberia")
-        self.assertEqual(len(days), 3)
-        self.assertEqual(client.post_many_calls, 1)
-        self.assertEqual(len(client.posts), 6)
-
-    def test_http_source_currency_country_reach_calendar_and_fanout_urls(self) -> None:
-        calendar = _calendar_rpc_body([["2026-09-01", None, [[None, 80], "tok"], 1]])
-        client = _FakeSweepClient(post_text=calendar)
-        source = GoogleFlightsHttpSource(client=client, currency="USD", country="US")
-        source.fetch_calendar(
-            FlightQuery("JFK", "LHR", date(2026, 9, 1)),
-            date(2026, 9, 1),
-            date(2026, 9, 2),
-        )
-        params = parse_qs(urlparse(client.posts[0]).query)
-        self.assertEqual(params["hl"], ["en"])
-        self.assertEqual(params["curr"], ["USD"])
-        self.assertEqual(params["gl"], ["US"])
-        shop = _compact_body(_itinerary(price=45, airline="Vueling"))
-        mux = _MuxFakeSweepClient(shop_text=shop)
-        GoogleFlightsHttpSource(client=mux, currency="GBP", country="GB").fetch_many(
-            (FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),)
-        )
-        fanout = parse_qs(urlparse(mux.posts[0]).query)
-        self.assertEqual(fanout["curr"], ["GBP"])
-        self.assertEqual(fanout["gl"], ["GB"])
-        unnamed_client = _FakeSweepClient(post_text=calendar)
-        GoogleFlightsHttpSource(client=unnamed_client, currency="EUR").fetch_calendar(
-            FlightQuery("JFK", "LHR", date(2026, 9, 1)),
-            date(2026, 9, 1),
-            date(2026, 9, 2),
-        )
-        unnamed = parse_qs(urlparse(unnamed_client.posts[0]).query)
-        self.assertEqual(unnamed["curr"], ["EUR"])
-        self.assertNotIn("gl", unnamed)
-
-    def test_rpc_error_envelope_is_blocked_not_markup_drift(self) -> None:
-        throttled = (
-            ')]}\'\n\n39\n[["wrb.fr",null,null,null,null,[13]]]\n'
-            '55\n[["di",34],["af.httprm",34,"-7689648241438755997",6]]\n'
-            '25\n[["e",4,null,null,131]]\n'
-        )
-        source = GoogleFlightsHttpSource(
-            client=_FakeSweepClient(post_text=throttled), currency="EUR"
-        )
-        with self.assertRaisesRegex(GoogleFlightsBlocked, "RPC error status 13"):
-            source.fetch_calendar(
-                FlightQuery("SIN", "BKK", date(2026, 11, 20)),
-                date(2026, 11, 18),
-                date(2026, 11, 22),
-            )
-        with self.assertRaises(GoogleFlightsBlocked):
-            source.fetch_explore("LHR", date(2026, 11, 5))
-
-    def test_http_sources_reuse_the_process_tls_session(self) -> None:
-        created: list[object] = []
-
-        class FakeChrome:
-            def __init__(self, *, proxy: str | None = None) -> None:
-                self.proxy = proxy
-                created.append(self)
-
-            def close(self) -> None:
-                return None
-
-            def post(
-                self,
-                url: str,
-                *,
-                data: str,
-                headers: object,
-                timeout: float,
-            ) -> SweepHttpResponse:
-                return SweepHttpResponse(200, _compact_body(_itinerary(price=10)), url)
-
-            def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-                return SweepHttpResponse(200, "<html></html>", url)
-
-        with patch("viajante.google_flights.ChromeSweepClient", FakeChrome):
-            reset_shared_chrome_sweep_client()
-            first = GoogleFlightsHttpSource(currency="EUR")
-            second = GoogleFlightsHttpSource(currency="EUR")
-            query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
-            first.fetch(query)
-            second.fetch(query)
-            self.assertIs(shared_chrome_sweep_client(), created[0])
-            self.assertEqual(len(created), 1)
-            first.close()
-            second.close()
-            third = GoogleFlightsHttpSource(currency="EUR")
-            third.fetch(query)
-            self.assertEqual(len(created), 1)
-            reset_shared_chrome_sweep_client()
-
-    def test_http_source_passes_proxy_and_resets_when_it_changes(self) -> None:
-        created: list[object] = []
-        closed: list[object] = []
-
-        class FakeChrome:
-            def __init__(self, *, proxy: str | None = None) -> None:
-                self.proxy = proxy
-                created.append(self)
-
-            def close(self) -> None:
-                closed.append(self)
-
-            def post(
-                self,
-                url: str,
-                *,
-                data: str,
-                headers: object,
-                timeout: float,
-            ) -> SweepHttpResponse:
-                return SweepHttpResponse(200, _compact_body(_itinerary(price=10)), url)
-
-            def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
-                return SweepHttpResponse(200, "<html></html>", url)
-
-        with patch("viajante.google_flights.ChromeSweepClient", FakeChrome):
-            reset_shared_chrome_sweep_client()
-            query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
-            proxied = GoogleFlightsHttpSource(proxy="http://127.0.0.1:8080", currency="EUR")
-            proxied.fetch(query)
-            self.assertEqual(created[0].proxy, "http://127.0.0.1:8080")
-            GoogleFlightsHttpSource(currency="EUR").fetch(query)
-            self.assertEqual(len(created), 2)
-            self.assertIsNone(created[1].proxy)
-            self.assertEqual(len(closed), 1)
-            reset_shared_chrome_sweep_client()
-
 
 def _multi_board_html(rows) -> str:
     """Synthetic results board a card parser can read like the real DOM."""
@@ -2788,8 +1737,9 @@ def _multi_board_html(rows) -> str:
 class _MultiRow:
     """One locator chain: ``.first`` waits, ``.nth(i).click()`` advances a board."""
 
-    def __init__(self, page) -> None:
+    def __init__(self, page, selector: str = "") -> None:
         self._page = page
+        self._selector = selector
         self._index = 0
 
     @property
@@ -2801,6 +1751,10 @@ class _MultiRow:
         return self
 
     def wait_for(self, **_):
+        # A wait only resolves when the fake DOM carries one of its selectors.
+        dom = self._page.dom_selectors
+        if dom is not None and not any(part.strip() in dom for part in self._selector.split(",")):
+            raise TimeoutError(f"never attached: {self._selector}")
         return None
 
     def click(self, **_):
@@ -2812,9 +1766,10 @@ class _MultiRow:
 class _MultiPage:
     """Fake detail page serving one board innerHTML per click step."""
 
-    def __init__(self, boards, *, fail_after_clicks=()) -> None:
+    def __init__(self, boards, *, fail_after_clicks=(), dom_selectors=None) -> None:
         self._boards = list(boards)
         self._fail = set(fail_after_clicks)
+        self.dom_selectors = dom_selectors
         self.step = 0
         self.clicks = 0
         self.row_indexes: list[int] = []
@@ -2824,8 +1779,8 @@ class _MultiPage:
         self.url = url
         self.step = 0
 
-    def locator(self, _selector):
-        return _MultiRow(self)
+    def locator(self, selector):
+        return _MultiRow(self, selector)
 
     def evaluate(self, script):
         if "querySelector('h3')" in script:
@@ -2918,6 +1873,26 @@ class MultiCityDetailTests(unittest.TestCase):
             self.assertIn(card.price, {"£1,200", "£1,300"})
             self.assertEqual(len(card.flight_numbers or ()), 2)
         self.assertEqual(source.metadata_for(trip), (None, True))
+
+    def test_board_without_results_container_still_completes(self) -> None:
+        # Live multi-city boards render the rows without the results container
+        # (.eQ35Ce) or the empty-state node; the readiness wait must accept rows.
+        board1 = _multi_board_html(
+            [("LHR", "JFK", "AA", "103", "20261110", "10:15 AM on Tue, Nov 10", "£500")]
+        )
+        board2 = _multi_board_html(
+            [("JFK", "LAX", "AA", "201", "20261114", "9:00 AM on Sat, Nov 14", "£1,200")]
+        )
+        trip = MultiCity(
+            (
+                FlightLeg("LHR", "JFK", date(2026, 11, 10)),
+                FlightLeg("JFK", "LAX", date(2026, 11, 14)),
+            )
+        )
+        page = _MultiPage([board1, board2], dom_selectors={"ul.Rk10dc li"})
+        cards = self._source(page).fetch(trip)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].price, "£1,200")
 
     def test_three_leg_package_picks_cheapest_middle_board_row(self) -> None:
         board1 = _multi_board_html(
@@ -3092,7 +2067,9 @@ class MultiCityDetailTests(unittest.TestCase):
             source.fetch(trip)
 
     def test_multi_row_index_matches_owned_identity(self) -> None:
-        from viajante.google_flights import _multi_row_index
+        from viajante.google_flights_detail import (
+            _multi_row_index,
+        )
 
         cards = parse_flight_cards(
             _multi_board_html(

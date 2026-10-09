@@ -5,7 +5,11 @@ from typing import Mapping, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-def local_instant(value: datetime, zone: object) -> Optional[datetime]:
+def _zone_instants(value: datetime, zone: object) -> Optional[frozenset[datetime]]:
+    """UTC instants for a civil time. None when ``zone`` is not a usable IANA name.
+
+    Empty when the wall time does not exist. Two when both DST folds do.
+    """
     if not isinstance(zone, str):
         return None
     try:
@@ -19,7 +23,12 @@ def local_instant(value: datetime, zone: object) -> Optional[datetime]:
         utc = aware.astimezone(timezone.utc)
         if utc.astimezone(tz).replace(tzinfo=None) == civil:
             instants.add(utc)
-    if len(instants) != 1:
+    return frozenset(instants)
+
+
+def local_instant(value: datetime, zone: object) -> Optional[datetime]:
+    instants = _zone_instants(value, zone)
+    if not instants or len(instants) != 1:
         return None
     instant = next(iter(instants))
     if value.tzinfo is not None and value.astimezone(timezone.utc) != instant:

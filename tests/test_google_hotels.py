@@ -19,7 +19,7 @@ from viajante.google_hotels_rpc import (
     parse_hotels_page,
 )
 from viajante.hotels import _run_search
-from viajante.models import HotelQuery, HotelQuerySuccess
+from viajante.models import HotelQuery, HotelQuerySuccess, SearchErrorCode
 
 QUERY = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7))
 
@@ -227,6 +227,17 @@ class HotelsParseTests(unittest.TestCase):
         with self.assertRaises(HotelsParseMiss):
             parse_hotels_page(_wrap_wrb(["not", "hotels"]))
 
+    def test_dict_shaped_slot_is_a_parse_miss_not_an_uncaught_keyerror(self) -> None:
+        for mutate in (
+            lambda record: record.__setitem__(6, {"unexpected": "shape"}),
+            lambda record: record[6].__setitem__(2, {"unexpected": "shape"}),
+        ):
+            with self.subTest(mutate=mutate):
+                record = _hotel_record()
+                mutate(record)
+                with self.assertRaises(HotelsParseMiss):
+                    parse_hotels_page(_wrap_wrb(_search_payload(record)))
+
     def test_closed_title_is_not_a_property(self) -> None:
         body = _wrap_wrb(
             _search_payload(
@@ -348,6 +359,36 @@ class GoogleHotelsFetchTests(unittest.TestCase):
         self.assertEqual(failure.error.code.value, "fetch_failed")
         self.assertFalse(failure.error.rate_limited)
 
+    def test_unsent_sibling_job_429_is_still_rate_limited(self) -> None:
+        url = "https://www.google.com/travel/search"
+        rated = HotelQuery("Prague", date(2099, 12, 4), date(2099, 12, 7), min_rating=4.5)
+
+        class _Throttled:
+            def post_many(self, jobs, *, timeout: float) -> list[SweepHttpResponse]:
+                # First job was never sent after its sibling hit a real 429: the
+                # transport stamps the status but no cooldown advice.
+                return [
+                    SweepHttpResponse(429, "", url),
+                    SweepHttpResponse(429, "", url, rate_limit="pause advice"),
+                ]
+
+            def close(self) -> None:
+                return None
+
+        report = _run_search(
+            (rated,),
+            top=1,
+            source=GoogleHotelsSource(client=_Throttled(), currency="CZK"),
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            provider="google-hotels",
+            currency="CZK",
+        )
+        failure = report.queries[0]
+        self.assertEqual(failure.error.code.value, "blocked")
+        self.assertTrue(failure.error.rate_limited)
+
     def test_temporary_network_failure_can_retry(self) -> None:
         body = _wrap_wrb(_search_payload(_hotel_record()))
         client = _ScriptedHotelClient(
@@ -396,6 +437,28 @@ class GoogleHotelsFetchTests(unittest.TestCase):
             rated, build_applied_filters(rated, currency="CZK"), 24
         )
         self.assertEqual([card.title for card in page.cards], ["Cheap"])
+
+    def test_a_failed_widening_page_is_recorded_and_a_server_error_is_replayed(self) -> None:
+        cheap = _wrap_wrb(_search_payload(_hotel_record(title="Cheap", rating=2.0)))
+        good = _wrap_wrb(_search_payload(_hotel_record(title="Good", rating=4.6)))
+        url = "https://www.google.com/travel/search"
+        rated = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), min_rating=4.5)
+
+        def fetch(*responses: SweepHttpResponse):
+            client = _ScriptedHotelClient([SweepHttpResponse(200, cheap, url), *responses])
+            return GoogleHotelsSource(client=client, currency="CZK").fetch(
+                rated, build_applied_filters(rated, currency="CZK"), 24
+            )
+
+        blocked = fetch(SweepHttpResponse(429, "", url))
+        self.assertEqual([error.code for error in blocked.page_errors], [SearchErrorCode.BLOCKED])
+        drift = fetch(SweepHttpResponse(200, "junk", url))
+        self.assertEqual(
+            [error.code for error in drift.page_errors], [SearchErrorCode.MARKUP_DRIFT]
+        )
+        recovered = fetch(SweepHttpResponse(500, "", url), SweepHttpResponse(200, good, url))
+        self.assertEqual([card.title for card in recovered.cards], ["Cheap", "Good"])
+        self.assertEqual(recovered.page_errors, ())
 
     def test_relevance_page_leaves_the_sort_slot_empty(self) -> None:
         self.assertEqual(build_hotels_inner(QUERY, currency="CZK")[1][4][0][4], 3)

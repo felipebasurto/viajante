@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import unittest
 from datetime import date, datetime, timezone
+from pathlib import Path
 from random import Random
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
+from viajante.control import SearchDeadline
 from viajante.hotels import _run_search, search_hotels
 from viajante.models import (
     HotelQuery,
@@ -169,6 +171,37 @@ class SkiplaggedSearchParseTests(unittest.TestCase):
         self.assertEqual([card.title for card in page.cards], ["a&o Prague Rhea"])
 
 
+class SkiplaggedCapturedSearchTests(unittest.TestCase):
+    """The live `sk_hotels_search` reply in fixtures/skiplagged/hotels_miami_search.json."""
+
+    @staticmethod
+    def _captured() -> dict:
+        path = Path(__file__).parent / "fixtures" / "skiplagged" / "hotels_miami_search.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_total_comes_from_the_table_not_the_structured_nightly_rate(self) -> None:
+        page = parse_search_page(self._captured())
+        self.assertEqual(len(page.cards), 8)
+        first = page.cards[0]
+        self.assertEqual(first.title, "Beachside All Suites Hotel")
+        self.assertEqual(first.total_price, "$112")  # structured price is $30.67/night
+        self.assertEqual((first.rating, first.class_label), ("5.8", "3 stars"))
+        self.assertEqual(first.provider_id, "926127")
+        self.assertEqual(page.resolved_place, "miami-beach-florida")
+
+    def test_card_priced_in_another_currency_is_dropped(self) -> None:
+        result = self._captured()
+        cards = result["structuredContent"]["results"]
+        cards[0]["price"]["currency"] = "EUR"
+        page = parse_search_page(result)
+        self.assertNotIn("Beachside All Suites Hotel", [card.title for card in page.cards])
+        self.assertEqual(len(page.cards), 7)
+        for card in cards:
+            card["price"]["currency"] = "EUR"
+        with self.assertRaises(SkiplaggedParseMiss):
+            parse_search_page(result)
+
+
 class SkiplaggedAppliedFilterTests(unittest.TestCase):
     def test_free_cancellation_is_stamped_not_applied(self) -> None:
         applied = build_applied_filters(QUERY, currency="USD")
@@ -283,6 +316,25 @@ class SkiplaggedRateLimitTests(unittest.TestCase):
         self.assertEqual(report.error.code, SearchErrorCode.BLOCKED)
         self.assertTrue(report.error.rate_limited)
         self.assertEqual(calls, ["initialize"])
+
+    def test_rooms_deadline_is_not_retried_or_reported_as_fetch_failure(self) -> None:
+        calls: list = []
+        sleeps: list = []
+
+        def rpc(url, payload, headers):
+            calls.append(payload.get("method"))
+            raise SearchDeadline()
+
+        report = search_hotel_rooms(
+            1,
+            date(2026, 12, 1),
+            date(2026, 12, 4),
+            rpc=rpc,
+            sleep=sleeps.append,
+        )
+        self.assertEqual(report.error.code, SearchErrorCode.DEADLINE)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sleeps, [])
 
 
 def _routing_rpc(search_result: dict, details_result: dict, calls: list):
@@ -406,6 +458,20 @@ class SkiplaggedNameLookupTests(unittest.TestCase):
         self.assertIn("25584", str(ctx.exception))
         self.assertIn("99", str(ctx.exception))
 
+    def test_a_tool_error_reply_is_settled_and_not_retried(self) -> None:
+        calls: list = []
+        rejected = {"isError": True, "content": [{"type": "text", "text": "hotel 99 is delisted"}]}
+        sleeps: list = []
+        report = search_hotel_rooms(
+            99,
+            *self.DAY,
+            rpc=_routing_rpc(_search_result(), rejected, calls),
+            sleep=sleeps.append,
+        )
+        self.assertEqual([params["name"] for params in calls], ["sk_hotel_details"])
+        self.assertEqual(report.error.code, SearchErrorCode.REJECTED)
+        self.assertEqual(sleeps, [])
+
     def test_search_hotel_rooms_by_name_resolves_then_fetches_the_rates(self) -> None:
         calls: list = []
         report = search_hotel_rooms(
@@ -501,6 +567,18 @@ class SkiplaggedRoomsTests(unittest.TestCase):
             sleep=lambda _: None,
         )
         self.assertEqual(report.error.code, SearchErrorCode.NO_RESULTS)
+        self.assertEqual(report.rates, ())
+
+    def test_non_list_rooms_is_drift_not_a_no_rooms_claim(self) -> None:
+        drifted = {"content": [], "structuredContent": {"rooms": {"unexpected": "shape"}}}
+        report = search_hotel_rooms(
+            1,
+            date(2026, 12, 1),
+            date(2026, 12, 4),
+            rpc=_fake_rpc(drifted, []),
+            sleep=lambda _: None,
+        )
+        self.assertEqual(report.error.code, SearchErrorCode.MARKUP_DRIFT)
         self.assertEqual(report.rates, ())
 
     def test_limits_fail_before_any_request(self) -> None:

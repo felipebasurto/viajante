@@ -14,26 +14,19 @@ from typing import Callable, Optional, Protocol, Sequence, Tuple
 from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
 from viajante.control import checkpoint, controlled
 from viajante.dates import _fetch_or_exception, calendar_trip, one_or_many
-from viajante.flights import (
+from viajante.flight_filters import OfferFilters, owned_clock, parse_code_list, parse_offer_filters
+from viajante.flight_offers import (
     FlightSort,
-    OfferFilters,
-    _calendar_summary_from_source,
     _cheapest_by_fare,
     _cheapest_by_ranked,
-    _clock_minutes,
-    _summary_from_calendar_days,
-    _typical_window,
-    classify_failure,
     compare_nonstop_vs_one_stop,
-    expand_nearby_origins,
     offers_from_cards,
-    owned_clock,
-    parse_code_list,
-    parse_offer_filters,
     validate_sort,
 )
+from viajante.flight_routes import expand_nearby_origins
 from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
+from viajante.google_flights_public import classify_failure
 from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.models import (
     ExploreDestination,
@@ -49,8 +42,8 @@ from viajante.models import (
     explore_stop,
     normalize_country,
 )
+from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
-from viajante.typical import with_typical_dest
 
 DEFAULT_EXPLORE_TOP = 12
 MAX_EXPLORE_TOP = 30
@@ -82,14 +75,23 @@ def validate_explore_window(start: date, days: int, *, today: Optional[date] = N
         raise ValueError(f"start date is in the past: {start.isoformat()}")
 
 
-def month_window(value: str, *, flag: str = "month") -> tuple[date, int]:
-    """First day of YYYY-MM and that month's length in days."""
+def month_window(
+    value: str, *, flag: str = "month", today: Optional[date] = None
+) -> tuple[date, int]:
+    """First day of YYYY-MM and that month's length in days.
+
+    The current month starts today: its earlier days are in the past and cannot be searched.
+    """
     try:
         year_text, month_text = value.split("-", 1)
         start = date(int(year_text), int(month_text), 1)
     except ValueError as exc:
         raise ValueError(f"{flag} must look like YYYY-MM") from exc
-    return start, calendar.monthrange(start.year, start.month)[1]
+    length = calendar.monthrange(start.year, start.month)[1]
+    check = today or date.today()
+    if (start.year, start.month) == (check.year, check.month):
+        return check, length - check.day + 1
+    return start, length
 
 
 def _rank_explore_destinations(
@@ -277,27 +279,27 @@ def search_explore(
             )
             for place in chosen
         ]
-        typical_start, typical_end = _typical_window(start)
         batch = None
-        fetch_batch = getattr(client, "fetch_many_with_calendar", None)
+        fetch_batch = getattr(client, "fetch_many", None)
         if callable(fetch_batch) and len(shops) > 1:
             report_progress(f"pricing {len(shops)} dests on one multiplexed round-trip")
             try:
                 checkpoint()
-                batch = fetch_batch([(shop, typical_start, typical_end) for shop in shops])
-            except Exception:
-                batch = None
+                batch = fetch_batch(shops)
+            except Exception as exc:
+                # Every destination carries the batch failure; a serial resend would send each
+                # request a second time with no record of the first.
+                batch = [exc] * len(shops)
         priced: list[ExploreDestination] = []
         pricing_errors: list[QueryFailure] = []
         succeeded = empty = 0
         shop_cards = 0
-        typical_cache: dict = {}
         for index, (place, shop) in enumerate(zip(chosen, shops, strict=True)):
             if batch is None:
                 report_progress(f"[{index + 1}/{len(chosen)}] pricing {place.iata}")
-                cards, calendar_days = _fetch_or_exception(client, shop), None
+                cards = _fetch_or_exception(client, shop)
             else:
-                cards, calendar_days = batch[index]
+                cards = batch[index]
             cheapest, compare = _cheapest_shop(
                 cards, shop, filters, baggage_buffer=baggage_buffer, sort=sort
             )
@@ -323,14 +325,6 @@ def search_explore(
                 google_flights_url=google_flights_url(shop, currency=currency, country=country),
                 baggage_buffer=cheapest.baggage_buffer if cheapest is not None else None,
             )
-            if cheapest is not None:
-                summary = (
-                    _calendar_summary_from_source(client, shop, typical_cache)
-                    if batch is None
-                    else _summary_from_calendar_days(calendar_days, typical_start, typical_end)
-                )
-                if summary is not None:
-                    dest = with_typical_dest(dest, summary.median_price)
             priced.append(dest)
         stop_reason, stop_note = explore_stop(error, pricing_errors)
         empty_reason = None

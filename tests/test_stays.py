@@ -133,6 +133,8 @@ class SplitStayCostsTests(unittest.TestCase):
             "night outside roster": (stay(check_out="2026-12-12"), "EUR"),
             "reversed": (stay(check_in="2026-12-06", check_out="2026-12-03"), "EUR"),
             "negative total": (stay(total=-5), "EUR"),
+            "nan total": (stay(total=float("nan")), "EUR"),
+            "overflowing total": (stay(total="1e400"), "EUR"),
             "text total": (stay(total="lots"), "EUR"),
             "no name": (stay(name=" "), "EUR"),
             "no stays": ([], "EUR"),
@@ -154,12 +156,25 @@ class StayToolTests(unittest.TestCase):
         self.assertEqual(payload["person_nights"], 29)
         self.assertEqual([b["headcount"] for b in payload["blocks"]], [5, 6, 7, 4, 3])
 
-    def test_split_output_is_recorded_so_verify_answer_owns_the_shares(self) -> None:
-        split_stay_costs_tool(STAYS, ROSTER, "EUR", fee_per_person_night=2)
-        verdict = evidence.verify_answer("Chuspi pays EUR 71.28 and the group EUR 645.68.")
+    def test_a_caller_typed_stay_total_is_never_confirmed(self) -> None:
+        invented = [dict(STAYS[0], total=987.65)]
+        split_stay_costs_tool(invented, ROSTER, "EUR")
+        verdict = evidence.verify_answer("The hotel costs EUR 987.65.")
+        self.assertFalse(verdict["ok"], verdict)
+
+    def test_split_of_searched_totals_is_recorded_so_verify_answer_owns_the_shares(self) -> None:
+        evidence.record({"currency": "EUR", "queries": [{"offers": [{"total_price": 391.68}]}]})
+        evidence.record({"currency": "EUR", "queries": [{"offers": [{"total_price": 196}]}]})
+        split_stay_costs_tool(STAYS, ROSTER, "EUR")
+        verdict = evidence.verify_answer("Chuspi pays EUR 65.28 and the group EUR 587.68.")
         self.assertTrue(verdict["ok"], verdict)
-        invented = evidence.verify_answer("Chuspi pays EUR 99.99.")
-        self.assertFalse(invented["ok"])
+        self.assertFalse(evidence.verify_answer("Chuspi pays EUR 99.99.")["ok"])
+
+    def test_named_fee_keeps_the_split_unrecorded(self) -> None:
+        evidence.record({"currency": "EUR", "queries": [{"offers": [{"total_price": 391.68}]}]})
+        evidence.record({"currency": "EUR", "queries": [{"offers": [{"total_price": 196}]}]})
+        split_stay_costs_tool(STAYS, ROSTER, "EUR", fee_per_person_night=2)
+        self.assertFalse(evidence.verify_answer("Chuspi pays EUR 71.28.")["ok"])
 
 
 if __name__ == "__main__":

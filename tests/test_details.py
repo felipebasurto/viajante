@@ -232,11 +232,14 @@ class HotelDetailsTests(unittest.TestCase):
         self.assertEqual(calls[0]["name"], "sk_hotel_details")
         self.assertEqual(result["room_quotes"]["hotel_id"], "25584")
 
-    def test_missing_city_rejects_before_provider(self):
+    def test_missing_city_is_inconclusive_before_provider(self):
+        # A stored search whose city the catalogue cannot place is a result condition, not a
+        # caller error: the answer is inconclusive and nothing is sent.
         with patch("viajante.details.search_hotel_rooms") as rooms:
-            with self.assertRaisesRegex(ValueError, "unambiguous city"):
-                get_hotel_details(hotel(location="near a museum"), 0, 0, room_rates=True)
+            result = get_hotel_details(hotel(location="near a museum"), 0, 0, room_rates=True)
         rooms.assert_not_called()
+        self.assertEqual(result["room_rates_status"], "inconclusive")
+        self.assertIn("unambiguous city", result["reason"])
 
     def test_city_country_qualifier_disambiguates_catalogue_city(self):
         result = hotel(location="London, GB")["queries"][0]
@@ -246,8 +249,9 @@ class HotelDetailsTests(unittest.TestCase):
         result["resolved_place"] = "London"
         self.assertEqual(_city_decision(result, result["offers"][0])[0], "London, GB")
         result["resolved_place"] = "Paris"
-        with self.assertRaisesRegex(ValueError, "resolved place"):
-            _city_decision(result, result["offers"][0])
+        location, anchor = _city_decision(result, result["offers"][0])
+        self.assertIsNone(location)
+        self.assertIn("resolved place", anchor)
 
     def test_homonym_cities_are_inconclusive_without_a_live_call(self):
         for city in ("Springfield", "Portland", "Columbus"):

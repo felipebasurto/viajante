@@ -6,13 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
-from viajante.flights import (
-    _normalize_offer,
-    expand_nearby_trips,
-    parse_flight_plan,
-    parse_named_clock,
-    parse_route_specs,
-)
+from viajante.flight_filters import parse_named_clock
+from viajante.flight_offers import _normalize_offer
+from viajante.flight_routes import expand_nearby_trips, parse_flight_plan, parse_route_specs
 from viajante.google_flights import RawFlightCard
 from viajante.models import (
     AppliedHotelFilters,

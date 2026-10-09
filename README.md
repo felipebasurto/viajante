@@ -1,67 +1,44 @@
 # Viajante
 
-Flight and hotel search for the terminal, Python, and AI assistants.
+Flight and hotel search for your terminal, Python, and AI assistants.
+Runs on your machine, no API keys.
 
 [![PyPI](https://img.shields.io/pypi/v/viajante.svg)](https://pypi.org/project/viajante/)
 [![npm](https://img.shields.io/npm/v/@viajante/mcp.svg)](https://www.npmjs.com/package/@viajante/mcp)
 [![Tests](https://github.com/felipebasurto/viajante/actions/workflows/test.yml/badge.svg)](https://github.com/felipebasurto/viajante/actions/workflows/test.yml)
 
-Viajante searches Google Flights, Google Hotels, and Booking.com. Use it to
-compare flights, find cheaper travel dates, explore destinations, or look up
-places to stay. It runs on your computer and connects directly to the travel
-sites; no API keys are required.
+It reads Google Flights, Google Hotels, and Booking.com directly and returns
+prices, itinerary details, and links. It reports what the provider returned
+and says so when something is unknown; it never invents a fare.
 
-You can run a search from the command line, call the Python library, or connect
-an AI assistant through the Model Context Protocol (MCP). Results include
-prices, itinerary details, source text, and links where available.
-
-[Usage guide](https://github.com/felipebasurto/viajante/blob/main/docs/usage.md)
-· [Contributing](https://github.com/felipebasurto/viajante/blob/main/CONTRIBUTING.md)
-· [Report an issue](https://github.com/felipebasurto/viajante/issues)
-
-## Install
-
-Requires **Python 3.10 or later**.
-
-PyPI:
-
-```bash
-pip install viajante
-```
-
-npx (needs [`uv`](https://docs.astral.sh/uv/) and Python 3.10+ on PATH):
-
-```bash
-npx -y -p @viajante/mcp viajante airports JFK
-```
-
-No install (same `uv` + Python 3.10+):
-
-```bash
-uvx --from viajante viajante airports JFK
-```
+[Website](https://viajante.felipebasurto.com) ·
+[Usage guide](https://github.com/felipebasurto/viajante/blob/main/docs/usage.md) ·
+[Architecture](https://github.com/felipebasurto/viajante/blob/main/docs/architecture.md) ·
+[Changelog](https://github.com/felipebasurto/viajante/blob/main/CHANGELOG.md)
 
 ## Quick start
 
-Search for a one-way flight or a hotel stay:
+Requires **Python 3.10+**.
 
 ```bash
+pip install viajante
+
 viajante flights JFK-LHR:2026-11-15 --fetch sweep
 viajante hotels London 2026-11-15 2026-11-20 --currency GBP --source google
 ```
 
-Use future dates when trying the examples. `JFK` and `LHR` are airport codes;
-`viajante airports london` lists airports for a city so you can choose one.
+Use future dates. Not sure of a code? `viajante airports london`.
 
-These searches use HTTP and do not need a browser. Booking.com and the browser
-mode for Google Flights require the optional
-[browser setup](#optional-browser-support).
+Prefer not to install? `uvx --from viajante viajante airports JFK`, or
+`npx -y -p @viajante/mcp viajante airports JFK` (both need [`uv`](https://docs.astral.sh/uv/)).
+
+These searches use plain HTTP. Booking.com and `--fetch detail` need the
+[browser extra](#optional-browser-support).
 
 ## Connect an AI assistant
 
-Viajante provides a local MCP server over stdio. Requires
-[`uv`](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.10+.
-Add this entry to your assistant's MCP configuration:
+Add this to your assistant's MCP configuration (needs
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.10+):
 
 ```json
 {
@@ -74,103 +51,76 @@ Add this entry to your assistant's MCP configuration:
 }
 ```
 
-That entry runs `uvx --from viajante[mcp,browser]==<version> viajante-mcp`, with `<version>` pinned to the npm package. `search_explore` needs the browser extra. Install Chromium once (Playwright's browser cache is shared per user): `uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium`.
+Without Node, use `"command": "uvx"` with
+`"args": ["--from", "viajante[mcp]", "viajante-mcp"]`. That covers Google
+Flights and Hotels with no Chromium. The npm entry also includes the browser
+extra, which `search_explore` needs.
 
-Native Python (no Node):
+Then ask in plain language:
 
-```json
-{
-  "mcpServers": {
-    "viajante": {
-      "command": "uvx",
-      "args": ["--from", "viajante[mcp]", "viajante-mcp"]
-    }
-  }
-}
-```
+> Find a seven-night round trip from BOS to LHR, departing any day in
+> November 2026. Compare the dates.
 
-The native configuration supports Google Flights and Google Hotels without Chromium.
-npx still needs `uvx` (and Python 3.10+) on PATH. If you use an existing
-Python environment instead, install `pip install 'viajante[mcp]'` and configure
-the client to run that environment's `viajante-mcp` executable.
+> Hotels in Tokyo, November 12 to 16, two adults, free cancellation, in JPY.
 
-For a client that only connects to a URL, run the server on loopback with
-`viajante-mcp --transport streamable-http` and point the client at
-`http://127.0.0.1:8000/mcp`. This has no authentication; every client shares
-this machine's IP and the provider cooldown, so do not expose it. Details are in
-[usage](docs/usage.md#mcp-client-compatibility).
+Every tool result (except `lookup_airports`) carries one envelope: `status`,
+`completeness`, `empty_reason`, `retry_after`, `observed_at`. Only
+`empty_reason: provider_empty` means the provider found nothing. A client that
+only takes a URL can use `viajante-mcp --transport streamable-http`; it has no
+auth, so keep it on loopback ([details](https://github.com/felipebasurto/viajante/blob/main/docs/usage.md#mcp-client-compatibility)).
 
-Once connected, you can ask:
+<details>
+<summary>All 22 MCP tools</summary>
 
-> Find a seven-night round trip from BOS to LHR, departing between November 1
-> and November 30, 2026. Compare the departure dates.
-
-> Search for hotels in Tokyo from November 12 to November 16, 2026, for two
-> adults. Use JPY and require free cancellation.
-
-Every tool result (except `lookup_airports`) carries one envelope: `status`, `completeness`, `empty_reason` (`provider_empty` / `filtered_out` / `not_loaded`), `retry_after` and `observed_at`. Only `provider_empty` means the provider found nothing.
-
-The server exposes twenty-two tools:
-
-| Tool | Use it to |
+| Tool | What it does |
 | --- | --- |
-| `search_flights` | Search one-way, round-trip, or multi-city flights. |
-| `search_dates` | Compare the cheapest returned fare for each departure date in a window. |
-| `search_flex` | Check dates around a target departure, then fetch flights for the cheapest day. |
-| `search_explore` | Discover destinations from an origin airport and price a shortlist. |
-| `search_hotels` | Find stays with total-stay prices and cancellation details where available. |
-| `search_hotel_rooms` | Read Skiplagged room rates for one named hotel. |
-| `get_hotel_details` | Read a hotel offer this process returned, with an optional separate room quote. |
-| `search_trip` | Search flights and hotels together and sum compatible results. |
-| `search_split_tickets` | Opt-in separately ticketed itineraries (a self-transfer via a hub, or mixed one-ways for a round trip) built from real one-way quotes. Connections between tickets are not protected. |
-| `recheck_offer` | Re-check an earlier flight offer with one fresh search: same price, price changed, not found, multiple matches, incomplete identity, or check failed (the check could not complete, which never means the offer is gone). |
-| `lookup_airports` | Look up airport or metro codes offline. |
-| `search_hidden_city` | Opt-in Skiplagged hidden-city fares (not mixed with Google results). |
-| `compare_awards` | Cents-per-point math for a named award offer (no seat inventory). |
-| `lookup_transfers` | Local points transfer-partner table. |
-| `validate_itinerary` | Check a proposed itinerary against the searches' own evidence. |
-| `plan_stay_blocks` | Group consecutive nights that have the same people. |
-| `split_stay_costs` | Split named stay totals among the people who sleep there. |
-| `verify_answer` | Flag amounts, codes, dates, or links in a draft reply that no search returned. |
-| `price_history` | Read the prices this machine recorded for a query (opt-in, local, one currency). |
-| `watch_price` | Re-run a saved flight or hotel search once and report the change since its last observation. |
-| `get_runtime_info` | Read the executing package version offline. |
-| `get_guide` | Read the long operational guide (also the `viajante://guide` resource). |
+| `search_flights` | One-way, round-trip, or multi-city flights |
+| `search_dates` | Cheapest fare per departure date in a window |
+| `search_flex` | Dates around a target, then flights for the cheapest day |
+| `search_explore` | Destinations from an origin, with a priced shortlist |
+| `search_hotels` | Stays with total-stay prices and cancellation terms |
+| `search_hotel_rooms` | Skiplagged room rates for one named hotel |
+| `get_hotel_details` | A hotel offer from this session, plus an optional room quote |
+| `search_trip` | Flights and hotel together, summed when compatible |
+| `search_split_tickets` | Opt-in separately ticketed itineraries (connections not protected) |
+| `search_hidden_city` | Opt-in Skiplagged hidden-city fares |
+| `recheck_offer` | One fresh search to re-check an earlier offer |
+| `validate_itinerary` | Check a proposed itinerary against search evidence |
+| `compare_awards` | Cents-per-point math for a named award offer |
+| `lookup_transfers` | Points transfer-partner table |
+| `lookup_airports` | Airport and metro codes, offline |
+| `plan_stay_blocks` | Group consecutive nights with the same people |
+| `split_stay_costs` | Split stay totals among who slept there |
+| `verify_answer` | Flag amounts, codes, dates, or links no search returned |
+| `price_history` | Prices this machine recorded for a query (opt-in) |
+| `watch_price` | Re-run a saved search and report the change |
+| `get_runtime_info` | Installed version, offline |
+| `get_guide` | Long operational guide |
 
-## Use the command line
+</details>
 
-Each search command accepts `--save FILE` to write a JSON report. Run
-`viajante <command> --help` for its options.
+## Command line
+
+Run `viajante <command> --help` for options. Add `--save FILE` to write a JSON report.
 
 | Command | Purpose |
 | --- | --- |
-| `viajante flights` | Search specific routes and dates. `--split-tickets` opts in to separately ticketed alternatives (not protected if a connection is missed). |
-| `viajante dates` | Compare departure dates across a window of up to 31 days. |
-| `viajante flex` | Search a few days either side of a target date. |
-| `viajante explore` | Find destinations from an origin airport. |
-| `viajante hotels` | Search Google Hotels or Booking.com. |
-| `viajante trip` | Search flights and a hotel stay in one request. |
-| `viajante recheck-offer` | Re-check a saved flight offer against a fresh search; exit 2 means the check could not complete (not a booking guarantee). |
-| `viajante airports` | Find airport codes by city or code. |
-| `viajante hidden-city` | Opt-in Skiplagged hidden-city search. |
-| `viajante awards` | Cents-per-point value of a named award offer. |
-| `viajante points` | Points transfer-partner lookup. |
-| `viajante history` | Prices this machine recorded for a query (opt-in recording; `--clear` deletes it). |
-| `viajante watch` | Re-run a saved flight or hotel query now and report the change. |
-
-For example, compare dates for a seven-night round trip:
+| `flights` | Specific routes and dates (`--split-tickets` is opt-in) |
+| `dates` | Cheapest departure day across a window of up to 31 days |
+| `flex` | A few days either side of a target date |
+| `explore` | Destinations from an origin airport |
+| `hotels`, `hotel-rooms` | Google Hotels, Booking.com, or Skiplagged |
+| `trip` | Flights and a hotel stay in one request |
+| `recheck-offer` | Re-check a saved offer against a fresh search |
+| `airports` | Find airport codes |
+| `hidden-city`, `awards`, `points` | Skiplagged fares, award value, transfer partners |
+| `history`, `watch` | Recorded prices and saved re-runs (opt-in) |
 
 ```bash
 viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 7
 ```
 
-See the [usage guide](https://github.com/felipebasurto/viajante/blob/main/docs/usage.md)
-for round trips, flexible dates, filters, hotel searches, and saved reports.
-
-## Use Python
-
-`get_flights` accepts the same route format as the CLI and returns a typed
-report:
+## Python
 
 ```python
 from viajante import get_flights
@@ -185,80 +135,45 @@ for result in report.queries:
         print(result.error)
 ```
 
-The library also exports `FlightQuery`, `HotelQuery`, and the `search_*`
-functions. The
-[Python examples](https://github.com/felipebasurto/viajante/blob/main/docs/usage.md#python-library)
-show how to build queries directly.
+`FlightQuery`, `HotelQuery`, and the `search_*` functions are exported too;
+see the [Python examples](https://github.com/felipebasurto/viajante/blob/main/docs/usage.md#python-library).
 
 ## Optional browser support
-
-For Booking.com or Google Flights with `--fetch detail`, install Playwright
-and Chromium in the environment that runs Viajante:
 
 ```bash
 pip install 'viajante[browser]'
 playwright install chromium
 ```
 
-For the `uvx` MCP configuration, change `--from` to `viajante[mcp,browser]` and
-install Chromium through that same environment:
+For `uvx`, use `viajante[mcp,browser]` in `--from` and install Chromium from
+that same environment.
 
-```bash
-uvx --from 'viajante[mcp,browser]' playwright install chromium
-```
+## Good to know
 
-Flight searches default to `--fetch auto`: with Playwright installed, they use
-the browser for one or two queries and HTTP for larger batches. Without
-Playwright, they use HTTP. Hotel searches default to Booking.com in the CLI
-and Google Hotels in MCP; use `--source google` for CLI hotel searches without
-a browser.
+- **Currency.** Taken from `--currency`, or from a named origin airport's
+  country. Hotels always need one. Viajante never converts between currencies.
+- **Baggage.** `--bags` and `--carry-on` ask Google for bag pricing.
+  `--baggage-buffer` only affects ranking; it is not a quoted fee.
+- **Hotels.** Prices are for the whole stay. Free cancellation is required
+  unless you opt out. Google rates 0–5, Booking.com 0–10.
+- **Recommendation.** Flight results may include a short `recommendation`
+  block. It adds to the offer list and never replaces it.
+- **Unknown stays unknown.** Missing fields are left out or marked unknown.
 
-## Understanding the results
-
-- **Currency:** Flight searches use the origin airport's country to choose a
-  currency when possible. You can set one explicitly with `--currency`.
-  Standalone hotel searches require a currency. Viajante does not convert
-  between currencies.
-- **Baggage:** Use `--bags` or `--carry-on` to request baggage pricing from
-  Google Flights. An optional `--baggage-buffer` affects ranking; it is a
-  user-supplied amount, not a quoted bag fee, and defaults to zero.
-- **Hotels:** Prices cover the requested stay. Free cancellation is required
-  by default, but an applied search filter and a property's stated terms are
-  recorded separately. Google ratings use a 0–5 scale; Booking.com uses 0–10.
-- **Recommendation:** A successful flights query may carry a `recommendation`
-  block (none when the provider returned nothing): a pick that respects the requirements you named (and reports any it
-  had to relax), plus up to three genuinely different options with factual
-  `highlights` and `tradeoffs`. The score weights are published, unknown
-  fields are labelled unknown, and prices in different currencies are never
-  compared. It adds to the offer list; it does not replace it.
-- **Price comparisons:** When present, `typical` is a median from the same
-  route's date calendar. It is not a historical market average.
-- **Trip totals:** A combined total is shown only when both searches return
-  usable prices, their dates overlap, and their currencies match. It adds the
-  flight fare and hotel stay; it does not create a package booking.
-- **Missing information:** Fields that cannot be determined remain unknown
-  or are omitted. Source text is retained with offers to help you inspect
-  the result.
-
-Travel sites can change their pages, block requests, or return incomplete
-results. Prices and availability can also change after a search. Check the
-final fare, baggage allowance, hotel total, and cancellation terms on the
-provider's site before booking.
+Travel sites change their pages, block requests, and update prices at any time.
+Confirm the final fare, baggage, hotel total, and cancellation terms with the
+provider before you book.
 
 ## Contributing
 
-Bug reports, documentation improvements, and code contributions are welcome.
-The [contributor guide](https://github.com/felipebasurto/viajante/blob/main/CONTRIBUTING.md)
-covers local setup and the offline test suite. For a bug report, include your
-version, command, and error message, with personal information removed.
+Bug reports and focused pull requests are welcome; see
+[CONTRIBUTING.md](https://github.com/felipebasurto/viajante/blob/main/CONTRIBUTING.md).
 
 ## License
 
-Viajante is available under the
-[MIT License](https://github.com/felipebasurto/viajante/blob/main/LICENSE).
-It is an independent project and is not affiliated with Google, Booking.com,
-or any airline. Use of those services is subject to their respective terms:
-[Google](https://policies.google.com/terms) and
+[MIT](https://github.com/felipebasurto/viajante/blob/main/LICENSE). Independent project, not affiliated with Google, Booking.com,
+or any airline. Use of those services is subject to their terms:
+[Google](https://policies.google.com/terms),
 [Booking.com](https://www.booking.com/content/terms.html).
 
 <!-- mcp-name: io.github.felipebasurto/viajante -->

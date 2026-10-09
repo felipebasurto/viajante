@@ -38,7 +38,7 @@ from viajante.google_flights import (
     NoFlightsFound,
     RawFlightCard,
 )
-from viajante.google_flights_rpc import CompactCalendarDay, CompactExplorePlace, CompactParseMiss
+from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.google_hotels_rpc import EmptyHotelResults, HotelsBlocked
 from viajante.hotels import _run_search
 from viajante.models import (
@@ -93,6 +93,28 @@ def _card(price: str = "$128", airline: str = "Delta") -> RawFlightCard:
     )
 
 
+class ValidateOnlyLedgerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        evidence.clear()
+        self.addCleanup(evidence.clear)
+
+    def test_argument_check_takes_no_ledger_slot_and_no_cache_replay(self) -> None:
+        calls = []
+
+        @mcp_handlers._cached
+        def fake_search(value: int) -> dict:
+            # Argument checks run first; the lock is where a validate-only call stops.
+            mcp_handlers._with_search_lock(lambda: calls.append(value))
+            return {"status": "ok", "value": value}
+
+        mcp_handlers._CACHE.clear()
+        fake_search(1)  # a real search, cached and recorded once
+        before = len(evidence._ledger)
+        mcp_handlers.check_search_params(fake_search, {"value": 1})
+        self.assertEqual(len(evidence._ledger), before)
+        self.assertEqual(calls, [1])
+
+
 class _FlightSource:
     """Scripted per-destination responses; an Exception value is raised."""
 
@@ -122,7 +144,6 @@ def _flights(
     queries = tuple(FlightQuery("JFK", dest, DAY, max_stops=1) for dest in responses)
     with (
         patch("viajante.flights.GoogleFlightsHttpSource", return_value=_FlightSource(responses)),
-        patch("viajante.flights.chromium_installed", return_value=False),
     ):
         report = search_flights(queries, top=3, fetch="sweep", currency="USD", **kwargs)
     return stamp_search(reports_payload(report), now=NOW)
@@ -301,7 +322,6 @@ class FlightEmptyReasonTests(_StateDirCase):
             patch(
                 "viajante.flights.GoogleFlightsHttpSource", return_value=_FlightSource(responses)
             ),
-            patch("viajante.flights.chromium_installed", return_value=False),
         ):
             report = search_flights(queries, top=3, fetch="sweep", currency="USD")
         payload = stamp_search(reports_payload(report), now=start + 60)
@@ -441,21 +461,17 @@ class HotelEmptyReasonTests(_StateDirCase):
 
 class DatesFlexExploreTests(_StateDirCase):
     class _Source:
-        def __init__(self, calendar: object, cards: dict | None = None) -> None:
-            self.calendar = calendar
+        """Per-day shop source: each day answers the cards the test gives it, or raises."""
+
+        def __init__(self, cards: dict | None = None, *, error: Exception | None = None) -> None:
             self.cards = cards or {}
+            self.error = error
             self.config = SimpleNamespace(html_lang="en", currency="USD")
 
-        def fetch_calendar(self, query, start, end):
-            if isinstance(self.calendar, Exception):
-                raise self.calendar
-            return self.calendar
-
         def fetch(self, query):
-            response = self.cards.get(query.departure_date, ())
-            if isinstance(response, Exception):
-                raise response
-            return response
+            if self.error is not None:
+                raise self.error
+            return self.cards.get(query.departure_date, ())
 
         def close(self) -> None:
             pass
@@ -466,42 +482,45 @@ class DatesFlexExploreTests(_StateDirCase):
         )
         return stamp_search(reports_payload(report), now=NOW)
 
-    def test_calendar_cells_without_a_price_are_never_provider_empty(self) -> None:
-        # An unpriced or missing calendar cell does not prove the provider has no flights.
+    def test_unpriced_days_of_a_successful_shop_are_provider_empty_per_day(self) -> None:
+        # Each day was shopped and answered no fare, so each day is a provider-empty row.
         payload = self._dates(
-            self._Source((CompactCalendarDay(DAY, None),))  # the second day is missing entirely
+            self._Source({DAY: ()})  # the second day is missing entirely
         )
-        self.assertEqual({row["empty_reason"] for row in payload["days"]}, {"not_loaded"})
+        self.assertEqual({row["empty_reason"] for row in payload["days"]}, {"provider_empty"})
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
-            ("no_results", "partial", "not_loaded"),
+            ("no_results", "complete", "provider_empty"),
         )
-        self.assertNotIn("provider_empty", str(payload["days"]))
 
     def test_priced_calendar_is_ok(self) -> None:
-        payload = self._dates(
-            self._Source(
-                (CompactCalendarDay(DAY, 150.0), CompactCalendarDay(DAY + timedelta(1), None))
-            )
-        )
+        payload = self._dates(self._Source({DAY: (_card(price="$150"),), DAY + timedelta(1): ()}))
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
-            ("ok", "partial", None),
+            ("ok", "complete", None),
         )
 
     def test_sweep_days_filtered_locally_are_filtered_out_not_empty(self) -> None:
-        source = self._Source(
-            CompactParseMiss("drift"),
-            cards={DAY: (_card(),), DAY + timedelta(1): ()},
-        )
+        source = self._Source({DAY: (_card(),), DAY + timedelta(1): ()})
         payload = self._dates(source, max_duration_hours=0.5)
         reasons = [row["empty_reason"] for row in payload["days"]]
         self.assertEqual(reasons, ["filtered_out", "provider_empty"])
         self.assertEqual(payload["empty_reason"], "filtered_out")
         self.assertEqual(payload["status"], "no_results")
 
+    def test_a_date_row_without_a_reason_is_not_loaded_on_any_backend(self) -> None:
+        # Rows built outside viajante carry no reason: they are unproven, whichever backend shopped.
+        for backend in ("sweep", "calendar", "calendar_then_sweep"):
+            with self.subTest(backend=backend):
+                payload = stamp_search(
+                    {"fetch_backend": backend, "days": [{"status": "empty"}]}, now=NOW
+                )
+                self.assertEqual(
+                    (payload["empty_reason"], payload["completeness"]), ("not_loaded", "partial")
+                )
+
     def test_a_blocked_calendar_is_not_loaded_and_blocked(self) -> None:
-        payload = self._dates(self._Source(GoogleFlightsBlocked("wall")))
+        payload = self._dates(self._Source(error=GoogleFlightsBlocked("wall")))
         self.assertTrue(all(row["status"] == "error" for row in payload["days"]))
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
@@ -509,13 +528,13 @@ class DatesFlexExploreTests(_StateDirCase):
         )
 
     def test_a_window_with_missing_days_is_partial(self) -> None:
-        payload = self._dates(self._Source((CompactCalendarDay(DAY, 150.0),)))
+        payload = self._dates(self._Source({DAY: (_card(price="$150"),)}))
         payload["coverage"] = {**payload["coverage"], "complete": False}
         restamped = stamp_search(payload, now=NOW)
         self.assertEqual((restamped["status"], restamped["completeness"]), ("ok", "partial"))
 
-    def test_flex_calendar_miss_is_failed_not_no_results(self) -> None:
-        source = self._Source(CompactParseMiss("drift"))
+    def test_flex_markup_drift_on_every_day_is_failed_not_no_results(self) -> None:
+        source = self._Source(error=GoogleFlightsMarkupError("drift"))
         report = search_flex("JFK", "LHR", DAY, 1, source=source, currency="USD")
         payload = stamp_search(reports_payload(report), now=NOW)
         self.assertEqual(payload["error"]["code"], "markup_drift")
@@ -524,12 +543,12 @@ class DatesFlexExploreTests(_StateDirCase):
             ("failed", "blocked", "not_loaded"),
         )
 
-    def test_flex_window_with_no_priced_day_is_not_loaded_not_no_flights(self) -> None:
-        source = self._Source(())
+    def test_flex_window_with_no_priced_day_is_provider_empty(self) -> None:
+        source = self._Source()
         report = search_flex("JFK", "LHR", DAY, 1, source=source, currency="USD")
         payload = stamp_search(reports_payload(report), now=NOW)
-        self.assertEqual(payload["empty_reason"], "not_loaded")
-        self.assertEqual((payload["status"], payload["completeness"]), ("no_results", "partial"))
+        self.assertEqual(payload["empty_reason"], "provider_empty")
+        self.assertEqual((payload["status"], payload["completeness"]), ("no_results", "complete"))
 
     class _ExploreSource:
         def __init__(self, places: object, prices: dict | None = None) -> None:
@@ -782,6 +801,18 @@ class LocalToolTests(unittest.TestCase):
         payload = mcp_handlers.split_stay_costs_tool(stays, roster, "USD")
         self.assertEqual(payload["completeness"], "complete")
 
+    def test_split_totals_are_recorded_only_when_a_search_owns_every_input(self) -> None:
+        roster = {"2027-01-01": ["ana"]}
+        stay = {"name": "A", "check_in": "2027-01-01", "check_out": "2027-01-02"}
+        evidence._ledger.clear()
+        self.addCleanup(evidence._ledger.clear)
+        evidence.record({"currency": "USD", "offers": [{"price": 291}]})
+        before = len(evidence._ledger)
+        mcp_handlers.split_stay_costs_tool([{**stay, "total": 0}], roster, "USD")
+        self.assertEqual(len(evidence._ledger), before)
+        mcp_handlers.split_stay_costs_tool([{**stay, "total": 291}], roster, "USD")
+        self.assertEqual(len(evidence._ledger), before + 1)
+
     def test_validation_with_unknown_evidence_is_partial(self) -> None:
         report = MagicMock()
         report.to_dict.return_value = {"feasible": None, "checks": []}
@@ -828,6 +859,19 @@ class UnknownShapeTests(unittest.TestCase):
     def test_a_payload_with_only_a_typed_error_is_recognised(self) -> None:
         payload = stamp_search({"error": {"code": "blocked", "message": "wall"}}, now=NOW)
         self.assertEqual((payload["status"], payload["empty_reason"]), ("blocked", "not_loaded"))
+
+    def test_a_row_empty_reason_the_envelope_does_not_know_is_refused(self) -> None:
+        # A foreign empty_reason must not count toward (or corrupt) a tally field:
+        # before, "shapes" incremented the shape counter and stamped filtered_out.
+        for payload in (
+            {"queries": [{"query": {}, "empty_reason": "shapes"}]},
+            {"queries": [{"query": {}, "empty_reason": "bogus"}]},
+            {"days": [{"status": "ok", "empty_reason": "bogus"}]},
+            {"destinations": [], "empty_reason": "bogus"},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(EnvelopeShapeError):
+                    stamp_search(dict(payload))
 
 
 class VerifyAnswerEnvelopeTests(unittest.TestCase):
@@ -1070,6 +1114,16 @@ class SplitEnvelopeTests(unittest.TestCase):
             payload, status="blocked", completeness="blocked", empty_reason="not_loaded"
         )
 
+    def test_a_packaged_row_that_did_not_load_is_not_loaded_beside_an_empty_one(self) -> None:
+        # The same rule stamp_search applies: an empty sibling cannot hide a row that did not load.
+        packaged = {
+            "queries": [{"query": {}, "raw_count": 0}, {"query": {}, "empty_reason": "not_loaded"}]
+        }
+        payload = stamp_split(_split_payload([], packaged_report=packaged))
+        self.assertEnvelope(
+            payload, status="no_results", empty_reason="not_loaded", error_code=None
+        )
+
     def test_answered_legs_whose_pairings_were_all_rejected_are_filtered_out(self) -> None:
         payload = stamp_split(
             _split_payload([_leg(), _leg()], rejected={"connection_too_short": 2})
@@ -1130,6 +1184,16 @@ class SplitEnvelopeTests(unittest.TestCase):
             stamp_split({"searched_at": SPLIT_AT})
         with self.assertRaises(EnvelopeShapeError):
             stamp_search(_split_payload([_leg()]))
+
+    def test_legs_cut_by_the_deadline_are_partial_never_blocked(self) -> None:
+        # stamp_search treats an all-deadline result as a chosen stop (partial);
+        # a split search cut by an enclosing deadline reads the same way.
+        deadline = _split_error(SearchErrorCode.DEADLINE, "cut", timeout=True)
+        payload = stamp_split(_split_payload([_leg(deadline), _leg(deadline)]))
+        self.assertEqual(payload["status"], "timeout")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["empty_reason"], "not_loaded")
+        self.assertEqual(payload["error_code"], "deadline")
 
 
 class ErrorTaxonomyTests(unittest.TestCase):
@@ -1198,9 +1262,9 @@ class OutputSchemaTests(unittest.TestCase):
         self.assertEqual(len(tools), 22)
         for name, tool in tools.items():
             if name == "lookup_airports":
-                self.assertIsNone(tool.outputSchema)
+                self.assertIsNone(tool.output_schema)
                 continue
-            schema = tool.outputSchema
+            schema = tool.output_schema
             with self.subTest(tool=name):
                 own = {"guide"} if name == "get_guide" else set()
                 self.assertEqual(set(schema["required"]), ENVELOPE_KEYS | own)
@@ -1211,14 +1275,15 @@ class OutputSchemaTests(unittest.TestCase):
                 self.assertEqual(reasons, list(EMPTY_REASONS))
 
     def test_structured_content_keeps_every_payload_key(self) -> None:
-        _content, structured = asyncio.run(self.server.call_tool("get_runtime_info", {}))
+        # MCP 2 hands back a CallToolResult: text in .content, the payload in .structured_content.
+        structured = asyncio.run(self.server.call_tool("get_runtime_info", {})).structured_content
         self.assertTrue(ENVELOPE_KEYS <= set(structured))
         self.assertIn("viajante_version", structured)
-        content, structured = asyncio.run(
+        result = asyncio.run(
             self.server.call_tool("plan_stay_blocks", {"roster": {"2027-01-01": ["ana"]}})
         )
-        self.assertIn("blocks", structured)
-        self.assertEqual(json.loads(content[0].text)["status"], "ok")
+        self.assertIn("blocks", result.structured_content)
+        self.assertEqual(json.loads(result.content[0].text)["status"], "ok")
 
     def test_search_result_round_trips_with_payload_and_envelope(self) -> None:
         report = MagicMock()
@@ -1229,9 +1294,9 @@ class OutputSchemaTests(unittest.TestCase):
             "queries": [],
         }
         with patch("viajante.mcp_handlers.search_flights", return_value=report):
-            _content, structured = asyncio.run(
+            structured = asyncio.run(
                 self.server.call_tool("search_flights", {"routes": [f"JFK-LHR:{DAY.isoformat()}"]})
-            )
+            ).structured_content
         self.assertEqual(structured["schema_version"], 2)
         self.assertEqual(structured["observed_at"], "2026-08-10T10:00:00Z")
         self.assertEqual(structured["queries"], [])

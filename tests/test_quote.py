@@ -33,6 +33,12 @@ class OriginCashCurrencyTests(unittest.TestCase):
         self.assertEqual(cash_currency_for_origin("SYD"), "AUD")
         self.assertEqual(cash_currency_for_origin("MAD"), "EUR")
 
+    def test_countries_with_two_or_a_replaced_cash_currency_ask_for_one(self) -> None:
+        # Panama takes USD and PAB; Curaçao and Sint Maarten changed codes. Viajante asks.
+        for origin in ("PTY", "CUR", "SXM"):
+            with self.subTest(origin=origin):
+                self.assertIsNone(cash_currency_for_origin(origin))
+
     def test_unknown_iata_cannot_prove_a_currency(self) -> None:
         self.assertIsNone(cash_currency_for_origin("XXX"))
         self.assertIsNone(cash_currency_for_origin(""))

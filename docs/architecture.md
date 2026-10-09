@@ -83,6 +83,9 @@ immediately instead of queueing. Lookups, local stay arithmetic, `price_history`
 verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
 
+Loopback HTTP passes `transport_security` to `run()` explicitly, so the allowed Host and Origin
+list is viajante's and does not depend on the SDK default.
+
 MCP client compatibility lives at the adapter edge. `mcp_server.py` registers each
 tool with a title and read-only annotations (`openWorldHint` only for tools that go
 through the search runner). `mcp_errors.py` turns a handler `ValueError` into the
@@ -143,8 +146,8 @@ slot for them.
   page scripts. Missing or malformed bootstrap data is a parse failure, while
   a recognized empty result shape remains provider-empty.
 - `google_flights_rpc.py` owns compact-provider decoding. The public-page path
-  passes its decoded `data` array to the same `parse_shopping_data` function
-  used by the RPC adapter; it does not invent a `wrb.fr` wrapper.
+  passes its decoded `data` array to `parse_shopping_data`; it does not invent a
+  `wrb.fr` wrapper and sends no unsigned RPC.
 
 ### 3. The public-page sweep
 
@@ -277,8 +280,7 @@ recorded cooldown answered every request (nothing was sent). `stamp_search`
 raises on a payload shape it does not recognise instead of defaulting to
 `no_results`. `verify_answer` is local: its `status` follows its verdict.
 
-Machine-readable schema: the mcp SDK (the supported floor is 1.14.1; earlier
-releases crash at startup on this module's postponed annotations) derives `outputSchema` and
+Machine-readable schema: the mcp SDK (the supported floor is 2.3.0; the 1.x line has no `MCPServer`) derives `outputSchema` and
 `structuredContent` from a tool's return annotation. The envelope is a pydantic
 model with `extra="allow"`, so tool-specific keys stay in the structured result.
 `lookup_airports` keeps its bare list return and has no output schema (a list
@@ -404,7 +406,7 @@ improvement loops.
   confirm the room and terms on the provider.
 - **Unconfirmed money fields stay out.** Google base/tax/fee breakdown
   (`record[6][2][44]`) needs provider evidence. Caller-named exchange rates
-  need a design decision; neither is part of this release.
+  need a design decision; neither is implemented.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.

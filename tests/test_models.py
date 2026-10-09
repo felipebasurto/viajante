@@ -57,6 +57,8 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             FlightQuery("JFK", "LHR", date(2026, 9, 1), cabin="space")  # type: ignore[arg-type]
         with self.assertRaises(ValueError):
+            FlightQuery("JFK", "JFK", date(2026, 9, 1))
+        with self.assertRaises(ValueError):
             FlightQuery("XXX", "LHR", date(2026, 9, 1))
         with self.assertRaises(ValueError):
             FlightQuery("JFK", "XXX", date(2026, 9, 1))
@@ -124,7 +126,7 @@ class ModelTests(unittest.TestCase):
             nearby_label="nearby London LHR",
         )
         self.assertEqual(labeled.nearby_label, "nearby London LHR")
-        self.assertNotIn("nearby_label", labeled.to_dict())
+        self.assertEqual(labeled.to_dict()["nearby_label"], "nearby London LHR")
         self.assertNotIn("return_date", data)
         self.assertNotIn("legs", data)
         self.assertNotIn("bags", data)
@@ -192,20 +194,22 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(same_day.legs[1].departure_date, date(2026, 9, 1))
 
     def test_flight_offer_requires_positive_price(self) -> None:
-        with self.assertRaises(ValueError):
-            FlightOffer(
-                airline="Air",
-                departure="08:00",
-                arrival="09:00",
-                price_text="0 €",
-                price=0.0,
-                duration="1 h",
-                duration_hours=1.0,
-                stops="Directo",
-                stops_count=0,
-                baggage_buffer=0,
-                needs_bag_verify=False,
-            )
+        for bad in (0.0, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(price=bad):
+                with self.assertRaises(ValueError):
+                    FlightOffer(
+                        airline="Air",
+                        departure="08:00",
+                        arrival="09:00",
+                        price_text="0 €",
+                        price=bad,
+                        duration="1 h",
+                        duration_hours=1.0,
+                        stops="Directo",
+                        stops_count=0,
+                        baggage_buffer=0,
+                        needs_bag_verify=False,
+                    )
 
     def test_query_result_variants(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1))

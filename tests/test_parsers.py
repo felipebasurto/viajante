@@ -31,6 +31,8 @@ PRICE_CASES = [
     ("-20 €", -20.0),
     ("Ryanair - 120 €", 120.0),
     ("BHD 12.345", 12.345),
+    ("12.345 BHD", 12.345),
+    ("from JOD 1.234", 1.234),
     ("CHF 1'234", 1234.0),
     ("CHF 1\u2019234", 1234.0),
     ("USD 1,2,3", None),
@@ -66,6 +68,12 @@ STOPS_CASES = [
 
 
 class ParserTests(unittest.TestCase):
+    def test_a_trailing_iso_code_sets_three_decimal_currencies(self) -> None:
+        # The RPC price text is "<amount> <CODE>"; a KWD fare of 45.125 must not read as 45125.
+        self.assertEqual(parse_price("45.125 KWD"), 45.125)
+        self.assertEqual(parse_price("1,045.125 KWD"), 1045.125)
+        self.assertEqual(parse_price("KWD 45.125"), 45.125)
+
     def test_parse_price(self) -> None:
         for text, want in PRICE_CASES:
             with self.subTest(text=text):
@@ -146,6 +154,14 @@ class ParserTests(unittest.TestCase):
                 CancellationEvidence.FREE,
             ),
             ("No free cancellation", CancellationEvidence.UNKNOWN),
+            ("No  free cancellation", CancellationEvidence.UNKNOWN),
+            ("No\n free cancellation", CancellationEvidence.UNKNOWN),
+            ("Not free cancellation", CancellationEvidence.UNKNOWN),
+            ("Non-free cancellation", CancellationEvidence.UNKNOWN),
+            ("Free cancellation not available", CancellationEvidence.UNKNOWN),
+            ("Free cancellation unavailable", CancellationEvidence.UNKNOWN),
+            ("Free cancellation is not offered", CancellationEvidence.UNKNOWN),
+            ("Free cancellation until 20 Oct", CancellationEvidence.FREE),
             (
                 "No free cancellation. Non-refundable",
                 CancellationEvidence.NON_REFUNDABLE,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -50,13 +51,15 @@ def cents_per_point(
     taxes: Optional[float] = None,
 ) -> float:
     """Owned CPP in cents. cash_price and taxes must be the same currency."""
-    if cash_price <= 0:
-        raise ValueError("cash_price must be positive")
+    if not math.isfinite(cash_price) or cash_price <= 0:
+        raise ValueError("cash_price must be a positive number")
     if points <= 0:
         raise ValueError("points must be positive")
-    if taxes is not None and taxes < 0:
-        raise ValueError("taxes must not be negative")
+    if taxes is not None and (not math.isfinite(taxes) or taxes < 0):
+        raise ValueError("taxes must be a non-negative number")
     outlay = 0.0 if taxes is None else taxes
+    if outlay > cash_price:
+        raise ValueError("taxes cannot exceed cash_price, which includes them")
     return round((cash_price - outlay) / points * 100.0, 2)
 
 
@@ -81,9 +84,12 @@ def parse_balances(raw: Any) -> tuple[PointsBalance, ...]:
     return tuple(out)
 
 
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def load_balances(path: Path) -> tuple[PointsBalance, ...]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return parse_balances(payload)
+    return parse_balances(_read_json(path))
 
 
 def award_offer_from_mapping(raw: Mapping[str, Any]) -> AwardOffer:
@@ -125,17 +131,21 @@ def award_offer_from_mapping(raw: Mapping[str, Any]) -> AwardOffer:
         evidence=evidence,  # type: ignore[arg-type]
         cabin=cabin,  # type: ignore[arg-type]
         taxes=float(taxes) if taxes is not None else None,
-        currency=raw.get("currency") if isinstance(raw.get("currency"), str) else None,
+        currency=_optional_str(raw.get("currency")),
         remaining_seats=remaining,
-        booking_url=raw.get("booking_url") if isinstance(raw.get("booking_url"), str) else None,
-        source=source if isinstance(source, str) else None,
-        airline=raw.get("airline") if isinstance(raw.get("airline"), str) else None,
+        booking_url=_optional_str(raw.get("booking_url")),
+        source=_optional_str(source),
+        airline=_optional_str(raw.get("airline")),
         return_date=date.fromisoformat(return_date) if isinstance(return_date, str) else None,
     )
 
 
+def _optional_str(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) else None
+
+
 def load_award_offer(path: Path) -> AwardOffer:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = _read_json(path)
     if not isinstance(payload, Mapping):
         raise ValueError("award offer must be a JSON object")
     return award_offer_from_mapping(payload)

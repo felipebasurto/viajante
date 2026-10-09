@@ -118,7 +118,7 @@ def _offer() -> HotelOffer:
 def _report() -> HotelSearchReport:
     query = HotelQuery("Prague", date(2026, 12, 4), date(2026, 12, 7), min_rating=8.5)
     applied = AppliedHotelFilters(
-        chips=("oos=1",),
+        chips=("fc=2",),
         url="https://www.booking.com/searchresults.html?ss=Prague",
     )
     return HotelSearchReport(

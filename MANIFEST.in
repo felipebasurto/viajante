@@ -1,0 +1,4 @@
+# The landing page and design notes live in git but never ship in the sdist.
+prune landing
+prune .impeccable
+exclude DESIGN.md PRODUCT.md

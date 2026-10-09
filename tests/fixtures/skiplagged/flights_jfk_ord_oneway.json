@@ -1,0 +1,212 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "# Flight search results (JFK → ORD)\n\n- Departure: 2026-11-17\n- Sorted by: Lowest price first\n- Showing 8 of 71 results (more available)\n\n[Open search on Skiplagged](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp)\n\n| Price | Duration | Stops | Type | Airlines | Segments | Booking |\n| --- | --- | --- | --- | --- | --- | --- |\n| $98 | 3h 1m | Nonstop | — | American Airlines | Outbound:<br/>JFK → ORD (2026-11-17 07:29:00-05:00 → 2026-11-17 09:30:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2819) |\n| $98 | 2h 57m | Nonstop | — | Delta Air Lines | Outbound:<br/>JFK → ORD (2026-11-17 07:30:00-05:00 → 2026-11-17 09:27:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL4925) |\n| $98 | 2h 55m | Nonstop | — | American Airlines | Outbound:<br/>JFK → ORD (2026-11-17 10:40:00-05:00 → 2026-11-17 12:35:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2848) |\n| $98 | 2h 56m | Nonstop | — | American Airlines | Outbound:<br/>JFK → ORD (2026-11-17 14:59:00-05:00 → 2026-11-17 16:55:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3162) |\n| $98 | 2h 59m | Nonstop | — | Delta Air Lines | Outbound:<br/>JFK → ORD (2026-11-17 15:21:00-05:00 → 2026-11-17 17:20:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL4915) |\n| $98 | 3h 7m | Nonstop | — | Delta Air Lines | Outbound:<br/>JFK → ORD (2026-11-17 19:35:00-05:00 → 2026-11-17 21:42:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL5611) |\n| $98 | 3h 6m | Nonstop | — | American Airlines | Outbound:<br/>JFK → ORD (2026-11-17 20:24:00-05:00 → 2026-11-17 22:30:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA1067) |\n| $98 | 6h 20m | 1 stop | — | JetBlue Airways | Outbound:<br/>JFK → BOS (2026-11-17 06:40:00-05:00 → 2026-11-17 07:50:00-05:00)<br/>Layover in BOS – 2h 9m<br/>BOS → ORD (2026-11-17 09:59:00-05:00 → 2026-11-17 12:00:00-06:00) | [Book](https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=B62718-B6111) |"
+    }
+  ],
+  "structuredContent": {
+    "searchUrl": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp",
+    "flights": [
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=AA2819",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T07:29:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T09:30:00-06:00"
+        },
+        "duration": "3h 1m",
+        "layovers": 0,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2819",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=DL4925",
+        "airlines": "Delta Air Lines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T07:30:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T09:27:00-06:00"
+        },
+        "duration": "2h 57m",
+        "layovers": 0,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL4925",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=AA2848",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T10:40:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T12:35:00-06:00"
+        },
+        "duration": "2h 55m",
+        "layovers": 0,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA2848",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=AA3162",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T14:59:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T16:55:00-06:00"
+        },
+        "duration": "2h 56m",
+        "layovers": 0,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA3162",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=DL4915",
+        "airlines": "Delta Air Lines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T15:21:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T17:20:00-06:00"
+        },
+        "duration": "2h 59m",
+        "layovers": 0,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL4915",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=DL5611",
+        "airlines": "Delta Air Lines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T19:35:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T21:42:00-06:00"
+        },
+        "duration": "3h 7m",
+        "layovers": 0,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=DL5611",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=AA1067",
+        "airlines": "American Airlines",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T20:24:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T22:30:00-06:00"
+        },
+        "duration": "3h 6m",
+        "layovers": 0,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=AA1067",
+        "attributes": [
+          "standard",
+          "nonstop"
+        ]
+      },
+      {
+        "type": "FlightCard",
+        "id": "JFK-ORD-2026-11-17-trip=B62718-B6111",
+        "airlines": "JetBlue Airways",
+        "departure": {
+          "airport": "JFK",
+          "dateTime": "2026-11-17T06:40:00-05:00"
+        },
+        "arrival": {
+          "airport": "ORD",
+          "dateTime": "2026-11-17T12:00:00-06:00"
+        },
+        "duration": "6h 20m",
+        "layovers": 1,
+        "price": {
+          "amount": 98,
+          "currency": "USD"
+        },
+        "deepLink": "https://skiplagged.com/flights/JFK/ORD/2026-11-17?utm_source=mcp&utm_medium=ai&utm_campaign=skiplagged_mcp#trip=B62718-B6111",
+        "attributes": [
+          "standard",
+          "one-stop"
+        ]
+      }
+    ],
+    "pagination": {
+      "totalAvailable": 71,
+      "currentlyShowing": 8,
+      "offset": 0,
+      "limit": 8,
+      "hasMoreResults": true
+    }
+  }
+}

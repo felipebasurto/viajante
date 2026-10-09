@@ -368,6 +368,50 @@ class ValidateItineraryTests(unittest.TestCase):
         )
         self.assertNotIn("price_eur", json.dumps(data))
 
+    def test_missing_provenance_stays_unknown(self) -> None:
+        row = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="owned",
+            segments=[_segment("JFK", "LHR")],
+        )
+        del row["offer"]["evidence"]["evidence_id"]
+        report = validate_itinerary([row], {}, currency="USD")
+        self.assertEqual(_status(report, "evidence"), "unknown")
+        self.assertIsNone(report.feasible)
+
+        owned = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="owned",
+            segments=[_segment("JFK", "LHR")],
+        )
+        reproducible = validate_itinerary([owned], {"require_reproducible": True}, currency="USD")
+        self.assertEqual(_status(reproducible, "require_reproducible"), "pass")
+        self.assertTrue(reproducible.feasible)
+
+        for kind in (None, "query"):
+            bare = _row(
+                "JFK",
+                "LHR",
+                "2026-10-01",
+                evidence_id="bare",
+                segments=[_segment("JFK", "LHR")],
+            )
+            if kind is None:
+                del bare["offer"]["evidence"]["url_kind"]
+            else:
+                bare["offer"]["evidence"]["url_kind"] = kind
+                bare["offer"]["evidence"]["query_url"] = None
+            checked = validate_itinerary([bare], {"require_reproducible": True}, currency="USD")
+            self.assertEqual(
+                _status(checked, "require_reproducible"),
+                "unknown" if kind is None else "fail",
+            )
+            self.assertIs(checked.feasible, None if kind is None else False)
+
     def test_unknown_constraint_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported itinerary constraints"):
             validate_itinerary([], {"optimal": True}, currency="USD")

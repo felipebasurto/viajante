@@ -17,17 +17,13 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
 
 from viajante.airports import airport_geo
-from viajante.flights import (
-    DEFAULT_TOP,
-    _overlay_carrier_filters,
-    parse_code_list,
-    search_flights,
-)
+from viajante.flight_filters import parse_code_list
+from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.models import (
     FlightOffer,
     FlightQuery,
@@ -42,6 +38,8 @@ from viajante.models import (
 from viajante.parsers import normalize_clock
 from viajante.quote import first_origin_iata, resolve_quote_currency
 from viajante.ratelimit import rate_limit_advice, rate_limit_status
+from viajante.split_filters import SplitFilters, search_bounds
+from viajante.split_filters import passes as split_passes
 from viajante.temporal import local_instant
 
 # A planning default for a self-transfer, not provider evidence. Border control, bag
@@ -151,6 +149,11 @@ class SplitItinerary:
         if self.currency is None:
             return None
         return _money(sum(part.offer.price for part in self.parts), self.currency)
+
+    @property
+    def baggage_buffer_total(self) -> int:
+        """The parts' baggage buffers added up: a ranking add-on, never part of ``total``."""
+        return sum(part.offer.baggage_buffer for part in self.parts)
 
     @property
     def savings(self) -> Optional[float]:
@@ -435,7 +438,9 @@ def pair_hub_quotes(
 
 
 def pair_mixed_one_ways(
-    report: SearchReport, packaged: Optional[PackagedQuote] = None
+    report: SearchReport,
+    packaged: Optional[PackagedQuote] = None,
+    keep: Optional[Callable[[SplitItinerary], bool]] = None,
 ) -> tuple[list[SplitItinerary], Counter[str]]:
     """Cheapest feasible outbound one-way plus return one-way (two queries in the report).
 
@@ -447,11 +452,10 @@ def pair_mixed_one_ways(
     only when nothing proven exists in its currency, and is flagged ``timing_proven: false``
     with a ``timing_note``. One pair per currency (the cheapest total within it); prices in
     different currencies never compete. When no currency has both tickets the total is
-    unknown and each ticket is the cheapest of its own search.
+    unknown and each ticket is the cheapest of its own search. ``keep`` drops a candidate
+    pair before that choice, so a named filter cannot remove the only pair it had left.
     """
     rejected: Counter[str] = Counter()
-    if len(report.queries) != 2:
-        return [], rejected
     out, back = report.queries
     if not isinstance(out, QuerySuccess) or not isinstance(back, QuerySuccess):
         return [], rejected
@@ -486,6 +490,9 @@ def pair_mixed_one_ways(
                 packaged=packaged,
                 timing_proven=known,
             )
+            if keep is not None and not keep(row):
+                rejected["filter"] += 1
+                continue
             (proven if known else unproven).append(row)
     chosen: list[SplitItinerary] = []
     for code in dict.fromkeys(row.currency for row in (*proven, *unproven)):
@@ -530,7 +537,7 @@ def _rank(
             groups[code],
             key=lambda row: (
                 row.timing_proven is False,
-                row.total or 0.0,
+                (row.total or 0.0) + row.baggage_buffer_total,
                 row.connection_minutes or 0,
             ),
         )
@@ -539,25 +546,6 @@ def _rank(
         if code != currency:
             omitted += max(len(group) - limit, 0)
     return ranked, omitted
-
-
-def with_carrier_filters(
-    query: FlightQuery | RoundTrip,
-    *,
-    airlines: Optional[Sequence[str]] = None,
-    exclude_airlines: Optional[Sequence[str]] = None,
-    alliances: Optional[Sequence[str]] = None,
-    exclude_alliances: Optional[Sequence[str]] = None,
-) -> FlightQuery | RoundTrip:
-    """The query with the caller's carrier filters applied to it."""
-    (row,) = _overlay_carrier_filters(
-        (query,),
-        airlines=airlines,
-        exclude_airlines=exclude_airlines,
-        alliances=alliances,
-        exclude_alliances=exclude_alliances,
-    )
-    return row  # type: ignore[return-value]
 
 
 def _leg_rows(report: SearchReport, hub: Optional[str] = None) -> list[dict[str, object]]:
@@ -667,6 +655,8 @@ def search_split_tickets(
     proxy: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
     search: SearchFn = search_flights,
+    filters: Optional[SplitFilters] = None,
+    baggage_buffer: int = 0,
 ) -> SplitReport:
     """Search split tickets for one one-way (via hubs) or one round-trip (mixed one-ways).
 
@@ -688,7 +678,16 @@ def search_split_tickets(
     )
     currency = resolve_quote_currency(currency, first_origin_iata(query))
     report_progress = progress or (lambda _: None)
-    shop = dict(fetch=fetch, currency=currency, country=country, proxy=proxy, progress=progress)
+    if baggage_buffer < 0:
+        raise ValueError("baggage_buffer must not be negative")
+    shop = dict(
+        fetch=fetch,
+        currency=currency,
+        country=country,
+        proxy=proxy,
+        progress=progress,
+        baggage_buffer=baggage_buffer,
+    )
 
     packaged_searched = packaged is None
     if packaged is None:
@@ -707,6 +706,8 @@ def search_split_tickets(
     max_hubs = max_hubs or (len(named_via) if named_via else DEFAULT_SPLIT_HUBS)
     max_extra = 2 if kind == "mixed_one_ways" else max_hubs * (3 if allow_overnight else 2)
 
+    named_filters = filters if filters is not None and filters.named else None
+    keep = None if named_filters is None else (lambda row: split_passes(row, named_filters))
     if kind == "mixed_one_ways":
         if error is None:
             assert isinstance(query, RoundTrip)
@@ -719,13 +720,20 @@ def search_split_tickets(
                 ),
             ]
             report_progress("split: outbound and return as separate one-way tickets")
-            report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop)
+            # Each ticket is a whole journey, so the bounds apply to both before their top rows.
+            report = search(
+                trips,
+                top=SPLIT_LEG_TOP,
+                sort="fare",
+                **shop,
+                **search_bounds(filters, end="journey"),
+            )
             extra += len(trips)
             reports.append(report)
             legs.extend(_leg_rows(report))
             error = _rate_limited([report])
             stopping = "rate_limited" if error else stopping
-            found, short = pair_mixed_one_ways(report, baseline)
+            found, short = pair_mixed_one_ways(report, baseline, keep=keep)
             itineraries.extend(found)
             rejected.update(short)
     else:
@@ -759,7 +767,17 @@ def search_split_tickets(
                 days.append(query.departure_date + timedelta(days=1))
             trips += [_one_way(query, hub, query.destination, day, leg_max_stops) for day in days]
             report_progress(f"split: {query.origin}-{hub}-{query.destination} as two tickets")
-            report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop)
+            head_bounds = search_bounds(filters, end="first")
+            tail_bounds = search_bounds(filters, end="last")
+            if head_bounds == tail_bounds:
+                report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)
+            else:
+                # A clock bound binds one end of the journey, so each end is its own search.
+                # ponytail: with named clock bounds a hub costs two sequential sweeps instead of
+                # one. Upgrade: merge them once the provider takes per-query clock filters.
+                head = search(trips[:1], top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)
+                tail = search(trips[1:], top=SPLIT_LEG_TOP, sort="fare", **shop, **tail_bounds)
+                report = replace(head, queries=(*head.queries, *tail.queries), coverage=None)
             extra += len(trips)
             tried.append(hub)
             reports.append(report)
@@ -777,6 +795,10 @@ def search_split_tickets(
             for row in itineraries
             if row.currency == currency and row.total is not None and row.total <= query.price_cap
         ]
+    if filters is not None and filters.named:
+        kept = [row for row in itineraries if split_passes(row, filters)]
+        rejected["filter"] += len(itineraries) - len(kept)
+        itineraries = kept
     ranked, omitted = _rank(itineraries, currency, top)
     leg_total = len(legs)
     ok = sum(row["status"] == "ok" for row in legs)

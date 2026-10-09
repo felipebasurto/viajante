@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import re
-import time
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date
 from typing import Callable, Sequence
 from urllib.parse import urlencode
 
@@ -16,11 +14,8 @@ from viajante.airports import same_city_iata
 from viajante.carriers import ALLIANCE_TFS_CODE, _airline_filter_hit
 from viajante.control import SearchDeadline, checkpoint
 from viajante.google_flights import (
-    CONSENT_SETTLE_MS,
-    PAGE_TIMEOUT_MS,
     RPC_THROTTLE_STATUS,
     SEARCH_URL,
-    STATE_FILENAME,
     SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
@@ -29,15 +24,14 @@ from viajante.google_flights import (
     NoFlightsFound,
     SweepHttpResponse,
     SweepTransportError,
-    _retry_after_seconds,
     build_search_params,
     looks_blocked,
     raise_for_sweep_response,
     response_diagnostics,
 )
+from viajante.google_flights_explore_browser import capture_catalog, explore_session
 from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
 from viajante.google_flights_rpc import (
-    CompactCalendarDay,
     CompactExplorePlace,
     CompactParseMiss,
     EmptyShoppingResults,
@@ -47,10 +41,24 @@ from viajante.google_flights_rpc import (
     parse_explore_catalog,
     raw_rpc_error_status,
 )
-from viajante.models import FlightCabin, FlightQuery, MultiCity, RawJourneyLeg, RoundTrip, Trip
+from viajante.models import (
+    FlightCabin,
+    FlightQuery,
+    MultiCity,
+    RawJourneyLeg,
+    RoundTrip,
+    SearchError,
+    SearchErrorCode,
+    Trip,
+)
+from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.parsers import parse_price
-from viajante.ratelimit import note_rate_limited, rate_limit_advice, rate_limit_status
-from viajante.storage import default_state_dir
+from viajante.ratelimit import (
+    cooldown_until,
+    note_rate_limited,
+    rate_limit_advice,
+    rate_limit_status,
+)
 from viajante.sweep_config import get_sweep_config
 from viajante.tfs import CABIN_SEAT, encode_explore_tfs, encode_tfs_selected_outbound
 
@@ -111,13 +119,57 @@ def _response_retriable(response: SweepHttpResponse) -> bool:
 
 
 EXPLORE_URL = "https://www.google.com/travel/explore"
-_EXPLORE_CATALOG_SERVICE = "GetExploreDestinations"
-_EXPLORE_CATALOG_WAIT_MS = 45_000
 _EXPLORE_OCCUPANCY = [1, 0, 0, 0]
 
 
 class GoogleFlightsUnsupported(GoogleFlightsRejected):
     """A requested capability cannot be represented by this transport."""
+
+
+NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
+
+
+REJECTED_MESSAGE = "Google Flights rejected this query; the provider did not identify the cause."
+
+
+def classify_failure(exc: BaseException) -> SearchError:
+    if isinstance(exc, NoFlightsFound):
+        return SearchError(
+            code=SearchErrorCode.NO_RESULTS,
+            message=NO_RESULTS_MESSAGE,
+        )
+    if isinstance(exc, GoogleFlightsUnsupported):
+        return SearchError(
+            code=SearchErrorCode.REJECTED,
+            message=str(exc),
+            diagnostics={
+                "request_sent": False,
+                "attempts": 0,
+                "http_status": None,
+                "rpc_status": None,
+                "endpoint": "www.google.com/travel/flights",
+                "cooldown_basis": None,
+            },
+        )
+    if isinstance(exc, GoogleFlightsRejected):
+        return SearchError(
+            code=SearchErrorCode.REJECTED,
+            message=REJECTED_MESSAGE,
+        )
+    if isinstance(exc, GoogleFlightsBlocked):
+        return SearchError(
+            code=SearchErrorCode.BLOCKED,
+            message=str(exc) or "Google Flights blocked the request.",
+            rate_limited=exc.status == 429,
+            retry_until=cooldown_until(str(exc)) if exc.status == 429 else None,
+            diagnostics=getattr(exc, "diagnostics", None),
+        )
+    if isinstance(exc, GoogleFlightsMarkupError):
+        return SearchError(
+            code=SearchErrorCode.MARKUP_DRIFT,
+            message=str(exc) or "Google Flights markup could not be parsed.",
+        )
+    return classify_provider_failure(exc)
 
 
 def _carrier_catalog_tokens(data: object) -> set[str] | None:
@@ -138,10 +190,101 @@ def _carrier_catalog_tokens(data: object) -> set[str] | None:
     return {row[0] for row in rows if isinstance(row, list) and row and isinstance(row[0], str)}
 
 
+def _replay_response(first: object, response: SweepHttpResponse) -> SweepHttpResponse:
+    """A replayed page is attempt 2 only when its first attempt was sent. An unsent page's
+    replay is its first send, so its diagnostics must not claim a second attempt."""
+    if isinstance(first, SweepHttpResponse):
+        first_sent = first.request_sent
+    else:
+        first_sent = bool((getattr(first, "diagnostics", None) or {}).get("request_sent"))
+    return replace(response, attempts=2) if first_sent and response.request_sent else response
+
+
+def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlightCard:
+    """One round-trip package: the outbound card carrying the return leg's fare and carriers.
+
+    The fare, token and bag evidence come from the return card, since that card priced the
+    package. Carriers come from both legs, so an exclusion on either leg still applies.
+    """
+    sides = (outbound, returned)
+    if any(side.airline_codes is None and not side.airline for side in sides):
+        # One leg's carrier is unknown, so the package carrier is unknown too.
+        codes, airline = None, ""
+    else:
+        codes = None
+        if all(side.airline_codes is not None for side in sides):
+            codes = tuple(dict.fromkeys(outbound.airline_codes + returned.airline_codes))
+        airline = ", ".join(dict.fromkeys(side.airline for side in sides if side.airline))
+    return replace(
+        outbound,
+        airline=airline,
+        airline_codes=codes,
+        price=returned.price,
+        booking_token=returned.booking_token,
+        checked_bags=returned.checked_bags,
+        carry_on=returned.carry_on,
+        legs=(outbound.legs[0], returned.legs[0]),
+        flight_numbers=tuple((outbound.flight_numbers or ()) + (returned.flight_numbers or ())),
+    )
+
+
+def _validate_capabilities(trip: Trip, *, allow_multi_city: bool = False) -> None:
+    unsupported = [
+        key
+        for key in (
+            "bags",
+            "exclude_alliances",
+        )
+        if getattr(trip, key, None) is not None
+    ]
+    # A positive carry-on rides the tfs BaggageFilter and is verified by the
+    # page's Bags chip echo. Checked bags produce no provider echo on this
+    # transport, and a named 0 is the unselected state (no echo either);
+    # both stay refused like an unverifiable filter.
+    if trip.carry_on == 0:
+        unsupported.append("carry_on")
+    if isinstance(trip, MultiCity) and not allow_multi_city:
+        unsupported.append("multi_city")
+    if unsupported:
+        reasons = []
+        if "bags" in unsupported or "carry_on" in unsupported:
+            reasons.append("baggage-inclusive fares remain unknown")
+        if "exclude_alliances" in unsupported:
+            reasons.append(
+                "alliance exclusion is not verifiable: the public page "
+                "registers the filter but does not remove every "
+                "alliance-marketed itinerary"
+            )
+        if "multi_city" in unsupported:
+            reasons.append(
+                "the public page returns no multi-city results; request an explicit "
+                "browser detail search (--fetch detail) for multi-city packages"
+            )
+        message = (
+            "Not sent. Google Flights public-page transport cannot verify "
+            "these requested capabilities: "
+        ) + ", ".join(unsupported)
+        message += ". Remove them only for an explicitly separate scenario"
+        if reasons:
+            message += "; " + "; ".join(reasons)
+        raise GoogleFlightsUnsupported(message + ".")
+
+
+def _matches_leg(card: RawFlightCard, query) -> bool:
+    if len(card.legs) != 1 or not card.legs[0].segments:
+        return False
+    segments = card.legs[0].segments
+    return (
+        segments[0].origin == query.origin
+        and segments[-1].destination == query.destination
+        and segments[0].departure_date == query.departure_date
+        and len(segments) - 1 <= query.max_stops
+    )
+
+
 class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
     """Read server-rendered ds:1 data; complete RTs with owned outbound selections."""
 
-    automatic_typical = False
     transport = "public_page"
 
     def __init__(self, **kwargs) -> None:
@@ -151,48 +294,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self.scope_bound = False
         self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
         self._stopped_error: GoogleFlightsBlocked | None = None
-        self._explore_browser = None
-
-    def _validate_capabilities(self, trip: Trip, *, allow_multi_city: bool = False) -> None:
-        unsupported = [
-            key
-            for key in (
-                "bags",
-                "exclude_alliances",
-            )
-            if getattr(trip, key, None) is not None
-        ]
-        # A positive carry-on rides the tfs BaggageFilter and is verified by the
-        # page's Bags chip echo. Checked bags produce no provider echo on this
-        # transport, and a named 0 is the unselected state (no echo either);
-        # both stay refused like an unverifiable filter.
-        if trip.carry_on == 0:
-            unsupported.append("carry_on")
-        if isinstance(trip, MultiCity) and not allow_multi_city:
-            unsupported.append("multi_city")
-        if unsupported:
-            reasons = []
-            if "bags" in unsupported or "carry_on" in unsupported:
-                reasons.append("baggage-inclusive fares remain unknown")
-            if "exclude_alliances" in unsupported:
-                reasons.append(
-                    "alliance exclusion is not verifiable: the public page "
-                    "registers the filter but does not remove every "
-                    "alliance-marketed itinerary"
-                )
-            if "multi_city" in unsupported:
-                reasons.append(
-                    "the public page returns no multi-city results; request an explicit "
-                    "browser detail search (--fetch detail) for multi-city packages"
-                )
-            message = (
-                "Not sent. Google Flights public-page transport cannot verify "
-                "these requested capabilities: "
-            ) + ", ".join(unsupported)
-            message += ". Remove them only for an explicitly separate scenario"
-            if reasons:
-                message += "; " + "; ".join(reasons)
-            raise GoogleFlightsUnsupported(message + ".")
+        self._explore_browser = explore_session(
+            html_lang=self._html_lang,
+            currency=self._currency,
+            country=self._country,
+            proxy=self._proxy,
+        )
 
     def _url(self, trip: Trip, outbound: RawJourneyLeg | None = None) -> str:
         params = build_search_params(
@@ -317,18 +424,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     "Public page did not echo the requested alliance filter."
                 )
 
-    @staticmethod
-    def _matches_leg(card: RawFlightCard, query) -> bool:
-        if len(card.legs) != 1 or not card.legs[0].segments:
-            return False
-        segments = card.legs[0].segments
-        return (
-            segments[0].origin == query.origin
-            and segments[-1].destination == query.destination
-            and segments[0].departure_date == query.departure_date
-            and len(segments) - 1 <= query.max_stops
-        )
-
     def _read_page(self, trip: Trip, outbound: RawJourneyLeg | None = None):
         checkpoint()
         url = self._url(trip, outbound)
@@ -371,18 +466,22 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         )
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        self._validate_capabilities(trip)
+        _validate_capabilities(trip)
         self.partial_error = None
         self.scope_bound = False
         cards, _html = self._read_page_retry(trip)
-        matched = tuple(card for card in cards if self._matches_leg(card, trip.legs[0]))
+        matched = tuple(card for card in cards if _matches_leg(card, trip.legs[0]))
         if not matched:
             raise GoogleFlightsMarkupError(
                 "Public-page rows did not prove the requested route, date and stops."
             )
         if not isinstance(trip, RoundTrip):
             return matched
-        return self._round_trip_packages(trip, matched, self._read_selected_return)
+        client = self._round_trip_batch_client()
+        if client is None:
+            return self._round_trip_packages(trip, matched, self._read_selected_return)
+        slots, _halt, _client = self._return_slots(client, trip, matched)
+        return self._round_trip_packages(trip, matched, _cached_return_reader(slots))
 
     def _read_selected_return(
         self, trip: RoundTrip, outbound: RawFlightCard
@@ -409,19 +508,8 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                         "Selected outbound echo was not proven on the return page."
                     )
                 for returned in returns:
-                    if self._matches_leg(returned, trip.legs[1]):
-                        complete.append(
-                            replace(
-                                outbound,
-                                price=returned.price,
-                                booking_token=returned.booking_token,
-                                legs=(outbound.legs[0], returned.legs[0]),
-                                flight_numbers=tuple(
-                                    (outbound.flight_numbers or ())
-                                    + (returned.flight_numbers or ())
-                                ),
-                            )
-                        )
+                    if _matches_leg(returned, trip.legs[1]):
+                        complete.append(_package_card(outbound, returned))
             except SearchDeadline:
                 if not complete:
                     raise
@@ -461,12 +549,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             if isinstance(diagnostics, dict):
                 exc.diagnostics = {**diagnostics, "attempts": 2}
             raise
-
-    def fetch_with_calendar(self, query, start, end):
-        return self.fetch(query), ()  # No hidden 31-day fanout for an optional typical.
-
-    def fetch_many_with_calendar(self, jobs):
-        return [(result, ()) for result in self.fetch_many([query for query, _, _ in jobs])]
 
     def _round_trip_batch_client(self):
         """Sweep client when it can multiplex GETs. Otherwise the serial loop stays."""
@@ -517,8 +599,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         for slot, response in zip(retry, retried, strict=True):
             # An unsent sibling's replay is its first send. Only a page that
             # was sent, failed, and was sent again is attempt 2.
-            already_sent = first[slot].request_sent and response.request_sent
-            out[slot] = replace(response, attempts=2) if already_sent else response
+            out[slot] = _replay_response(first[slot], response)
         return out, client
 
     @staticmethod
@@ -594,7 +675,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         chunk_size = get_sweep_config().concurrency
         for index, trip in enumerate(trips):
             try:
-                self._validate_capabilities(trip)
+                _validate_capabilities(trip)
             except Exception as exc:
                 results[index] = exc
         halt: GoogleFlightsBlocked | None = None
@@ -622,7 +703,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 try:
                     cards = self._parse_response(response, url, trips[index])
                     matched = tuple(
-                        card for card in cards if self._matches_leg(card, trips[index].legs[0])
+                        card for card in cards if _matches_leg(card, trips[index].legs[0])
                     )
                     if not matched:
                         raise GoogleFlightsMarkupError(
@@ -725,7 +806,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         pending = []
         for index, trip in enumerate(trips):
             try:
-                self._validate_capabilities(trip)
+                _validate_capabilities(trip)
                 pending.append(index)
             except Exception as exc:
                 results[index] = exc
@@ -747,11 +828,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         for index, url, response in zip(pending, urls, responses, strict=True):
             try:
                 cards = self._parse_response(response, url, trips[index])
-                if not all(self._matches_leg(card, trips[index].legs[0]) for card in cards):
+                matched = tuple(card for card in cards if _matches_leg(card, trips[index].legs[0]))
+                if not matched:
                     raise GoogleFlightsMarkupError(
                         "Public-page rows did not prove the requested route, date and stops."
                     )
-                results[index] = cards
+                results[index] = matched
             except SearchDeadline as exc:
                 results[index] = exc
             except Exception as exc:
@@ -772,14 +854,17 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 for index, url, response in zip(replay, retry_urls, retried, strict=True):
                     try:
                         cards = self._parse_response(
-                            replace(response, attempts=2), url, trips[index]
+                            _replay_response(results[index], response), url, trips[index]
                         )
-                        if not all(self._matches_leg(card, trips[index].legs[0]) for card in cards):
+                        matched = tuple(
+                            card for card in cards if _matches_leg(card, trips[index].legs[0])
+                        )
+                        if not matched:
                             raise GoogleFlightsMarkupError(
                                 "Public-page rows did not prove the requested "
                                 "route, date and stops."
                             )
-                        results[index] = cards
+                        results[index] = matched
                     except SearchDeadline as exc:
                         results[index] = exc
                     except Exception as exc:
@@ -821,33 +906,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 or looks_blocked(response.text, response.url)
             )
         return responses
-
-    def fetch_calendar(self, trip: Trip, start: date, end: date):
-        self._validate_capabilities(trip)
-        if end < start or (end - start).days > 30:
-            raise ValueError("public calendar requires an ordered window of at most 31 days")
-        queries = []
-        for offset in range((end - start).days + 1):
-            day = start + timedelta(days=offset)
-            changes = {"departure_date": day}
-            if isinstance(trip, RoundTrip):
-                changes["return_date"] = day + (trip.return_date - trip.departure_date)
-            queries.append(replace(trip, **changes))
-        outcomes = self.fetch_many(queries)
-        days = []
-        for query, outcome in zip(queries, outcomes, strict=True):
-            if isinstance(outcome, BaseException):
-                raise outcome  # Unknown is never an unpriced provider-empty cell.
-            prices = [parse_price(card.price) for card in outcome]
-            owned = [price for price in prices if price is not None]
-            days.append(
-                CompactCalendarDay(
-                    query.departure_date,
-                    min(owned) if owned else None,
-                    query.return_date if isinstance(query, RoundTrip) else None,
-                )
-            )
-        return tuple(days)
 
     def fetch_explore(
         self,
@@ -931,98 +989,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         state = rate_limit_status()
         if state is not None:
             raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
-        page = self._explore_session().new_page()
-        captured: list[tuple[object, SweepHttpResponse, float | None]] = []
-
-        def _capture(response) -> None:
-            if _EXPLORE_CATALOG_SERVICE not in response.url:
-                return
-            try:
-                body = response.text()
-            except SearchDeadline:
-                raise
-            except Exception:
-                body = ""
-            post = None
-            try:
-                post = response.request.post_data
-            except SearchDeadline:
-                raise
-            except Exception:
-                post = None
-            captured.append(
-                (
-                    post,
-                    SweepHttpResponse(response.status, body, response.url),
-                    _retry_after_seconds(response),
-                )
-            )
-
-        page.on("response", _capture)
-        try:
-            navigation = page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
-            checkpoint()
-            if navigation is not None and navigation.status >= 400:
-                self._raise_explore_failure(
-                    navigation.text(),
-                    response=SweepHttpResponse(navigation.status, "", navigation.url),
-                    retry_after_seconds=_retry_after_seconds(navigation),
-                )
-            if "consent.google" in page.url:
-                self._dismiss_consent(page)
-            if looks_blocked("", page.url):
-                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
-            deadline = time.monotonic() + _EXPLORE_CATALOG_WAIT_MS / 1000
-            while not captured and time.monotonic() < deadline:
-                checkpoint()
-                page.wait_for_timeout(250)
-            checkpoint()
-            for _post, response, retry_after in captured:
-                self._raise_explore_failure(
-                    response.text, response=response, retry_after_seconds=retry_after
-                )
-            # Keep Playwright pumping response events while checking control between sleeps.
-            for elapsed in range(0, CONSENT_SETTLE_MS, 250):
-                checkpoint()
-                page.wait_for_timeout(min(250, CONSENT_SETTLE_MS - elapsed))
-                checkpoint()
-                for _post, response, retry_after in captured:
-                    self._raise_explore_failure(
-                        response.text, response=response, retry_after_seconds=retry_after
-                    )
-        finally:
-            with contextlib.suppress(Exception):
-                page.close()
-        if not captured:
-            raise SweepTransportError(
-                "Google Explore issued no catalog request before the wait expired.",
-                timeout=True,
-            )
-        return [(post, response.text) for post, response, _retry_after in captured]
-
-    def _explore_session(self):
-        if self._explore_browser is None:
-            from viajante.browser import BrowserSessionConfig, ChromiumSession
-            from viajante.models import FETCH_LOCALE
-
-            self._explore_browser = ChromiumSession(
-                default_state_dir(),
-                BrowserSessionConfig(
-                    state_filename=STATE_FILENAME,
-                    locale=FETCH_LOCALE,
-                    html_lang=self._html_lang,
-                    currency=self._currency,
-                    country=self._country,
-                    proxy=self._proxy,
-                ),
-            )
-        return self._explore_browser
-
-    @staticmethod
-    def _dismiss_consent(page) -> None:
-        from viajante.google_flights import GoogleFlightsSource
-
-        GoogleFlightsSource._dismiss_consent(page)
+        return capture_catalog(self._explore_browser, url, self._raise_explore_failure)
 
     def _raise_explore_failure(
         self,
@@ -1045,9 +1012,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             if self._proxy is None:
                 checkpoint()
                 state = (
-                    note_rate_limited(retry_after_seconds)
+                    note_rate_limited(retry_after_seconds, endpoint=response.url)
                     if response.status == 429
-                    else note_rate_limited(basis="heuristic_rpc_13", cause="rpc_13")
+                    else note_rate_limited(
+                        basis="heuristic_rpc_13", cause="rpc_13", endpoint=response.url
+                    )
                 )
                 reason = rate_limit_advice(state, reason=cause)
                 basis = state.get("basis", "unknown")
@@ -1070,8 +1039,5 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
 
     def close(self) -> None:
-        browser = self._explore_browser
-        self._explore_browser = None
-        if browser is not None:
-            browser.close()
+        self._explore_browser.close()
         super().close()
