@@ -866,6 +866,7 @@ class PartialBatchTests(unittest.TestCase):
         client = ChromeSweepClient.__new__(ChromeSweepClient)
         client._asyncio = asyncio
         client._loop = asyncio.new_event_loop()
+        self.addCleanup(client._loop.close)  # cleanups run LIFO: after stop and join below
         thread = threading.Thread(target=client._loop.run_forever, daemon=True)
         thread.start()
         self.addCleanup(thread.join, 2)

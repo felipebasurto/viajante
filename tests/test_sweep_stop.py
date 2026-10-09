@@ -128,6 +128,7 @@ class BatchWaitTests(unittest.TestCase):
         with patch("viajante.google_flights.wait_for_future", side_effect=FutureTimeout()):
             with patch.object(client._asyncio, "run_coroutine_threadsafe", return_value=future):
                 coro = asyncio.sleep(0)
+                self.addCleanup(coro.close)  # the patch never hands it to a loop
                 with self.assertRaises(FutureTimeout):
                     client._submit(coro, timeout=1.0)
         self.assertTrue(future.cancelled())
