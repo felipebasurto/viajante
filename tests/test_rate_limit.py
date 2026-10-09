@@ -134,6 +134,13 @@ class CooldownStateTests(_StateDir):
         state = note_rate_limited(now=T0)
         self.assertEqual(state["cooldown_s"], RATE_LIMIT_COOLDOWN_SECONDS)
 
+    def test_an_unhashable_basis_reads_as_unknown_not_a_crash(self) -> None:
+        write_json_atomic(
+            {"at": T0, "until": T0 + 60, "cooldown_s": 60, "basis": ["x"], "cause": "unknown"},
+            default_state_dir() / GOOGLE_RATE_LIMIT_FILE,
+        )
+        self.assertEqual(rate_limit_status(now=T0 + 1)["basis"], "unknown")
+
 
 class CooldownGateTests(_StateDir):
     def test_flights_and_hotels_send_nothing_during_a_cooldown(self) -> None:
