@@ -26,9 +26,9 @@ from viajante.flight_routes import (
     keep_included_dest_trips,
     normalize_trip_kind,
 )
-from viajante.flights import DEFAULT_TOP, classify_failure
 from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
+from viajante.google_flights_public import classify_failure
 from viajante.models import (
     DateCalendarReport,
     DateCalendarSummary,
@@ -48,6 +48,7 @@ from viajante.models import (
     format_money,
     normalize_country,
 )
+from viajante.models_common import DEFAULT_TOP, empty_reason_for_rows
 from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
 from viajante.typical import typical_from_daily_prices, vs_typical, with_typical
@@ -718,6 +719,8 @@ def _flex_report_for_seed(
         f"{_stay_label(kind, stay)}{_nearby_suffix(seed)}"
     )
     started = time.perf_counter()
+    # fetch_backend values are JSON and stay as they are. "calendar_then_sweep" means the chosen
+    # day's offers were ranked from cards the window's day GETs already fetched.
     backend: FlexFetchBackend = "calendar"
     days: tuple[DatePriceRow, ...] = ()
     offers: tuple[FlightOffer, ...] = ()
@@ -969,7 +972,7 @@ def _row_from_day_cards(
             departure_date=cursor,
             return_date=returning,
             status="empty",
-            empty_reason="filtered_out" if cards else "provider_empty",
+            empty_reason=empty_reason_for_rows(len(cards)),
         )
     return DatePriceRow(
         departure_date=cursor,

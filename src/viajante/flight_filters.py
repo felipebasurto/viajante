@@ -94,20 +94,46 @@ def validate_layover_hours(
     max_layover_hours: Optional[float] = None,
     min_layover_hours: Optional[float] = None,
     max_duration_hours: Optional[float] = None,
+    *,
+    cli: bool = False,
 ) -> None:
-    """Reject negative layover/duration caps and a min above the max."""
+    """Reject negative layover/duration caps and a min above the max. cli=True names the flags."""
+    if cli:
+        max_name, min_name, duration_name = "--max-layover", "--min-layover", "--max-duration"
+    else:
+        max_name, min_name, duration_name = (
+            "max_layover_hours",
+            "min_layover_hours",
+            "max_duration_hours",
+        )
     if max_layover_hours is not None and max_layover_hours < 0:
-        raise ValueError("max_layover_hours must not be negative")
+        raise ValueError(f"{max_name} must not be negative")
     if min_layover_hours is not None and min_layover_hours < 0:
-        raise ValueError("min_layover_hours must not be negative")
+        raise ValueError(f"{min_name} must not be negative")
     if max_duration_hours is not None and max_duration_hours < 0:
-        raise ValueError("max_duration_hours must not be negative")
+        raise ValueError(f"{duration_name} must not be negative")
     if (
         min_layover_hours is not None
         and max_layover_hours is not None
         and min_layover_hours > max_layover_hours
     ):
-        raise ValueError("min layover must be at or below max layover")
+        raise ValueError(
+            f"{min_name} must be at or below {max_name}"
+            if cli
+            else "min layover must be at or below max layover"
+        )
+
+
+def validate_via_pair(
+    via: Optional[Sequence[str]], exclude_via: Optional[Sequence[str]], *, cli: bool = False
+) -> None:
+    """A connection airport cannot be both required and excluded. cli=True names the flags."""
+    if via and exclude_via and set(via) & set(exclude_via):
+        raise ValueError(
+            "--via and --exclude-via must not share a code"
+            if cli
+            else "via and exclude-via must not share a code"
+        )
 
 
 OVERNIGHT_ANY = "any"
@@ -194,6 +220,21 @@ class OfferFilters:
     def named(self) -> bool:
         return any(value is not None for value in vars(self).values())
 
+    def normalizer_kwargs(self) -> dict[str, object]:
+        """The post-filter keywords ``_normalize_offer`` takes, each named here."""
+        return {
+            "max_layover_hours": self.max_layover_hours,
+            "min_layover_hours": self.min_layover_hours,
+            "max_duration_hours": self.max_duration_hours,
+            "depart_window": self.depart_window,
+            "arrive_before": self.arrive_before,
+            "depart_after": self.depart_after,
+            "via": self.via,
+            "exclude_via": self.exclude_via,
+            "no_overnight": self.no_overnight,
+            "require_overnight": self.require_overnight,
+        }
+
 
 NO_OFFER_FILTERS = OfferFilters()
 
@@ -218,8 +259,7 @@ def parse_offer_filters(
     )
     parsed_via = parse_code_list(via, role="via")
     parsed_exclude_via = parse_code_list(exclude_via, role="exclude-via")
-    if parsed_via and parsed_exclude_via and set(parsed_via) & set(parsed_exclude_via):
-        raise ValueError("via and exclude-via must not share a code")
+    validate_via_pair(parsed_via, parsed_exclude_via)
     parsed_no, parsed_require = parse_overnight_lists(no_overnight, require_overnight)
     return OfferFilters(
         max_layover_hours=max_layover_hours,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import fields
 from datetime import date, datetime
 from random import Random
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import _isolate  # noqa: F401
 from viajante.airports import get_airport
 from viajante.flight_filters import (
     NO_OFFER_FILTERS,
+    OfferFilters,
     _overnight_from_owned_clocks,
     parse_depart_window,
     parse_named_clock,
@@ -1395,6 +1397,11 @@ class GetFlightsTests(unittest.TestCase):
 
 
 class OfferFilterTests(unittest.TestCase):
+    def test_normalizer_kwargs_names_every_offer_filter_field(self) -> None:
+        # A field left out of the normalizer's keywords would be dropped without any error.
+        names = {field.name for field in fields(OfferFilters)}
+        self.assertEqual(set(OfferFilters().normalizer_kwargs()), names)
+
     def test_include_airlines_keeps_matching_codes(self) -> None:
         iberia = card(airline="Iberia", airline_codes=("IB",), price="100 €")
         ryanair = card(airline="Ryanair", airline_codes=("FR",), price="40 €", departure="09:00")

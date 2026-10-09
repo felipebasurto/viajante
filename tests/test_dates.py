@@ -31,7 +31,6 @@ from viajante.dates import (
 from viajante.flight_filters import parse_depart_window, parse_named_clock
 from viajante.flight_offers import _normalize_offer
 from viajante.google_flights import GoogleFlightsRejected, RawFlightCard, google_flights_url
-from viajante.google_flights_rpc import CompactCalendarDay
 from viajante.models import (
     MIN_PRICED_DAYS_FOR_SUMMARY,
     DateCalendarReport,
@@ -70,15 +69,16 @@ def tearDownModule() -> None:
 
 
 class FakeDaySource:
-    """Per-day shopping source: the live dates and flex path prices each day by one shop."""
+    """Per-day shopping source: each day answers the cards the test gives it, or raises."""
 
     def __init__(
         self,
-        days: tuple[CompactCalendarDay, ...] | Exception = (),
         cards: dict[date, tuple[RawFlightCard, ...]] | None = None,
+        *,
+        error: Exception | None = None,
     ) -> None:
-        self.days = days
         self.cards = cards or {}
+        self.error = error
         self.closed = False
         self.fetch_calls = 0
         self.fetched_queries: list[object] = []
@@ -87,17 +87,17 @@ class FakeDaySource:
     def fetch(self, query):
         self.fetch_calls += 1
         self.fetched_queries.append(query)
-        if isinstance(self.days, Exception):
-            raise self.days
-        if query.departure_date in self.cards:
-            return self.cards[query.departure_date]
-        for day in self.days:
-            if day.departure_date == query.departure_date and day.price is not None:
-                return (_card(price=f"€{day.price:g}"),)
-        return ()
+        if self.error is not None:
+            raise self.error
+        return self.cards.get(query.departure_date, ())
 
     def close(self) -> None:
         self.closed = True
+
+
+def _shopped(*days: tuple[date, float | None]) -> dict[date, tuple[RawFlightCard, ...]]:
+    """Per-day answers: a priced day gets one card at its price, an unpriced day gets none."""
+    return {day: (_card(price=f"€{price:g}"),) if price is not None else () for day, price in days}
 
 
 def _card(**kwargs: object) -> RawFlightCard:
@@ -152,12 +152,10 @@ def _overnight_card(
 def _flex_shop_source(*cards: RawFlightCard) -> FakeDaySource:
     chosen = date(2026, 9, 12)
     return FakeDaySource(
-        (
-            CompactCalendarDay(date(2026, 9, 11), 180.0),
-            CompactCalendarDay(chosen, 90.0),
-            CompactCalendarDay(date(2026, 9, 13), 140.0),
-        ),
-        cards={chosen: cards},
+        cards={
+            **_shopped((date(2026, 9, 11), 180.0), (chosen, 90.0), (date(2026, 9, 13), 140.0)),
+            chosen: cards,
+        },
     )
 
 
@@ -197,11 +195,7 @@ class DateWindowTests(unittest.TestCase):
 class DateSearchTests(unittest.TestCase):
     def test_fake_source_fills_a_window(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 45.0),
-                CompactCalendarDay(date(2026, 9, 2), None),
-                CompactCalendarDay(date(2026, 9, 3), 52.0),
-            )
+            _shopped((date(2026, 9, 1), 45.0), (date(2026, 9, 2), None), (date(2026, 9, 3), 52.0))
         )
         report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 3), source=source)
         self.assertEqual(len(report.days), 3)
@@ -214,7 +208,7 @@ class DateSearchTests(unittest.TestCase):
         self.assertTrue(source.closed)
 
     def test_rejected_calendar_marks_every_day(self) -> None:
-        source = FakeDaySource(GoogleFlightsRejected("nope"))
+        source = FakeDaySource(error=GoogleFlightsRejected("nope"))
         report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 2), source=source)
         self.assertEqual(report.days[0].status, "error")
         self.assertEqual(report.days[0].error.code, SearchErrorCode.REJECTED)
@@ -434,12 +428,7 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(events, ["[1/3] JFK -> LHR 2026-09-01"])
 
     def test_unnamed_sort_stays_date_order(self) -> None:
-        source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 90.0),
-                CompactCalendarDay(date(2026, 9, 2), 40.0),
-            )
-        )
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 90.0), (date(2026, 9, 2), 40.0)))
         report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 2), source=source)
         self.assertEqual(
             [row.departure_date for row in report.days],
@@ -501,11 +490,7 @@ class DateSearchTests(unittest.TestCase):
 
     def test_fare_sort_uses_owned_price(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 90.0),
-                CompactCalendarDay(date(2026, 9, 2), None),
-                CompactCalendarDay(date(2026, 9, 3), 40.0),
-            )
+            _shopped((date(2026, 9, 1), 90.0), (date(2026, 9, 2), None), (date(2026, 9, 3), 40.0))
         )
         unnamed = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 3), source=source)
         self.assertEqual(
@@ -544,11 +529,8 @@ class DateSearchTests(unittest.TestCase):
         # Day 1's cheapest fare is a 100 LCC that costs 160 with the bag buffer, so its ranked
         # winner is the 120 legacy fare. Sorting by price must show and place it at 100.
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 100.0),
-                CompactCalendarDay(date(2026, 9, 2), 110.0),
-            ),
             cards={
+                **_shopped((date(2026, 9, 1), 100.0), (date(2026, 9, 2), 110.0)),
                 date(2026, 9, 1): (
                     _card(airline="Ryanair", price="€100"),
                     _card(airline="Iberia", price="€120"),
@@ -604,12 +586,10 @@ class DateSearchTests(unittest.TestCase):
         # 120 legacy fare. The summary and typical are fare statistics on the same base as flex
         # (each day's cheapest fare), whatever the row sort. The row still shows its winner.
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 120.0),
-                CompactCalendarDay(date(2026, 9, 2), 110.0),
-                CompactCalendarDay(date(2026, 9, 3), 130.0),
-            ),
             cards={
+                **_shopped(
+                    (date(2026, 9, 1), 120.0), (date(2026, 9, 2), 110.0), (date(2026, 9, 3), 130.0)
+                ),
                 date(2026, 9, 1): (
                     _card(airline="Ryanair", price="€100"),
                     _card(airline="Iberia", price="€120"),
@@ -634,12 +614,7 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(report.days[0].typical, 110.0)
 
     def test_round_trip_calendar_fills_return_dates_and_does_not_invent_fares(self) -> None:
-        source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 11, 1), 410.0, date(2026, 11, 6)),
-                CompactCalendarDay(date(2026, 11, 2), None, date(2026, 11, 7)),
-            )
-        )
+        source = FakeDaySource(_shopped((date(2026, 11, 1), 410.0), (date(2026, 11, 2), None)))
         report = search_dates(
             "BOS",
             "LHR",
@@ -738,11 +713,11 @@ class CalendarPresentationTests(unittest.TestCase):
 
     def test_search_dates_attaches_summary_from_owned_rows(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 81.0),
-                CompactCalendarDay(date(2026, 9, 2), None),
-                CompactCalendarDay(date(2026, 9, 3), 67.0),
-                CompactCalendarDay(date(2026, 9, 4), 90.0),
+            _shopped(
+                (date(2026, 9, 1), 81.0),
+                (date(2026, 9, 2), None),
+                (date(2026, 9, 3), 67.0),
+                (date(2026, 9, 4), 90.0),
             )
         )
         report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 4), source=source)
@@ -769,11 +744,7 @@ class CalendarPresentationTests(unittest.TestCase):
 
     def test_search_dates_omits_summary_when_the_grid_is_thin(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 45.0),
-                CompactCalendarDay(date(2026, 9, 2), None),
-                CompactCalendarDay(date(2026, 9, 3), 52.0),
-            )
+            _shopped((date(2026, 9, 1), 45.0), (date(2026, 9, 2), None), (date(2026, 9, 3), 52.0))
         )
         report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 3), source=source)
         self.assertIsNone(report.summary)
@@ -789,7 +760,7 @@ class CalendarPresentationTests(unittest.TestCase):
             self.assertNotIn("typical_deal", row.to_dict(currency="EUR"))
 
     def test_empty_calendar_omits_the_typical_triple(self) -> None:
-        source = FakeDaySource(())
+        source = FakeDaySource(_shopped())
         report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 2), source=source)
         self.assertIsNone(report.summary)
         self.assertTrue(report.days)
@@ -917,12 +888,7 @@ class DateCliTests(unittest.TestCase):
         search.assert_not_called()
 
     def test_prints_compact_table(self) -> None:
-        source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 40.0),
-                CompactCalendarDay(date(2026, 9, 2), 55.0),
-            )
-        )
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 40.0), (date(2026, 9, 2), 55.0)))
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
@@ -951,11 +917,11 @@ class DateCliTests(unittest.TestCase):
 
     def test_prints_week_calendar_summary_and_marks_empty(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 40.0),
-                CompactCalendarDay(date(2026, 9, 2), None),
-                CompactCalendarDay(date(2026, 9, 3), 90.0),
-                CompactCalendarDay(date(2026, 9, 4), 55.0),
+            _shopped(
+                (date(2026, 9, 1), 40.0),
+                (date(2026, 9, 2), None),
+                (date(2026, 9, 3), 90.0),
+                (date(2026, 9, 4), 55.0),
             )
         )
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
@@ -1314,7 +1280,7 @@ class DateCliTests(unittest.TestCase):
         search.assert_not_called()
 
     def test_prints_round_trip_stay_in_the_header(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 11, 1), 410.0, date(2026, 11, 6)),))
+        source = FakeDaySource(_shopped((date(2026, 11, 1), 410.0)))
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
@@ -1390,16 +1356,16 @@ class FlexWindowTests(unittest.TestCase):
 class FlexSearchTests(unittest.TestCase):
     def test_calendar_picks_cheapest_and_shops_once(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 9), 520.0, date(2026, 9, 16)),
-                CompactCalendarDay(date(2026, 9, 10), 388.0, date(2026, 9, 17)),
-                CompactCalendarDay(date(2026, 9, 11), 410.0, date(2026, 9, 18)),
-                CompactCalendarDay(date(2026, 9, 12), 450.0, date(2026, 9, 19)),
-                CompactCalendarDay(date(2026, 9, 13), 430.0, date(2026, 9, 20)),
-                CompactCalendarDay(date(2026, 9, 14), None, date(2026, 9, 21)),
-                CompactCalendarDay(date(2026, 9, 15), 500.0, date(2026, 9, 22)),
-            ),
             cards={
+                **_shopped(
+                    (date(2026, 9, 9), 520.0),
+                    (date(2026, 9, 10), 388.0),
+                    (date(2026, 9, 11), 410.0),
+                    (date(2026, 9, 12), 450.0),
+                    (date(2026, 9, 13), 430.0),
+                    (date(2026, 9, 14), None),
+                    (date(2026, 9, 15), 500.0),
+                ),
                 date(2026, 9, 10): (
                     RawFlightCard(
                         airline="British Airways",
@@ -1442,16 +1408,16 @@ class FlexSearchTests(unittest.TestCase):
         # only the 120. The typical is the median of day minima (100, 122, 125, 130, 140, 150),
         # 127.5. The label must compare the day's 100 minimum, not the shown 120.
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 9), 122.0),
-                CompactCalendarDay(date(2026, 9, 10), 150.0),
-                CompactCalendarDay(date(2026, 9, 11), 130.0),
-                CompactCalendarDay(date(2026, 9, 12), 120.0),
-                CompactCalendarDay(date(2026, 9, 13), 125.0),
-                CompactCalendarDay(date(2026, 9, 14), None),
-                CompactCalendarDay(date(2026, 9, 15), 140.0),
-            ),
             cards={
+                **_shopped(
+                    (date(2026, 9, 9), 122.0),
+                    (date(2026, 9, 10), 150.0),
+                    (date(2026, 9, 11), 130.0),
+                    (date(2026, 9, 12), 120.0),
+                    (date(2026, 9, 13), 125.0),
+                    (date(2026, 9, 14), None),
+                    (date(2026, 9, 15), 140.0),
+                ),
                 date(2026, 9, 12): (
                     _card(airline="Ryanair", price="€100"),
                     _card(airline="Iberia", price="€120"),
@@ -1474,11 +1440,7 @@ class FlexSearchTests(unittest.TestCase):
 
     def test_empty_window_does_not_invent(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 9), None),
-                CompactCalendarDay(date(2026, 9, 12), None),
-                CompactCalendarDay(date(2026, 9, 15), None),
-            )
+            _shopped((date(2026, 9, 9), None), (date(2026, 9, 12), None), (date(2026, 9, 15), None))
         )
         report = search_flex("JFK", "LHR", date(2026, 9, 12), 3, source=source)
         self.assertIsNone(report.chosen_date)
@@ -1491,11 +1453,8 @@ class FlexSearchTests(unittest.TestCase):
 
     def test_thin_grid_omits_typical(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 12), 410.0),
-                CompactCalendarDay(date(2026, 9, 13), 388.0),
-            ),
             cards={
+                **_shopped((date(2026, 9, 12), 410.0), (date(2026, 9, 13), 388.0)),
                 date(2026, 9, 13): (
                     RawFlightCard(
                         airline="Norse Atlantic",
@@ -2031,12 +1990,7 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(report.offers, ())
 
     def test_dates_named_currency_country_reach_http_source(self) -> None:
-        source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 45.0),
-                CompactCalendarDay(date(2026, 9, 2), 30.0),
-            )
-        )
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 45.0), (date(2026, 9, 2), 30.0)))
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
             report = search_dates(
                 "JFK",
@@ -2050,24 +2004,14 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(report.currency, "USD")
 
     def test_dates_unnamed_currency_follows_origin_country_usd(self) -> None:
-        source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 45.0),
-                CompactCalendarDay(date(2026, 9, 2), 30.0),
-            )
-        )
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 45.0), (date(2026, 9, 2), 30.0)))
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
             report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 2))
         ctor.assert_called_once_with(currency="USD", country=None, proxy=None)
         self.assertEqual(report.currency, "USD")
 
     def test_dates_named_proxy_reaches_http_source(self) -> None:
-        source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 45.0),
-                CompactCalendarDay(date(2026, 9, 2), 30.0),
-            )
-        )
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 45.0), (date(2026, 9, 2), 30.0)))
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source) as ctor:
             search_dates(
                 "JFK",
@@ -2429,12 +2373,12 @@ class FlexCliTests(unittest.TestCase):
 
     def test_prints_chosen_day_and_fare(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 9), 520.0, date(2026, 9, 16)),
-                CompactCalendarDay(date(2026, 9, 10), 388.0, date(2026, 9, 17)),
-                CompactCalendarDay(date(2026, 9, 11), 410.0, date(2026, 9, 18)),
-            ),
             cards={
+                **_shopped(
+                    (date(2026, 9, 9), 520.0),
+                    (date(2026, 9, 10), 388.0),
+                    (date(2026, 9, 11), 410.0),
+                ),
                 date(2026, 9, 10): (
                     RawFlightCard(
                         airline="British Airways",
@@ -2476,8 +2420,8 @@ class FlexCliTests(unittest.TestCase):
 
 class NearbyDateFlexTests(unittest.TestCase):
     def test_dates_nearby_expands_london_and_default_keeps_heathrow(self) -> None:
-        priced = (CompactCalendarDay(date(2026, 9, 1), 80.0),)
-        off_source = FakeDaySource(priced)
+        priced = _shopped((date(2026, 9, 1), 80.0))
+        off_source = FakeDaySource(cards=priced)
         off = search_dates("BOS", "LHR", date(2026, 9, 1), date(2026, 9, 1), source=off_source)
         self.assertIsInstance(off, DateCalendarReport)
         self.assertEqual((off.origin, off.destination), ("BOS", "LHR"))
@@ -2485,7 +2429,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertEqual(off_source.fetch_calls, 1)
         self.assertEqual(off_source.fetched_queries[-1].destination, "LHR")
 
-        on_source = FakeDaySource(priced)
+        on_source = FakeDaySource(cards=priced)
         reports = search_dates(
             "BOS", "LHR", date(2026, 9, 1), date(2026, 9, 1), nearby=True, source=on_source
         )
@@ -2501,7 +2445,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertEqual({query.destination for query in on_source.fetched_queries}, dests)
 
     def test_dates_nearby_unknown_city_does_not_invent_codes(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 40.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 40.0)))
         report = search_dates(
             "MAD", "BCN", date(2026, 9, 1), date(2026, 9, 1), nearby=True, source=source
         )
@@ -2535,12 +2479,12 @@ class NearbyDateFlexTests(unittest.TestCase):
 
     def test_flex_nearby_unknown_city_does_not_invent_codes(self) -> None:
         source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 11), 80.0),
-                CompactCalendarDay(date(2026, 9, 12), 70.0),
-                CompactCalendarDay(date(2026, 9, 13), 90.0),
-            ),
-            cards={date(2026, 9, 12): (_card(price="€70"),)},
+            cards={
+                **_shopped(
+                    (date(2026, 9, 11), 80.0), (date(2026, 9, 12), 70.0), (date(2026, 9, 13), 90.0)
+                ),
+                date(2026, 9, 12): (_card(price="€70"),),
+            },
         )
         report = search_flex(
             "MAD", "BCN", date(2026, 9, 12), 1, nearby=True, source=source, baggage_buffer=0
@@ -2553,7 +2497,7 @@ class NearbyDateFlexTests(unittest.TestCase):
 
 class ExcludeAirportsDateFlexTests(unittest.TestCase):
     def test_dates_named_dest_excluded_is_empty(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         report = search_dates(
             "BOS",
             "HND",
@@ -2566,14 +2510,14 @@ class ExcludeAirportsDateFlexTests(unittest.TestCase):
         self.assertEqual((report.origin, report.destination), ("BOS", "HND"))
         self.assertEqual(report.days, ())
         self.assertEqual(source.fetch_calls, 0)
-        unnamed = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        unnamed = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         kept = search_dates("BOS", "HND", date(2026, 9, 1), date(2026, 9, 1), source=unnamed)
         self.assertEqual(len(kept.days), 1)
         self.assertEqual(kept.days[0].price, 80.0)
         self.assertEqual(unnamed.fetch_calls, 1)
 
     def test_dates_named_origin_excluded_is_empty(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         report = search_dates(
             "HND",
             "SIN",
@@ -2588,7 +2532,7 @@ class ExcludeAirportsDateFlexTests(unittest.TestCase):
         self.assertEqual(source.fetch_calls, 0)
 
     def test_dates_nearby_does_not_sneak_excluded_code_back(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         reports = search_dates(
             "BOS",
             "HND",
@@ -2650,7 +2594,7 @@ class ExcludeAirportsDateFlexTests(unittest.TestCase):
 
 class IncludeAirportsDateFlexTests(unittest.TestCase):
     def test_dates_named_dest_in_include_list_keeps(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         report = search_dates(
             "BOS",
             "NRT",
@@ -2665,7 +2609,7 @@ class IncludeAirportsDateFlexTests(unittest.TestCase):
         self.assertEqual(source.fetch_calls, 1)
 
     def test_dates_named_dest_not_in_include_list_is_empty(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         report = search_dates(
             "BOS",
             "KIX",
@@ -2678,13 +2622,13 @@ class IncludeAirportsDateFlexTests(unittest.TestCase):
         self.assertEqual((report.origin, report.destination), ("BOS", "KIX"))
         self.assertEqual(report.days, ())
         self.assertEqual(source.fetch_calls, 0)
-        unnamed = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        unnamed = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         kept = search_dates("BOS", "KIX", date(2026, 9, 1), date(2026, 9, 1), source=unnamed)
         self.assertEqual(len(kept.days), 1)
         self.assertEqual(unnamed.fetch_calls, 1)
 
     def test_dates_nearby_keeps_owned_same_city_already_in_list(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         reports = search_dates(
             "BOS",
             "NRT",
@@ -2701,7 +2645,7 @@ class IncludeAirportsDateFlexTests(unittest.TestCase):
         self.assertEqual({query.destination for query in source.fetched_queries}, dests)
 
     def test_dates_exclude_wins_on_include_overlap(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         report = search_dates(
             "BOS",
             "HND",
@@ -2715,7 +2659,7 @@ class IncludeAirportsDateFlexTests(unittest.TestCase):
         self.assertEqual(source.fetch_calls, 0)
 
     def test_dates_include_is_dests_only_origin_in_list_does_not_keep(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 80.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 80.0)))
         report = search_dates(
             "BOS",
             "NRT",
@@ -2924,7 +2868,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
             "LHR",
             date(2026, 9, 12),
             3,
-            source=FakeDaySource(()),
+            source=FakeDaySource(_shopped()),
         )
         expected = google_flights_url(
             calendar_trip("BOS", "LHR", date(2026, 9, 12), max_stops=1), currency="USD"
@@ -2947,12 +2891,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertEqual(report.offers[0].booking_token, "tok")
 
     def test_dates_compact_stamps_query_url_without_inventing_a_token(self) -> None:
-        source = FakeDaySource(
-            (
-                CompactCalendarDay(date(2026, 9, 1), 45.0),
-                CompactCalendarDay(date(2026, 9, 2), 38.0),
-            )
-        )
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 45.0), (date(2026, 9, 2), 38.0)))
         report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 2), source=source)
         seed = calendar_trip("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         day = calendar_trip("JFK", "LHR", date(2026, 9, 2), max_stops=1)
@@ -2984,7 +2923,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertNotIn("booking_token=", report.days[0].google_flights_url or "")
 
     def test_dates_omits_url_when_encode_cannot_run(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 45.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 45.0)))
         with patch("viajante.dates.google_flights_url", return_value=None):
             report = search_dates("JFK", "LHR", date(2026, 9, 1), date(2026, 9, 1), source=source)
         self.assertIsNone(report.google_flights_url)
@@ -3015,7 +2954,7 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         self.assertIn("booking_token=tok", output)
 
     def test_dates_cli_prints_owned_url(self) -> None:
-        source = FakeDaySource((CompactCalendarDay(date(2026, 9, 1), 45.0),))
+        source = FakeDaySource(_shopped((date(2026, 9, 1), 45.0)))
         with patch("viajante.dates.GoogleFlightsHttpSource", return_value=source):
             buffer = io.StringIO()
             with redirect_stdout(buffer):

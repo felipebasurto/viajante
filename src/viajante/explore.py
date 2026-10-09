@@ -24,9 +24,9 @@ from viajante.flight_offers import (
     validate_sort,
 )
 from viajante.flight_routes import expand_nearby_origins
-from viajante.flights import classify_failure
 from viajante.google_flights import RawFlightCard, google_flights_url
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
+from viajante.google_flights_public import classify_failure
 from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.models import (
     ExploreDestination,

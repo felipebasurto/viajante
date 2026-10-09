@@ -347,8 +347,8 @@ viajante flex BOS-LHR --around 2026-11-15 --flex 3 --nights 7
 ```
 
 This checks November 12–18 with one public-page GET per day (up to 31), selects
-the cheapest returned date, then makes one additional fresh public-page search
-for that date when a provider block has not stopped the search. Day failures
+the cheapest returned date, and ranks that date's offers from the page it already
+fetched, unless a provider block stopped the search. Day failures
 remain attached to their rows; an unpriced or failed day is never treated as a
 fare. `dates` and `flex` always use public-page GETs and never launch Playwright. For `flex`, `typical` is stamped at report level from the same window.
 
@@ -649,7 +649,7 @@ viajante flights JFK-LHR:2026-11-15 --fetch sweep --save /tmp/viajante-flights.j
 ```
 
 Reports include query status, quote currency, and returned offers or error
-details. Optional information, such as booking links and calendar medians,
+details. Optional information, such as booking links and same-route medians,
 appears only when it can be determined. Offers retain source text alongside
 parsed fields. The report types and JSON fields are defined in
 [`models.py`](../src/viajante/models.py).
@@ -786,8 +786,8 @@ search at a time. See the signatures in
   `coverage.stopping_reason` is `"deadline"`. An unfinished query is not proof of
   no availability. Deadline results are not cached, and neither is any search a
   deadline cut in any way (the search control records the cut). A cut that leaves
-  no failed row, such as the typical-price lookup, keeps the fare that already
-  arrived with `typical` null (unknown, not cached as "no typical") and marks the
+  no failed row, such as an optional package expansion that did not finish, keeps
+  the fare that already arrived with `typical` null (unknown, not cached as "no typical") and marks the
   coverage `complete: false`, `stopping_reason: "deadline"`. A deadline inside a follow-up call (for example the
   return leg of a round trip) makes that query a `deadline` row; it is never
   reported as a complete result with fewer legs. Hotel payloads carry a

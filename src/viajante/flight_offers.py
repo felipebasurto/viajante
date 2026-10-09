@@ -240,7 +240,7 @@ def _shop_offers(
     # a card may qualify through an alliance member we cannot verify locally.
     airlines = trip.airlines if not trip.alliances else None
     shared: dict[str, Any] = {
-        **vars(filters),
+        **filters.normalizer_kwargs(),
         "baggage_buffer": baggage_buffer,
         "airlines": airlines,
         "exclude_airlines": trip.exclude_airlines,

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Mapping, Optional
 
+from viajante.models_common import empty_reason_for_rows
 from viajante.ratelimit import NOT_SENT
 
 
@@ -87,6 +88,13 @@ def _failure_status(error: Mapping[str, object]) -> str:
     return "failed"
 
 
+def _answer_reason(*, not_loaded: bool, provider_only: bool) -> str:
+    """The weakest claim an answer with no usable units can make. Only provider_empty says none."""
+    if not_loaded:
+        return "not_loaded"
+    return "provider_empty" if provider_only else "filtered_out"
+
+
 def _error(
     error: Mapping[str, object],
     tally: _Tally,
@@ -132,14 +140,12 @@ def _query_row(row: dict, tally: _Tally, provider: str) -> None:
     elif row.get("offers"):
         tally.usable += 1
     else:
-        reason = row.get("empty_reason") or (
-            "filtered_out" if (row.get("raw_count") or 0) > 0 else "provider_empty"
-        )
+        reason = row.get("empty_reason") or empty_reason_for_rows(row.get("raw_count") or 0)
         setattr(tally, reason, getattr(tally, reason) + 1)
         row["empty_reason"] = reason
 
 
-def _date_row(row: dict, tally: _Tally, provider: str, *, calendar: bool) -> None:
+def _date_row(row: dict, tally: _Tally, provider: str) -> None:
     if row.get("scope_bound") is True:
         tally.scope_partial = True
     for error in row.get("page_errors", ()):
@@ -152,9 +158,9 @@ def _date_row(row: dict, tally: _Tally, provider: str, *, calendar: bool) -> Non
     elif status == "ok" and row.get("price") is not None:
         tally.usable += 1
     else:
-        # A row without its own reason came from outside viajante's constructors:
-        # never "no flights". A calendar cell is unproven, anything else a filter claim.
-        reason = row.get("empty_reason") or ("not_loaded" if calendar else "filtered_out")
+        # A row without its own reason came from outside viajante's constructors: it is
+        # unproven, never "no flights".
+        reason = row.get("empty_reason") or "not_loaded"
         setattr(tally, reason, getattr(tally, reason) + 1)
 
 
@@ -186,10 +192,9 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
         _walk(node.get("hotels"), tally, provider)
         return
     elif isinstance(node.get("days"), list):
-        calendar = node.get("fetch_backend") in ("calendar", "calendar_then_sweep")
         for row in node["days"]:
             if isinstance(row, dict):
-                _date_row(row, tally, provider, calendar=calendar)
+                _date_row(row, tally, provider)
     elif isinstance(node.get("destinations"), list):
         # A catalog destination whose price shop failed or came back empty carries no
         # price: it proves nothing, so it is unproven rather than usable.
@@ -284,11 +289,10 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
         status = "no_results"
         # The weakest claim wins. Unproven units cannot be called empty, and nothing
         # attempted (every query removed locally) is a filter outcome, not an empty answer.
-        if tally.not_loaded:
-            empty_reason = "not_loaded"
-        else:
-            only_provider = tally.provider_empty and not tally.filtered_out
-            empty_reason = "provider_empty" if only_provider else "filtered_out"
+        empty_reason = _answer_reason(
+            not_loaded=bool(tally.not_loaded),
+            provider_only=tally.provider_empty and not tally.filtered_out,
+        )
     if failures:
         # A deadline cut is a stop we chose, not a provider refusal: what ran stays partial.
         cut = all(code == "deadline" for _, code, _ in failures)
@@ -382,7 +386,9 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
             only_provider = leg_empty == len(legs)
         else:
             only_provider = tally.provider_empty and not (tally.usable or tally.filtered_out)
-        empty_reason = "provider_empty" if only_provider else "filtered_out"
+        empty_reason = _answer_reason(
+            not_loaded=bool(tally.not_loaded), provider_only=only_provider
+        )
     if failures:
         completeness = "partial" if itineraries or answered else "blocked"
     else:

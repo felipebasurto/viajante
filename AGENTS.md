@@ -27,16 +27,17 @@ add new prose labels to any result.
 - `tfs` bytes, cabin, or occupancy in the Google Flights URL: `src/viajante/tfs.py`
 - Public Google Flights `ds:1` page decode: `src/viajante/google_flights_page.py`
 - Public Flights page GETs and selected round-trip return pages: `src/viajante/google_flights_public.py`
+- Public Explore catalog Chromium run (the page's own catalog request, captured): `src/viajante/google_flights_explore_browser.py`; its gate and failure rules stay in `google_flights_public.py`
 - Public sweep GET concurrency: `src/viajante/sweep_config.py`
 - Compact shopping RPC encode/parse: `src/viajante/google_flights_rpc.py`
-- Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`
+- Google CSS, consent, empty vs markup, sweep HTTP client: `src/viajante/google_flights.py`; browser detail source and its CSS card parser: `src/viajante/google_flights_detail.py`
 - Reject-only Google consent cookies kept across CLI processes (`google-consent.json`): `src/viajante/consent.py`
 - Route specs, metro and nearby expand, trip include/exclude: `src/viajante/flight_routes.py`
 - Flight post-filters (clocks, layover, via, overnight, bag requirements): `src/viajante/flight_filters.py`
 - Offer normalization, LCC buffer, flight ranking, per-query recommendation: `src/viajante/flight_offers.py`
 - Flight evidence stamps (Google Flights URLs, offer evidence): `src/viajante/flight_evidence.py`
 - Round-trip / multi-city next-leg completion and package filters: `src/viajante/flight_packages.py`
-- Search loop, failure classification, `search_flights`, or `get_flights`: `src/viajante/flights.py`
+- Search loop, `search_flights`, or `get_flights`: `src/viajante/flights.py`; Google failure classification: `src/viajante/google_flights_public.py` (`classify_failure`)
 - Per-query `recommendation` (requirements, relaxation, score, shortlist): `src/viajante/recommend.py`
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`

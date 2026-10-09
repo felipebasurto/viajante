@@ -144,6 +144,21 @@ class ConsentStateTests(unittest.TestCase):
             [(c.name, c.domain) for c in session.cookies.jar], [("SOCS", ".google.com")]
         )
 
+    def test_a_corrupt_stored_at_is_unreadable(self) -> None:
+        # Past float range, NaN and inf (json accepts all three), and a stamp in the future.
+        cases = {
+            "past float range": 10**400,
+            "nan": float("nan"),
+            "inf": float("inf"),
+            "future": NOW + 2 * CONSENT_MAX_AGE_SECONDS,
+        }
+        for label, stored_at in cases.items():
+            with self.subTest(label):
+                self._write({"stored_at": stored_at, "cookies": [self._cookie()]})
+                session = SimpleNamespace(cookies=FakeCookies())
+                self.assertEqual(restore_consent_cookies(session, now=NOW), 0)
+                self.assertEqual(session.cookies.jar, [])
+
     def test_save_failure_is_not_fatal(self) -> None:
         session = SimpleNamespace(cookies=FakeCookies())
         session.cookies.set("SOCS", "v1", domain=".google.com")

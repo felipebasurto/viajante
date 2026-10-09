@@ -22,6 +22,7 @@ from typing import (
     Any,
     Callable,
     Literal,
+    Mapping,
     NoReturn,
     Optional,
     Sequence,
@@ -418,12 +419,6 @@ def _wire_type(hint: Any) -> Any:
     return hint
 
 
-async def _hotel_details_runner(fn: Callable[..., _T], **kwargs: object) -> _T:
-    # A stored-quote read stays off the search lock; room_rates asks Skiplagged afresh.
-    runner = run_mcp_tool if kwargs["room_rates"] else run_lookup_tool
-    return await runner(fn, **kwargs)
-
-
 def _room_rates_flag(value: object) -> bool:
     # Reject before bool coercion, which would treat "yes" as true.
     if not isinstance(value, bool):
@@ -555,7 +550,7 @@ def build_server():
         envelope: bool = True,
         writes: bool = False,
         returns: type = ToolEnvelope,
-        runner: Optional[Callable[..., Any]] = None,
+        search: Optional[Callable[[Mapping[str, object]], bool]] = None,
     ):
         # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
         # provider. A writing tool is neither read-only nor idempotent (it appends), but
@@ -593,10 +588,9 @@ def build_server():
                     bound = client.bind(**kwargs)
                     bound.apply_defaults()
                     kwargs = bound.arguments
-                    # Resolve the runner at call time so tests can patch the module names.
-                    if runner is not None:
-                        result = await runner(handler, **kwargs)
-                    elif network:
+                    # Resolve at call time so tests can patch the module names. `search`
+                    # decides, per call, whether a network tool reaches a provider.
+                    if network and (search is None or search(kwargs)):
                         result = await run_mcp_tool(handler, **kwargs)
                     else:
                         result = await run_lookup_tool(handler, **kwargs)
@@ -649,7 +643,10 @@ def build_server():
         """
 
     @tool(
-        "Hotel finalist details", get_hotel_details_tool, network=True, runner=_hotel_details_runner
+        "Hotel finalist details",
+        get_hotel_details_tool,
+        network=True,
+        search=lambda kwargs: kwargs["room_rates"],
     )
     def get_hotel_details():
         """Read a hotel offer this process returned. room_rates must be a boolean.
@@ -831,16 +828,8 @@ def build_server():
         during a search.
         """
 
-    @tool("Price history", network=False)
-    async def price_history(
-        kind: str | None = None,
-        route: str | None = None,
-        date: str | None = None,
-        location: str | None = None,
-        query_key: str | None = None,
-        currency: str | None = None,
-        limit: int = 20,
-    ) -> dict:
+    @tool("Price history", price_history_tool, network=False)
+    def price_history():
         """Local read of prices this machine observed (opt-in: VIAJANTE_PRICE_HISTORY=1 in the
         server environment). One exact query in one currency is a series: first_seen,
         last_seen, lowest, highest, and the change since the previous observation. One
@@ -849,14 +838,9 @@ def build_server():
         check-out; location names a hotel stay. An unreadable log gives read_error and series
         null: unknown, not empty. May run during a search.
         """
-        return dict(await run_lookup_tool(price_history_tool, **locals()))
 
-    @tool("Watch a price", network=True, writes=True)
-    async def watch_price(
-        name: str | None = None,
-        kind: str | None = None,
-        params: dict | None = None,
-    ) -> dict:
+    @tool("Watch a price", watch_price_tool, network=True, writes=True)
+    def watch_price():
         """Re-run a saved flight or hotel search and report the change. With no arguments, list
         saved watches (watches null and status failed when the file cannot be read). With
         name, kind (flight or hotel) and params (the search_flights or search_hotels
@@ -865,7 +849,6 @@ def build_server():
         the history opt-in is off. A cached or rate-limited run records nothing. No scheduler
         and no notification: do not call it in a loop.
         """
-        return dict(await run_mcp_tool(watch_price_tool, **locals()))
 
     @tool("Operational guide", network=False, returns=GuideEnvelope)
     def get_guide() -> dict:

@@ -77,6 +77,20 @@ class CooldownStateTests(_StateDir):
         )
         self.assertIsNone(rate_limit_status(now=T0 + 1))
 
+    def test_a_stamp_far_from_now_or_past_float_range_is_unreadable(self) -> None:
+        century = 100 * 365 * 86400
+        cases = {
+            "past float range": (10**400, 10**400 + 60),
+            "stamped a century ahead": (T0 + century, T0 + century + 60),
+        }
+        path = default_state_dir() / GOOGLE_RATE_LIMIT_FILE
+        for label, (at, until) in cases.items():
+            with self.subTest(label):
+                write_json_atomic({"at": at, "until": until, "cooldown_s": 60.0}, path)
+                self.assertIsNone(rate_limit_status(now=T0 + 1))
+        write_json_atomic({"at": T0, "until": T0 + 60, "cooldown_s": 60.0}, path)
+        self.assertIsNotNone(rate_limit_status(now=T0 + 1))
+
     def test_named_retry_after_wins(self) -> None:
         state = note_rate_limited(retry_after=42, now=T0)
         self.assertEqual(state["cooldown_s"], 42)
@@ -105,6 +119,20 @@ class CooldownStateTests(_StateDir):
         state = rate_limit_status(now=T0 + 1)
         self.assertEqual(state["basis"], "unknown")
         self.assertEqual(state["cause"], "unknown")
+
+    def test_a_non_numeric_cooldown_length_in_an_expired_record_is_not_a_crash(self) -> None:
+        write_json_atomic(
+            {
+                "at": T0 - 100,
+                "until": T0 - 10,
+                "cooldown_s": "x",
+                "basis": "unknown",
+                "cause": "unknown",
+            },
+            default_state_dir() / GOOGLE_RATE_LIMIT_FILE,
+        )
+        state = note_rate_limited(now=T0)
+        self.assertEqual(state["cooldown_s"], RATE_LIMIT_COOLDOWN_SECONDS)
 
 
 class CooldownGateTests(_StateDir):

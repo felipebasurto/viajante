@@ -57,8 +57,6 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
     def test_one_way_cards_are_usd_offers_with_their_deep_link(self) -> None:
         offers = parse_skiplagged_offers(
             _fixture("flights_jfk_mia_oneway"),
-            origin="JFK",
-            destination="MIA",
             departure_date=NOV_17,
             currency="USD",
         )
@@ -80,8 +78,6 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
     def test_hidden_city_attribute_flags_the_nonstop_cards(self) -> None:
         offers = parse_skiplagged_offers(
             _fixture("flights_jfk_mia_oneway"),
-            origin="JFK",
-            destination="MIA",
             departure_date=NOV_17,
         )
         hidden = [offer for offer in offers if offer.hidden_city]
@@ -96,8 +92,6 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
         # Not in any captured card: no field names the beyond city. Stays null.
         offers = parse_skiplagged_offers(
             _fixture("flights_jfk_mia_oneway"),
-            origin="JFK",
-            destination="MIA",
             departure_date=NOV_17,
         )
         self.assertTrue(all(offer.ticketed_destination is None for offer in offers))
@@ -105,8 +99,6 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
     def test_one_stop_layover_comes_from_the_table_row(self) -> None:
         offers = parse_skiplagged_offers(
             _fixture("flights_jfk_ord_oneway"),
-            origin="JFK",
-            destination="ORD",
             departure_date=NOV_17,
         )
         one_stop = [offer for offer in offers if offer.stops_count == 1]
@@ -119,9 +111,7 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
     def test_layover_is_unknown_when_the_table_text_is_gone(self) -> None:
         result = _fixture("flights_jfk_den_oneway")
         result["content"] = []
-        offers = parse_skiplagged_offers(
-            result, origin="JFK", destination="DEN", departure_date=NOV_17
-        )
+        offers = parse_skiplagged_offers(result, departure_date=NOV_17)
         one_stop = [offer for offer in offers if offer.stops_count == 1]
         self.assertTrue(one_stop)
         self.assertTrue(all(offer.layover_city is None for offer in one_stop))
@@ -130,13 +120,12 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
     def test_round_trip_hidden_return_leg_marks_the_offer(self) -> None:
         offers = parse_skiplagged_offers(
             _fixture("flights_jfk_mia_roundtrip"),
-            origin="JFK",
-            destination="MIA",
             departure_date=NOV_17,
             return_date=NOV_22,
         )
         self.assertEqual(len(offers), 8)
         self.assertTrue(all(offer.hidden_city for offer in offers))
+        self.assertTrue(all(offer.duration is None for offer in offers))
         self.assertTrue(all(offer.return_date == NOV_22 for offer in offers))
         self.assertEqual({offer.currency for offer in offers}, {"USD"})
         self.assertEqual(offers[-1].airline, "Delta Air Lines")
@@ -145,8 +134,6 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
     def test_currency_keep_filters_captured_usd_cards(self) -> None:
         kept = parse_skiplagged_offers(
             _fixture("flights_jfk_den_oneway"),
-            origin="JFK",
-            destination="DEN",
             departure_date=NOV_17,
             currency="EUR",
         )
@@ -164,17 +151,29 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
             )
         self.assertEqual(calls, [])
 
+    def test_an_offer_built_without_attributes_is_unknown_not_false(self) -> None:
+        offer = HiddenCityOffer("JFK", "MIA", NOV_17, 99.0, currency="USD", evidence="confirmed")
+        self.assertIsNone(offer.hidden_city)
+        self.assertIsNone(offer.to_dict()["hidden_city"])
+
     def test_hidden_city_is_unknown_when_no_leg_carries_attributes(self) -> None:
         result = copy.deepcopy(_fixture("flights_jfk_mia_oneway"))
         for card in result["structuredContent"]["flights"]:
             card.pop("attributes", None)
-        offers = parse_skiplagged_offers(
-            result, origin="JFK", destination="MIA", departure_date=NOV_17
-        )
+        offers = parse_skiplagged_offers(result, departure_date=NOV_17)
         self.assertTrue(offers)
         self.assertEqual({offer.hidden_city for offer in offers}, {None})
         self.assertIsNone(offers[0].to_dict()["hidden_city"])
         self.assertEqual(offers[0].warnings, ())
+
+    def test_a_card_without_its_own_airport_is_skipped_not_relabelled(self) -> None:
+        result = copy.deepcopy(_fixture("flights_jfk_mia_oneway"))
+        result["structuredContent"]["flights"][0]["departure"].pop("airport")
+        offers = parse_skiplagged_offers(result, departure_date=NOV_17, currency="USD")
+        self.assertEqual(len(offers), 7)
+        self.assertTrue(
+            all(offer.origin == "JFK" and offer.destination == "MIA" for offer in offers)
+        )
 
     def test_one_bad_card_does_not_drop_priced_neighbors(self) -> None:
         result = copy.deepcopy(_fixture("flights_jfk_den_oneway"))
@@ -182,17 +181,13 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
         cards[0]["price"]["amount"] = 0
         del cards[1]["price"]["currency"]
         cards[2]["price"] = "not a price"
-        offers = parse_skiplagged_offers(
-            result, origin="JFK", destination="DEN", departure_date=NOV_17
-        )
+        offers = parse_skiplagged_offers(result, departure_date=NOV_17)
         self.assertEqual(len(offers), 5)
 
     def test_missing_flights_list_is_a_shape_change(self) -> None:
         with self.assertRaises(SkiplaggedShapeError):
             parse_skiplagged_offers(
                 {"content": [], "structuredContent": {"pagination": {}}},
-                origin="JFK",
-                destination="DEN",
                 departure_date=NOV_17,
             )
 
@@ -202,8 +197,6 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
         with self.assertRaises(SkiplaggedError) as caught:
             parse_skiplagged_offers(
                 {"isError": True, "content": [{"type": "text", "text": "bad origin"}]},
-                origin="JFK",
-                destination="DEN",
                 departure_date=NOV_17,
             )
         self.assertNotIsInstance(caught.exception, SkiplaggedShapeError)
@@ -380,6 +373,8 @@ class HiddenCityRoundTripFieldTests(unittest.TestCase):
     ) -> dict:
         return {
             "price": {"amount": 289, "currency": "USD"},
+            "departure": {"airport": "JFK"},
+            "arrival": {"airport": "LAX"},
             "layovers": layovers,
             "duration": duration,
             "airlines": airlines,
@@ -394,14 +389,12 @@ class HiddenCityRoundTripFieldTests(unittest.TestCase):
     def _offer(self, card: dict, layovers: dict | None = None):
         return _offer_from_card(
             card,
-            origin="JFK",
-            destination="LAX",
             departure_date=FUTURE,
             return_date=FUTURE + timedelta(days=5),
             layover_by_trip={"abc": "ORD"} if layovers is None else layovers,
         )
 
-    def test_directions_that_agree_keep_the_trip_values(self) -> None:
+    def test_a_round_trip_publishes_no_duration_even_when_the_legs_agree(self) -> None:
         offer = self._offer(
             self._card(
                 layovers=0,
@@ -412,7 +405,7 @@ class HiddenCityRoundTripFieldTests(unittest.TestCase):
                 return_airlines="DL",
             )
         )
-        self.assertEqual((offer.stops_count, offer.duration, offer.airline), (0, "5h", "DL"))
+        self.assertEqual((offer.stops_count, offer.duration, offer.airline), (0, None, "DL"))
 
     def test_a_connecting_return_makes_the_outbound_values_unknown(self) -> None:
         offer = self._offer(

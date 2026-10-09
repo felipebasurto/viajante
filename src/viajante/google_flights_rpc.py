@@ -52,13 +52,6 @@ class RawFlightCard:
 
 
 @dataclass(frozen=True)
-class CompactCalendarDay:
-    departure_date: date
-    price: Optional[float]
-    return_date: Optional[date] = None
-
-
-@dataclass(frozen=True)
 class CompactExplorePlace:
     iata: str
     city: str

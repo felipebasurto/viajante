@@ -358,8 +358,6 @@ def _stops(card: Mapping[str, Any]) -> Optional[int]:
 def _offer_from_card(
     card: Any,
     *,
-    origin: str,
-    destination: str,
     departure_date: date,
     return_date: Optional[date],
     layover_by_trip: Mapping[str, Optional[str]],
@@ -373,8 +371,11 @@ def _offer_from_card(
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
         return None
     currency = normalize_currency(price_block.get("currency"))
-    row_origin = _leg_airport(card.get("departure")) or origin
-    row_dest = _leg_airport(card.get("arrival")) or destination
+    # The query's route is not the card's: a card that names no airport is skipped, not labelled.
+    row_origin = _leg_airport(card.get("departure"))
+    row_dest = _leg_airport(card.get("arrival"))
+    if row_origin is None or row_dest is None:
+        return None
     return_leg = card.get("returnFlight")
     deep_link = card.get("deepLink")
     deep_link = deep_link.strip() if isinstance(deep_link, str) and deep_link.strip() else None
@@ -384,13 +385,12 @@ def _offer_from_card(
     stops_count = _stops(card)
     layover_city = layover_by_trip.get(fragment)
     if isinstance(return_leg, dict):
-        # The card's own fields describe the outbound. A round-trip value is reported only
-        # when the return agrees; the layover city belongs to the outbound alone when the
-        # return is nonstop.
+        # The card's own fields describe the outbound. A round trip has one duration per leg and
+        # the offer has one slot, so it publishes none. Airline and stops are kept only when the
+        # return agrees; the layover city belongs to the outbound alone when the return is nonstop.
+        duration = None
         if _stops(return_leg) != stops_count:
             stops_count = None
-        if return_leg.get("duration") != duration:
-            duration = None
         if return_leg.get("airlines") != airline:
             airline = None
         if _stops(return_leg) != 0:
@@ -417,15 +417,13 @@ def _offer_from_card(
 def parse_skiplagged_offers(
     result: Any,
     *,
-    origin: str,
-    destination: str,
     departure_date: date,
     currency: Optional[str] = None,
     return_date: Optional[date] = None,
 ) -> tuple[HiddenCityOffer, ...]:
     """Normalize a sk_flights_search result. Never invents a fare or an FX pairing.
 
-    A card with no usable price or currency is skipped. Currency is kept as
+    A card with no usable price, currency, or airport is skipped. Currency is kept as
     the card's own; a named keep filters on it and nothing converts.
     """
     wanted = normalize_currency(currency) if currency else None
@@ -436,8 +434,6 @@ def parse_skiplagged_offers(
         try:
             offer = _offer_from_card(
                 card,
-                origin=origin,
-                destination=destination,
                 departure_date=departure_date,
                 return_date=return_date,
                 layover_by_trip=layover_by_trip,
@@ -547,8 +543,6 @@ def search_hidden_city(
         result = _call_mcp(arguments, rpc=rpc or _rpc_post)
         owned = parse_skiplagged_offers(
             result,
-            origin=origin,
-            destination=destination,
             departure_date=departure_date,
             return_date=return_date,
         )

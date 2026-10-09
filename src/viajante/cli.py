@@ -51,10 +51,13 @@ from viajante.flight_filters import (
     parse_named_clock,
     parse_overnight_airports,
     parse_via_airports,
+    validate_layover_hours,
+    validate_via_pair,
 )
 from viajante.flight_offers import FLIGHT_SORTS
 from viajante.flight_routes import (
     FlightPlan,
+    _overlay_carrier_filters,
     as_trips,
     expand_nearby_trips,
     nearby_notes,
@@ -101,7 +104,6 @@ from viajante.split import (
     MAX_SPLIT_HUBS,
     search_split_tickets,
     validate_split_request,
-    with_carrier_filters,
 )
 from viajante.split_filters import SplitFilters
 from viajante.storage import reports_payload, write_json_atomic
@@ -340,8 +342,8 @@ def _split_query_from_args(
             "--split-tickets takes exactly one one-way route or one --trip rt route "
             "(not --nearby, multi-city, or several routes)"
         )
-    query = with_carrier_filters(
-        queries[0],
+    (query,) = _overlay_carrier_filters(
+        (queries[0],),
         airlines=shop["airlines"],  # type: ignore[arg-type]
         exclude_airlines=shop["exclude_airlines"],  # type: ignore[arg-type]
         alliances=shop["alliances"],  # type: ignore[arg-type]
@@ -974,8 +976,7 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         raise ValueError("--price-cap must be a positive amount in the quote currency")
     via = parse_via_airports(args.via)
     exclude_via = parse_via_airports(args.exclude_via, role="exclude-via")
-    if via and exclude_via and set(via) & set(exclude_via):
-        raise ValueError("--via and --exclude-via must not share a code")
+    validate_via_pair(via, exclude_via, cli=True)
     no_overnight = parse_overnight_airports(
         getattr(args, "no_overnight", None), role="no-overnight"
     )
@@ -985,14 +986,12 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
     max_layover = getattr(args, "max_layover", None)
     min_layover = getattr(args, "min_layover", None)
     max_duration = getattr(args, "max_duration", None)
-    if max_layover is not None and max_layover < 0:
-        raise ValueError("--max-layover must not be negative")
-    if min_layover is not None and min_layover < 0:
-        raise ValueError("--min-layover must not be negative")
-    if max_duration is not None and max_duration < 0:
-        raise ValueError("--max-duration must not be negative")
-    if min_layover is not None and max_layover is not None and min_layover > max_layover:
-        raise ValueError("--min-layover must be at or below --max-layover")
+    validate_layover_hours(
+        max_layover_hours=max_layover,
+        min_layover_hours=min_layover,
+        max_duration_hours=max_duration,
+        cli=True,
+    )
     return {
         "bags": args.bags,
         "carry_on": carry_on,

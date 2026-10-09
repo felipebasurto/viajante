@@ -40,18 +40,20 @@ _CAUSE_OF_BASIS = {
 }
 
 
-def _read_rate_limit(file: str) -> Optional[dict]:
+def _read_rate_limit(file: str, now: float) -> Optional[dict]:
     try:
         state = json.loads((default_state_dir() / file).read_text(encoding="utf-8"))
         if not all(isinstance(state[k], (int, float)) for k in ("at", "until")):
             return None
-    except (OSError, ValueError, TypeError, KeyError):
+        at, until = float(state["at"]), float(state["until"])
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
         return None
-    # A record that is not finite, or claims longer than the cap, would crash every later
-    # search (year out of range) or hold the provider off for good. Treat it as unreadable.
-    if not math.isfinite(state["at"]) or not math.isfinite(state["until"]):
+    # A stamp more than one cap from now would hold the provider off for good or overflow the
+    # clock format. NaN and inf fail these comparisons too; the span check bounds `at`.
+    cap = RATE_LIMIT_MAX_COOLDOWN_SECONDS
+    if not now - cap <= until <= now + cap:
         return None
-    if not 0 <= state["until"] - state["at"] <= RATE_LIMIT_MAX_COOLDOWN_SECONDS:
+    if not 0 <= until - at <= cap:
         return None
     # Records written before these fields existed stay readable: their provenance is
     # unknown rather than guessed.
@@ -63,6 +65,9 @@ def _read_rate_limit(file: str) -> Optional[dict]:
     for key in ("viajante_version", "endpoint"):
         if not isinstance(state.get(key), str):
             state[key] = None
+    # A cooldown length that is not a number in range is unknown: 0, as for records without one.
+    if not (isinstance(state.get("cooldown_s"), (int, float)) and 0 <= state["cooldown_s"] <= cap):
+        state["cooldown_s"] = 0
     return state
 
 
@@ -76,8 +81,8 @@ def rate_limit_status(
     now: Optional[float] = None, *, file: str = GOOGLE_RATE_LIMIT_FILE
 ) -> Optional[dict]:
     """The recorded cooldown for this machine while it runs, else None."""
-    state = _read_rate_limit(file)
     current = time.time() if now is None else now
+    state = _read_rate_limit(file, current)
     return state if state is not None and state["until"] > current else None
 
 
@@ -103,7 +108,7 @@ def note_rate_limited(
     if cause not in _CAUSE_OF_BASIS.values():
         raise ValueError(f"invalid cooldown cause: {cause!r}")
     current = time.time() if now is None else now
-    previous = _read_rate_limit(file)
+    previous = _read_rate_limit(file, current)
     if previous is not None and previous["until"] > current:
         return previous
     if retry_after is not None and not math.isfinite(retry_after):

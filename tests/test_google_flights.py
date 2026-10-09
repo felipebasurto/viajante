@@ -14,19 +14,21 @@ from urllib.parse import parse_qs, urlparse
 import _isolate  # noqa: F401
 from viajante.flight_offers import _normalize_offer
 from viajante.google_flights import (
-    EMPTY_STATE_TEXT,
     GoogleFlightsBlocked,
     GoogleFlightsMarkupError,
-    GoogleFlightsSource,
     NoFlightsFound,
     _consent_reject_form,
     _is_consent_interstitial,
     build_itinerary_url,
     build_search_params,
     build_search_url,
-    extract_main_html,
     google_flights_url,
     looks_blocked,
+)
+from viajante.google_flights_detail import (
+    EMPTY_STATE_TEXT,
+    GoogleFlightsSource,
+    extract_main_html,
     parse_flight_cards,
     parse_http_flight_cards,
 )
@@ -2065,7 +2067,9 @@ class MultiCityDetailTests(unittest.TestCase):
             source.fetch(trip)
 
     def test_multi_row_index_matches_owned_identity(self) -> None:
-        from viajante.google_flights import _multi_row_index
+        from viajante.google_flights_detail import (
+            _multi_row_index,
+        )
 
         cards = parse_flight_cards(
             _multi_board_html(

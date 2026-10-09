@@ -17,6 +17,7 @@ from typing import Any, Callable, Mapping, Optional
 from viajante.envelope import ENVELOPE_KEYS, stamp_local
 from viajante.evidence import record
 from viajante.history import (
+    DEFAULT_OBSERVATION_LIMIT,
     SCHEMA_VERSION,
     change_between,
     forced_recording,
@@ -220,8 +221,25 @@ def watch_price_tool(
     return record(out)  # type: ignore[return-value]
 
 
-def price_history_tool(**filters: Any) -> dict:
-    payload = price_history(**filters)
+def price_history_tool(
+    *,
+    kind: Optional[str] = None,
+    query_key: Optional[str] = None,
+    route: Optional[str] = None,
+    date: Optional[str] = None,
+    location: Optional[str] = None,
+    currency: Optional[str] = None,
+    limit: int = DEFAULT_OBSERVATION_LIMIT,
+) -> dict:
+    payload = price_history(
+        kind=kind,
+        query_key=query_key,
+        route=route,
+        date=date,
+        location=location,
+        currency=currency,
+        limit=limit,
+    )
     if payload.get("read_error") is None:
         stamp_local(payload)
     else:

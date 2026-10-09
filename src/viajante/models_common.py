@@ -12,6 +12,9 @@ from typing import Literal, Mapping, Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata
 
+# Results a search returns per query when the caller does not name a top count.
+DEFAULT_TOP = 8
+
 # Fetch/browser locale is English so owned card parsers stay on English evidence.
 FETCH_LANGUAGE = "en"
 
@@ -333,6 +336,11 @@ class SearchCoverage:
 
 
 EmptyReason = Literal["provider_empty", "filtered_out", "not_loaded"]
+
+
+def empty_reason_for_rows(provider_rows: int) -> EmptyReason:
+    """An empty answer the provider gave: rows it returned that our filters removed, or none."""
+    return "filtered_out" if provider_rows > 0 else "provider_empty"
 
 
 class SearchErrorCode(str, Enum):

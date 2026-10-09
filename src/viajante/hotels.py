@@ -20,7 +20,6 @@ from viajante.booking import (
 )
 from viajante.browser import playwright_available
 from viajante.control import checkpoint, controlled, interruptible_sleep
-from viajante.flights import DEFAULT_TOP
 from viajante.google_flights import SweepTransportError
 from viajante.google_hotels import (
     GoogleHotelsSource,
@@ -54,6 +53,7 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
+from viajante.models_common import DEFAULT_TOP
 from viajante.orchestration import (
     MAX_ATTEMPTS,
     NON_RETRIABLE_CODES,

@@ -716,18 +716,19 @@ class ViaTests(unittest.TestCase):
 
 
 class _TopAfterFilters(FakeSearch):
-    """Filters on depart_after, then takes the top, as search_flights does before --top."""
+    """Filters on depart_after and arrive_before, then takes the top, as search_flights does."""
 
     def __call__(self, trips, **kwargs) -> SearchReport:
         report = super().__call__(trips, **kwargs)
-        bound = kwargs.get("depart_after")
+        depart_after, arrive_before = kwargs.get("depart_after"), kwargs.get("arrive_before")
         queries = []
         for row in report.queries:
             if isinstance(row, QuerySuccess):
                 offers = [
                     offer
                     for offer in row.offers
-                    if bound is None or _clock(offer.departure) >= bound
+                    if (depart_after is None or _clock(offer.departure) >= depart_after)
+                    and (arrive_before is None or _clock(offer.arrival) <= arrive_before)
                 ]
                 row = _ok(row.query, offers[: kwargs["top"]])
             queries.append(row)
@@ -758,6 +759,48 @@ class LegFilterPushdownTests(unittest.TestCase):
         )
         self.assertEqual([row.hub for row in report.itineraries], ["LAX"])
         self.assertEqual(report.itineraries[0].parts[0].offer.airline, "B")
+
+    def test_a_later_ticket_that_leaves_before_depart_after_keeps_the_journey(self) -> None:
+        # The journey leaves JFK at 10:30, so it passes depart_after 10:00. Its second ticket
+        # leaves LAX at 09:00 the next morning: the bound binds where the journey starts only.
+        table = {
+            ("JFK", "LAX", DAY): [
+                _offer(200.0, (_segment("JFK", "LAX", "10:30", "11:30"),), airline="A")
+            ],
+            ("LAX", "NRT", NEXT): [
+                _offer(500.0, (_segment("LAX", "NRT", "09:00", "23:00", on=NEXT),), airline="B")
+            ],
+        }
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            allow_overnight=True,
+            search=_TopAfterFilters(table),
+            filters=SplitFilters(OfferFilters(depart_after=10 * 60)),
+        )
+        self.assertEqual([row.hub for row in report.itineraries], ["LAX"])
+
+    def test_an_early_ticket_that_lands_after_arrive_before_keeps_the_journey(self) -> None:
+        # The journey lands in NRT at 12:00 the next day, inside arrive_before 15:00. Its first
+        # ticket reaches LAX at 22:00, after that clock, and must not be dropped for it.
+        table = {
+            ("JFK", "LAX", DAY): [
+                _offer(200.0, (_segment("JFK", "LAX", "08:00", "22:00"),), airline="A")
+            ],
+            ("LAX", "NRT", NEXT): [
+                _offer(500.0, (_segment("LAX", "NRT", "06:00", "12:00", on=NEXT),), airline="B")
+            ],
+        }
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            allow_overnight=True,
+            search=_TopAfterFilters(table),
+            filters=SplitFilters(OfferFilters(arrive_before=15 * 60)),
+        )
+        self.assertEqual([row.hub for row in report.itineraries], ["LAX"])
 
 
 class MixedOneWayTests(unittest.TestCase):

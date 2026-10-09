@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from viajante.flights import DEFAULT_TOP, search_flights
-from viajante.google_flights import NoFlightsFound, parse_flight_cards, parse_http_flight_cards
+from viajante.google_flights import (
+    NoFlightsFound,
+)
+from viajante.google_flights_detail import (
+    parse_flight_cards,
+    parse_http_flight_cards,
+)
 from viajante.google_flights_rpc import (
     EmptyShoppingResults,
     ShoppingRejected,

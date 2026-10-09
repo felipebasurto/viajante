@@ -24,14 +24,13 @@ from viajante.flight_filters import (
 )
 from viajante.flight_offers import (
     FlightSort,
-    _offer_sort_key,
     _rank_offers,
     _recommend,
     _shop_offers,
     compare_nonstop_vs_one_stop,
     validate_sort,
 )
-from viajante.flight_packages import _passes_packaged_filters
+from viajante.flight_packages import _packaged_eligible, package_shop_filters
 from viajante.flight_routes import (
     _is_route_spec,
     _overlay_carrier_filters,
@@ -44,16 +43,14 @@ from viajante.flight_routes import (
     parse_flight_plan,
 )
 from viajante.google_flights import (
-    GoogleFlightsBlocked,
-    GoogleFlightsMarkupError,
-    GoogleFlightsRejected,
-    GoogleFlightsSource,
-    NoFlightsFound,
     RawFlightCard,
     SweepTransportError,
 )
-from viajante.google_flights_public import GoogleFlightsUnsupported
+from viajante.google_flights_detail import (
+    GoogleFlightsSource,
+)
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
+from viajante.google_flights_public import classify_failure
 from viajante.history import recorded_flights
 from viajante.models import (
     FetchBackend,
@@ -70,6 +67,7 @@ from viajante.models import (
     Trip,
     normalize_country,
 )
+from viajante.models_common import DEFAULT_TOP
 from viajante.orchestration import (
     MAX_ATTEMPTS,
     inter_query_delay_seconds,
@@ -77,19 +75,9 @@ from viajante.orchestration import (
     should_retry,
     sweep_inter_query_delay_seconds,
 )
-from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
-from viajante.ratelimit import NOT_SENT, cooldown_until
+from viajante.ratelimit import NOT_SENT
 from viajante.storage import default_state_dir
-
-DEFAULT_TOP = 8
-
-
-NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
-
-
-REJECTED_MESSAGE = "Google Flights rejected this query; the provider did not identify the cause."
-
 
 FetchMode = Literal["auto", "sweep", "detail"]
 
@@ -100,46 +88,6 @@ def resolve_fetch_mode(fetch: FetchMode) -> Literal["sweep", "detail"]:
     if fetch in ("auto", "sweep"):
         return "sweep"
     raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
-
-
-def classify_failure(exc: BaseException) -> SearchError:
-    if isinstance(exc, NoFlightsFound):
-        return SearchError(
-            code=SearchErrorCode.NO_RESULTS,
-            message=NO_RESULTS_MESSAGE,
-        )
-    if isinstance(exc, GoogleFlightsUnsupported):
-        return SearchError(
-            code=SearchErrorCode.REJECTED,
-            message=str(exc),
-            diagnostics={
-                "request_sent": False,
-                "attempts": 0,
-                "http_status": None,
-                "rpc_status": None,
-                "endpoint": "www.google.com/travel/flights",
-                "cooldown_basis": None,
-            },
-        )
-    if isinstance(exc, GoogleFlightsRejected):
-        return SearchError(
-            code=SearchErrorCode.REJECTED,
-            message=REJECTED_MESSAGE,
-        )
-    if isinstance(exc, GoogleFlightsBlocked):
-        return SearchError(
-            code=SearchErrorCode.BLOCKED,
-            message=str(exc) or "Google Flights blocked the request.",
-            rate_limited=exc.status == 429,
-            retry_until=cooldown_until(str(exc)) if exc.status == 429 else None,
-            diagnostics=getattr(exc, "diagnostics", None),
-        )
-    if isinstance(exc, GoogleFlightsMarkupError):
-        return SearchError(
-            code=SearchErrorCode.MARKUP_DRIFT,
-            message=str(exc) or "Google Flights markup could not be parsed.",
-        )
-    return classify_provider_failure(exc)
 
 
 class _SourceConfig(Protocol):
@@ -202,24 +150,10 @@ def _run_search(
 
     def _success_from_cards(trip: Trip, cards: Sequence[RawFlightCard]) -> QuerySuccess:
         packaged = len(trip.legs) > 1
-        initial_filters = (
-            replace(filters, via=None, exclude_via=None, no_overnight=None, require_overnight=None)
-            if packaged
-            else filters
-        )
-        pool, eligible = _shop_offers(cards, trip, initial_filters, baggage_buffer=baggage_buffer)
+        shop_filters = package_shop_filters(filters, packaged)
+        pool, eligible = _shop_offers(cards, trip, shop_filters, baggage_buffer=baggage_buffer)
         if packaged:
-            candidates = sorted(eligible, key=lambda offer: _offer_sort_key(offer, sort))
-            eligible = []
-            for start in range(0, len(candidates), top):
-                eligible.extend(
-                    offer
-                    for offer in candidates[start : start + top]
-                    if _passes_packaged_filters(offer, trip, filters)
-                )
-                if len(_rank_offers(eligible, top=top, sort=sort)) >= top:
-                    break
-            pool = eligible
+            pool = eligible = _packaged_eligible(eligible, trip, filters, top=top, sort=sort)
         ranked = _rank_offers(eligible, top=top, sort=sort)
         recommendation = _recommend(trip, pool, filters, currency=currency, packaged=packaged)
         metadata_for = getattr(source, "metadata_for", None)

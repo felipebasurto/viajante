@@ -17,13 +17,12 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
 
 from viajante.airports import airport_geo
 from viajante.flight_filters import parse_code_list
-from viajante.flight_routes import _overlay_carrier_filters
 from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.models import (
     FlightOffer,
@@ -39,7 +38,7 @@ from viajante.models import (
 from viajante.parsers import normalize_clock
 from viajante.quote import first_origin_iata, resolve_quote_currency
 from viajante.ratelimit import rate_limit_advice, rate_limit_status
-from viajante.split_filters import SplitFilters
+from viajante.split_filters import SplitFilters, search_bounds
 from viajante.split_filters import passes as split_passes
 from viajante.temporal import local_instant
 
@@ -549,25 +548,6 @@ def _rank(
     return ranked, omitted
 
 
-def with_carrier_filters(
-    query: FlightQuery | RoundTrip,
-    *,
-    airlines: Optional[Sequence[str]] = None,
-    exclude_airlines: Optional[Sequence[str]] = None,
-    alliances: Optional[Sequence[str]] = None,
-    exclude_alliances: Optional[Sequence[str]] = None,
-) -> FlightQuery | RoundTrip:
-    """The query with the caller's carrier filters applied to it."""
-    (row,) = _overlay_carrier_filters(
-        (query,),
-        airlines=airlines,
-        exclude_airlines=exclude_airlines,
-        alliances=alliances,
-        exclude_alliances=exclude_alliances,
-    )
-    return row  # type: ignore[return-value]
-
-
 def _leg_rows(report: SearchReport, hub: Optional[str] = None) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for result in report.queries:
@@ -659,23 +639,6 @@ def validate_split_request(
     return kind, named
 
 
-def _leg_bounds(filters: Optional[SplitFilters]) -> dict[str, object]:
-    """The per-journey clock and duration bounds, in the keyword names the search accepts."""
-    if filters is None:
-        return {}
-    offer = filters.offer
-    bounds: dict[str, object] = {}
-    if offer.depart_after is not None:
-        bounds["depart_after"] = offer.depart_after
-    if offer.depart_window is not None:
-        bounds["depart_window"] = offer.depart_window
-    if offer.arrive_before is not None:
-        bounds["arrive_before"] = offer.arrive_before
-    if offer.max_duration_hours is not None:
-        bounds["max_duration_hours"] = offer.max_duration_hours
-    return bounds
-
-
 def search_split_tickets(
     query: FlightQuery | RoundTrip,
     *,
@@ -729,9 +692,6 @@ def search_split_tickets(
     packaged_searched = packaged is None
     if packaged is None:
         packaged = search([query], top=top, **shop)
-    # Each journey of a ticket must meet these bounds, so the leg searches can apply them
-    # before they take their top rows; otherwise the fare-ordered top ten can all fail them.
-    leg_bounds = _leg_bounds(filters)
     baseline = _packaged_quote(packaged, currency)
     legs: list[Mapping[str, object]] = []
     itineraries: list[SplitItinerary] = []
@@ -760,7 +720,14 @@ def search_split_tickets(
                 ),
             ]
             report_progress("split: outbound and return as separate one-way tickets")
-            report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop, **leg_bounds)
+            # Each ticket is a whole journey, so the bounds apply to both before their top rows.
+            report = search(
+                trips,
+                top=SPLIT_LEG_TOP,
+                sort="fare",
+                **shop,
+                **search_bounds(filters, end="journey"),
+            )
             extra += len(trips)
             reports.append(report)
             legs.extend(_leg_rows(report))
@@ -800,7 +767,17 @@ def search_split_tickets(
                 days.append(query.departure_date + timedelta(days=1))
             trips += [_one_way(query, hub, query.destination, day, leg_max_stops) for day in days]
             report_progress(f"split: {query.origin}-{hub}-{query.destination} as two tickets")
-            report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop, **leg_bounds)
+            head_bounds = search_bounds(filters, end="first")
+            tail_bounds = search_bounds(filters, end="last")
+            if head_bounds == tail_bounds:
+                report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)
+            else:
+                # A clock bound binds one end of the journey, so each end is its own search.
+                # ponytail: with named clock bounds a hub costs two sequential sweeps instead of
+                # one. Upgrade: merge them once the provider takes per-query clock filters.
+                head = search(trips[:1], top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)
+                tail = search(trips[1:], top=SPLIT_LEG_TOP, sort="fare", **shop, **tail_bounds)
+                report = replace(head, queries=(*head.queries, *tail.queries), coverage=None)
             extra += len(trips)
             tried.append(hub)
             reports.append(report)

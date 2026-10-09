@@ -169,6 +169,22 @@ class ToolMetadataTests(_StateDir):
                 self.assertIs(hints.idempotent_hint, not writes)
                 self.assertIsInstance(hints.open_world_hint, bool)
 
+    def test_the_wheel_smoke_job_reads_sdk2_names(self) -> None:
+        # The dist job's inline client runs only in CI, against a built wheel, where SDK 1
+        # spellings raise AttributeError. Pin the names in the workflow text.
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/test.yml").read_text(encoding="utf-8")
+        sdk1_names = (
+            "readOnlyHint",
+            "idempotentHint",
+            "destructiveHint",
+            "openWorldHint",
+            "inputSchema",
+            "isError",
+        )
+        for name in sdk1_names:
+            self.assertNotIn(name, workflow)
+
     def test_open_world_hint_matches_the_tools_that_reach_a_provider(self) -> None:
         for name, tool in self.tools.items():
             with self.subTest(tool=name):

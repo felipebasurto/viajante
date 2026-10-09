@@ -21,7 +21,12 @@ from viajante.explore import search_explore
 from viajante.flight_filters import NO_OFFER_FILTERS, OfferFilters
 from viajante.flight_offers import _normalize_offer
 from viajante.flights import _run_search, search_flights
-from viajante.google_flights import GoogleFlightsBlocked, GoogleFlightsSource
+from viajante.google_flights import (
+    GoogleFlightsBlocked,
+)
+from viajante.google_flights_detail import (
+    GoogleFlightsSource,
+)
 from viajante.google_flights_rpc import CompactExplorePlace, RawFlightCard
 from viajante.models import (
     FlightLeg,

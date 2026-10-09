@@ -28,6 +28,8 @@ from viajante.google_flights import (
     NoFlightsFound,
     SweepHttpResponse,
     SweepPost,
+)
+from viajante.google_flights_detail import (
     _multi_row_index,
     parse_flight_cards,
 )
@@ -136,7 +138,7 @@ class PublicTransportRegressions(unittest.TestCase):
 
     def _source(self, page, *, proxy=None):
         source = PublicGoogleFlightsHttpSource(currency="USD", client=object(), proxy=proxy)
-        source._explore_session = lambda: SimpleNamespace(new_page=lambda: page)
+        source._explore_browser = SimpleNamespace(new_page=lambda: page, close=lambda: None)
         return source
 
     def test_explore_http_429_stops_before_settle_and_stamps_actual_endpoint(self):
@@ -194,7 +196,9 @@ class PublicTransportRegressions(unittest.TestCase):
                 source = self._source(page, proxy="http://127.0.0.1:8080")
                 with self.assertRaises(GoogleFlightsBlocked):
                     source.fetch_explore("JFK", DAY)
-                source._explore_session = lambda: self.fail("pending jobs must not open a page")
+                source._explore_browser = SimpleNamespace(
+                    new_page=lambda: self.fail("pending jobs must not open a page")
+                )
                 with self.assertRaises(GoogleFlightsBlocked) as caught:
                     source.fetch_explore("EWR", DAY)
                 self.assertFalse(caught.exception.diagnostics["request_sent"])
@@ -272,7 +276,7 @@ class PublicTransportRegressions(unittest.TestCase):
         control = SearchControl(deadline_seconds=0.1, clock=lambda: clock.now)
         with (
             active(control),
-            patch("viajante.google_flights_public.time.monotonic", lambda: clock.now),
+            patch("viajante.google_flights_explore_browser.time.monotonic", lambda: clock.now),
         ):
             result = search_explore("JFK", DAY, source=self._source(page))
         self.assertTrue(control.cut)

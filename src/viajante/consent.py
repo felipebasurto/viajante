@@ -36,10 +36,11 @@ def restore_consent_cookies(session: Any, *, now: Optional[float] = None) -> int
         state = json.loads(_consent_path().read_text(encoding="utf-8"))
         stored_at = float(state["stored_at"])
         cookies = state["cookies"]
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
         return 0
     clock = time.time() if now is None else now
-    if not isinstance(cookies, list) or clock - stored_at > CONSENT_MAX_AGE_SECONDS:
+    # NaN, inf and a future stamp fail the chained test too: a clock we cannot trust is no record.
+    if not isinstance(cookies, list) or not 0 <= clock - stored_at <= CONSENT_MAX_AGE_SECONDS:
         return 0
     loaded = 0
     for item in cookies:

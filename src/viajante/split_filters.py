@@ -16,7 +16,7 @@ same rules as the one-way search. Nothing here converts money or invents a time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 from viajante.flight_filters import (
     OVERNIGHT_ANY,
@@ -134,3 +134,28 @@ def passes(itinerary: SplitItinerary, filters: SplitFilters) -> bool:
     if itinerary.kind == "hub":
         return _hub_connection_passes(itinerary, offer)
     return True
+
+
+def search_bounds(filters: Optional[SplitFilters], *, end: str) -> dict[str, object]:
+    """Clock and duration bounds a leg search may apply without outrunning ``passes``.
+
+    ``end`` names the ticket's place in the journey: ``"journey"`` for a mixed one-way (each
+    ticket is a whole journey), ``"first"`` for origin to hub (it starts the journey), or
+    ``"last"`` for hub to destination (it ends the journey). A departure bound binds where the
+    journey starts and an arrival bound where it ends, so a hub's second ticket never takes
+    ``depart_after``: it can leave the next morning. Each ticket takes ``max_duration``.
+    """
+    if filters is None:
+        return {}
+    offer = filters.offer
+    bounds: dict[str, object] = {}
+    if offer.max_duration_hours is not None:
+        bounds["max_duration_hours"] = offer.max_duration_hours
+    if end in ("journey", "first"):
+        if offer.depart_after is not None:
+            bounds["depart_after"] = offer.depart_after
+        if offer.depart_window is not None:
+            bounds["depart_window"] = offer.depart_window
+    if end in ("journey", "last") and offer.arrive_before is not None:
+        bounds["arrive_before"] = offer.arrive_before
+    return bounds

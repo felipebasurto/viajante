@@ -399,6 +399,24 @@ class CliTests(unittest.TestCase):
             self.assertEqual(main(["flights", ROUTE, "--baggage-buffer", "-1"]), 1)
             search.assert_not_called()
 
+    def test_layover_and_via_errors_name_the_cli_flags(self) -> None:
+        cases = {
+            ("--max-layover", "-1"): "--max-layover must not be negative",
+            ("--min-layover", "3", "--max-layover", "1"): (
+                "--min-layover must be at or below --max-layover"
+            ),
+            ("--via", "DXB", "--exclude-via", "DXB"): (
+                "--via and --exclude-via must not share a code"
+            ),
+        }
+        with patch("viajante.cli.search_flights") as search:
+            for flags, message in cases.items():
+                with self.subTest(flags=flags), redirect_stderr(io.StringIO()) as err:
+                    route = f"JFK-LHR:{FUTURE_DATE.isoformat()}"
+                    self.assertEqual(main(["flights", route, *flags]), 1)
+                    self.assertIn(message, err.getvalue())
+            search.assert_not_called()
+
     def test_past_dates_are_rejected_before_starting_chromium(self) -> None:
         with patch("viajante.cli.search_flights") as search:
             code = main(["flights", f"JFK-LHR:{PAST_DATE.isoformat()}"])

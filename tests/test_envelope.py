@@ -38,7 +38,7 @@ from viajante.google_flights import (
     NoFlightsFound,
     RawFlightCard,
 )
-from viajante.google_flights_rpc import CompactCalendarDay, CompactExplorePlace
+from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.google_hotels_rpc import EmptyHotelResults, HotelsBlocked
 from viajante.hotels import _run_search
 from viajante.models import (
@@ -461,25 +461,17 @@ class HotelEmptyReasonTests(_StateDirCase):
 
 class DatesFlexExploreTests(_StateDirCase):
     class _Source:
-        """Per-day shop source: a priced day answers one card, an unpriced day answers none."""
+        """Per-day shop source: each day answers the cards the test gives it, or raises."""
 
-        def __init__(self, calendar: object, cards: dict | None = None) -> None:
-            self.calendar = calendar
+        def __init__(self, cards: dict | None = None, *, error: Exception | None = None) -> None:
             self.cards = cards or {}
+            self.error = error
             self.config = SimpleNamespace(html_lang="en", currency="USD")
 
         def fetch(self, query):
-            if isinstance(self.calendar, Exception):
-                raise self.calendar
-            if query.departure_date in self.cards:
-                response = self.cards[query.departure_date]
-                if isinstance(response, Exception):
-                    raise response
-                return response
-            for day in self.calendar:
-                if day.departure_date == query.departure_date and day.price is not None:
-                    return (_card(price=f"${day.price:g}"),)
-            return ()
+            if self.error is not None:
+                raise self.error
+            return self.cards.get(query.departure_date, ())
 
         def close(self) -> None:
             pass
@@ -493,7 +485,7 @@ class DatesFlexExploreTests(_StateDirCase):
     def test_unpriced_days_of_a_successful_shop_are_provider_empty_per_day(self) -> None:
         # Each day was shopped and answered no fare, so each day is a provider-empty row.
         payload = self._dates(
-            self._Source((CompactCalendarDay(DAY, None),))  # the second day is missing entirely
+            self._Source({DAY: ()})  # the second day is missing entirely
         )
         self.assertEqual({row["empty_reason"] for row in payload["days"]}, {"provider_empty"})
         self.assertEqual(
@@ -502,29 +494,33 @@ class DatesFlexExploreTests(_StateDirCase):
         )
 
     def test_priced_calendar_is_ok(self) -> None:
-        payload = self._dates(
-            self._Source(
-                (CompactCalendarDay(DAY, 150.0), CompactCalendarDay(DAY + timedelta(1), None))
-            )
-        )
+        payload = self._dates(self._Source({DAY: (_card(price="$150"),), DAY + timedelta(1): ()}))
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
             ("ok", "complete", None),
         )
 
     def test_sweep_days_filtered_locally_are_filtered_out_not_empty(self) -> None:
-        source = self._Source(
-            (),
-            cards={DAY: (_card(),), DAY + timedelta(1): ()},
-        )
+        source = self._Source({DAY: (_card(),), DAY + timedelta(1): ()})
         payload = self._dates(source, max_duration_hours=0.5)
         reasons = [row["empty_reason"] for row in payload["days"]]
         self.assertEqual(reasons, ["filtered_out", "provider_empty"])
         self.assertEqual(payload["empty_reason"], "filtered_out")
         self.assertEqual(payload["status"], "no_results")
 
+    def test_a_date_row_without_a_reason_is_not_loaded_on_any_backend(self) -> None:
+        # Rows built outside viajante carry no reason: they are unproven, whichever backend shopped.
+        for backend in ("sweep", "calendar", "calendar_then_sweep"):
+            with self.subTest(backend=backend):
+                payload = stamp_search(
+                    {"fetch_backend": backend, "days": [{"status": "empty"}]}, now=NOW
+                )
+                self.assertEqual(
+                    (payload["empty_reason"], payload["completeness"]), ("not_loaded", "partial")
+                )
+
     def test_a_blocked_calendar_is_not_loaded_and_blocked(self) -> None:
-        payload = self._dates(self._Source(GoogleFlightsBlocked("wall")))
+        payload = self._dates(self._Source(error=GoogleFlightsBlocked("wall")))
         self.assertTrue(all(row["status"] == "error" for row in payload["days"]))
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),
@@ -532,13 +528,13 @@ class DatesFlexExploreTests(_StateDirCase):
         )
 
     def test_a_window_with_missing_days_is_partial(self) -> None:
-        payload = self._dates(self._Source((CompactCalendarDay(DAY, 150.0),)))
+        payload = self._dates(self._Source({DAY: (_card(price="$150"),)}))
         payload["coverage"] = {**payload["coverage"], "complete": False}
         restamped = stamp_search(payload, now=NOW)
         self.assertEqual((restamped["status"], restamped["completeness"]), ("ok", "partial"))
 
     def test_flex_markup_drift_on_every_day_is_failed_not_no_results(self) -> None:
-        source = self._Source(GoogleFlightsMarkupError("drift"))
+        source = self._Source(error=GoogleFlightsMarkupError("drift"))
         report = search_flex("JFK", "LHR", DAY, 1, source=source, currency="USD")
         payload = stamp_search(reports_payload(report), now=NOW)
         self.assertEqual(payload["error"]["code"], "markup_drift")
@@ -548,7 +544,7 @@ class DatesFlexExploreTests(_StateDirCase):
         )
 
     def test_flex_window_with_no_priced_day_is_provider_empty(self) -> None:
-        source = self._Source(())
+        source = self._Source()
         report = search_flex("JFK", "LHR", DAY, 1, source=source, currency="USD")
         payload = stamp_search(reports_payload(report), now=NOW)
         self.assertEqual(payload["empty_reason"], "provider_empty")
@@ -1091,6 +1087,16 @@ class SplitEnvelopeTests(unittest.TestCase):
         payload = stamp_split(_split_payload([], packaged_report=packaged))
         self.assertEnvelope(
             payload, status="blocked", completeness="blocked", empty_reason="not_loaded"
+        )
+
+    def test_a_packaged_row_that_did_not_load_is_not_loaded_beside_an_empty_one(self) -> None:
+        # The same rule stamp_search applies: an empty sibling cannot hide a row that did not load.
+        packaged = {
+            "queries": [{"query": {}, "raw_count": 0}, {"query": {}, "empty_reason": "not_loaded"}]
+        }
+        payload = stamp_split(_split_payload([], packaged_report=packaged))
+        self.assertEnvelope(
+            payload, status="no_results", empty_reason="not_loaded", error_code=None
         )
 
     def test_answered_legs_whose_pairings_were_all_rejected_are_filtered_out(self) -> None:

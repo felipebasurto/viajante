@@ -28,6 +28,7 @@ from viajante.control import (
     controlled,
     cut_by_deadline,
     interruptible_sleep,
+    note_cut,
     validate_deadline_seconds,
 )
 from viajante.dates import search_dates, search_flex
@@ -43,6 +44,7 @@ from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.google_hotels import GoogleHotelsSource, build_applied_filters
 from viajante.hotels import search_hotels
 from viajante.models import FlightQuery, HotelQuery, HotelSearchReport, QueryFailure
+from viajante.orchestration import classify_failure
 from viajante.trip import search_trip
 
 FUTURE = date.today() + timedelta(days=30)
@@ -643,6 +645,76 @@ class DeadlineTests(McpControlCase):
             self.assertLess(seen[-1].deadline_at, outer.deadline_at)
         inner()
         self.assertIsNone(seen[-1])
+
+
+class CutFlagTests(McpControlCase):
+    """The cut flag keeps partial results out of the replay cache and marks deadline cuts."""
+
+    def test_the_cut_flag_decides_the_cache_not_the_clock(self) -> None:
+        runs: list[int] = []
+
+        @mcp_handlers._cached
+        def tool(*, cut=False, deadline_seconds=None):
+            runs.append(1)
+            time.sleep(0.05)
+            if cut:
+                note_cut()
+            return {"queries": []}
+
+        tool(cut=True, deadline_seconds=30)
+        tool(cut=True, deadline_seconds=30)
+        self.assertEqual(len(runs), 2, "a cut search is never replayed")
+        tool(deadline_seconds=0.001)
+        tool(deadline_seconds=0.001)
+        self.assertEqual(len(runs), 3, "running past an unchecked deadline cuts nothing")
+
+    def test_cut_is_set_by_a_raised_deadline_or_a_shortened_sleep_only(self) -> None:
+        clock = [0.0]
+        control = SearchControl(deadline_seconds=1, clock=lambda: clock[0])
+        control.wait(0)
+        self.assertFalse(control.cut, "a sleep the deadline did not shorten cuts nothing")
+        clock[0] = 0.9
+        control.wait(0.3)
+        self.assertTrue(control.cut, "a sleep the deadline shortened is a cut")
+
+        parent = SearchControl()
+        inner = SearchControl(deadline_seconds=1, clock=lambda: clock[0], parent=parent)
+        inner.checkpoint()
+        self.assertFalse(inner.cut or parent.cut)
+        clock[0] = 9.5
+        with self.assertRaises(SearchDeadline):
+            inner.checkpoint()
+        self.assertTrue(inner.cut and parent.cut, "the enclosing search sees the cut")
+
+    def test_classifying_a_deadline_marks_the_search_cut(self) -> None:
+        with active(SearchControl()) as control:
+            classify_failure(SearchDeadline())
+        self.assertTrue(control.cut)
+
+    def test_a_hotel_page_cut_after_arrival_is_never_replayed(self) -> None:
+        # The price page arrived with no error code, so only the cut flag keeps it out of the cache.
+        runs: list[int] = []
+        url = "https://www.google.com/travel/search"
+        cheap = _wrap_wrb(_search_payload(_hotel_record(title="Cheap", rating=2.0)))
+
+        class Client(_ScriptedHotelClient):
+            def post_many(self, jobs, *, timeout):
+                return [
+                    SweepHttpResponse(200, cheap, url),
+                    SweepHttpResponse(0, "", url, deadline=True),
+                ]
+
+        @mcp_handlers._cached
+        def tool():
+            runs.append(1)
+            rated = HotelQuery("Prague", FUTURE, FUTURE + timedelta(days=3), min_rating=4.5)
+            source = GoogleHotelsSource(client=Client([]), currency="CZK")
+            page = source.fetch(rated, build_applied_filters(rated, currency="CZK"), 24)
+            return {"cards": [card.title for card in page.cards]}
+
+        self.assertEqual(tool()["cards"], ["Cheap"])
+        self.assertEqual(tool()["cards"], ["Cheap"])
+        self.assertEqual(len(runs), 2, "a cut hotel search is never replayed")
 
 
 class CompactJsonTests(McpControlCase):

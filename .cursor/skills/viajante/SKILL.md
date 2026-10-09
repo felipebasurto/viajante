@@ -87,7 +87,7 @@ Check `get_runtime_info` or `viajante --version` before relying on new flags/too
 
 `--fetch auto`: public-page sweep. Explicit detail needs Playwright. A provider block (including RPC 13) never switches backends; it stops pending work. `markup_drift` does not fall back. Sweep needs no Chromium. Detail and Booking sleep ~4.5–6s between queries. Never shorten that or parallelize. One MCP search at a time. A second search while one is running raises `a viajante search is already running in this process` immediately. That is not `MCP error -32001: Request timed out`; do not treat timeouts as lock-busy or retry them in a long wait loop. `lookup_airports` may run during a search.
 
-`search_dates` is an HTTP calendar and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment. Optional MCP `country` is Google `gl` (origin market). Omit when unset. Do not pass a destination ISO.
+`search_dates` is a per-day public-page window (HTTP GETs) and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment. Optional MCP `country` is Google `gl` (origin market). Omit when unset. Do not pass a destination ISO.
 
 Unnamed `baggage_buffer` is 0. The public-page transport sends `carry_on` (one bag for the whole party, not per passenger), `airlines`, `exclude_airlines` and `alliances`; every page must echo them or the read fails. Google ignores an airline exclusion, so viajante drops excluded and carrier-unknown cards locally; operator and codeshare evidence is limited. It refuses named checked `bags`, `exclude_alliances`, and multi-city (use `fetch=detail`) before network work. `search_explore` needs the browser extra and accepts only one adult in economy. Detail refuses bag and carrier filters. Do not remove requested filters silently; a base-fare search is a separate scenario. Round-trip results complete up to eight owned outbound selections and remain scope-bound/partial. Automatic typical-price fanout is disabled. `VIAJANTE_SWEEP_MODE=conservative` caps HTTP/2 dispatch at two instead of eight. Do not invent a bag fee.
 
@@ -102,7 +102,7 @@ No implied home hub. Use the origin the user named. If unnamed, ask.
 
 ## Report
 
-Copy owned numbers. Print `vs_typical` only when `typical` is present (same-route calendar median, not a price-trend history). Print `stops_compare` when present. When a flights query carries `recommendation`, read `relaxed_requirements` first and say which named requirements the pick relaxed; quote `highlights` / `tradeoffs` as returned, keep "unknown" wording, and do not compare prices across currencies. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
+Copy owned numbers. Print `vs_typical` only when `typical` is present (same-route median of the priced days, not a price-trend history). Print `stops_compare` when present. When a flights query carries `recommendation`, read `relaxed_requirements` first and say which named requirements the pick relaxed; quote `highlights` / `tradeoffs` as returned, keep "unknown" wording, and do not compare prices across currencies. JSON keys: `src/viajante/models.py`. Booking/Google URLs are optional.
 
 Only values returned by a Viajante payload are search evidence. Do not use a manually operated Google Flights tab to continue an MCP failure or present its price as a Viajante result.
 
@@ -163,7 +163,7 @@ Every MCP result (except `lookup_airports`) opens with `status`, `completeness`,
 | `not_loaded` | The search did not complete. Availability is unknown. |
 
 `completeness` `partial` or `blocked` means do not summarise as a full answer.
-In `search_dates` / `search_flex`, a day with no calendar price is `not_loaded`:
+In `search_dates` / `search_flex`, a day with no price is `not_loaded`:
 never say "no flights that day". An explore destination with `price: null` is `not_loaded` too. An `ok` or `partial`
 result may carry the worst failure's `error_code`; read `empty_reason` for emptiness.
 `verify_answer` `status: failed` means the draft
@@ -180,8 +180,8 @@ has claims no search owns (see `error_code`), not that a search failed.
 | `rate_limited: true` | Stop provider searches. Wait until `retry_after` (UTC; `retry_after_seconds`) when the error has it, else 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
 | `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |
-| `blocked` (including a short unknown HTML shell) | Stop that calendar. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
-| `search_dates` returns `blocked` | Stop that calendar search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
+| `blocked` (including a short unknown HTML shell) | Stop that date window. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
+| `search_dates` returns `blocked` | Stop that date search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
 | `search_hidden_city` `blocked` / fetch failed | Stop. Do not treat a Google Flights tab as Skiplagged evidence. Wait 30–60 minutes. |
 | Flex `markup_drift` with empty `days` | A day page could not be parsed, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
 | `markup_drift` (other) | Stop. Do not retry the same parse. |
