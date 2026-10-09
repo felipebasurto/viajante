@@ -90,7 +90,7 @@ usage: viajante-mcp [--transport {{stdio,streamable-http}}] [--host HOST] [--por
   --host        streamable-http bind address (default {_DEFAULT_HOST})
   --port        streamable-http port (default {_DEFAULT_PORT}); the endpoint is /mcp
 
-Install:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp
+Install:  npx -y @viajante/mcp   (no Node: uvx --from 'viajante[mcp]' viajante-mcp)
 Checkout: uv sync --extra mcp && viajante-mcp
 
 Tools: search_flights, get_hotel_details, search_dates, search_flex, search_explore,

@@ -5,44 +5,30 @@ Fetch locale is English. User prompts may be any language. No implied home hub.
 
 ## Install (agents)
 
-```json
-{
-  "mcpServers": {
-    "viajante": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/felipebasurto/viajante.git[mcp]",
-        "viajante-mcp"
-      ]
-    }
-  }
-}
-```
-
-After PyPI publishes, `--from viajante[mcp]`. Sweep and Google Hotels need no Chromium.
-Detail scrape and Booking.com need both extras in the **same** uvx environment:
+Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.10+.
 
 ```json
 {
   "mcpServers": {
     "viajante": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/felipebasurto/viajante.git[mcp,browser]",
-        "viajante-mcp"
-      ]
+      "command": "npx",
+      "args": ["-y", "@viajante/mcp"]
     }
   }
 }
 ```
+
+`@viajante/mcp` runs the PyPI package at its own version, with the browser extra.
+Sweep and Google Hotels need no Chromium. Detail scrape, Booking.com, and
+`search_explore` need it, installed once from the same environment:
 
 ```bash
-uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' playwright install chromium
+uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium
 ```
 
-Installing `viajante[browser]` elsewhere does not update the uvx environment.
+No Node: `"command": "uvx", "args": ["--from", "viajante[mcp]", "viajante-mcp"]`
+(no browser extra). Installing `viajante[browser]` elsewhere does not update the
+uvx environment.
 
 ## Tools
 

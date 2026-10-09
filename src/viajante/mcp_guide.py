@@ -48,11 +48,11 @@ the `get_guide` tool.
 ## Install
 
 ```
-Install:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' viajante-mcp
+Install:  npx -y @viajante/mcp
+No Node:  uvx --from 'viajante[mcp]' viajante-mcp
 Checkout: uv sync --extra mcp && viajante-mcp
-Browser:  uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' \
-            playwright install chromium
-          (only for --fetch detail and Booking.com; extras must match the MCP env)
+Browser:  uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium
+          (only for --fetch detail, Booking.com and search_explore; extras must match the MCP env)
 ```
 
 Stdio is the default transport. `viajante-mcp --transport streamable-http` serves the same tools

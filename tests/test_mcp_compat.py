@@ -613,6 +613,11 @@ class GuideTests(_StateDir):
         changed_transport_rules = {
             "search_dates is HTTP-calendar only and has no fetch parameter.",
             "Prefer bags / carry_on on the shopping request so Google prices the bag.",
+            # install lines moved from git+https to the published npx / PyPI forms
+            "uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' "
+            "viajante-mcp Checkout:",
+            "uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' \\ "
+            "playwright install chromium (only for --fetch detail and Booking.com;",
         }
         missing = [s for s in sentences if s not in covered and s not in changed_transport_rules]
         self.assertIn("bounded per-day public-page GETs", covered)
