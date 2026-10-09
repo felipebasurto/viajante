@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import io
 import json
+import subprocess
 import sys
 import threading
 import types
@@ -50,9 +51,11 @@ class McpHandlerTests(unittest.TestCase):
         mcp_handlers._CACHE.clear()
 
     def test_handlers_do_not_import_the_sdk(self) -> None:
-        text = Path("src/viajante/mcp_handlers.py").read_text(encoding="utf-8")
-        self.assertNotIn("from mcp", text)
-        self.assertNotIn("import mcp", text)
+        code = (
+            "import sys, viajante.mcp_handlers;"
+            "sys.exit(any(m == 'mcp' or m.startswith('mcp.') for m in sys.modules))"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
 
     def test_lookup_airports_returns_dicts(self) -> None:
         rows = lookup_airports_tool("NRT", limit=3)
@@ -1035,12 +1038,6 @@ def _sdk_module_names() -> tuple[str, ...]:
 
 
 class McpServerImportTests(unittest.TestCase):
-    def test_mcp_server_keeps_fastmcp_off_module_import(self) -> None:
-        text = Path("src/viajante/mcp_server.py").read_text(encoding="utf-8")
-        self.assertFalse(text.startswith("from mcp") or text.startswith("import mcp"))
-        self.assertNotIn("\nfrom mcp", text)
-        self.assertNotIn("\nimport mcp", text)
-
     def test_help_does_not_import_fastmcp(self) -> None:
         from viajante.mcp_server import main
 
