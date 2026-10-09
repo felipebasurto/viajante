@@ -53,7 +53,7 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
-from viajante.models_common import DEFAULT_TOP
+from viajante.models_common import DEFAULT_TOP, ISO_4217_CODES
 from viajante.orchestration import (
     MAX_ATTEMPTS,
     NON_RETRIABLE_CODES,
@@ -108,9 +108,10 @@ def _named_other_currency(price_text: str, currency: str) -> Optional[str]:
     """An ISO 4217 code in a price text that is not the requested one, else None.
 
     Symbols are not read: "$" or "kr" alone cannot prove a code, so they never mismatch.
+    A word that is not a code (TAX, PER, VAT) is not one either.
     """
     for token in _ISO_TOKEN.findall(price_text):
-        if token != currency:
+        if token != currency and token in ISO_4217_CODES:
             return token
     return None
 
