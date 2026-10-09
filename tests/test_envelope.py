@@ -801,6 +801,18 @@ class LocalToolTests(unittest.TestCase):
         payload = mcp_handlers.split_stay_costs_tool(stays, roster, "USD")
         self.assertEqual(payload["completeness"], "complete")
 
+    def test_split_totals_are_recorded_only_when_a_search_owns_every_input(self) -> None:
+        roster = {"2027-01-01": ["ana"]}
+        stay = {"name": "A", "check_in": "2027-01-01", "check_out": "2027-01-02"}
+        evidence._ledger.clear()
+        self.addCleanup(evidence._ledger.clear)
+        evidence.record({"currency": "USD", "offers": [{"price": 291}]})
+        before = len(evidence._ledger)
+        mcp_handlers.split_stay_costs_tool([{**stay, "total": 0}], roster, "USD")
+        self.assertEqual(len(evidence._ledger), before)
+        mcp_handlers.split_stay_costs_tool([{**stay, "total": 291}], roster, "USD")
+        self.assertEqual(len(evidence._ledger), before + 1)
+
     def test_validation_with_unknown_evidence_is_partial(self) -> None:
         report = MagicMock()
         report.to_dict.return_value = {"feasible": None, "checks": []}

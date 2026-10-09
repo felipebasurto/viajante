@@ -1016,6 +1016,38 @@ class MalformedInputTests(unittest.TestCase):
             recheck_offer(_previous(OUTBOUND), search=stub, now=after)
         self.assertEqual(len(stub.calls), 1)
 
+    def test_a_clockless_departure_day_is_judged_at_the_origin_not_the_host_zone(self) -> None:
+        if not hasattr(time, "tzset"):
+            self.skipTest("this platform cannot change the process time zone")
+        # At this instant it is 06:00 on 2026-10-09 at JFK: 2026-10-08 is over there, and
+        # 2026-10-09 is not, whatever zone the host runs in.
+        now = datetime(2026, 10, 9, 10, 0, tzinfo=timezone.utc)
+        saved = os.environ.get("TZ")
+        try:
+            for zone in ("Pacific/Pago_Pago", "Pacific/Kiritimati"):
+                os.environ["TZ"] = zone
+                time.tzset()
+                with self.subTest(zone=zone):
+                    over = _segment("JFK", "LHR", None, None, day=date(2026, 10, 8))
+                    with self.assertRaisesRegex(ValueError, "in the past"):
+                        recheck_offer(
+                            _previous(over),
+                            search=_Stub(_report(_offer(500.0, (over,)))),
+                            now=now,
+                        )
+                    open_day = _segment("JFK", "LHR", None, None, day=date(2026, 10, 9))
+                    recheck_offer(
+                        _previous(open_day),
+                        search=_Stub(_report(_offer(500.0, (open_day,)))),
+                        now=now,
+                    )
+        finally:
+            if saved is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = saved
+            time.tzset()
+
     def test_ambiguous_departure_is_past_only_after_both_folds(self) -> None:
         # JFK 01:30 on 2026-11-01 is 05:30Z and again at 06:30Z. 02:30 on
         # 2026-03-08 does not exist (the clock jumps 02:00 to 03:00).

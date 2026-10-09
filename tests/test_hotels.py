@@ -195,6 +195,29 @@ class PureHotelLogicTests(unittest.TestCase):
         self.assertIsInstance(failure, HotelQueryFailure)
         self.assertEqual(failure.error.code, SearchErrorCode.CURRENCY_MISMATCH)
 
+    def test_uppercase_price_words_are_not_read_as_a_currency_mismatch(self) -> None:
+        # TAX and PER are uppercase words, not ISO 4217 codes: a page of them is not a mismatch.
+        words = FakeSource(
+            [
+                HotelPage(
+                    cards=(
+                        card(title="Tax", total_price="$1,234 TAX included"),
+                        card(title="Night", total_price="$123 PER NIGHT"),
+                    )
+                )
+            ]
+        )
+        report = _run_search(
+            (query(),),
+            top=8,
+            source=words,
+            sleep=lambda _seconds: None,
+            random_gen=Random(3),
+            now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            currency="USD",
+        )
+        self.assertNotIsInstance(report.queries[0], HotelQueryFailure)
+
     def test_normalize_card_preserves_raw_values_and_parses_details(self) -> None:
         normalized = _normalize_card(card())
 

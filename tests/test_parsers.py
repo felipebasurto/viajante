@@ -158,6 +158,10 @@ class ParserTests(unittest.TestCase):
             ("No\n free cancellation", CancellationEvidence.UNKNOWN),
             ("Not free cancellation", CancellationEvidence.UNKNOWN),
             ("Non-free cancellation", CancellationEvidence.UNKNOWN),
+            ("Free cancellation not available", CancellationEvidence.UNKNOWN),
+            ("Free cancellation unavailable", CancellationEvidence.UNKNOWN),
+            ("Free cancellation is not offered", CancellationEvidence.UNKNOWN),
+            ("Free cancellation until 20 Oct", CancellationEvidence.FREE),
             (
                 "No free cancellation. Non-refundable",
                 CancellationEvidence.NON_REFUNDABLE,
