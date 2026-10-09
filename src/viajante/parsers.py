@@ -191,7 +191,11 @@ def parse_rating(rating_text: str | None) -> float | None:
 
 
 _FREE_CANCEL = re.compile(r"free\s+cancell?ation")
-_NEGATED_FREE_CANCEL = re.compile(r"\b(?:no|not|non|without)[\s-]+free\s+cancell?ation")
+# Negated before ("no free cancellation") or after ("free cancellation not available").
+_NEGATED_FREE_CANCEL = re.compile(
+    r"\b(?:no|not|non|without)[\s-]+free\s+cancell?ation"
+    r"|free\s+cancell?ation\s+(?:is\s+|are\s+)?(?:not|unavailable|isn['’]?t|aren['’]?t)\b"
+)
 _NON_REFUNDABLE = re.compile(
     r"non[\s-]?refundable|"
     r"no\s+cancell?ation(?!\s+(?:fees?|charges?|costs?))"
