@@ -671,6 +671,10 @@ h1 {
 })();
 (function () {
   var MESSAGE = 'Set up viajante as an MCP server. Add it to your MCP config: {"mcpServers":{"viajante":{"command":"npx","args":["-y","@viajante/mcp"]}}} (needs uv and Python 3.10 or later). Reload MCP, then search flights and hotels with its tools. Without MCP: pip install viajante, then run viajante --help.';
+  var SANDBOX_MESSAGE = 'Run this in your Python sandbox and show me the output: pip install viajante && viajante --help. viajante is open source (https://github.com/felipebasurto/viajante, PyPI: viajante). Then use the viajante CLI for every flight and hotel search I ask for, and show me the rows it returns.';
+  function messageFor(button) {
+    return button.getAttribute('data-name') === 'Instinct' ? SANDBOX_MESSAGE : MESSAGE;
+  }
   var RESET_MS = 1600;
   var live = document.getElementById('live');
   var manual = document.getElementById('manual');
@@ -678,9 +682,9 @@ h1 {
 
   manual.textContent = MESSAGE;
 
-  function legacyCopy() {
+  function legacyCopy(text) {
     var field = document.createElement('textarea');
-    field.value = MESSAGE;
+    field.value = text;
     field.setAttribute('readonly', '');
     field.style.position = 'fixed';
     field.style.opacity = '0';
@@ -708,6 +712,7 @@ h1 {
   }
 
   function showFallback(button) {
+    manual.textContent = messageFor(button);
     manual.hidden = false;
     manual.scrollIntoView({ block: 'center' });
     live.textContent = 'Copy is blocked in this view. The setup message is shown here. Select it and copy it.';
@@ -720,14 +725,15 @@ h1 {
 
   document.querySelectorAll('[data-agent]').forEach(function (button) {
     button.addEventListener('click', function () {
+      var text = messageFor(button);
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(MESSAGE).then(function () {
+        navigator.clipboard.writeText(text).then(function () {
           finish(button, true);
         }, function () {
-          finish(button, legacyCopy());
+          finish(button, legacyCopy(text));
         });
       } else {
-        finish(button, legacyCopy());
+        finish(button, legacyCopy(text));
       }
     });
   });
