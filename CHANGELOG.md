@@ -9,6 +9,14 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Fixed
+
+- `--help` examples use future dates and no longer show `--bags`, which the
+  public page refuses.
+- The README, usage guide, and `llms.txt` no longer say `--bags` asks Google to
+  price checked bags. Only `--carry-on` rides the request.
+- Four CLI tests used a departure date that is now in the past.
+
 ## [1.5.0] - 2026-10-08
 
 ### Changed

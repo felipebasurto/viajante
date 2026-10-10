@@ -152,7 +152,8 @@ that same environment.
 
 - **Currency.** Taken from `--currency`, or from a named origin airport's
   country. Hotels always need one. Viajante never converts between currencies.
-- **Baggage.** `--bags` and `--carry-on` ask Google for bag pricing.
+- **Baggage.** `--carry-on` asks Google to price one carry-on. Checked bags
+  (`--bags`) are refused, because no transport can verify them.
   `--baggage-buffer` only affects ranking; it is not a quoted fee.
 - **Hotels.** Prices are for the whole stay. Free cancellation is required
   unless you opt out. Google rates 0–5, Booking.com 0–10.

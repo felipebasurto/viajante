@@ -973,7 +973,7 @@ class ReportRenderingTests(unittest.TestCase):
                         "flights",
                         "--trip",
                         "round-trip",
-                        "LAX-NRT:2026-10-09:2026-10-12",
+                        "LAX-NRT:2027-04-09:2027-04-12",
                         "--fetch",
                         "sweep",
                     ]
@@ -985,7 +985,7 @@ class ReportRenderingTests(unittest.TestCase):
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
                 code = main(
-                    ["flights", "--trip", "rt", "LAX-NRT:2026-10-09:2026-10-12", "--fetch", "sweep"]
+                    ["flights", "--trip", "rt", "LAX-NRT:2027-04-09:2027-04-12", "--fetch", "sweep"]
                 )
         self.assertEqual(code, 0)
         trips = search.call_args.args[0]
@@ -995,23 +995,23 @@ class ReportRenderingTests(unittest.TestCase):
     def test_trip_one_way_keeps_rt_sugar(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", "--trip", "one-way", "LAX-NRT:2026-10-09:2026-10-12"])
+                code = main(["flights", "--trip", "one-way", "LAX-NRT:2027-04-09:2027-04-12"])
         self.assertEqual(code, 0)
         self.assertEqual(len(search.call_args.args[0]), 2)
 
     def test_rt_sugar_builds_return_leg(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", "LAX-NRT:2026-10-09:2026-10-12"])
+                code = main(["flights", "LAX-NRT:2027-04-09:2027-04-12"])
         self.assertEqual(code, 0)
         queries = search.call_args.args[0]
         self.assertEqual(len(queries), 2)
         self.assertEqual(queries[0].origin, "LAX")
         self.assertEqual(queries[0].destination, "NRT")
-        self.assertEqual(queries[0].departure_date, date(2026, 10, 9))
+        self.assertEqual(queries[0].departure_date, date(2027, 4, 9))
         self.assertEqual(queries[1].origin, "NRT")
         self.assertEqual(queries[1].destination, "LAX")
-        self.assertEqual(queries[1].departure_date, date(2026, 10, 12))
+        self.assertEqual(queries[1].departure_date, date(2027, 4, 12))
 
     def test_best_pair_line_uses_sort_key(self) -> None:
         outbound = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=1)
@@ -1059,7 +1059,7 @@ class ReportRenderingTests(unittest.TestCase):
         help_text = buffer.getvalue()
         self.assertIn("Examples:", help_text)
         self.assertIn("viajante flights JFK-LHR", help_text)
-        self.assertIn("JFK-NRT:2026-10-09:2026-10-20", help_text)
+        self.assertIn("JFK-NRT:2027-04-09:2027-04-20", help_text)
         self.assertIn("--trip", help_text)
         self.assertIn("--sort", help_text)
         self.assertIn("--fetch", help_text)

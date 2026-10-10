@@ -116,56 +116,56 @@ from viajante.trip import (
 
 FLIGHTS_EXAMPLES = """\
 Examples:
-  viajante flights JFK-LHR:2026-09-15
-  viajante flights BOS-LHR:2026-09-18 --nearby --fetch sweep
-  viajante flights JFK-NRT:2026-10-09:2026-10-20
-  viajante flights --trip rt LAX-NRT:2026-10-12:2026-10-26 --fetch sweep
-  viajante flights SYD-AKL:2026-11-03 AKL-SYD:2026-11-10 --max-stops 0
-  viajante flights JFK-LHR:2026-09-15,2026-09-16 --top 5 --sort fare --save results/search.json
-  viajante flights JFK-LHR:2026-09-15 --fetch sweep
-  viajante flights LAX-NRT:2026-10-12 --fetch sweep --max-layover 8
-  viajante flights JFK-LHR:2026-09-15 --fetch detail
-  viajante flights JFK-LHR:2026-09-15 --exclude-airlines F9,NK --depart-window 7-12 --fetch sweep
-  viajante flights JFK-LHR:2026-09-15 --depart-window 06:00-20:00 --sort duration
-  viajante flights JFK-LHR:2026-09-15 --airlines BA,AA --sort duration
-  viajante flights JFK-LHR:2026-09-15 --price-cap 200 --fetch sweep
-  viajante flights JFK-LHR:2026-09-15 --bags 1 --carry-on --fetch sweep
-  viajante flights JFK-LHR:2026-09-15 --max-duration 16 --min-layover 1 --max-layover 8
-  viajante flights JFK-SIN:2026-11-03 --via IST --exclude-via DXB --fetch sweep
-  viajante flights JFK-NRT:2026-11-03 --split-tickets --split-via LAX,SFO
-  viajante flights --trip rt JFK-NRT:2026-11-03:2026-11-17 --split-tickets
+  viajante flights JFK-LHR:2027-03-15
+  viajante flights BOS-LHR:2027-03-18 --nearby --fetch sweep
+  viajante flights JFK-NRT:2027-04-09:2027-04-20
+  viajante flights --trip rt LAX-NRT:2027-04-12:2027-04-26 --fetch sweep
+  viajante flights SYD-AKL:2027-05-03 AKL-SYD:2027-05-10 --max-stops 0
+  viajante flights JFK-LHR:2027-03-15,2027-03-16 --top 5 --sort fare --save results/search.json
+  viajante flights JFK-LHR:2027-03-15 --fetch sweep
+  viajante flights LAX-NRT:2027-04-12 --fetch sweep --max-layover 8
+  viajante flights JFK-LHR:2027-03-15 --fetch detail
+  viajante flights JFK-LHR:2027-03-15 --exclude-airlines F9,NK --depart-window 7-12 --fetch sweep
+  viajante flights JFK-LHR:2027-03-15 --depart-window 06:00-20:00 --sort duration
+  viajante flights JFK-LHR:2027-03-15 --airlines BA,AA --sort duration
+  viajante flights JFK-LHR:2027-03-15 --price-cap 200 --fetch sweep
+  viajante flights JFK-LHR:2027-03-15 --carry-on --fetch sweep
+  viajante flights JFK-LHR:2027-03-15 --max-duration 16 --min-layover 1 --max-layover 8
+  viajante flights JFK-SIN:2027-05-03 --via IST --exclude-via DXB --fetch sweep
+  viajante flights JFK-NRT:2027-05-03 --split-tickets --split-via LAX,SFO
+  viajante flights --trip rt JFK-NRT:2027-05-03:2027-05-17 --split-tickets
 """
 
 DATES_EXAMPLES = """\
 Examples:
-  viajante dates LAX-NRT --from 2026-10-01 --to 2026-10-31
-  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14
-  viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 5
-  viajante dates BOS-LHR --from 2026-09-01 --to 2026-09-14 --nearby
-  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --depart-window 7-12
-  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --max-layover 3
-  viajante dates JFK-LHR --from 2026-09-01 --to 2026-09-14 --sort duration
+  viajante dates LAX-NRT --from 2027-04-01 --to 2027-04-30
+  viajante dates JFK-LHR --from 2027-03-01 --to 2027-03-14
+  viajante dates BOS-LHR --from 2027-05-01 --to 2027-05-30 --nights 5
+  viajante dates BOS-LHR --from 2027-03-01 --to 2027-03-14 --nearby
+  viajante dates JFK-LHR --from 2027-03-01 --to 2027-03-14 --depart-window 7-12
+  viajante dates JFK-LHR --from 2027-03-01 --to 2027-03-14 --max-layover 3
+  viajante dates JFK-LHR --from 2027-03-01 --to 2027-03-14 --sort duration
 """
 
 FLEX_EXAMPLES = """\
 Examples:
-  viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nights 7
-  viajante flex JFK-LHR --around 2026-09-15 --flex 3
-  viajante flex BOS-LHR --around 2026-09-12 --flex 3 --nearby
-  viajante flex JFK-LHR --around 2026-09-15 --flex 3 --depart-window 06:00-20:00
-  viajante flex JFK-LHR --around 2026-09-15 --flex 3 --max-layover 3
+  viajante flex BOS-LHR --around 2027-03-12 --flex 3 --nights 7
+  viajante flex JFK-LHR --around 2027-03-15 --flex 3
+  viajante flex BOS-LHR --around 2027-03-12 --flex 3 --nearby
+  viajante flex JFK-LHR --around 2027-03-15 --flex 3 --depart-window 06:00-20:00
+  viajante flex JFK-LHR --around 2027-03-15 --flex 3 --max-layover 3
 """
 
 EXPLORE_EXAMPLES = """\
 Examples:
-  viajante explore JFK --from 2026-09-15 --days 7
-  viajante explore JFK --from 2026-09-15 --days 7 --sort duration
-  viajante explore NRT --month 2026-10
-  viajante explore SIN --from 2026-09-01 --price-cap 200
-  viajante explore LHR --from 2026-09-15 --nearby
-  viajante explore JFK --from 2026-09-15 --depart-window 7-12
-  viajante explore JFK --from 2026-09-15 --max-layover 3
-  viajante explore NRT --from 2026-09-15 --days 7 --exclude-regions asia
+  viajante explore JFK --from 2027-03-15 --days 7
+  viajante explore JFK --from 2027-03-15 --days 7 --sort duration
+  viajante explore NRT --month 2027-04
+  viajante explore SIN --from 2027-03-01 --price-cap 200
+  viajante explore LHR --from 2027-03-15 --nearby
+  viajante explore JFK --from 2027-03-15 --depart-window 7-12
+  viajante explore JFK --from 2027-03-15 --max-layover 3
+  viajante explore NRT --from 2027-03-15 --days 7 --exclude-regions asia
 """
 
 AIRPORTS_EXAMPLES = """\
@@ -183,28 +183,28 @@ Examples:
 
 HOTELS_EXAMPLES = """\
 Examples:
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY
-  viajante hotels "Mexico City" 2026-12-04 2026-12-10 --currency MXN --top 5
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --entire-home --min-rating 8.5
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --compare-cancellation
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --save results/hotels.json
-  viajante hotels Tokyo 2026-10-12 2026-10-16 --currency JPY --source google --top 3
+  viajante hotels Tokyo 2027-04-12 2027-04-16 --currency JPY
+  viajante hotels "Mexico City" 2027-06-04 2027-06-10 --currency MXN --top 5
+  viajante hotels Tokyo 2027-04-12 2027-04-16 --currency JPY --entire-home --min-rating 8.5
+  viajante hotels Tokyo 2027-04-12 2027-04-16 --currency JPY --compare-cancellation
+  viajante hotels Tokyo 2027-04-12 2027-04-16 --currency JPY --save results/hotels.json
+  viajante hotels Tokyo 2027-04-12 2027-04-16 --currency JPY --source google --top 3
 """
 
 TRIP_EXAMPLES = """\
 Examples:
-  viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --adults 2
-  viajante trip DUB-JFK:2026-10-09:2026-10-13 --hotel "New York" --adults 2 --fetch sweep
-  viajante trip LAX-NRT:2026-10-12:2026-10-20 --hotel Tokyo --trip rt --source google
-  viajante trip SIN-MEL:2026-11-06:2026-11-10 --hotel Melbourne --trip rt --bags 1 --via DXB
-  viajante trip BOS-LHR:2026-09-18:2026-09-22 --hotel London --trip rt --nearby
+  viajante trip SIN-MEL:2027-05-06:2027-05-10 --hotel Melbourne --trip rt --adults 2
+  viajante trip DUB-JFK:2027-04-09:2027-04-13 --hotel "New York" --adults 2 --fetch sweep
+  viajante trip LAX-NRT:2027-04-12:2027-04-20 --hotel Tokyo --trip rt --source google
+  viajante trip SIN-MEL:2027-05-06:2027-05-10 --hotel Melbourne --trip rt --via DXB
+  viajante trip BOS-LHR:2027-03-18:2027-03-22 --hotel London --trip rt --nearby
 """
 
 HIDDEN_CITY_EXAMPLES = """\
 Examples:
-  viajante hidden-city JFK-LHR:2026-11-15
-  viajante hidden-city NRT-SIN:2026-11-03 --return 2026-11-10
-  viajante hidden-city GRU-EZE:2026-11-20 --save results/hidden.json
+  viajante hidden-city JFK-LHR:2027-05-15
+  viajante hidden-city NRT-SIN:2027-05-03 --return 2027-05-10
+  viajante hidden-city GRU-EZE:2027-05-20 --save results/hidden.json
 """
 
 AWARDS_EXAMPLES = """\
