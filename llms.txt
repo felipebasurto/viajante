@@ -119,7 +119,8 @@ Do not invent IATA, gl, or ISO 4217. Viajante does not convert.
 
 ## Bags
 
-Unnamed baggage_buffer is 0. Prefer bags / carry_on on the shopping request.
+Unnamed baggage_buffer is 0. carry_on rides the shopping request and is verified on
+the page; checked bags are refused before any request.
 Do not invent a bag fee.
 
 ## Python

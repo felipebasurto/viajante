@@ -143,7 +143,8 @@ A recommendation's comparison always leaves those connections out, whatever the 
 and `recommendation.slow_connections_hidden` counts them when a recommendation is
 built. Other sorts keep every connection in `offers`.
 
-`--bags N` and `--carry-on` ask Google Flights to price baggage. A baggage
+`--carry-on` asks Google Flights to price one carry-on. `--bags N` is refused
+before any request, because no transport can verify checked bags. A baggage
 buffer is your own ranking allowance, not a provider fee. The list of low-cost
 carriers is partial, so absence from the list does not mean bags are included.
 Check baggage terms before booking.
