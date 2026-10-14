@@ -20,6 +20,10 @@ history up to commit 6ee0fb7.
   page, up to the same 800 ms. A control that stays on screen costs what it did
   before. Two dismissals went from 1.7 s to 0.3 s in headless Chromium on a stub
   page.
+- Public Google Flights results pages are parsed into one HTML tree per fetch,
+  not two or three, and the ds:1 data is decoded once. On a fixture sweep of 31
+  one-way queries, local CPU fell from about 1.0 s to about 0.4 s. The same cards
+  come back, and tests pin the single tree build.
 
 ## [1.5.1] - 2026-10-13
 
