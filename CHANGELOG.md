@@ -9,6 +9,18 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Changed
+
+- The landing page no longer waits for the Google Fonts stylesheet before its
+  first paint. The page shows the system font and swaps to Figtree when the
+  stylesheet arrives. With that stylesheet held for 600 ms in headless Chromium,
+  first contentful paint went from 660 ms to 56 ms.
+- Booking.com searches no longer pay the full 800 ms settle after every consent
+  or sign-in popup click. The search waits only until that control leaves the
+  page, up to the same 800 ms. A control that stays on screen costs what it did
+  before. Two dismissals went from 1.7 s to 0.3 s in headless Chromium on a stub
+  page.
+
 ### Fixed
 
 - `--help` examples use future dates and no longer show `--bags`, which the
