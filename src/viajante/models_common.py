@@ -14,6 +14,9 @@ from viajante.airports import is_known_iata
 
 # Results a search returns per query when the caller does not name a top count.
 DEFAULT_TOP = 8
+# Round-trip date windows check this many outbound choices per day, each with one return
+# page. Flight round trips keep eight.
+RT_WINDOW_OUTBOUND_LIMIT = 3
 
 # Fetch/browser locale is English so owned card parsers stay on English evidence.
 FETCH_LANGUAGE = "en"

@@ -2120,3 +2120,29 @@ class DetailSorryPageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LooksBlockedMemoTests(unittest.TestCase):
+    """One response is checked once; a different page or URL is checked again."""
+
+    def test_the_same_page_and_url_are_checked_once(self) -> None:
+        from viajante import google_flights
+
+        page = "".join(["<html>", "results", "</html>"])
+        same_text = "".join(["<html>", "results", "</html>"])
+        real = google_flights._looks_blocked
+        with patch("viajante.google_flights._looks_blocked", wraps=real) as check:
+            self.assertFalse(google_flights.looks_blocked(page, "https://www.google.com/a"))
+            self.assertFalse(google_flights.looks_blocked(page, "https://www.google.com/a"))
+            self.assertEqual(check.call_count, 1)
+            google_flights.looks_blocked(page, "https://www.google.com/b")
+            self.assertEqual(check.call_count, 2)
+            google_flights.looks_blocked(same_text, "https://www.google.com/b")
+            self.assertEqual(check.call_count, 3)
+
+    def test_a_blocked_page_stays_blocked_on_a_repeat_check(self) -> None:
+        from viajante import google_flights
+
+        page = "".join(["<html>", "our systems have detected unusual traffic", "</html>"])
+        self.assertTrue(google_flights.looks_blocked(page, ""))
+        self.assertTrue(google_flights.looks_blocked(page, ""))

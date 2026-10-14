@@ -54,6 +54,7 @@ from viajante.models import (
     SearchErrorCode,
     Trip,
 )
+from viajante.models_common import RT_WINDOW_OUTBOUND_LIMIT
 from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
@@ -68,9 +69,11 @@ from viajante.tfs import CABIN_SEAT, encode_explore_tfs, encode_tfs_selected_out
 MAX_PUBLIC_OUTBOUNDS = 8
 
 
-def _ranked_outbounds(cards: Sequence[RawFlightCard]) -> tuple[RawFlightCard, ...]:
+def _ranked_outbounds(
+    cards: Sequence[RawFlightCard], limit: int = MAX_PUBLIC_OUTBOUNDS
+) -> tuple[RawFlightCard, ...]:
     ranked = sorted(cards, key=lambda card: parse_price(card.price) or float("inf"))
-    return tuple(ranked[:MAX_PUBLIC_OUTBOUNDS])
+    return tuple(ranked[:limit])
 
 
 def _cached_return_reader(
@@ -471,7 +474,13 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             and "round trip" in text
         )
 
+    # Set only while a round-trip date window runs its serial fallback day by day.
+    _window_candidates: int | None = None
+
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
+        return self._fetch(trip, self._window_candidates or MAX_PUBLIC_OUTBOUNDS)
+
+    def _fetch(self, trip: Trip, candidates: int) -> tuple[RawFlightCard, ...]:
         _validate_capabilities(trip)
         self.partial_error = None
         self.scope_bound = False
@@ -485,9 +494,9 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             return matched
         client = self._round_trip_batch_client()
         if client is None:
-            return self._round_trip_packages(trip, matched, self._read_selected_return)
-        slots, _halt, _client = self._return_slots(client, trip, matched)
-        return self._round_trip_packages(trip, matched, _cached_return_reader(slots))
+            return self._round_trip_packages(trip, matched, self._read_selected_return, candidates)
+        slots, _halt, _client = self._return_slots(client, trip, matched, candidates)
+        return self._round_trip_packages(trip, matched, _cached_return_reader(slots), candidates)
 
     def _read_selected_return(
         self, trip: RoundTrip, outbound: RawFlightCard
@@ -500,12 +509,13 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         trip: RoundTrip,
         outbound_cards: Sequence[RawFlightCard],
         read_return: Callable[[RoundTrip, RawFlightCard], object],
+        candidates: int = MAX_PUBLIC_OUTBOUNDS,
     ) -> tuple[RawFlightCard, ...]:
         """Join each selected outbound with its return page. Outbound amounts are not fares."""
         self.partial_error = None
         self.scope_bound = True  # A bounded outbound board does not cover all packages.
         complete: list[RawFlightCard] = []
-        for outbound in _ranked_outbounds(outbound_cards):
+        for outbound in _ranked_outbounds(outbound_cards, candidates):
             try:
                 parsed = read_return(trip, outbound)
                 returns, html = parsed
@@ -659,25 +669,37 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         if client is None:
             self._serial_round_trip_window(trips, on_day)
             return
-        self._fill_round_trip_batch(client, trips, [None] * len(trips), on_day)
+        self._fill_round_trip_batch(
+            client, trips, [None] * len(trips), on_day, RT_WINDOW_OUTBOUND_LIMIT
+        )
 
     def _serial_round_trip_window(self, trips: Sequence[RoundTrip], on_day) -> None:
-        for index, trip in enumerate(trips):
-            checkpoint()
-            try:
-                result: object = self.fetch(trip)
-            except SearchDeadline:
-                raise
-            except Exception as exc:
-                result = exc
-            on_day(index, result)
+        self._window_candidates = RT_WINDOW_OUTBOUND_LIMIT
+        try:
+            for index, trip in enumerate(trips):
+                checkpoint()
+                try:
+                    result: object = self.fetch(trip)
+                except SearchDeadline:
+                    raise
+                except Exception as exc:
+                    result = exc
+                on_day(index, result)
+        finally:
+            self._window_candidates = None
 
-    def _fill_round_trip_batch(self, client, trips: Sequence[RoundTrip], results: list, on_day):
-        # ponytail: chunks of sweep-concurrency days — one outbound get_many, then
-        # one get_many per day for that day's returns (at most 8). A 31-day window
-        # at 8 streams is ceil(31/8) + 31 = 35 waves. A short day does not share a
-        # return wave, and a 429 keeps only chunks that already finished.
-        # Upgrade: pack a short day's returns into a wave that still has room.
+    def _fill_round_trip_batch(
+        self,
+        client,
+        trips: Sequence[RoundTrip],
+        results: list,
+        on_day,
+        candidates: int = MAX_PUBLIC_OUTBOUNDS,
+    ):
+        # Chunks of sweep-concurrency days. Each chunk sends one outbound batch, then one
+        # return batch for all of its days. The sweep pipelines a batch through its streams,
+        # so one day's slow return no longer holds up the next day. A block still stops the
+        # sends that have not gone out, and the days after it are reported as stopped.
         chunk_size = get_sweep_config().concurrency
         for index, trip in enumerate(trips):
             try:
@@ -734,6 +756,18 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     if on_day is not None:
                         on_day(index, results[index])
                 continue
+            days = [index for index in chunk if results[index] is None]
+            plans = {
+                index: self._return_plan(trips[index], boards[index], candidates) for index in days
+            }
+            urls = [url for index in days for _slot, url in plans[index][1]]
+            returned, client = self._get_pages(client, urls) if urls else ([], client)
+            cursor = 0
+            day_responses: dict[int, list[SweepHttpResponse]] = {}
+            for index in days:
+                count = len(plans[index][1])
+                day_responses[index] = returned[cursor : cursor + count]
+                cursor += count
             for index in chunk:
                 if results[index] is not None:
                     if on_day is not None:
@@ -745,10 +779,15 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                         on_day(index, results[index])
                     continue
                 matched = boards[index]
-                slots, day_halt, client = self._return_slots(client, trips[index], matched)
+                slots, day_halt = self._parse_return_slots(
+                    trips[index], *plans[index], day_responses[index]
+                )
                 try:
                     results[index] = self._round_trip_packages(
-                        trips[index], matched, _cached_return_reader(slots)
+                        trips[index],
+                        matched,
+                        _cached_return_reader(slots),
+                        candidates,
                     )
                 except SearchDeadline as exc:
                     results[index] = exc
@@ -759,10 +798,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 if day_halt is not None:
                     halt = day_halt
 
-    def _return_slots(self, client, trip: RoundTrip, matched: Sequence[RawFlightCard]):
+    def _return_plan(self, trip: RoundTrip, matched: Sequence[RawFlightCard], candidates: int):
+        """Slots for the top outbound choices, and the return URL each one needs."""
         slots: list = []
         jobs: list[tuple[int, str]] = []
-        for slot_index, card in enumerate(_ranked_outbounds(matched)):
+        for slot_index, card in enumerate(_ranked_outbounds(matched, candidates)):
             try:
                 url = self._url(trip, card.legs[0])
             except Exception as exc:
@@ -770,11 +810,17 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             else:
                 slots.append(None)
                 jobs.append((slot_index, url))
+        return slots, jobs
+
+    def _parse_return_slots(
+        self,
+        trip: RoundTrip,
+        slots: list,
+        jobs: Sequence[tuple[int, str]],
+        responses: Sequence[SweepHttpResponse],
+    ):
         halt: GoogleFlightsBlocked | None = None
-        if not jobs:
-            return slots, halt, client
-        returned, client = self._get_pages(client, [url for _slot, url in jobs])
-        for (slot_index, url), response in zip(jobs, returned, strict=True):
+        for (slot_index, url), response in zip(jobs, responses, strict=True):
             try:
                 cards = self._parse_response(response, url, trip)
             except Exception as exc:
@@ -787,6 +833,20 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     halt = exc
             else:
                 slots[slot_index] = (cards, response.text)
+        return slots, halt
+
+    def _return_slots(
+        self,
+        client,
+        trip: RoundTrip,
+        matched: Sequence[RawFlightCard],
+        candidates: int = MAX_PUBLIC_OUTBOUNDS,
+    ):
+        slots, jobs = self._return_plan(trip, matched, candidates)
+        if not jobs:
+            return slots, None, client
+        returned, client = self._get_pages(client, [url for _slot, url in jobs])
+        slots, halt = self._parse_return_slots(trip, slots, jobs, returned)
         return slots, halt, client
 
     def fetch_many(self, trips: Sequence[Trip]):

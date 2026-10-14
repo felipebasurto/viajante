@@ -16,6 +16,7 @@ from viajante.dates import calendar_trip, search_dates
 from viajante.google_flights import GoogleFlightsBlocked, SweepHttpResponse
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource
 from viajante.models import FlightQuery
+from viajante.models_common import RT_WINDOW_OUTBOUND_LIMIT
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
     GOOGLE_RATE_LIMIT_FILE,
@@ -192,7 +193,7 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         if path.exists():
             path.unlink()
 
-    def test_31_day_round_trip_is_35_waves_and_matches_serial(self) -> None:
+    def test_31_day_round_trip_batches_each_chunk_and_matches_serial(self) -> None:
         pages = _Pages(31, 8)
         serial = _SerialClient(pages)
         batch = _BatchClient(pages)
@@ -210,16 +211,25 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         self.assertEqual(batch_report.days[-1].price, 530)
         self.assertTrue(all(row.status == "ok" and row.scope_bound for row in batch_report.days))
         self.assertEqual(sorted(serial.urls), sorted(batch.urls))
-        self.assertEqual(len(batch.urls), 31 + 31 * 8)
+        # Each chunk of days: its outbound boards, then every day's three return choices.
+        self.assertEqual(len(batch.urls), 31 + 31 * RT_WINDOW_OUTBOUND_LIMIT)
         expected_batches: list[list[str]] = []
         for start in range(0, 31, CONCURRENCY):
+            days = range(start, min(start + CONCURRENCY, 31))
             expected_batches.append(pages.outbound_urls[start : start + CONCURRENCY])
-            for day in range(start, min(start + CONCURRENCY, 31)):
-                expected_batches.append(pages.return_urls[day * 8 : (day + 1) * 8])
+            expected_batches.append(
+                [
+                    url
+                    for day in days
+                    for url in pages.return_urls[day * 8 : day * 8 + RT_WINDOW_OUTBOUND_LIMIT]
+                ]
+            )
         self.assertEqual(batch.batches, expected_batches)
         self.assertEqual(batch.batches[0], pages.outbound_urls[:CONCURRENCY])
-        self.assertEqual(len(batch.batches), 4 + 31)
-        self.assertEqual(batch.waves, 35)
+        self.assertEqual(len(batch.batches), 2 * 4)
+        # Waves are the sweep's eight-stream slots: 4 outbound waves, then 3 for a full chunk's
+        # 24 returns and 3 for the last chunk's 21.
+        self.assertEqual(batch.waves, 4 + 3 + 3 + 3 + 3)
         self.assertLessEqual(max(batch.wave_sizes), CONCURRENCY)
         self.assertEqual(batch.timestamps, sorted(batch.timestamps))
         self.assertEqual(batch.timestamps[0], batch.timestamps[CONCURRENCY - 1])
@@ -229,28 +239,32 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         self.assertEqual(len(progress_at), 31)
         for index, (line, sent) in enumerate(progress_at):
             day = START + timedelta(days=index)
-            chunk, pos = divmod(index, CONCURRENCY)
+            chunk = index // CONCURRENCY
             chunk_days = min(CONCURRENCY, 31 - chunk * CONCURRENCY)
-            # Each finished chunk is that many outbound pages plus 8 returns a day.
-            expected = chunk * CONCURRENCY * 9 + chunk_days + (pos + 1) * 8
+            # A day is reported once its chunk's return batch has gone out: all earlier
+            # chunks, this chunk's outbound boards, and its returns.
+            per_day = 1 + RT_WINDOW_OUTBOUND_LIMIT
+            expected = chunk * CONCURRENCY * per_day + chunk_days * per_day
             self.assertEqual(line, f"[{index + 1}/31] HAN -> SIN {day.isoformat()}")
             self.assertEqual(sent, expected)
 
-    def test_batch_keeps_eight_returns_and_matches_serial_cards(self) -> None:
+    def test_batch_keeps_the_window_limit_of_returns_and_matches_serial_cards(self) -> None:
         pages = _Pages(1, 10)
         serial = _SerialClient(pages)
         batch = _BatchClient(pages)
         serial_report, _serial_sleeps = _search(serial, pages)
         batch_report, _batch_sleeps = _search(batch, pages)
 
+        kept = pages.return_urls[:RT_WINDOW_OUTBOUND_LIMIT]
         self.assertEqual(_view(serial_report), _view(batch_report))
-        self.assertEqual(batch.batches[1], pages.return_urls)
+        self.assertEqual(batch.batches[1], kept)
         self.assertEqual(len(pages.return_urls), 8)
-        self.assertEqual(len(pages.dropped_return_urls), 2)
-        self.assertTrue(set(pages.dropped_return_urls).isdisjoint(batch.urls))
         self.assertEqual(sorted(serial.urls), sorted(batch.urls))
+        self.assertTrue(set(pages.return_urls[RT_WINDOW_OUTBOUND_LIMIT:]).isdisjoint(batch.urls))
         self.assertEqual(batch_report.days[0].price, 500)
-        self.assertEqual(batch_report.coverage.scope["public_page_outbound_limit"], 8)
+        self.assertEqual(
+            batch_report.coverage.scope["public_page_outbound_limit"], RT_WINDOW_OUTBOUND_LIMIT
+        )
 
     def test_failed_return_page_matches_the_serial_partial(self) -> None:
         pages = _Pages(1, 2, bad_echo={(0, 1)})
@@ -270,7 +284,8 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         client = _RateLimitClient(pages, concurrency=2, trigger_at=2)
         report, _sleeps = _search(client, pages)
 
-        self.assertEqual(len(client.batches), 3)
+        # One outbound batch, then one batch for every day's returns.
+        self.assertEqual(len(client.batches), 2)
         self.assertEqual(client.return_sent, pages.return_urls[:4])
         self.assertEqual(report.days[0].status, "ok")
         self.assertEqual(report.days[0].price, 500)
@@ -461,7 +476,7 @@ class PublicRoundTripDateBatchTests(unittest.TestCase):
         serial_prices = [row[0].price for row in serial_rows]
         self.assertEqual(serial_prices, [row[0].price for row in batch_rows])
         self.assertEqual(batch.batches[0], pages.outbound_urls)
-        self.assertEqual(batch.batches[1:], [[url] for url in pages.return_urls])
+        self.assertEqual(batch.batches[1:], [pages.return_urls])
 
         pages = _Pages(2, 1)
         deadline = _DeadlineClient(pages)
@@ -630,6 +645,8 @@ class _RateLimitClient(_BatchClient):
 
 
 class _CancelClient:
+    """Cancel lands inside the return batch: the sweep sends nothing after the request in flight."""
+
     def __init__(self, pages: _Pages, cancel: threading.Event) -> None:
         self.pages = pages
         self.cancel = cancel
@@ -642,12 +659,15 @@ class _CancelClient:
         if self.calls == 1:
             self.sent.extend(urls)
             return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
-        self.sent.extend(urls)
+        self.sent.append(urls[0])
         self.cancel.set()
-        return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
+        raise SearchCancelled()
 
 
 class _DeadlineClient:
+    """The deadline lands inside the second batch, as the sweep settles it: the first request
+    is answered and the rest are stamped as not loaded, never sent."""
+
     def __init__(self, pages: _Pages) -> None:
         self.pages = pages
         self.sent: list[str] = []
@@ -659,9 +679,13 @@ class _DeadlineClient:
         if self.calls == 1:
             self.sent.extend(urls)
             return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
-        self.sent.extend(urls)
+        self.sent.append(urls[0])
         control = current_control()
         if control is not None:
             control.deadline_at = control.clock()
             control.mark_cut()
-        return [SweepHttpResponse(200, self.pages.html[url], url) for url in urls]
+        out = [SweepHttpResponse(200, self.pages.html[urls[0]], urls[0])]
+        out.extend(
+            SweepHttpResponse(0, "", url, deadline=True, request_sent=False) for url in urls[1:]
+        )
+        return out

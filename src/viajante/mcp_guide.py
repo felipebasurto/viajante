@@ -97,7 +97,7 @@ In search_explore, `not_loaded` under a deadline means the prices weren't loaded
 even if destinations are listed.
 Long round-trip date sweeps (search_dates or search_flex with a stay) read the
 window in groups of at most the sweep concurrency: that group's outbound
-boards, then those days' return pages (at most eight per day), then the next
+boards, then those days' return pages (at most three per day), then the next
 group. A day is reported only after it finishes; a day the deadline cut is not.
 Pass deadline_seconds on those calls so finished
 days come back early

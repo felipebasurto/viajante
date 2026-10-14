@@ -168,7 +168,8 @@ physical segments, including carrier and bare flight number. Before accepting
 return rows, Viajante checks that the page echoes the selected route and clock.
 The accepted price is the provider's returned package total; Viajante never
 sums two one-way amounts or reports the outbound amount as a standalone fare.
-The eight-outbound cap makes the result scope-bound, and a failed follow-up can
+The eight-outbound cap makes the result scope-bound. Round-trip date windows use
+three per day and send one return batch per chunk of days. A failed follow-up can
 leave a partial report with a page error.
 
 A carry-on rides tfs field 13 (`BaggageFilter`) as a party total, and every

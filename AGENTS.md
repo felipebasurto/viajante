@@ -159,6 +159,9 @@ add new prose labels to any result.
   local, applied after parse and before `--top`. An unknown clock, stop count,
   or layover cannot prove an include or an exclude.
 - Public round trips check at most eight outbound candidates, one return page each.
+  Round-trip date windows (`search_dates`, and `search_flex` with a stay) check at most
+  three per day (`RT_WINDOW_OUTBOUND_LIMIT`), and their return pages go out one batch per
+  chunk of days, not one per day.
   The provider's package total is the price. Never sum one-way amounts. The result
   is scope-bound.
 - `max_stops` is 0, 1, or 2. The product cannot require 3+ stops; say so or refuse.

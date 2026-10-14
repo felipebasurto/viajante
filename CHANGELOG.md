@@ -20,6 +20,13 @@ history up to commit 6ee0fb7.
   page, up to the same 800 ms. A control that stays on screen costs what it did
   before. Two dismissals went from 1.7 s to 0.3 s in headless Chromium on a stub
   page.
+- Round-trip date windows (`search_dates`, and `search_flex` with a stay) check at most
+  three outbound choices per day, down from eight, and report that bound as
+  `public_page_outbound_limit`. Each chunk of days sends one batch of return pages
+  instead of one batch per day, so the sweep's streams stay full. On a fixture window of
+  31 days, simulated provider time fell from about 54 s to about 23 s, and local CPU fell
+  from about 7.7 s to about 3.2 s. Flight round trips keep eight choices and only change
+  in batching.
 - Public Google Flights results pages are parsed into one HTML tree per fetch,
   not two or three, and the ds:1 data is decoded once. On a fixture sweep of 31
   one-way queries, local CPU fell from about 1.0 s to about 0.4 s. The same cards
