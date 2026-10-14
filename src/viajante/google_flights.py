@@ -173,7 +173,21 @@ def google_flights_url(
         return None
 
 
+_BLOCKED_MEMO = threading.local()
+
+
 def looks_blocked(html: str, final_url: str = "") -> bool:
+    # One response is checked up to three times on the way in. Remember the last page
+    # by identity, so its lowercase copy and RPC scan run once per response.
+    memo = getattr(_BLOCKED_MEMO, "entry", None)
+    if memo is not None and memo[0] is html and memo[1] == final_url:
+        return memo[2]
+    blocked = _looks_blocked(html, final_url)
+    _BLOCKED_MEMO.entry = (html, final_url, blocked)
+    return blocked
+
+
+def _looks_blocked(html: str, final_url: str) -> bool:
     lowered_url = final_url.casefold()
     if any(marker in lowered_url for marker in BLOCK_URL_MARKERS):
         return True

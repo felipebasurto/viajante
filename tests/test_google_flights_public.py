@@ -708,7 +708,9 @@ class PublicRoundTripCoverageTests(unittest.TestCase):
             )
             self.assertEqual(report.coverage.strategy, "heuristic")
             self.assertFalse(report.coverage.complete)
-            self.assertEqual(report.coverage.scope["public_page_outbound_limit"], 8)
+            # Date windows check three outbound choices per day; flex keeps the eight.
+            limit = 3 if report.coverage.scope["kind"] == "date_window" else 8
+            self.assertEqual(report.coverage.scope["public_page_outbound_limit"], limit)
             envelope = stamp_search(report.to_dict())
             self.assertEqual(envelope["completeness"], "partial")
             self.assertEqual(envelope["status"], "ok")
