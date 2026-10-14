@@ -65,6 +65,7 @@ class FakeLocator:
         self._visible = visible
         self._wait_error = wait_error
         self.click_timeouts: List[int] = []
+        self.wait_calls: List[tuple[str | None, int]] = []
 
     @property
     def first(self) -> "FakeLocator":
@@ -79,7 +80,8 @@ class FakeLocator:
     def click(self, *, timeout: int) -> None:
         self.click_timeouts.append(timeout)
 
-    def wait_for(self, *, timeout: int) -> None:
+    def wait_for(self, *, timeout: int, state: str | None = None) -> None:
+        self.wait_calls.append((state, timeout))
         if self._wait_error is not None:
             raise self._wait_error
 
@@ -259,7 +261,8 @@ class BookingHotelsSourceTests(unittest.TestCase):
         BookingHotelsSource._dismiss_overlays(page)
 
         self.assertEqual(button.click_timeouts, [3_000])
-        self.assertEqual(page.wait_timeouts, [800])
+        self.assertEqual(button.wait_calls, [("hidden", 800)])
+        self.assertEqual(page.wait_timeouts, [])
 
     def test_visible_consent_button_is_clicked(self) -> None:
         button = FakeLocator(count=1, visible=True)
@@ -268,7 +271,19 @@ class BookingHotelsSourceTests(unittest.TestCase):
         BookingHotelsSource._dismiss_overlays(page)
 
         self.assertEqual(button.click_timeouts, [3_000])
-        self.assertEqual(page.wait_timeouts, [800])
+        self.assertEqual(button.wait_calls, [("hidden", 800)])
+        self.assertEqual(page.wait_timeouts, [])
+
+    def test_control_that_stays_on_screen_costs_at_most_the_old_settle(self) -> None:
+        # Worst case is unchanged: a control that never hides is waited on for the
+        # same 800 ms as before, and the click still counts as dismissed.
+        button = FakeLocator(count=1, visible=True, wait_error=TimeoutError("still visible"))
+        page = FakePage(locators={CONSENT_SELECTORS[0]: button})
+
+        self.assertTrue(BookingHotelsSource._click_first_visible(page, CONSENT_SELECTORS))
+
+        self.assertEqual(button.wait_calls, [("hidden", 800)])
+        self.assertEqual(page.wait_timeouts, [])
 
     def test_selector_timeout_closes_page_and_propagates(self) -> None:
         page = FakePage(wait_error=RuntimeError("selector timeout"))
