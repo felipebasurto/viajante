@@ -8,8 +8,6 @@ from datetime import date
 from typing import Callable, Sequence
 from urllib.parse import urlencode
 
-from selectolax.lexbor import LexborHTMLParser
-
 from viajante.airports import same_city_iata
 from viajante.carriers import ALLIANCE_TFS_CODE, _airline_filter_hit
 from viajante.control import SearchDeadline, checkpoint
@@ -30,7 +28,12 @@ from viajante.google_flights import (
     response_diagnostics,
 )
 from viajante.google_flights_explore_browser import capture_catalog, explore_session
-from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
+from viajante.google_flights_page import (
+    extract_ds1_data,
+    page_tree,
+    parse_shopping_page,
+    shared_page_tree,
+)
 from viajante.google_flights_rpc import (
     CompactExplorePlace,
     CompactParseMiss,
@@ -340,23 +343,26 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             if exc.status in {None, 403, 429}:
                 self._stopped_error = exc
             raise
-        if trip is not None:
-            self._verify_context(response.text, trip)
-        try:
-            cards = parse_shopping_page(response.text, currency=self._currency)
-        except EmptyShoppingResults as exc:
+        html = response.text
+        # The context, ds:1 and carrier checks all read this page: parse its tree once.
+        with shared_page_tree(html):
             if trip is not None:
-                self._verify_carrier_filters(response.text, (), trip)
-            raise NoFlightsFound() from exc
-        except CompactParseMiss as exc:
-            # Missing bootstrap data cannot prove the provider returned no flights.
-            raise GoogleFlightsMarkupError(str(exc)) from exc
-        if trip is not None:
-            self._verify_carrier_filters(response.text, cards, trip)
-        return cards
+                self._verify_context(html, trip)
+            try:
+                cards = parse_shopping_page(html, currency=self._currency)
+            except EmptyShoppingResults as exc:
+                if trip is not None:
+                    self._verify_carrier_filters(html, (), trip)
+                raise NoFlightsFound() from exc
+            except CompactParseMiss as exc:
+                # Missing bootstrap data cannot prove the provider returned no flights.
+                raise GoogleFlightsMarkupError(str(exc)) from exc
+            if trip is not None:
+                self._verify_carrier_filters(html, cards, trip)
+            return cards
 
     def _verify_context(self, html: str, trip: Trip) -> None:
-        root = LexborHTMLParser(html)
+        root = page_tree(html)
         labels = {node.attributes.get("aria-label") for node in root.css("button[aria-label]")}
         if f"Currency {self._currency}" not in labels:
             raise GoogleFlightsMarkupError("Public page did not echo the requested quote currency.")
@@ -442,7 +448,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
     @staticmethod
     def _selected_echo(html: str, outbound: RawJourneyLeg) -> bool:
         """Require the visible selected journey, not just return rows with a price."""
-        root = LexborHTMLParser(html)
+        root = page_tree(html)
         if root.body is None:
             return False
         text = " ".join(root.body.text(separator=" ", strip=True).split())
