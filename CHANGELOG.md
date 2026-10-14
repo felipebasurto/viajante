@@ -9,6 +9,23 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-13
+
+### Added
+
+- `viajante feedback` opens a prefilled GitHub issue with the Viajante version,
+  Python version, and platform. Viajante sends nothing itself; `--no-browser`
+  prints the link only.
+- One-way `flights` takes `--depart-before HH:MM`, `--arrive-after HH:MM`,
+  `--less-emissions`, and `--hide-separate-tickets` (MCP `search_flights`:
+  `depart_before`, `arrive_after`, `less_emissions`, `hide_separate_tickets`).
+  Fetch `auto` and `sweep` send the clock bounds, `max_duration`, `max_layover`,
+  the price cap, and the two options to Google's page. The page must echo each
+  one; a missing or tighter echo is `markup_drift`. The local filter still runs on
+  every row.
+- `--exclude-basic-economy` is refused on every path: the public page echoes no
+  basic-economy filter, so viajante cannot prove it applied.
+
 ### Changed
 
 - The landing page no longer waits for the Google Fonts stylesheet before its
@@ -31,26 +48,6 @@ history up to commit 6ee0fb7.
   not two or three, and the ds:1 data is decoded once. On a fixture sweep of 31
   one-way queries, local CPU fell from about 1.0 s to about 0.4 s. The same cards
   come back, and tests pin the single tree build.
-
-## [1.5.1] - 2026-10-13
-
-### Added
-
-- `viajante feedback` opens a prefilled GitHub issue with the Viajante version,
-  Python version, and platform. Viajante sends nothing itself; `--no-browser`
-  prints the link only.
-- One-way `flights` takes `--depart-before HH:MM`, `--arrive-after HH:MM`,
-  `--less-emissions`, and `--hide-separate-tickets` (MCP `search_flights`:
-  `depart_before`, `arrive_after`, `less_emissions`, `hide_separate_tickets`).
-  Fetch `auto` and `sweep` send the clock bounds, `max_duration`, `max_layover`,
-  the price cap, and the two options to Google's page. The page must echo each
-  one; a missing or tighter echo is `markup_drift`. The local filter still runs on
-  every row.
-- `--exclude-basic-economy` is refused on every path: the public page echoes no
-  basic-economy filter, so viajante cannot prove it applied.
-
-### Changed
-
 - Detail searches click Reject only on Google's consent banner. The Accept
   selectors are gone.
 - A results page that finishes loading with no results grid and no empty state is
