@@ -47,6 +47,11 @@ Every result (except lookup_airports) opens with an envelope: status, completene
   the provider returned nothing): a pick that respects named requirements
   (`relaxed_requirements` lists any it relaxed), a varied shortlist, and
   highlights/tradeoffs from returned fields only. Additive; `offers` unchanged.
+  nearby_days (default 3, 0 off) adds nearby_dates: cheapest fare ±N days around
+  the requested date, delta against that date, cheapest on the lowest day. Round
+  trips shift both dates and keep the length. Same public date calendar as
+  search_dates, one batch per query. Multi-city omits it. An unpriced day is not
+  "no flights".
 - search_dates: cheapest-per-day calendar (cheapest week). Max 31 days.
 - search_flex: ±N around one date, then one shop. Not a date matrix.
 - search_explore: dest triage from a named origin

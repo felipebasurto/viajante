@@ -641,7 +641,10 @@ def build_server():
         convert. Do not invent a bag fee. max_stops is 0, 1 or 2. Metro codes (LON, NYC)
         expand on one-way and rt routes. One-way searches send clock bounds, max_duration,
         max_layover, price_cap, less_emissions and hide_separate_tickets to the page, and check
-        each one locally. exclude_basic_economy is refused. A successful query may carry
+        each one locally. exclude_basic_economy is refused. nearby_days (default 3, 0 off)
+        adds a ±N cheapest-fare grid on that search; round trips shift both dates and
+        keep the trip length. The grid reuses the date calendar and does not change offers.
+        A successful query may carry
         recommendation:
         evidence, not a verdict. Check relaxed_requirements before calling it a match. After a
         named hub or leisure trunk, search_hidden_city may run once with the same route and

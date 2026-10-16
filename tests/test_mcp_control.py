@@ -117,7 +117,14 @@ class McpControlCase(unittest.TestCase):
 
 
 def _args(routes=ROUTES, **extra: object) -> dict:
-    return {"routes": list(routes), "fetch": "sweep", "currency": "USD", **extra}
+    # nearby_days defaults to 3 on the tool; these tests count the flight fetches only.
+    return {
+        "routes": list(routes),
+        "fetch": "sweep",
+        "currency": "USD",
+        "nearby_days": 0,
+        **extra,
+    }
 
 
 @contextlib.asynccontextmanager
@@ -351,7 +358,13 @@ class CancelTests(McpControlCase):
 
 
 def _tool_args(**extra: object) -> dict:
-    return {"routes": list(ROUTES), "fetch": "sweep", "currency": "USD", **extra}
+    return {
+        "routes": list(ROUTES),
+        "fetch": "sweep",
+        "currency": "USD",
+        "nearby_days": 0,
+        **extra,
+    }
 
 
 class DeadlineTests(McpControlCase):
@@ -411,26 +424,34 @@ class DeadlineTests(McpControlCase):
     def test_partial_results_are_not_cached_or_cooled_down(self) -> None:
         source = self.use_source(FakeFlights(delay=0.2))
         first = mcp_handlers.search_flights_tool(
-            ROUTES, fetch="sweep", currency="USD", deadline_seconds=0.1
+            ROUTES, fetch="sweep", currency="USD", deadline_seconds=0.1, nearby_days=0
         )
         self.assertEqual(first["coverage"]["stopping_reason"], "deadline")
         self.assert_untouched()
         source.delay = 0.0
-        again = mcp_handlers.search_flights_tool(ROUTES, fetch="sweep", currency="USD")
+        again = mcp_handlers.search_flights_tool(
+            ROUTES, fetch="sweep", currency="USD", nearby_days=0
+        )
         self.assertNotIn("cached", again)
         self.assertTrue(again["coverage"]["complete"])
         self.assertEqual(source.calls, 1 + 3)
 
     def test_complete_result_under_a_deadline_is_cached_for_any_deadline(self) -> None:
         source = self.use_source(FakeFlights())
-        mcp_handlers.search_flights_tool(ROUTES, fetch="sweep", currency="USD", deadline_seconds=30)
-        again = mcp_handlers.search_flights_tool(ROUTES, fetch="sweep", currency="USD")
+        mcp_handlers.search_flights_tool(
+            ROUTES, fetch="sweep", currency="USD", deadline_seconds=30, nearby_days=0
+        )
+        again = mcp_handlers.search_flights_tool(
+            ROUTES, fetch="sweep", currency="USD", nearby_days=0
+        )
         self.assertTrue(again["cached"])
         self.assertEqual(source.calls, 3)
 
     def test_no_deadline_keeps_todays_behavior(self) -> None:
         self.use_source(FakeFlights())
-        payload = mcp_handlers.search_flights_tool(ROUTES, fetch="sweep", currency="USD")
+        payload = mcp_handlers.search_flights_tool(
+            ROUTES, fetch="sweep", currency="USD", nearby_days=0
+        )
         self.assertTrue(payload["coverage"]["complete"])
         self.assertEqual(payload["coverage"]["stopping_reason"], "completed_scope")
 
@@ -734,7 +755,9 @@ class CompactJsonTests(McpControlCase):
         indented = json.dumps(payload, indent=2, ensure_ascii=False)
         self.assertLess(len(text.encode()), len(indented.encode()) * 0.8)
         mcp_handlers._CACHE.clear()
-        direct = mcp_handlers.search_flights_tool(ROUTES, fetch="sweep", currency="USD")
+        direct = mcp_handlers.search_flights_tool(
+            ROUTES, fetch="sweep", currency="USD", nearby_days=0
+        )
         self.assertEqual(set(payload), set(direct) - {"cached"})
 
     def test_non_json_text_and_other_blocks_pass_through(self) -> None:

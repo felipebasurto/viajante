@@ -9,6 +9,17 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Added
+
+- `flights` and MCP `search_flights` include a nearby-date price grid.
+  `--nearby-days` / `nearby_days` defaults to 3; `0` turns it off. Each one-way
+  or round-trip query gains `nearby_dates`: the cheapest owned fare per day for
+  ±N around the requested date, `delta` against that date, and `cheapest: true`
+  on the lowest priced day. Round trips shift the outbound and return together
+  and keep the trip length. The grid reuses the public date calendar (one batched
+  window per query). Multi-city queries omit it. An unpriced day is not "no
+  flights". The grid does not change `offers`.
+
 ## [1.5.1] - 2026-10-13
 
 ### Added

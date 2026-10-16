@@ -628,6 +628,7 @@ class QuerySuccess:
     recommendation: Optional["Recommendation"] = None
     page_errors: Tuple[SearchError, ...] = ()
     scope_bound: bool = False
+    nearby_dates: Optional[NearbyDates] = None
     status: Literal["ok"] = field(init=False, default="ok")
 
     def __post_init__(self) -> None:
@@ -659,6 +660,8 @@ class QuerySuccess:
             listed = {offer.evidence.evidence_id for offer in self.offers if offer.evidence}
             payload["recommendation"] = self.recommendation.to_dict(listed, currency)
         _put_present(payload, "empty_reason", self.empty_reason)
+        if self.nearby_dates is not None:
+            payload["nearby_dates"] = self.nearby_dates.to_dict()
         return payload
 
 
@@ -667,17 +670,79 @@ class QueryFailure:
     query: Trip
     error: SearchError
     google_flights_url: Optional[str] = None
+    nearby_dates: Optional[NearbyDates] = None
     status: Literal["error"] = field(init=False, default="error")
 
     def to_dict(self) -> Mapping[str, object]:
         query = dict(self.query.to_dict())
         if self.google_flights_url:
             query["google_flights_url"] = self.google_flights_url
-        return {
+        payload: dict[str, object] = {
             "status": self.status,
             "query": query,
             "error": self.error.to_dict(),
         }
+        if self.nearby_dates is not None:
+            payload["nearby_dates"] = self.nearby_dates.to_dict()
+        return payload
+
+
+@dataclass(frozen=True)
+class NearbyDatePrice:
+    """One day in a flight search's nearby-date grid. Price is the day's cheapest owned fare."""
+
+    departure_date: date
+    offset_days: int
+    price: Optional[float] = None
+    delta: Optional[float] = None
+    return_date: Optional[date] = None
+    cheapest: bool = False
+    status: Literal["ok", "empty", "error"] = "ok"
+    empty_reason: Optional[EmptyReason] = None
+    error: Optional[SearchError] = None
+
+    def to_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "date": self.departure_date.isoformat(),
+            "offset_days": self.offset_days,
+            "price": self.price,
+            "delta": self.delta,
+            "status": self.status,
+            "cheapest": self.cheapest,
+        }
+        if self.return_date is not None:
+            payload["return_date"] = self.return_date.isoformat()
+        _put_present(payload, "empty_reason", self.empty_reason)
+        if self.error is not None:
+            payload["error"] = self.error.to_dict()
+        return payload
+
+
+@dataclass(frozen=True)
+class NearbyDates:
+    """±N cheapest fares around the requested departure. Deltas use that day's owned fare."""
+
+    days: int
+    requested_date: date
+    prices: Tuple[NearbyDatePrice, ...]
+    cheapest_date: Optional[date] = None
+    nights: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.days < 1:
+            raise ValueError("nearby_dates.days must be at least 1")
+        if not self.prices:
+            raise ValueError("nearby_dates needs at least one day")
+
+    def to_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "days": self.days,
+            "requested_date": self.requested_date.isoformat(),
+            "cheapest_date": None if self.cheapest_date is None else self.cheapest_date.isoformat(),
+            "prices": [row.to_dict() for row in self.prices],
+        }
+        _put_present(payload, "nights", self.nights)
+        return payload
 
 
 QueryResult = Union[QuerySuccess, QueryFailure]

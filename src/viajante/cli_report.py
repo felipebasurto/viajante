@@ -28,6 +28,7 @@ from viajante.models import (
     HotelQuerySuccess,
     LodgingKind,
     MultiCity,
+    NearbyDates,
     QueryFailure,
     QuerySuccess,
     RawJourneyLeg,
@@ -313,6 +314,28 @@ def _google_flights_url_for(
     )
 
 
+def _print_nearby_dates(grid: NearbyDates, currency: str) -> None:
+    stay = f", {grid.nights} nights" if grid.nights else ""
+    print(
+        f"  Nearby dates (±{grid.days}{stay}), cheapest fare vs {grid.requested_date.isoformat()}:"
+    )
+    for cell in grid.prices:
+        when = cell.departure_date.isoformat()
+        if cell.return_date is not None:
+            when += f"/{cell.return_date.isoformat()}"
+        offset = f"{cell.offset_days:+d}"
+        if cell.status == "error" and cell.error is not None:
+            print(f"    {when}  {offset}  ERROR: {cell.error.message}")
+            continue
+        if cell.price is None:
+            reason = f"  {cell.empty_reason}" if cell.empty_reason else ""
+            print(f"    {when}  {offset}  —{reason}")
+            continue
+        delta = "0" if cell.delta == 0 else f"{cell.delta:+.0f}"
+        mark = "  cheapest" if cell.cheapest else ""
+        print(f"    {when}  {offset}  {format_money(cell.price, currency)}  {delta}{mark}")
+
+
 def _print_google_flights_url(url: Optional[str], *, indent: str = "    ") -> None:
     if url:
         print(f"{indent}{url}")
@@ -357,9 +380,13 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
                 f"eligible: {result.eligible_count}; "
                 f"shown: {len(result.offers)}"
             )
+            if result.nearby_dates is not None:
+                _print_nearby_dates(result.nearby_dates, currency)
         elif isinstance(result, QueryFailure):
             print(f"  ERROR: {result.error.message}")
             _print_google_flights_url(query_url, indent="  ")
+            if result.nearby_dates is not None:
+                _print_nearby_dates(result.nearby_dates, currency)
     _print_best_pairs(report, sort)
     if any_success:
         print(VERIFY_BAGGAGE_LINE)

@@ -305,7 +305,9 @@ class MetroSurfaceTests(unittest.TestCase):
         )
         mcp_handlers._CACHE.clear()
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
-            mcp_handlers.search_flights_tool([f"LON-NYC:{day}"], currency="GBP", fetch="sweep")
+            mcp_handlers.search_flights_tool(
+                [f"LON-NYC:{day}"], currency="GBP", fetch="sweep", nearby_days=0
+            )
         self.assertEqual(len(source.fetched), 18)
 
 
