@@ -182,6 +182,15 @@ add new prose labels to any result.
   named metro is an error. A route whose two ends share a metro is rejected.
   Open-jaw, multi-city, dates, flex, explore, hotels, and hidden-city do not take
   metro codes.
+- `search_flights` takes `nearby_days` (CLI `--nearby-days`, MCP `nearby_days`,
+  default 3, `0` off). Each one-way or round-trip query may carry `nearby_dates`:
+  the cheapest owned fare per day for ±N around the requested date, `delta`
+  against that date, and `cheapest: true` on the lowest priced day. Round trips
+  shift outbound and return together and keep the trip length. The grid is the
+  public date calendar, one batched window per query. Multi-city queries omit it.
+  An unpriced cell is not "no flights". It does not change `offers`. Library
+  `search_flights` / `get_flights` default the argument to 0 so trip and recheck
+  do not add a second calendar.
 - `recommendation` is additive. It never changes `offers` or `--sort`, never
   relaxes a filter silently (the relaxed requirement is named in
   `relaxed_requirements`), and offers in an unproven or mixed currency are not

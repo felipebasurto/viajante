@@ -39,6 +39,8 @@ from viajante.models import (
     FlightCabin,
     FlightOffer,
     FlightQuery,
+    NearbyDatePrice,
+    NearbyDates,
     QuerySuccess,
     RoundTrip,
     SearchError,
@@ -256,7 +258,7 @@ def _day_trip(
     day: date,
     nights: Optional[int],
 ) -> FlightQuery | RoundTrip:
-    return calendar_trip(
+    trip = calendar_trip(
         seed.origin,
         seed.destination,
         day,
@@ -272,6 +274,10 @@ def _day_trip(
         exclude_alliances=seed.exclude_alliances,
         **_occupancy_from_trip(seed),
     )
+    provider = getattr(seed, "provider", None)
+    if provider is not None and isinstance(trip, FlightQuery):
+        return replace(trip, provider=provider)
+    return trip
 
 
 def _stamp_date_row_url(
@@ -653,6 +659,19 @@ def search_dates(
     return one_or_many(reports)
 
 
+def validate_nearby_days(days: int) -> int:
+    """0 disables the grid. The cap matches flex so the window stays within 31 days."""
+    if isinstance(days, bool) or not isinstance(days, int):
+        raise ValueError("nearby_days must be an integer")
+    if days < 0:
+        raise ValueError("nearby_days must be 0 or greater (0 disables the date grid)")
+    if days > MAX_FLEX_DAYS:
+        raise ValueError(
+            f"nearby_days is at most {MAX_FLEX_DAYS} (window cap {MAX_DATE_WINDOW_DAYS})"
+        )
+    return days
+
+
 def flex_window(
     around: date,
     flex_days: int,
@@ -947,6 +966,94 @@ def search_flex(
     finally:
         client.close()
     return one_or_many(reports)
+
+
+def _priced_day(row: DatePriceRow) -> bool:
+    return row.status == "ok" and row.price is not None and row.price > 0
+
+
+def nearby_date_grid(
+    source: DaySource,
+    trip: FlightQuery | RoundTrip,
+    days: int,
+    *,
+    filters: OfferFilters,
+    baggage_buffer: int,
+    progress: Callable[[str], None],
+) -> Optional[NearbyDates]:
+    """Cheapest fare per day for ±days around `trip`, via the date-calendar sweep.
+
+    Round trips shift outbound and return together (`nights` stays fixed). A past
+    requested date returns None: the flight result is kept and no day is fetched.
+    """
+    around = trip.departure_date
+    nights = None
+    if isinstance(trip, RoundTrip):
+        nights = (trip.return_date - trip.departure_date).days
+    try:
+        start, end = flex_window(around, days)
+    except ValueError as exc:
+        progress(f"nearby dates skipped: {exc}")
+        return None
+    progress(
+        f"nearby dates: {trip.origin} -> {trip.destination} "
+        f"±{days} {start.isoformat()} .. {end.isoformat()}"
+    )
+    try:
+        rows = _sweep_per_day(
+            source,
+            trip,
+            start,
+            end,
+            nights,
+            progress,
+            filters,
+            baggage_buffer,
+            by_fare=True,
+        )
+    except Exception as exc:
+        rows = _error_rows(start, end, classify_failure(exc), nights=nights)
+    requested = next((row for row in rows if row.departure_date == around), None)
+    base = requested.price if requested is not None and _priced_day(requested) else None
+    priced = [row for row in rows if _priced_day(row)]
+    winner = (
+        min(
+            priced,
+            key=lambda row: (
+                row.price or 0.0,
+                abs((row.departure_date - around).days),
+                row.departure_date,
+            ),
+        )
+        if priced
+        else None
+    )
+    cells: list[NearbyDatePrice] = []
+    for row in rows:
+        owned = _priced_day(row)
+        delta = None
+        if owned and base is not None and row.price is not None:
+            delta = row.price - base
+        cells.append(
+            NearbyDatePrice(
+                departure_date=row.departure_date,
+                offset_days=(row.departure_date - around).days,
+                price=row.price if owned else None,
+                delta=delta,
+                return_date=row.return_date,
+                cheapest=winner is not None and row.departure_date == winner.departure_date,
+                status=row.status,
+                empty_reason=row.empty_reason,
+                error=row.error,
+            )
+        )
+    return NearbyDates(
+        days=days,
+        requested_date=around,
+        prices=tuple(cells),
+        cheapest_date=None if winner is None else winner.departure_date,
+        nights=nights,
+    )
 
 
 def _return_for(day: date, nights: Optional[int]) -> Optional[date]:

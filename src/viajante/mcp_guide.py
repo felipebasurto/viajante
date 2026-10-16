@@ -192,7 +192,14 @@ cooldown_basis distinguishes provider Retry-After from a heuristic pause.
 ## Choosing a search tool
 
 search_dates is the cheapest week. search_flex is ±N around a named date.
-Do not brute-force a date matrix. search_explore is dest triage from an origin.
+Do not brute-force a date matrix. search_flights nearby_days (default 3, 0 off)
+adds nearby_dates to that search: the cheapest owned fare per day for ±N around
+the requested date, delta against that date, and cheapest true on the lowest
+priced day. Round trips shift outbound and return together and keep the trip
+length. The grid is one batched public date-calendar window per one-way or
+round-trip query. Multi-city queries omit it. It does not change offers. An
+unpriced cell carries empty_reason or an error; it is not "no flights".
+search_explore is dest triage from an origin.
 search_dates uses bounded per-day public-page GETs and has no fetch parameter. A long
 round-trip window should pass deadline_seconds so finished days return early and the
 rest are deadline, not empty. If it returns

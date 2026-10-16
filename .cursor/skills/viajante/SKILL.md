@@ -19,13 +19,15 @@ CLI rejects dates in the past. Compute ISO dates from **today**. Roll a named se
 
 Fuzzy timing (for example, “late October / early November”) is not an ISO window. Propose the computed `start` and `end`, then wait for the user's confirmation before searching. For `search_flights`, every `routes` entry is exactly `ORIGIN-DEST:YYYY-MM-DD`; for `search_dates`, `route` is `ORIGIN-DEST` and `start` / `end` are separate ISO dates. Do not replace the colon with whitespace.
 
+`search_flights` `nearby_days` (CLI `--nearby-days`, default 3, `0` off) adds `nearby_dates` to that search: the cheapest owned fare per day for ±N around the requested date, `delta` against that date, and `cheapest: true` on the lowest priced day. Round trips shift outbound and return together and keep the trip length. The grid reuses the date calendar. `search_flex` still shops the cheapest day. An unpriced day is not "no flights". Multi-city omits the grid.
+
 ## Which tool
 
 | Need | MCP | CLI |
 |------|-----|-----|
 | Executing package and schema versions (offline) | `get_runtime_info` | `viajante --version` |
 | Ambiguous city or IATA | `lookup_airports` | `viajante airports` |
-| Named route and date | `search_flights` (`routes`) | `viajante flights` |
+| Named route and date | `search_flights` (`routes`; `nearby_days` default 3) | `viajante flights` (`--nearby-days`) |
 | Cheapest week (max 31 days) | `search_dates` (`route`, `start`, `end`) | `viajante dates` |
 | ±N around one date, then one shop | `search_flex` (`route`, `around`, `flex`) | `viajante flex` |
 | Dest triage from a named origin | `search_explore` (`origin`, `start` or `month`) | `viajante explore` |

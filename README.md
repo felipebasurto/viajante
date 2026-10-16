@@ -114,7 +114,7 @@ Run `viajante <command> --help` for options. Add `--save FILE` to write a JSON r
 
 | Command | Purpose |
 | --- | --- |
-| `flights` | Specific routes and dates (`--split-tickets` is opt-in) |
+| `flights` | Specific routes and dates (`--nearby-days` compares ±N days, default 3; `--split-tickets` is opt-in) |
 | `dates` | Cheapest departure day across a window of up to 31 days |
 | `flex` | A few days either side of a target date |
 | `explore` | Destinations from an origin airport |
