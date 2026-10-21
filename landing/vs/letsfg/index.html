@@ -78,7 +78,7 @@
       "name": "Does viajante work in Claude, Cursor, and Hermes?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. It runs as a local MCP server in Claude, Cursor, and Hermes Agent, and as a Python package. In Hermes Agent the command is hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp."
+        "text": "Yes. It runs as a local MCP server in Claude, Cursor, and Hermes Agent, and as a Python package. viajante is an official Hermes Agent plugin. In Hermes Agent, install it from the catalog with hermes plugins install viajante, or add the server with hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp."
       }
     }
   ]
@@ -321,6 +321,24 @@ code.cmd {
   line-height: 1.45;
 }
 
+.catalog { margin: 14px 0 0; }
+
+a.badge {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid #0066CC;
+  border-radius: 999px;
+  background: #fff;
+  color: #0066CC;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+a.badge:hover { background: #0066CC; color: #fff; }
+
 .sources { margin: 14px 0 0; padding-left: 20px; }
 .sources li { margin-top: 8px; }
 .sources li::marker { color: var(--muted); }
@@ -464,7 +482,11 @@ code.cmd {
     <p>Local award math on offers you supply: cents per point, and transfer paths. It does not search live award seats, and it does not book the award.</p>
 
     <h3>Clients</h3>
-    <p>Claude, Cursor, and Hermes Agent, as a local MCP server, and as a Python package (<code>pip install viajante</code>). In Hermes Agent:</p>
+    <p>Claude, Cursor, and Hermes Agent, as a local MCP server, and as a Python package (<code>pip install viajante</code>).</p>
+    <p class="catalog"><a class="badge" href="https://hermes-agent.nousresearch.com/docs/plugins/viajante">Official Hermes Agent plugin</a></p>
+    <p>In Hermes Agent, the catalog install is:</p>
+    <p><code class="cmd">hermes plugins install viajante</code></p>
+    <p>Or add the local MCP server directly:</p>
     <p><code class="cmd">hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp</code></p>
     <p>Setup for the other clients is on the <a href="/">viajante homepage</a>.</p>
   </section>
@@ -501,7 +523,7 @@ code.cmd {
     <p>When you want the tool to book the flight or the hotel. LetsFG books both after you approve the booking by email. viajante returns the rows and the links, and you book yourself.</p>
 
     <h3>Does viajante work in Claude, Cursor, and Hermes?</h3>
-    <p>Yes. It runs as a local MCP server in Claude, Cursor, and Hermes Agent, and as a Python package. In Hermes Agent the command is <code>hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp</code>.</p>
+    <p>Yes. It runs as a local MCP server in Claude, Cursor, and Hermes Agent, and as a Python package. viajante is an <a href="https://hermes-agent.nousresearch.com/docs/plugins/viajante">official Hermes Agent plugin</a>. In Hermes Agent, install it from the catalog with <code>hermes plugins install viajante</code>, or add the server with <code>hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp</code>.</p>
   </section>
 
   <section>

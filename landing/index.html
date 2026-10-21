@@ -207,10 +207,35 @@ h1 {
 .cue:hover { color: var(--ink); text-decoration: underline; }
 
 .cue:focus-visible,
-.foot a:focus-visible {
+.foot a:focus-visible,
+a.badge:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
   border-radius: 6px;
+}
+
+.catalog {
+  margin: 16px 0 0;
+  text-align: center;
+}
+
+a.badge {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid #0066CC;
+  border-radius: 999px;
+  background: #fff;
+  color: #0066CC;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+a.badge:hover {
+  background: #0066CC;
+  color: #fff;
 }
 
 .how {
@@ -523,7 +548,7 @@ h1 {
     <p class="lede">Pick your assistant.</p>
 
     <div data-picker>
-      <noscript><p class="manual">Run <code>npx -y @viajante/mcp</code> as an MCP server, or without Node <code>uvx --from viajante[mcp] viajante-mcp</code>. Needs uv and Python 3.10 or later. <a href="https://github.com/felipebasurto/viajante#readme">Setup guide</a></p></noscript>
+      <noscript><p class="manual">Run <code>npx -y @viajante/mcp</code> as an MCP server, or without Node <code>uvx --from viajante[mcp] viajante-mcp</code>. Needs uv and Python 3.10 or later. <a href="https://github.com/felipebasurto/viajante#readme">Setup guide</a>. In Hermes Agent: <code>hermes plugins install viajante</code>, or <code>hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp</code>. <a href="https://hermes-agent.nousresearch.com/docs/plugins/viajante">Official Hermes Agent plugin</a>.</p></noscript>
     </div>
 
     <a class="cue" href="#how">How it works
@@ -657,6 +682,7 @@ h1 {
       <span class="agent-label">Install in Instinct</span>
     </button>
   </div>
+  <p class="catalog"><a class="badge" href="https://hermes-agent.nousresearch.com/docs/plugins/viajante">Official Hermes Agent plugin</a></p>
   <p class="manual" hidden></p>
 </template>
 
@@ -682,7 +708,7 @@ h1 {
     ChatGPT: 'You are ChatGPT on the web. You cannot edit a local MCP config, and you cannot start npx on my computer. Do not ask which client I use. Logged out, chatgpt.com only shows sign-in, and this chat cannot add a plugin. viajante searches from my computer and has no login. To use it here, I sign in, then on my computer (uv and Python 3.10 or later) I create a Secure MCP Tunnel in OpenAI platform tunnel settings and associate it with this ChatGPT account. I leave this running: tunnel-client init --sample sample_mcp_stdio_local --profile viajante --tunnel-id TUNNEL_ID --mcp-command "npx -y @viajante/mcp" and then tunnel-client run --profile viajante. I add it at https://chatgpt.com/plugins with Add custom MCP server, name Viajante, connection Tunnel, authentication No authentication, then install it and call it with @Viajante.',
     'Grok Bot': 'Add a custom MCP server named viajante that runs on your computer, not on my laptop. Command: npx. Arguments: -y @viajante/mcp. That computer needs uv and Python 3.10 or later. Do not use a localhost URL. There is no settings form; add it from this chat. When it is connected, list its tools. If uv or Python is missing, say so.',
     Muse: 'Add viajante to Muse Code user settings. The file is $XDG_CONFIG_HOME/muse/settings.json when that variable is set, otherwise ~/.config/muse/settings.json. Merge into the existing file and keep "schema_version": 1. Use the mcp_servers key, not mcpServers: {"schema_version":1,"mcp_servers":{"viajante":{"transport":"stdio","command":"npx","args":["-y","@viajante/mcp"],"mode":"optional"}}}. It needs uv and Python 3.10 or later. Then run /mcp and confirm viajante is connected. If you cannot write that file, say so.',
-    'Hermes Agent': 'Add viajante as a local MCP server in Hermes Agent. It needs uv and Python 3.10 or later. Run: hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp. Without Node, run: hermes mcp add viajante --connect-timeout 300 --command uvx --args --from \'viajante[mcp]\' viajante-mcp. Then run /reload-mcp and confirm the viajante tools are listed.',
+    'Hermes Agent': 'Add viajante in Hermes Agent. It needs uv and Python 3.10 or later. Catalog install: hermes plugins install viajante. Or add the local MCP server: hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp. Without Node, run: hermes mcp add viajante --connect-timeout 300 --command uvx --args --from \'viajante[mcp]\' viajante-mcp. Then run /reload-mcp and confirm the viajante tools are listed.',
     Instinct: 'This assistant has a Python sandbox, not an MCP config. viajante is open source (https://github.com/felipebasurto/viajante, PyPI: viajante).'
   };
   var FALLBACK = ' When viajante tools are connected, use them for flight and hotel searches. If they are not, write a Python file and run it. If import viajante fails, run pip install viajante (Python 3.10 or later) and run the file again. If pip cannot reach PyPI, say so and stop. Copy these calls and do not invent others: from datetime import date; from viajante import get_flights, HotelQuery, search_hotels. get_flights takes a route spec, not a sentence: get_flights("JFK-LHR:2026-11-15", fetch="sweep"). Hotels require a currency: search_hotels([HotelQuery(location="London", check_in=date(2026, 11, 15), check_out=date(2026, 11, 20))], currency="GBP"). Print each result with to_dict(). Read status and empty_reason before the rows. Only provider_empty means none found. Do not invent a fare, a currency, or a home airport. Other searches are search_dates, search_flex, search_explore, and search_trip; read the installed signature before calling one.';
