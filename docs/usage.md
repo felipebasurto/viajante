@@ -707,6 +707,7 @@ parsed fields. The report types and JSON fields are defined in
 | `rejected` | The provider rejected the request. |
 | `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 is reported without assuming its cause. |
 | `markup_drift` | The response could not be read in the expected page or `ds:1` format. |
+| `cards_unparsed` | A public page loaded, but some itinerary cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |
 

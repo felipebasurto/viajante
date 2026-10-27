@@ -115,7 +115,12 @@ with observed_at_basis (fetch: when viajante asked; provider is reserved). Only
 provider_empty may be told to a traveller as "no flights/hotels found". filtered_out
 means viajante's own filters removed the provider's rows; not_loaded means the
 search did not complete and availability is unknown. partial means some queries
-failed or part of the window is missing: read the per-query rows. Offline tools
+failed, part of the window is missing, or a loaded public page kept some itinerary
+cards and skipped others: read the per-query rows. error_code cards_unparsed means
+the page offered more itinerary cards than were parsed. The parsed rows stay; that
+query's page_errors carry seen and parsed. Those rows are not a complete answer.
+A page where every card failed is markup_drift. Filters (filtered_out) and route
+or date matching are not unparsed cards. Offline tools
 report status ok and are complete unless they say otherwise (unknown checks,
 unallocated nights). get_guide carries the envelope too, beside its guide key.
 

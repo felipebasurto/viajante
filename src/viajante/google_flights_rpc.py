@@ -85,21 +85,40 @@ def parse_shopping_body(text: str, *, currency: str) -> tuple[RawFlightCard, ...
     return parse_shopping_data(data, currency=currency)
 
 
+class ShoppingCards(tuple[RawFlightCard, ...]):
+    """Parsed cards plus how many itinerary rows the payload offered.
+
+    ``seen`` is the row count. ``len(self)`` is how many became cards. A caller that
+    only reads the cards can keep treating this as a tuple.
+    """
+
+    seen: int
+
+    def __new__(cls, cards: tuple[RawFlightCard, ...], *, seen: int) -> "ShoppingCards":
+        self = super().__new__(cls, cards)
+        self.seen = seen
+        return self
+
+
 def parse_shopping_data(data: object, *, currency: str) -> tuple[RawFlightCard, ...]:
     """Parse Google Flights' decoded shopping-data array from any owned transport."""
     if not isinstance(data, list):
         raise CompactParseMiss("shopping data is not a list")
-    items = _collect_itineraries(data)
-    if not items:
+    rows = _offered_itineraries(data)
+    if not any(_looks_like_itinerary(row) for row in rows):
         if _has_itinerary_slots(data):
             raise EmptyShoppingResults()
         raise CompactParseMiss("no itinerary groups in shopping payload")
-    cards = tuple(
-        card for item in items if (card := _itinerary_to_card(item, currency=currency)) is not None
-    )
+    cards: list[RawFlightCard] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        card = _itinerary_to_card(row, currency=currency)
+        if card is not None:
+            cards.append(card)
     if not cards:
         raise UnpricedShoppingResults("itineraries had no priced offers")
-    return cards
+    return ShoppingCards(tuple(cards), seen=len(rows))
 
 
 # Confirmed on the public results page: 1 low, 2/3/4 typical, 5 high.
@@ -327,12 +346,17 @@ def _has_itinerary_slots(data: list[Any]) -> bool:
 
 
 def _collect_itineraries(data: list[Any]) -> list[Any]:
+    return [item for item in _offered_itineraries(data) if _looks_like_itinerary(item)]
+
+
+def _offered_itineraries(data: list[Any]) -> list[Any]:
+    """Itinerary rows the page listed, including ones that will not become cards."""
     found: list[Any] = []
     seen: set[int] = set()
     for index in (2, 3):
         if index >= len(data):
             continue
-        for item in _iter_group(data[index]):
+        for item in _offered_in_group(data[index]):
             marker = id(item)
             if marker in seen:
                 continue
@@ -341,14 +365,12 @@ def _collect_itineraries(data: list[Any]) -> list[Any]:
     return found
 
 
-def _iter_group(group: object) -> list[Any]:
+def _offered_in_group(group: object) -> list[Any]:
     if not isinstance(group, list) or not group:
         return []
     first = group[0]
-    if isinstance(first, list) and first:
-        nested = [item for item in first if _looks_like_itinerary(item)]
-        if nested:
-            return nested
+    if isinstance(first, list) and first and any(_looks_like_itinerary(item) for item in first):
+        return list(first)
     return [item for item in group if _looks_like_itinerary(item)]
 
 

@@ -1163,10 +1163,16 @@ def _sweep_per_day(
         )
         if getattr(source, "transport", None) == "public_page":
             page_error, scope_bound = source.metadata_for(day_query)
+            page_errors = (classify_failure(page_error),) if page_error is not None else ()
+            card_error = getattr(source, "card_parse_error", None)
+            if callable(card_error):
+                extra = card_error(day_query)
+                if extra is not None:
+                    page_errors = (*page_errors, extra)
             row = replace(
                 row,
                 scope_bound=scope_bound,
-                page_errors=(classify_failure(page_error),) if page_error is not None else (),
+                page_errors=page_errors,
             )
         return row
 
