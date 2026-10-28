@@ -73,6 +73,8 @@ _FLIGHT_FILTERS = (
     "depart_window",
     "arrive_before",
     "depart_after",
+    "depart_before",
+    "arrive_after",
     "via",
     "exclude_via",
     "no_overnight",
@@ -80,6 +82,8 @@ _FLIGHT_FILTERS = (
     "exclude_airports",
     "include_airports",
     "country",
+    "less_emissions",
+    "hide_separate_tickets",
 )
 _HOTEL_FILTERS = ("top", "source", "near", "max_distance_km")
 _DATE_KEYS = ("departure_date", "return_date", "check_in", "check_out")
@@ -279,7 +283,12 @@ def _entry(
 
 
 def flight_observations(report: Any, args: Mapping[str, Any]) -> list[dict]:
-    filters = {k: _plain(args[k]) for k in _FLIGHT_FILTERS if args.get(k) is not None}
+    # An unset switch stays out of the key, so searches without it keep their recorded series.
+    filters = {
+        k: _plain(args[k])
+        for k in _FLIGHT_FILTERS
+        if args.get(k) is not None and args[k] is not False
+    }
     filters["baggage_buffer"] = args.get("baggage_buffer") or 0
     rows = []
     for result in report.queries:
