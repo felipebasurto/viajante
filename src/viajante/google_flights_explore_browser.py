@@ -57,14 +57,21 @@ def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tu
     page = session.new_page()
     captured: list[tuple[object, SweepHttpResponse, float | None]] = []
 
+    read_error: SweepTransportError | None = None
+
     def _capture(response) -> None:
+        nonlocal read_error
         if _EXPLORE_CATALOG_SERVICE not in response.url:
             return
         try:
             body = response.text()
         except SearchDeadline:
             raise
-        except Exception:
+        except Exception as exc:
+            transport = _network_failure(exc)
+            if transport is not None:
+                read_error = transport
+                return
             body = ""
         post = None
         try:
@@ -83,7 +90,15 @@ def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tu
 
     page.on("response", _capture)
     try:
-        navigation = page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+        try:
+            navigation = page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+        except SearchDeadline:
+            raise
+        except Exception as exc:
+            transport = _network_failure(exc)
+            if transport is not None:
+                raise transport from exc
+            raise
         checkpoint()
         if navigation is not None and navigation.status >= 400:
             check(
@@ -96,7 +111,7 @@ def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tu
         if looks_blocked("", page.url):
             raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
         deadline = time.monotonic() + _EXPLORE_CATALOG_WAIT_MS / 1000
-        while not captured and time.monotonic() < deadline:
+        while not captured and read_error is None and time.monotonic() < deadline:
             checkpoint()
             page.wait_for_timeout(250)
         checkpoint()
@@ -112,9 +127,26 @@ def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tu
     finally:
         with contextlib.suppress(Exception):
             page.close()
+    if read_error is not None and not captured:
+        raise read_error
     if not captured:
         raise SweepTransportError(
             "Google Explore issued no catalog request before the wait expired.",
             timeout=True,
         )
     return [(post, response.text) for post, response, _retry_after in captured]
+
+
+def _network_failure(exc: BaseException) -> SweepTransportError | None:
+    """A Chromium net error or timeout. Not a provider block.
+
+    ``net::ERR_CONNECTION_CLOSED`` and the other ``net::ERR_*`` failures happen
+    before any HTTP status. They are transport, retried once by the caller.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    lowered = text.casefold()
+    if "net::err_" in lowered:
+        return SweepTransportError(text)
+    if isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.casefold():
+        return SweepTransportError(text, timeout=True)
+    return None

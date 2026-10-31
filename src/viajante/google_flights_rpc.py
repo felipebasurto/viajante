@@ -256,23 +256,45 @@ def first_wrb_data(
     return None
 
 
+def _rpc_rows(obj: object) -> list:
+    """Rows of one batchexecute chunk.
+
+    A chunk is one RPC row, or a list of rows. The first row is not always
+    ``wrb.fr``; the status walker already scans every row, and so does this.
+    """
+    if isinstance(obj, list) and obj and isinstance(obj[0], list):
+        return [row for row in obj if isinstance(row, list)]
+    return [obj]
+
+
+def _wrb_data_payload(obj: object) -> str | list | None:
+    """The ``wrb.fr`` data slot: a JSON string, or the same value already decoded."""
+    if (
+        isinstance(obj, list)
+        and obj
+        and isinstance(obj[0], list)
+        and obj[0]
+        and obj[0][0] == "wrb.fr"
+    ):
+        obj = obj[0]
+    if not (isinstance(obj, list) and len(obj) >= 3 and obj[0] == "wrb.fr"):
+        return None
+    data = obj[2]
+    if isinstance(data, str) or isinstance(data, list):
+        return data
+    return None
+
+
 def wrb_data_strings(text: str) -> tuple[str, ...]:
     """Every string payload on every ``wrb.fr`` row in a response body, in order."""
-    found: list[str] = []
+    return tuple(item for item in _wrb_payloads(text) if isinstance(item, str))
+
+
+def _wrb_payloads(text: str) -> tuple[str | list, ...]:
+    found: list[str | list] = []
     for obj in _wrb_chunk_objects(text):
-        rows = (
-            obj
-            if (
-                isinstance(obj, list)
-                and obj
-                and isinstance(obj[0], list)
-                and obj[0]
-                and obj[0][0] == "wrb.fr"
-            )
-            else [obj]
-        )
-        for row in rows:
-            data = _wrb_data_string(row)
+        for row in _rpc_rows(obj):
+            data = _wrb_data_payload(row)
             if data is not None:
                 found.append(data)
     return tuple(found)
@@ -880,7 +902,10 @@ def parse_explore_catalog(text: str, *, origins: frozenset[str]) -> ExploreCatal
     proves it was priced from an accepted origin code.
     """
     payloads: list[Any] = []
-    for raw in wrb_data_strings(text):
+    for raw in _wrb_payloads(text):
+        if isinstance(raw, list):
+            payloads.append(raw)
+            continue
         try:
             payloads.append(json.loads(raw))
         except json.JSONDecodeError:

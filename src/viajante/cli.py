@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, Sequence, Tuple, get_args
 
-from viajante.airports import is_known_iata, parse_exclude_regions
+from viajante.airports import is_known_iata, metro_members, parse_exclude_regions
 from viajante.bench import run_bench
 from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.cli_report import (
@@ -41,6 +41,7 @@ from viajante.dates import (
 )
 from viajante.explore import (
     DEFAULT_EXPLORE_TOP,
+    MAX_EXPLORE_TOP,
     month_window,
     search_explore,
     validate_explore_window,
@@ -1234,7 +1235,8 @@ def _run_flex(args: argparse.Namespace) -> int:
 def _run_explore(args: argparse.Namespace) -> int:
     try:
         origin = args.origin.strip().upper()
-        if not is_known_iata(origin):
+        members = metro_members(origin)
+        if not members and not is_known_iata(origin):
             raise ValueError(f"unknown origin IATA code: {origin!r}")
         if args.month and (args.start or args.days != 7):
             raise ValueError("use either --month or --from/--days, not both")
@@ -1249,7 +1251,7 @@ def _run_explore(args: argparse.Namespace) -> int:
             raise ValueError("--top must be a positive integer")
         occupancy = _occupancy_from_args(args)
         shop = _owned_shop_filters_from_args(args)
-        market = _market_from_args(args, origin)
+        market = _market_from_args(args, members[0] if members else origin)
         validate_explore_window(start, days)
         exclude_regions = parse_exclude_regions(getattr(args, "exclude_regions", None))
     except ValueError as exc:
@@ -1827,7 +1829,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=EXPLORE_EXAMPLES,
     )
-    explore.add_argument("origin", help="Origin IATA code")
+    explore.add_argument("origin", help="Origin IATA code, or a metro code such as NYC or MIL")
     explore.add_argument(
         "--from",
         dest="start",
@@ -1852,7 +1854,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--top",
         type=int,
         default=DEFAULT_EXPLORE_TOP,
-        help=f"Destinations to price (default {DEFAULT_EXPLORE_TOP})",
+        help=(
+            f"Destinations to price (default {DEFAULT_EXPLORE_TOP}, "
+            f"at most {MAX_EXPLORE_TOP}; a larger value is clamped and named in warnings)"
+        ),
     )
     explore.add_argument(
         "--max-stops",

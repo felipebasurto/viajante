@@ -14,6 +14,7 @@ from viajante.control import SearchDeadline, checkpoint
 from viajante.google_flights import (
     RPC_THROTTLE_STATUS,
     SEARCH_URL,
+    SWEEP_RETRY_BACKOFF_SECONDS,
     SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
@@ -177,6 +178,35 @@ def classify_failure(exc: BaseException) -> SearchError:
             message=str(exc) or "Google Flights markup could not be parsed.",
         )
     return classify_provider_failure(exc)
+
+
+def _catalog_parse_error(body: str, exc: CompactParseMiss) -> BaseException:
+    """A catalog body with no readable ``wrb.fr`` payload.
+
+    A consent or sorry page is a block, and the message names the marker.
+    Other HTML is markup drift: the page did not return a catalog. A bare
+    miss that is not HTML is also drift, not a fetch failure and not a block.
+    No owned capture shows this catalog inside ``AF_initDataCallback``, so an
+    HTML page is not mined for destinations.
+    """
+    if looks_blocked(body):
+        return GoogleFlightsBlocked(
+            "Google Explore returned a block page instead of a catalog. " + str(exc)
+        )
+    sample = body.lstrip()[:4000].casefold()
+    if "consent.google" in sample or "/sorry/" in sample:
+        marker = "consent.google" if "consent.google" in sample else "/sorry/"
+        return GoogleFlightsBlocked(
+            "Google Explore returned an interstitial ("
+            + marker
+            + ") instead of a catalog. "
+            + str(exc)
+        )
+    if sample.startswith("<") or "<html" in sample or "<!doctype" in sample:
+        return GoogleFlightsMarkupError(
+            "Google Explore catalog response was HTML without a wrb.fr payload. " + str(exc)
+        )
+    return GoogleFlightsMarkupError(str(exc))
 
 
 def _carrier_catalog_tokens(data: object) -> set[str] | None:
@@ -1069,7 +1099,10 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             raise GoogleFlightsMarkupError(
                 "Google Explore catalog request did not echo the default occupancy."
             )
-        catalog = parse_explore_catalog(body, origins=accepted)
+        try:
+            catalog = parse_explore_catalog(body, origins=accepted)
+        except CompactParseMiss as exc:
+            raise _catalog_parse_error(body, exc) from exc
         if catalog.origin_echo is not None and catalog.origin_echo not in accepted:
             raise GoogleFlightsMarkupError(
                 f"Google Explore catalog echoed origin {catalog.origin_echo}, "
@@ -1092,6 +1125,17 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         state = rate_limit_status()
         if state is not None:
             raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+        try:
+            return capture_catalog(self._explore_browser, url, self._raise_explore_failure)
+        except SweepTransportError:
+            # One replay, the same rule as a public-page GET. A recorded cooldown
+            # is not a transport error and is not replayed.
+            if rate_limit_status() is not None:
+                raise
+        reset = getattr(self._explore_browser, "reset", None)
+        if callable(reset):
+            reset()
+        self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
         return capture_catalog(self._explore_browser, url, self._raise_explore_failure)
 
     def _raise_explore_failure(

@@ -112,6 +112,9 @@ add new prose labels to any result.
 - An unpriced explore destination is `not_loaded`, and so is a date row that
   carries no reason of its own. An unpriced cell does not prove there are no flights.
   A date day shopped on the public page that returns no cards is `provider_empty`.
+  A `month` explore still shops only the start date. An empty shop that day is
+  `not_loaded` with `shopped_date`, not `no_results` and not `provider_empty`
+  for the month.
 - `error_code` rides only with the `empty_reason` it supports. An `ok` or
   `partial` result may still carry the worst failure's code.
 - A new search tool must stamp through `stamp_search` (or `stamp_split`,
@@ -178,10 +181,12 @@ add new prose labels to any result.
 - `max_stops` is 0, 1, or 2. The product cannot require 3+ stops; say so or refuse.
   Default trip kind is one-way. `ORIGIN-DEST:OUT:BACK` without `--trip` is two
   one-ways. `--trip multi` needs explicit detail.
-- Metro codes expand only when named on a one-way or `rt` route. `--nearby` with a
-  named metro is an error. A route whose two ends share a metro is rejected.
-  Open-jaw, multi-city, dates, flex, explore, hotels, and hidden-city do not take
-  metro codes.
+- Metro codes expand only when named on a one-way or `rt` route, or as a
+  `search_explore` origin. `--nearby` with a named metro is an error. A route
+  whose two ends share a metro is rejected. Explore runs one catalog per member
+  airport, sequentially, keeps the cheapest fare per destination, records
+  `origin_airport`, and stops on `rate_limited`. Open-jaw, multi-city, dates,
+  flex, hotels, and hidden-city do not take metro codes.
 - `search_flights` takes `nearby_days` (CLI `--nearby-days`, MCP `nearby_days`,
   default `0` = off). Each one-way or round-trip query may carry `nearby_dates`:
   the cheapest owned fare per day for ±N around the requested date, `delta`
