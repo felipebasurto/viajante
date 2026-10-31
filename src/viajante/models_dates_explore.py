@@ -436,9 +436,14 @@ class ExploreDestination:
     vs_typical: Optional[VsTypical] = None
     vs_typical_pct: Optional[int] = None
     baggage_buffer: Optional[int] = None
+    origin_airport: Optional[str] = None
+    empty_reason: Optional[EmptyReason] = None
+    shopped_date: Optional[str] = None
 
     def __post_init__(self) -> None:
         _require_typical_triple(self.typical, self.vs_typical, self.vs_typical_pct)
+        if self.empty_reason is not None and self.price is not None:
+            raise ValueError("empty_reason applies only to an unpriced destination")
         if self.price is None and self.typical is not None:
             raise ValueError("typical requires an owned dest fare")
         if self.price is None and (
@@ -467,6 +472,9 @@ class ExploreDestination:
             payload["stops_compare"] = self.stops_compare.to_dict()
         _put_truthy(payload, "google_flights_url", self.google_flights_url)
         _put_present(payload, "baggage_buffer", self.baggage_buffer)
+        _put_truthy(payload, "origin_airport", self.origin_airport)
+        _put_present(payload, "empty_reason", self.empty_reason)
+        _put_truthy(payload, "shopped_date", self.shopped_date)
         payload.update(_typical_json(self.typical, self.vs_typical, self.vs_typical_pct, currency))
         return payload
 
@@ -501,6 +509,7 @@ class ExploreReport:
     coverage: Optional[SearchCoverage] = None
     pricing_errors: Tuple[QueryFailure, ...] = field(default=(), kw_only=True)
     empty_reason: Optional[EmptyReason] = field(default=None, kw_only=True)
+    warnings: Tuple[str, ...] = field(default=(), kw_only=True)
     schema_version: int = field(init=False, default=2)
 
     def __post_init__(self) -> None:
@@ -557,4 +566,6 @@ class ExploreReport:
             payload["pricing_errors"] = [row.to_dict() for row in self.pricing_errors]
         _put_present(payload, "empty_reason", self.empty_reason)
         _put_truthy(payload, "nearby_label", self.nearby_label)
+        if self.warnings:
+            payload["warnings"] = list(self.warnings)
         return payload

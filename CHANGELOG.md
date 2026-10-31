@@ -9,6 +9,26 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Fixed
+
+- `search_explore` treats `net::ERR_CONNECTION_CLOSED` and other Chromium
+  `net::ERR_*` failures as a transport error. The Explore page load is retried
+  once, the same rule as a public-page GET, and the envelope is `failed` /
+  `fetch_failed`. A consent, sorry, or other block page is still `blocked`.
+  A catalog response with no `wrb.fr` payload is `markup_drift` unless that
+  page is a block. `wrb.fr` rows are read even when they are not the first row
+  of a chunk, and a payload that is already a list is read as the same catalog.
+- `search_explore` accepts a metro origin (MIL, NYC, and the rest of the owned
+  table). It runs one explore per member airport, sequentially, keeps the
+  cheapest fare per destination, records `origin_airport`, and stops when a
+  search is rate-limited. `--nearby` with a metro code is an error.
+- `top` above 30 is clamped to 30. The report names that in `warnings`. The
+  call is not rejected.
+- A `month` explore still shops only the start date. An empty shop that day
+  is `not_loaded` with `shopped_date`, not `no_results`. The envelope does
+  not say `provider_empty` for the month. A one-day shop that returns no
+  cards stays `provider_empty`.
+
 ## [1.5.2] - 2026-10-19
 
 ### Added

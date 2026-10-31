@@ -786,6 +786,8 @@ def _print_dates_report(report: DateCalendarReport) -> None:
 
 def _print_explore_report(report: ExploreReport) -> None:
     nearby = _nearby_suffix(report.nearby_label)
+    for warning in report.warnings:
+        print(f"  warning: {warning}")
     print(
         f"\n=== From {report.origin}  {report.start_date.isoformat()}  "
         f"({report.days}-day stay; dests priced on this date){nearby} ==="
@@ -806,9 +808,16 @@ def _print_explore_report(report: ExploreReport) -> None:
         hours = ""
         if row.duration_hours is not None:
             hours = f"  {_format_layover_hours(row.duration_hours)}"
+        extra = ""
+        if row.origin_airport:
+            extra += f"  from {row.origin_airport}"
+        if row.empty_reason:
+            extra += f"  {row.empty_reason}"
+            if row.shopped_date:
+                extra += f" {row.shopped_date}"
         print(
             f"  {price}  {row.iata}  {row.city}{country}{hours}"
-            f"{_format_typical_deal(row, currency)}"
+            f"{_format_typical_deal(row, currency)}{extra}"
         )
         _print_google_flights_url(row.google_flights_url)
         if row.stops_compare is not None:

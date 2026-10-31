@@ -697,8 +697,14 @@ def build_server():
     def search_explore():
         """Destinations from one origin, then a priced shortlist. Give start (ISO date) or month,
         not both. Needs the browser extra; one adult in economy only. Currency and country as
-        in search_flights. Viajante does not convert. A destination without a price is
-        not_loaded, not a usable row.
+        in search_flights. Viajante does not convert. A metro origin (MIL, NYC, and the
+        rest of the owned table) runs one explore per member airport, sequentially, and
+        merges destinations: the cheapest fare is kept and origin_airport names which
+        airport it came from. A rate limit stops the remaining airports. top above 30 is
+        clamped to 30 and named in warnings. A destination without a price is not_loaded,
+        not a usable row. A month window still shops one date; an empty shop that day
+        is not_loaded for that shopped_date, not no_results and not provider_empty
+        for the month.
         """
 
     @tool("Search hotels", search_hotels_tool, network=True)
