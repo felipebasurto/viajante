@@ -216,6 +216,14 @@ def _run_search(
         recommendation = _recommend(trip, pool, filters, currency=currency, packaged=packaged)
         metadata_for = getattr(source, "metadata_for", None)
         page_error, scope_bound = metadata_for(trip) if callable(metadata_for) else (None, False)
+        page_errors: tuple[SearchError, ...] = (
+            (classify_failure(page_error),) if page_error is not None else ()
+        )
+        card_error = getattr(source, "card_parse_error", None)
+        if callable(card_error):
+            extra = card_error(trip)
+            if extra is not None:
+                page_errors = (*page_errors, extra)
         insight_for = getattr(source, "price_insight_for", None)
         insight, insight_error = insight_for(trip) if callable(insight_for) else (None, None)
         if insight is not None and not include_price_history and insight.history is not None:
@@ -227,7 +235,7 @@ def _run_search(
             offers=ranked,
             stops_compare=compare_nonstop_vs_one_stop(eligible),
             recommendation=recommendation,
-            page_errors=(classify_failure(page_error),) if page_error is not None else (),
+            page_errors=page_errors,
             scope_bound=scope_bound,
             price_insight=insight,
             price_insight_error=insight_error,

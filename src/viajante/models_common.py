@@ -365,6 +365,7 @@ class SearchErrorCode(str, Enum):
     REJECTED = "rejected"
     BLOCKED = "blocked"
     MARKUP_DRIFT = "markup_drift"
+    CARDS_UNPARSED = "cards_unparsed"
     FETCH_FAILED = "fetch_failed"
     BROWSER_UNAVAILABLE = "browser_unavailable"
     CURRENCY_MISMATCH = "currency_mismatch"

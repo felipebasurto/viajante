@@ -361,6 +361,8 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self.scope_bound = False
         self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
         self._price_insights: dict[Trip, tuple[PriceInsight | None, str | None]] = {}
+        # Per trip, per page URL: itinerary rows offered, and how many became cards.
+        self._card_pages: dict[int, dict[str, tuple[int, int]]] = {}
         self._stopped_error: GoogleFlightsBlocked | None = None
         self._explore_browser = explore_session(
             html_lang=self._html_lang,
@@ -439,6 +441,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 self._price_insights[trip] = self._insight_from_page(html)
             if trip is not None:
                 self._verify_carrier_filters(html, cards, trip)
+                self._note_parsed_cards(trip, url, cards)
             return cards
 
     def _verify_context(self, html: str, trip: Trip) -> None:
@@ -558,6 +561,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         _validate_capabilities(trip)
         self.partial_error = None
         self.scope_bound = False
+        self._reset_parsed_cards(trip)
         cards, _html = self._read_page_retry(trip)
         matched = tuple(card for card in cards if _matches_leg(card, trip.legs[0]))
         if not matched:
@@ -621,6 +625,35 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
 
     def metadata_for(self, trip: Trip):
         return self._query_meta.get(trip, (None, False))
+
+    def _reset_parsed_cards(self, trip: Trip) -> None:
+        self._card_pages.pop(id(trip), None)
+
+    def _note_parsed_cards(self, trip: Trip, url: str, cards: tuple) -> None:
+        seen = getattr(cards, "seen", None)
+        if not isinstance(seen, int):
+            return
+        self._card_pages.setdefault(id(trip), {})[url] = (seen, len(cards))
+
+    def card_parse_error(self, trip: Trip) -> SearchError | None:
+        """A page_error when this trip's pages offered more itinerary rows than parsed.
+
+        Route matching and local filters are not counted: ``seen`` and ``parsed`` are
+        taken when the page is decoded, before either drop. Zero parsed cards stays
+        the markup error the decoder already raised.
+        """
+        pages = self._card_pages.get(id(trip))
+        if not pages:
+            return None
+        seen = sum(row[0] for row in pages.values())
+        parsed = sum(row[1] for row in pages.values())
+        if parsed == 0 or parsed >= seen:
+            return None
+        return SearchError(
+            code=SearchErrorCode.CARDS_UNPARSED,
+            message=f"{parsed} of {seen} itinerary cards parsed.",
+            diagnostics={"seen": seen, "parsed": parsed},
+        )
 
     def price_insight_for(self, trip: Trip) -> tuple[PriceInsight | None, str | None]:
         """Insight from the results page. Selected-outbound return pages are not read."""
@@ -801,6 +834,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     )
                     continue
                 try:
+                    self._reset_parsed_cards(trips[index])
                     cards = self._parse_response(response, url, trips[index], capture_insight=True)
                     matched = tuple(
                         card for card in cards if _matches_leg(card, trips[index].legs[0])
@@ -927,6 +961,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         )
         for index, url, response in zip(pending, urls, responses, strict=True):
             try:
+                self._reset_parsed_cards(trips[index])
                 cards = self._parse_response(response, url, trips[index], capture_insight=True)
                 matched = tuple(card for card in cards if _matches_leg(card, trips[index].legs[0]))
                 if not matched:

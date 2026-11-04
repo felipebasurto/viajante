@@ -146,6 +146,12 @@ add new prose labels to any result.
 - `auto` and `sweep` read Google's public results page over the shared Chrome-TLS
   HTTP/2 client. `auto` never selects browser detail. `detail` uses Playwright
   (`viajante[browser]`) and is explicit only.
+- A public page that parses some itinerary cards and skips others keeps the parsed
+  rows and stamps that query's `page_errors` with `cards_unparsed` (`seen` and
+  `parsed` in diagnostics). The envelope is `completeness: partial` and
+  `error_code: cards_unparsed`. It is not a complete answer. A page where every
+  card fails stays `markup_drift`. Route or date matching and local filters are
+  not unparsed cards.
 - A public sweep never falls back to detail after an empty page, a parse failure,
   or a provider block. Its `ds:1` data is extracted as balanced JSON and never
   executed. Do not fabricate an RPC envelope. Flights, dates, and flex send no
