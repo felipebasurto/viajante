@@ -11,17 +11,15 @@ history up to commit 6ee0fb7.
 
 ### Added
 
-<<<<<<< HEAD
-- A weekly live canary (`.github/workflows/canary.yml`, `scripts/canary.py`) runs three real
-  searches (JFK-LHR one-way and round trip, a Google hotels search), uploads the reports,
-  and opens or updates one `markup-drift` issue when any is not a priced success. It is
-  separate from `test.yml`, never retries, and cannot fail a pull request.
-=======
 - Flight segments from the public page carry `operated_by` (the operating carrier's own
   text, such as "Republic Airways as American Eagle", present only when it differs from the
   marketing carrier) and `duration_minutes` (the segment alone). Both were returned by
   Google and unread; checked against live JFK-BOS and MAD-BCN pages. Detail cards carry
   neither, and a missing fact stays absent.
+- A weekly live canary (`.github/workflows/canary.yml`, `scripts/canary.py`) runs three real
+  searches (JFK-LHR one-way and round trip, a Google hotels search), uploads the reports,
+  and opens or updates one `markup-drift` issue when any is not a priced success. It is
+  separate from `test.yml`, never retries, and cannot fail a pull request.
 
 ### Fixed
 
@@ -36,7 +34,7 @@ history up to commit 6ee0fb7.
   its fixed 60 s or 20 s timeout; it now returns the `deadline` partial at 30.1 s. The same
   search, uncut, takes about 77 s, so an MCP client timeout below that needs a lower
   `deadline_seconds`.
->>>>>>> origin/develop
+
 
 ## [1.5.3] - 2026-11-04
 
