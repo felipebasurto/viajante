@@ -85,7 +85,7 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Saved on-demand `watch` and the `price_history` / `watch_price` tool bodies: `src/viajante/watch.py`; their CLI: `src/viajante/history_cli.py`
 - Search control (cancel, deadline, progress): `src/viajante/control.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
-- Weekly live canary (three real searches, never gates a pull request): `scripts/canary.py`, `.github/workflows/canary.yml`
+- Weekly live canary (two real searches, never gates a pull request): `scripts/canary.py`, `.github/workflows/canary.yml`
 
 ## Public contract
 
@@ -190,8 +190,9 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   before `--top`. Min layover, via, overnight, and airport filters stay local.
   Detail and round-trip or multi-city searches keep the timing bounds local. An unknown
   clock, stop count, or layover cannot prove an include or an exclude.
-  A page-side bound that leaves no cards is `provider_empty` for the query as sent;
-  `filtered_out` counts only rows the page returned that the local filter removed.
+  A page-side bound that leaves no cards is `provider_empty` for the query as sent, when
+  the frame carries the route's price bounds (see above); `filtered_out` counts only rows
+  the page returned that the local filter removed.
 - Public round trips check at most eight outbound candidates, one return page each.
   The provider's package total is the price. Never sum one-way amounts. The result
   is scope-bound.
@@ -403,8 +404,8 @@ uv run viajante bench
 - `viajante bench` is the keep-or-revert gate. Do not optimize `score_ms`. Live
   Google runs only with `VIAJANTE_BENCH_LIVE=1`, and that extra time is never the
   score. Update `bench-baseline.json` only when a human merges a win.
-- The weekly canary workflow is the only scheduled live run. It sends three searches (a
-  one-way and a round trip on JFK-LHR, a Google hotels search), never retries, and on a
+- The weekly canary workflow is the only scheduled live run. It sends two searches (a
+  one-way on JFK-LHR, a Google hotels search), never retries, and on a
   failure that is not a block opens or comments on one `markup-drift` issue. A blocked run
   fails the job and opens no issue: a shared runner IP being blocked proves nothing about
   the layout.
