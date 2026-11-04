@@ -11,6 +11,8 @@ history up to commit 6ee0fb7.
 
 ### Fixed
 
+- An Explore catalog that lists destination cards but no priced rows is
+  `markup_drift`, not `provider_empty`. A catalog with no cards stays empty.
 - Price history keeps flight searches apart when they differ in `depart_before`,
   `arrive_after`, `less_emissions`, or `hide_separate_tickets`. Searches that
   leave them unset keep their existing query key.

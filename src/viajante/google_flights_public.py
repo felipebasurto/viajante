@@ -1162,6 +1162,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             raise GoogleFlightsMarkupError(
                 "Google Explore priced rows did not prove the requested origin."
             )
+        if catalog.cards and not catalog.priced:
+            # Destination cards with no priced slot is a moved slot as likely as an
+            # empty answer, so it cannot be told to a traveller as "no destinations".
+            raise GoogleFlightsMarkupError(
+                "Google Explore catalog listed destination cards but no priced rows."
+            )
         return catalog.places
 
     def _explore_page(self, url: str) -> list[tuple[object, str]]:
