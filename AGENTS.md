@@ -170,6 +170,10 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   every path (the page echoes no basic-economy filter). `less_emissions` and
   `hide_separate_tickets` are refused on detail, round-trip, and multi-city. Never
   silently drop a filter.
+- A sweep `provider_empty` is the page's own answer, not proof. A live check found a
+  route and date (`AGP-JNB` 2027-02-12) where the page answered empty and `--fetch detail`
+  listed itineraries, with identical frames. Do not claim more than the page said; when a
+  decision rests on an empty sweep, re-run explicit `--fetch detail` (issue #88).
 - A missing filter echo on a page is `markup_drift`, never an unfiltered result.
   The page applied an airline exclusion in a live check, but the page does not prove
   it for every card, so the loop still drops excluded and carrier-unknown cards.
@@ -339,6 +343,9 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - A raw status 13 does not prove an IP block or a cause. Diagnostics carry the
   endpoint host and path, the HTTP or RPC status, `request_sent`, `attempts`, and
   the cooldown basis. Never include query parameters.
+- A public page whose `ds:1` is the provider's error frame (`[status, null, [[...ErrorResponse...]]]`)
+  is `blocked` with the frame status in diagnostics, never `markup_drift`. Once a block
+  is seen in a batch, the batch replay is suppressed.
 - HTTP 429 and status 13 stop pending sweep work. Nothing replays and nothing falls
   back to detail. Empty results, drift, and HTTP 5xx may be retried once.
 - A Skiplagged 429 writes `skiplagged-rate-limit.json` and does not retry. Live
