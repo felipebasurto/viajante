@@ -2025,6 +2025,13 @@ class PublicExploreCatalogTests(unittest.TestCase):
             (CompactExplorePlace(iata="YQB", city="Quebec City", country="Canada"),),
         )
 
+    def test_fetch_explore_cards_without_priced_rows_is_markup_drift(self):
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        body = _explore_catalog_body()
+        source._explore_page = lambda url: [(_explore_post(), body)]
+        with self.assertRaisesRegex(GoogleFlightsMarkupError, "no priced rows"):
+            source.fetch_explore("JFK", date(2026, 11, 14))
+
     def test_fetch_explore_fails_when_request_echo_is_foreign(self):
         source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
         body = _explore_catalog_body(_explore_priced("/m/0pmp2", "YQB"))
