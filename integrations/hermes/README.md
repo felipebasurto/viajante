@@ -2,7 +2,7 @@
 
 Flight and hotel search that runs on your machine. No API keys.
 
-This package registers the `viajante` MCP server (`npx -y @viajante/mcp@1.5.3`, which runs the same-version Python package through `uvx`) and one skill that tells the agent how to read the results.
+This package registers the `viajante` MCP server (`npx -y @viajante/mcp@1.5.4`, which runs the same-version Python package through `uvx`) and one skill that tells the agent how to read the results.
 
 Needs [uv](https://docs.astral.sh/uv/) and Python 3.10 or later on the machine, plus Node.js for `npx`.
 
