@@ -12,10 +12,16 @@ import _isolate  # noqa: F401
 from viajante.airports import airport_geo
 from viajante.cli import main
 from viajante.cli_report import _print_explore_report
-from viajante.explore import month_window, search_explore
+from viajante.envelope import stamp_search
+from viajante.explore import MAX_EXPLORE_TOP, month_window, search_explore
 from viajante.flight_filters import parse_depart_window, parse_named_clock
 from viajante.flight_offers import _normalize_offer
-from viajante.google_flights import NoFlightsFound, RawFlightCard, google_flights_url
+from viajante.google_flights import (
+    GoogleFlightsBlocked,
+    NoFlightsFound,
+    RawFlightCard,
+    google_flights_url,
+)
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
     GoogleFlightsUnsupported,
@@ -2047,6 +2053,255 @@ class PublicExploreCatalogTests(unittest.TestCase):
         source._explore_page = lambda url: [(_explore_post(), body)]
         with self.assertRaises(GoogleFlightsMarkupError):
             source.fetch_explore("JFK", date(2026, 11, 14))
+
+    def test_catalog_reads_a_wrb_row_that_is_not_first_and_a_list_payload(self):
+        cards = [
+            _explore_card("/m/0pmp2", "Quebec City", "Canada"),
+        ]
+        main: list[object] = [None] * 9
+        main[3] = [cards]
+        main[6] = [["New York", [40.7, -74.0], "/m/02_286", "JFK", "x"]]
+        priced: list[object] = [None] * 5
+        priced[4] = [[_explore_priced("/m/0pmp2", "YQB")]]
+
+        def chunk(rows: list[object]) -> str:
+            raw = json.dumps(rows, separators=(",", ":"))
+            return f"{len(raw)}\n{raw}"
+
+        leading = chunk(
+            [
+                ["other", None],
+                ["wrb.fr", None, json.dumps(main, separators=(",", ":"))],
+            ]
+        )
+        decoded = chunk([["wrb.fr", None, priced]])
+        body = ")]}'\n\n" + leading + "\n" + decoded
+        page = parse_explore_catalog(body, origins=frozenset({"JFK"}))
+        self.assertEqual(
+            page.places,
+            (CompactExplorePlace(iata="YQB", city="Quebec City", country="Canada"),),
+        )
+
+    def test_html_without_a_catalog_is_drift_and_an_interstitial_is_a_block(self):
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        shell = (
+            "<!doctype html><html><script>"
+            "AF_initDataCallback({key:'ds:1',data:[1]});</script></html>"
+        )
+        source._explore_page = lambda url: [(_explore_post(), shell)]
+        with self.assertRaises(GoogleFlightsMarkupError) as drift:
+            source.fetch_explore("JFK", date(2026, 11, 14))
+        self.assertIn("wrb.fr", str(drift.exception))
+        consent = "<html><a href='https://consent.google.com/ml'>consent</a></html>"
+        source._explore_page = lambda url: [(_explore_post(), consent)]
+        with self.assertRaises(GoogleFlightsBlocked) as blocked:
+            source.fetch_explore("JFK", date(2026, 11, 14))
+        self.assertIn("consent.google", str(blocked.exception))
+        self.assertIsNone(blocked.exception.status)
+
+
+class MetroExploreTests(unittest.TestCase):
+    def test_a_metro_origin_merges_the_cheapest_fare_and_names_the_airport(self):
+        class Source:
+            def __init__(self) -> None:
+                self.origins: list[str] = []
+
+            def fetch_explore(self, origin, departure_date, **kwargs):
+                self.origins.append(origin)
+                if origin == "MXP":
+                    return (CompactExplorePlace("FCO", "Rome", "Italy"),)
+                if origin == "LIN":
+                    return (
+                        CompactExplorePlace("FCO", "Rome", "Italy"),
+                        CompactExplorePlace("NAP", "Naples", "Italy"),
+                    )
+                return (CompactExplorePlace("NAP", "Naples", "Italy"),)
+
+            def fetch(self, query: FlightQuery):
+                fares = {
+                    ("MXP", "FCO"): "€90",
+                    ("LIN", "FCO"): "€70",
+                    ("LIN", "NAP"): "€110",
+                    ("BGY", "NAP"): "€40",
+                }
+                return (_card(price=fares[(query.origin, query.destination)]),)
+
+            def close(self) -> None:
+                pass
+
+        source = Source()
+        report = search_explore(
+            "MIL", date(2026, 12, 1), days=31, top=5, currency="EUR", source=source
+        )
+        self.assertEqual(source.origins, ["MXP", "LIN", "BGY"])
+        self.assertEqual(report.origin, "MIL")
+        self.assertEqual(report.currency, "EUR")
+        self.assertEqual(report.nearby_label, "metro MIL")
+        by_iata = {row.iata: row for row in report.destinations}
+        self.assertEqual(by_iata["FCO"].price, 70.0)
+        self.assertEqual(by_iata["FCO"].origin_airport, "LIN")
+        self.assertEqual(by_iata["NAP"].price, 40.0)
+        self.assertEqual(by_iata["NAP"].origin_airport, "BGY")
+
+    def test_a_metro_search_stops_when_a_member_is_rate_limited(self):
+        class Source:
+            def __init__(self) -> None:
+                self.origins: list[str] = []
+
+            def fetch_explore(self, origin, departure_date, **kwargs):
+                self.origins.append(origin)
+                if origin == "LIN":
+                    raise GoogleFlightsBlocked("rate limited", status=429)
+                return (CompactExplorePlace("FCO", "Rome", "Italy"),)
+
+            def fetch(self, query: FlightQuery):
+                return (_card(price="€80"),)
+
+            def close(self) -> None:
+                pass
+
+        source = Source()
+        report = search_explore("MIL", date(2026, 12, 1), days=7, currency="EUR", source=source)
+        self.assertEqual(source.origins, ["MXP", "LIN"])
+        self.assertEqual(report.error.code, SearchErrorCode.BLOCKED)
+        self.assertTrue(report.error.rate_limited)
+        self.assertEqual([row.iata for row in report.destinations], ["FCO"])
+        self.assertIn("BGY", report.coverage.unsearched or "")
+
+    def test_nearby_with_a_metro_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "metro"):
+            search_explore(
+                "MIL",
+                date(2026, 12, 1),
+                nearby=True,
+                currency="EUR",
+                source=FakeExploreSource(()),
+            )
+
+
+class ExploreTopClampTests(unittest.TestCase):
+    def test_top_above_30_is_clamped_and_named(self):
+        codes = (
+            "LHR",
+            "CDG",
+            "FRA",
+            "AMS",
+            "FCO",
+            "MAD",
+            "LIS",
+            "BCN",
+            "MUC",
+            "ZRH",
+            "VIE",
+            "CPH",
+            "OSL",
+            "HEL",
+            "DUB",
+            "BRU",
+            "WAW",
+            "PRG",
+            "BUD",
+            "ATH",
+            "IST",
+            "DXB",
+            "DOH",
+            "SIN",
+            "HND",
+            "NRT",
+            "ICN",
+            "SYD",
+            "LAX",
+            "SFO",
+            "ORD",
+        )
+        places = tuple(CompactExplorePlace(code, "City", "Country") for code in codes)
+        source = FakeExploreSource(places, prices={"LHR": (_card(price="€40"),)})
+        report = search_explore(
+            "JFK", date(2026, 12, 1), days=1, top=40, currency="USD", source=source
+        )
+        self.assertEqual(len(source.fetched_queries), MAX_EXPLORE_TOP)
+        self.assertEqual(report.warnings, ("top 40 is above 30; clamped to 30",))
+        stamped = stamp_search(report.to_dict())
+        self.assertEqual(stamped["warnings"], ["top 40 is above 30; clamped to 30"])
+        self.assertEqual(stamped["status"], "ok")
+
+    def test_top_must_still_be_positive(self):
+        with self.assertRaisesRegex(ValueError, "positive"):
+            search_explore(
+                "JFK", date(2026, 12, 1), top=0, currency="USD", source=FakeExploreSource(())
+            )
+
+
+class ExploreWindowMissTests(unittest.TestCase):
+    def _source(self) -> FakeExploreSource:
+        class Source(FakeExploreSource):
+            def fetch(self, query: FlightQuery):
+                self.fetched_queries.append(query)
+                if query.destination == "ZAD":
+                    raise NoFlightsFound()
+                return self.prices.get(query.destination, ())
+
+        return Source(
+            (
+                CompactExplorePlace("OPO", "Porto", "Portugal"),
+                CompactExplorePlace("ZAD", "Zadar", "Croatia"),
+            ),
+            prices={"OPO": (_card(price="€80"),)},
+        )
+
+    def test_a_month_window_does_not_call_one_empty_date_no_results(self):
+        report = search_explore(
+            "BRU",
+            date(2026, 12, 1),
+            days=31,
+            top=2,
+            currency="EUR",
+            source=self._source(),
+        )
+        by_iata = {row.iata: row for row in report.destinations}
+        self.assertEqual(by_iata["OPO"].price, 80.0)
+        self.assertIsNone(by_iata["ZAD"].price)
+        self.assertEqual(by_iata["ZAD"].empty_reason, "not_loaded")
+        self.assertEqual(by_iata["ZAD"].shopped_date, "2026-12-01")
+        self.assertEqual(report.pricing_errors, ())
+        stamped = stamp_search(report.to_dict())
+        self.assertEqual(stamped["status"], "ok")
+        self.assertIsNone(stamped["empty_reason"])
+        self.assertNotEqual(stamped["empty_reason"], "provider_empty")
+        self.assertIsNone(stamped["error_code"])
+
+    def test_a_month_with_only_empty_shops_is_not_provider_empty(self):
+        source = FakeExploreSource((CompactExplorePlace("ZAD", "Zadar", "Croatia"),))
+
+        def fetch(query: FlightQuery):
+            source.fetched_queries.append(query)
+            raise NoFlightsFound()
+
+        source.fetch = fetch
+        report = search_explore(
+            "BRU", date(2026, 12, 1), days=31, top=1, currency="EUR", source=source
+        )
+        self.assertEqual(report.destinations[0].empty_reason, "not_loaded")
+        self.assertEqual(report.destinations[0].shopped_date, "2026-12-01")
+        self.assertEqual(report.pricing_errors, ())
+        stamped = stamp_search(report.to_dict())
+        self.assertEqual(stamped["empty_reason"], "not_loaded")
+        self.assertNotEqual(stamped["empty_reason"], "provider_empty")
+        self.assertNotEqual(stamped.get("error_code"), "no_results")
+
+    def test_a_one_day_window_still_records_no_results(self):
+        report = search_explore(
+            "BRU",
+            date(2026, 12, 1),
+            days=1,
+            top=2,
+            currency="EUR",
+            source=self._source(),
+        )
+        self.assertEqual(len(report.pricing_errors), 1)
+        self.assertEqual(report.pricing_errors[0].error.code, SearchErrorCode.NO_RESULTS)
+        zad = next(row for row in report.destinations if row.iata == "ZAD")
+        self.assertIsNone(zad.empty_reason)
 
 
 if __name__ == "__main__":

@@ -144,8 +144,8 @@ viajante flights NYC-LON:2026-11-15 --currency USD
 airports. Each expanded query carries `nearby_label` `metro NYC`, and
 `--exclude-airports` still removes members. Only a code you name expands: `JFK`
 searches `JFK` alone. Metro codes work on one-way and `--trip rt` routes in
-`flights` and `trip`, not on open-jaw or multi-city routes, and not in
-`dates`, `flex`, or `explore`. Combining `--nearby` with a metro code
+`flights` and `trip`, and as a `explore` origin, not on open-jaw or multi-city
+routes, and not in `dates` or `flex`. Combining `--nearby` with a metro code
 is an error, because expanding only the other side would drop part of the
 request. Name metros or airports on both sides instead (`NYC-LON`).
 A route whose two ends are the same metro is rejected: `LON-LON`, `JFK-NYC`,
@@ -416,8 +416,18 @@ never sends that request directly. The request must echo the named origin (or
 a same-city airport) and date, and each priced catalog row must prove its
 origin and destination, otherwise the read fails or the row is dropped. Only
 the page's default one-adult economy state can be proven, so a non-default
-party or cabin is refused before networking. Owned destinations are then
-shopped over the public page as ordinary one-way searches. `--exclude-regions` is explore-only and excludes
+party or cabin is refused before networking. A metro origin (NYC, MIL, and the
+rest of the owned table) runs that catalog once per member airport, in order,
+and merges destinations: the cheapest fare is kept and `origin_airport` names
+the airport. A rate limit stops the airports that have not run. `--nearby`
+with a metro code is an error. `--top` above 30 is clamped to 30 and named in
+`warnings`. Owned destinations are then
+shopped over the public page as ordinary one-way searches on the start date
+only, even when `--month` names the rest of the month. An empty shop on
+that date is `not_loaded` with `shopped_date`. It is not `no_results` and not
+`provider_empty` for the month. A one-day shop that returns no cards stays
+`provider_empty`.
+`--exclude-regions` is explore-only and excludes
 destinations by owned IANA time-zone prefix. Unnamed sort is by price. A raw RPC status 13
 on the catalog stops the search and records the shared Google cooldown. A raw status 13 on the catalog request can stop the read, so an empty or blocked
 explore proves nothing about destinations; name routes and use `flights`,

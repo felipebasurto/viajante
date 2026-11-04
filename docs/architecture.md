@@ -297,7 +297,15 @@ cannot carry top-level fields without breaking its shape).
   It does not guess a winner from failed or unpriced days.
 - **Explore** reads the catalog request the Explore page issues in Chromium
   (one adult, economy), then shops each owned destination over the public
-  page. A status 13 on the catalog stops it and records the shared cooldown.
+  page on the start date only. A connection failure loading that page
+  (`net::ERR_*`) is a transport error: one retry, then `fetch_failed`, not a
+  block. A catalog body with no `wrb.fr` payload is markup drift, or a block
+  when the body is a consent, sorry, or other block page. A metro origin fans
+  out to its member airports, sequentially, and stops on a rate limit. A
+  status 13 on the catalog stops it and records the shared cooldown. An empty
+  shop inside a `month` window is `not_loaded` for that date, not
+  `provider_empty` for the month. A one-day shop that returns no cards stays
+  `provider_empty`.
 
 ## Hotels
 

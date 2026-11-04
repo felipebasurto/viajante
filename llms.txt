@@ -59,7 +59,12 @@ Every result (except lookup_airports) opens with an envelope: status, completene
   "no flights".
 - search_dates: cheapest-per-day calendar (cheapest week). Max 31 days.
 - search_flex: ±N around one date, then one shop. Not a date matrix.
-- search_explore: dest triage from a named origin
+- search_explore: dest triage from a named origin. A metro code (MIL, NYC)
+  runs one explore per member airport, sequentially, and keeps the cheapest
+  fare per destination (`origin_airport`). A rate limit stops the rest. `top`
+  above 30 is clamped to 30 and named in `warnings`. A month window still
+  shops one date; an empty shop that day is `not_loaded` for that
+  `shopped_date`, not `no_results` and not `provider_empty` for the month.
 - search_hotels: total-stay prices. Currency required. Default source google.
 - search_hotel_rooms: Skiplagged room rates for one named hotel, in USD.
 - get_hotel_details: read a hotel offer this process returned. room_rates must
