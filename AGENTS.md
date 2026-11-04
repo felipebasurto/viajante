@@ -22,6 +22,10 @@ role, not a verdict, and every highlight or trade-off must restate a returned fi
 no comparative lead lines. Do not
 add new prose labels to any result.
 
+Every change must serve the user (UX), the developer (DX), and the agent (AX), and
+break none of them. Cut taglines, helper text, and secondary labels from tables,
+CLI output, and the landing page; if a screen needs them to make sense, fix the layout.
+
 ## Where to edit
 
 - `tfs` bytes, cabin, or occupancy in the Google Flights URL: `src/viajante/tfs.py`
