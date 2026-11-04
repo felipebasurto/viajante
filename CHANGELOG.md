@@ -11,10 +11,13 @@ history up to commit 6ee0fb7.
 
 ### Changed
 
+- The weekly canary runs two searches (a JFK-LHR one-way and a Google hotels search), not
+  three. From the CI runner's IP Google answered the round trip's return pages with error
+  status 13 on both dispatched runs, so that case could only be red, and a canary that is
+  always red gets ignored. A round-trip layout change is therefore not covered by it.
 - The canary opens its `markup-drift` issue only for a failure that is not a block. A
   `blocked` case (a shared runner IP) still fails the run, so it notifies, but it proves
-  nothing about the layout. The first dispatched run blocked the round trip while the other
-  two cases priced.
+  nothing about the layout.
 
 ## [1.5.4] - 2026-11-04
 

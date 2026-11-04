@@ -1,10 +1,13 @@
 """Live canary: a few real searches through the CLI, so a Google layout change shows up.
 
-Usage: python scripts/canary.py OUTDIR. One run is three searches (a one-way and a round
-trip on a route that always has flights, and a Google hotels search), paced and never
-retried. It writes one JSON report per case plus summary.json and summary.md to OUTDIR and
-exits 1 when any case is not a priced success. CI runs it weekly from
-.github/workflows/canary.yml; it never gates a pull request.
+Usage: python scripts/canary.py OUTDIR. One run is two searches (a one-way on a route that
+always has flights, and a Google hotels search), paced and never retried. A round trip is
+not part of it: from the CI runner's IP Google answers its return pages with error status
+13 every time (seen on two runs), so it could only ever be red.
+
+It writes one JSON report per case plus summary.json and summary.md to OUTDIR and exits 1
+when any case is not a priced success. CI runs it weekly from .github/workflows/canary.yml;
+it never gates a pull request.
 """
 
 from __future__ import annotations
@@ -24,26 +27,12 @@ CASE_TIMEOUT_SECONDS = 240
 
 def cases(today: date) -> list[tuple[str, list[str]]]:
     out = (today + timedelta(days=30)).isoformat()
-    back = (today + timedelta(days=40)).isoformat()
     stay_in = (today + timedelta(days=45)).isoformat()
     stay_out = (today + timedelta(days=48)).isoformat()
     return [
         (
             "flights-one-way",
             ["flights", f"JFK-LHR:{out}", "--currency", "USD", "--fetch", "sweep"],
-        ),
-        (
-            "flights-round-trip",
-            [
-                "flights",
-                f"JFK-LHR:{out}:{back}",
-                "--trip",
-                "rt",
-                "--currency",
-                "USD",
-                "--fetch",
-                "sweep",
-            ],
         ),
         (
             "hotels-google",

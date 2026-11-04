@@ -47,7 +47,7 @@ class CaseTests(unittest.TestCase):
         today = date(2026, 11, 4)
         by_name = dict(canary.cases(today))
         self.assertEqual(by_name["flights-one-way"][1], "JFK-LHR:2026-12-04")
-        self.assertEqual(by_name["flights-round-trip"][1], "JFK-LHR:2026-12-04:2026-12-14")
+        self.assertEqual(list(by_name), ["flights-one-way", "hotels-google"])
         self.assertEqual(by_name["hotels-google"][2:4], ["2026-12-19", "2026-12-22"])
 
     def test_the_summary_lists_every_case(self) -> None:
