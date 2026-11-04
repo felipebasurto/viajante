@@ -9,6 +9,13 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Added
+
+- A weekly live canary (`.github/workflows/canary.yml`, `scripts/canary.py`) runs three real
+  searches (JFK-LHR one-way and round trip, a Google hotels search), uploads the reports,
+  and opens or updates one `markup-drift` issue when any is not a priced success. It is
+  separate from `test.yml`, never retries, and cannot fail a pull request.
+
 ## [1.5.3] - 2026-11-04
 
 ### Added

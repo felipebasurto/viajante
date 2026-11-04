@@ -85,6 +85,7 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Saved on-demand `watch` and the `price_history` / `watch_price` tool bodies: `src/viajante/watch.py`; their CLI: `src/viajante/history_cli.py`
 - Search control (cancel, deadline, progress): `src/viajante/control.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
+- Weekly live canary (three real searches, never gates a pull request): `scripts/canary.py`, `.github/workflows/canary.yml`
 
 ## Public contract
 
@@ -400,5 +401,9 @@ uv run viajante bench
 - `viajante bench` is the keep-or-revert gate. Do not optimize `score_ms`. Live
   Google runs only with `VIAJANTE_BENCH_LIVE=1`, and that extra time is never the
   score. Update `bench-baseline.json` only when a human merges a win.
+- The weekly canary workflow is the only scheduled live run. It sends three searches (a
+  one-way and a round trip on JFK-LHR, a Google hotels search), never retries, and on a
+  failure opens or comments on one `markup-drift` issue. A blocked or rate-limited run
+  fails the job like any other; it proves nothing about the layout.
 - Playwright is the extra `viajante[browser]`. The MCP extra is `viajante[mcp]`.
 - Known limits and open debt: [docs/architecture.md](docs/architecture.md#known-limits-and-debt).
