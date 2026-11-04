@@ -14,6 +14,7 @@ from selectolax.lexbor import LexborHTMLParser
 from viajante.browser import BrowserSessionConfig, ChromiumSession
 from viajante.control import (
     SearchDeadline,
+    bounded_ms,
     checkpoint,
 )
 from viajante.google_flights import (
@@ -410,7 +411,7 @@ class GoogleFlightsSource:
         page = self._session.new_page()
         complete: list[RawFlightCard] = []
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            page.goto(url, wait_until="domcontentloaded", timeout=bounded_ms(PAGE_TIMEOUT_MS))
             if "consent.google" in page.url:
                 self._dismiss_consent(page)
             if looks_blocked("", page.url):
@@ -491,7 +492,7 @@ class GoogleFlightsSource:
         # Inline import, same cycle as in fetch().
         from viajante.google_flights_public import _matches_leg
 
-        page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+        page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
         checkpoint()
         html = page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
         matched: list[tuple[int, RawFlightCard]] = []
@@ -523,7 +524,9 @@ class GoogleFlightsSource:
     def _multi_click(self, page: object, dom_index: int) -> None:
         """Click one board row and wait for the board to advance."""
         prev_sig = self._multi_sig(page)
-        page.locator(CARD_SELECTOR).nth(dom_index).click(timeout=CONSENT_CLICK_TIMEOUT_MS)
+        page.locator(CARD_SELECTOR).nth(dom_index).click(
+            timeout=bounded_ms(CONSENT_CLICK_TIMEOUT_MS)
+        )
         try:
             page.wait_for_function(
                 "(prev) => {"
@@ -534,11 +537,12 @@ class GoogleFlightsSource:
                 "const sig = (h ? h.textContent : '') + '|' + (r ? r.textContent : '');"
                 "return r !== null && sig !== prev;}",
                 arg=prev_sig,
-                timeout=PAGE_TIMEOUT_MS,
+                timeout=bounded_ms(PAGE_TIMEOUT_MS),
             )
         except SearchDeadline:
             raise
         except Exception as exc:
+            checkpoint()  # a wait the deadline cut short is a deadline, not a drifted board
             raise GoogleFlightsMarkupError(
                 "The clicked board did not advance to the next journey."
             ) from exc
@@ -547,10 +551,10 @@ class GoogleFlightsSource:
         """Return to the first journey's board for the next candidate."""
         checkpoint()
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            page.goto(url, wait_until="domcontentloaded", timeout=bounded_ms(PAGE_TIMEOUT_MS))
             if looks_blocked("", page.url):
                 raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
-            page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=PAGE_TIMEOUT_MS)
+            page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
         except (SearchDeadline, GoogleFlightsBlocked):
             raise
         except Exception as exc:
@@ -570,7 +574,7 @@ class GoogleFlightsSource:
             self._started = True
         page = self._session.new_page()
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            page.goto(url, wait_until="domcontentloaded", timeout=bounded_ms(PAGE_TIMEOUT_MS))
             if "consent.google" in page.url:
                 self._dismiss_consent(page)
             if looks_blocked("", page.url):
@@ -585,7 +589,7 @@ class GoogleFlightsSource:
     def _await_results(page) -> None:
         ready = page.locator(READY_SELECTOR).first
         try:
-            ready.wait_for(timeout=READY_PROBE_MS)
+            ready.wait_for(timeout=bounded_ms(READY_PROBE_MS))
             return
         except Exception as exc:
             from playwright.sync_api import TimeoutError as PlaywrightTimeout
@@ -596,15 +600,16 @@ class GoogleFlightsSource:
             raise GoogleFlightsMarkupError(
                 "Results page finished loading with no results grid and no empty state."
             )
-        ready.wait_for(timeout=PAGE_TIMEOUT_MS)
+        ready.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
 
     @staticmethod
     def _dismiss_consent(page) -> None:
         for selector in CONSENT_SELECTORS:
+            click_ms = bounded_ms(CONSENT_CLICK_TIMEOUT_MS)
             try:
                 button = page.locator(selector).first
                 if button.count() > 0:
-                    button.click(timeout=CONSENT_CLICK_TIMEOUT_MS)
+                    button.click(timeout=click_ms)
                     break
             except Exception:
                 continue

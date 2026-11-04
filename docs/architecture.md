@@ -420,16 +420,15 @@ improvement loops.
   filter drops the extra rows). A tighter one could drop rows the local filter keeps,
   and nothing in the echo reveals it. Price, duration, and layover echoes are checked
   for range; the emissions and separate-ticket echoes are checked for presence.
-- **An empty results frame is ambiguous.** The public page answers a query with no
-  flights with a frame whose itinerary slots (`data[2]`, `data[3]`, `data[5]`) are null.
-  For some route and date pairs it answers the same way while the browser page loads
-  the itineraries separately: `AGP-JNB` on 2027-02-12 gave a sweep `provider_empty`
-  and eight itineraries on `--fetch detail`, and `MAD-JNB` the same day and `AGP-JNB`
-  in December returned rows. Nothing in the frame or the page text separates the two
-  cases, and sending the shopping RPC the browser uses is out of scope. The sweep keeps
-  reporting the page's answer as `provider_empty`; an empty result that matters is
-  re-run with explicit `--fetch detail`. Whether an empty frame may still claim
-  `provider_empty` is open (issue #88).
+- **A results page can arrive without its results.** For some route and date pairs the
+  public page carries no itinerary slots and no price bounds (`data[7][0]` null) while the
+  browser page loads the itineraries separately: `AGP-JNB` on 2027-02-12 listed eight
+  itineraries on `--fetch detail`, and `MAD-JNB` the same day returned rows. A query the
+  filters emptied (`AGP-JNB` in December, nonstop only) still carries the bounds. The
+  sweep reports the bounds-less frame as `markup_drift`, never `provider_empty`, because it
+  is the frame a route with no flights could also get and the shopping RPC the browser uses
+  is out of scope. A real no-flights route therefore also reads as `markup_drift` on the
+  sweep; `--fetch detail` settles it. Issue #88.
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.

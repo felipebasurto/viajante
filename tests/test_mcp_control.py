@@ -24,6 +24,7 @@ from viajante.control import (
     SearchControl,
     SearchDeadline,
     active,
+    bounded_ms,
     checkpoint,
     controlled,
     cut_by_deadline,
@@ -946,6 +947,31 @@ class MergedEnvelopeTests(McpControlCase):
         self.assertIsNone(payload["retry_after"])
         self.assertIsNone(payload["retry_after_seconds"])
         self.assert_untouched()
+
+
+class BoundedBrowserWaitTests(unittest.TestCase):
+    def test_a_wait_is_unchanged_without_a_control_or_a_deadline(self) -> None:
+        self.assertEqual(bounded_ms(60_000), 60_000)
+        with active(SearchControl()):
+            self.assertEqual(bounded_ms(60_000), 60_000)
+
+    def test_a_wait_is_cut_to_the_time_the_deadline_has_left(self) -> None:
+        now = [100.0]
+        control = SearchControl(deadline_seconds=30, clock=lambda: now[0])
+        with active(control):
+            self.assertEqual(bounded_ms(60_000), 30_000)
+            now[0] = 125.0
+            self.assertEqual(bounded_ms(60_000), 5_000)
+            self.assertEqual(bounded_ms(1_000), 1_000)
+
+    def test_a_spent_deadline_raises_instead_of_starting_a_wait(self) -> None:
+        now = [0.0]
+        control = SearchControl(deadline_seconds=5, clock=lambda: now[0])
+        with active(control):
+            now[0] = 5.0
+            with self.assertRaises(SearchDeadline):
+                bounded_ms(60_000)
+        self.assertTrue(control.cut)
 
 
 if __name__ == "__main__":
