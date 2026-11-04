@@ -9,6 +9,13 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Changed
+
+- The canary opens its `markup-drift` issue only for a failure that is not a block. A
+  `blocked` case (a shared runner IP) still fails the run, so it notifies, but it proves
+  nothing about the layout. The first dispatched run blocked the round trip while the other
+  two cases priced.
+
 ## [1.5.4] - 2026-11-04
 
 ### Added
