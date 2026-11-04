@@ -39,7 +39,7 @@ from viajante.google_flights_public import (
     _package_card,
 )
 from viajante.google_flights_rpc import RawFlightCard, _wrb_chunk_objects, raw_rpc_error_status
-from viajante.models import FlightLeg, FlightQuery, MultiCity, RawJourneyLeg
+from viajante.models import FlightLeg, FlightQuery, MultiCity, RawJourneyLeg, SearchErrorCode
 from viajante.ratelimit import rate_limit_status
 from viajante.runtime import get_runtime_info
 
@@ -179,6 +179,74 @@ class PublicTransportRegressions(unittest.TestCase):
         self.assertEqual(envelope["empty_reason"], "not_loaded")
         self.assertIsNone(envelope["retry_after"])
         self.assertIsNone(rate_limit_status())
+
+    def test_connection_closed_is_retried_once_and_is_not_a_block(self):
+        calls = {"pages": 0, "resets": 0}
+
+        class Page:
+            url = "https://www.google.com/travel/explore"
+
+            def on(self, _event, _callback):
+                return None
+
+            def goto(self, _url, **_kwargs):
+                raise RuntimeError(
+                    "Page.goto: net::ERR_CONNECTION_CLOSED at https://www.google.com/travel/explore"
+                )
+
+            def wait_for_timeout(self, _milliseconds):
+                return None
+
+            def close(self):
+                return None
+
+        class Browser:
+            def new_page(self):
+                calls["pages"] += 1
+                return Page()
+
+            def reset(self):
+                calls["resets"] += 1
+
+            def close(self):
+                return None
+
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        source._explore_browser = Browser()
+        report = search_explore("JFK", DAY, days=1, source=source)
+        self.assertEqual(calls["pages"], 2)
+        self.assertEqual(calls["resets"], 1)
+        assert report.error is not None
+        self.assertEqual(report.error.code, SearchErrorCode.FETCH_FAILED)
+        self.assertIn("ERR_CONNECTION_CLOSED", report.error.message)
+        self.assertFalse(report.error.rate_limited)
+        envelope = stamp_search(report.to_dict())
+        self.assertEqual(envelope["status"], "failed")
+        self.assertEqual(envelope["error_code"], "fetch_failed")
+        self.assertNotEqual(envelope["status"], "blocked")
+
+    def test_connection_closed_retry_keeps_a_catalog_that_answers(self):
+        calls = {"pages": 0}
+
+        def new_page():
+            calls["pages"] += 1
+            if calls["pages"] == 1:
+                page = _ExplorePage("")
+
+                def fail(_page):
+                    raise RuntimeError("net::ERR_CONNECTION_RESET")
+
+                page.navigate = fail
+                return page
+            return _ExplorePage(_explore_catalog_body(_explore_priced("/m/0pmp2", "YQB")))
+
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=object())
+        source._explore_browser = SimpleNamespace(
+            new_page=new_page, reset=lambda: None, close=lambda: None
+        )
+        places = source.fetch_explore("JFK", DAY)
+        self.assertEqual(calls["pages"], 2)
+        self.assertEqual(places[0].iata, "YQB")
 
     def test_explore_navigation_429_also_records_the_cooldown(self):
         page = _ExplorePage("Too many requests")

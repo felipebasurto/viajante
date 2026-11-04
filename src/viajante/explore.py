@@ -8,10 +8,16 @@ from __future__ import annotations
 import calendar
 import threading
 import time
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Callable, Optional, Protocol, Sequence, Tuple
 
-from viajante.airports import dest_blocked_by_exclude_regions, is_known_iata, parse_exclude_regions
+from viajante.airports import (
+    dest_blocked_by_exclude_regions,
+    is_known_iata,
+    metro_members,
+    parse_exclude_regions,
+)
 from viajante.control import checkpoint, controlled
 from viajante.dates import _fetch_or_exception, calendar_trip, one_or_many
 from viajante.flight_filters import OfferFilters, owned_clock, parse_code_list, parse_offer_filters
@@ -37,6 +43,7 @@ from viajante.models import (
     QueryFailure,
     SearchCoverage,
     SearchError,
+    SearchErrorCode,
     StopsCompare,
     Trip,
     explore_stop,
@@ -73,6 +80,18 @@ def validate_explore_window(start: date, days: int, *, today: Optional[date] = N
     check = today or date.today()
     if start < check:
         raise ValueError(f"start date is in the past: {start.isoformat()}")
+
+
+def _covers_rest_of_month(start: date, days: int) -> bool:
+    """True when ``days`` runs from ``start`` through the last day of that month.
+
+    Explore shops only ``start``. ``month=`` is this span. A window that ends
+    earlier is not.
+    """
+    if days <= 1:
+        return False
+    length = calendar.monthrange(start.year, start.month)[1]
+    return days == length - start.day + 1
 
 
 def month_window(
@@ -170,8 +189,10 @@ def search_explore(
     validate_explore_window(start, days)
     if top <= 0:
         raise ValueError("top must be positive")
+    warnings: list[str] = []
     if top > MAX_EXPLORE_TOP:
-        raise ValueError(f"top is at most {MAX_EXPLORE_TOP}")
+        warnings.append(f"top {top} is above {MAX_EXPLORE_TOP}; clamped to {MAX_EXPLORE_TOP}")
+        top = MAX_EXPLORE_TOP
     validate_sort(sort)
     if price_cap is not None and price_cap <= 0:
         raise ValueError("price_cap must be positive")
@@ -193,9 +214,14 @@ def search_explore(
         parse_exclude_regions(",".join(exclude_regions)) if exclude_regions else None
     )
     origin = origin.strip().upper()
-    if not is_known_iata(origin):
+    members = metro_members(origin)
+    if nearby and members:
+        raise ValueError(
+            "nearby cannot be combined with a metro code; the metro already names its airports"
+        )
+    if not members and not is_known_iata(origin):
         raise ValueError(f"unknown origin IATA code: {origin!r}")
-    currency = resolve_quote_currency(currency, origin)
+    currency = resolve_quote_currency(currency, members[0] if members else origin)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     report_progress = progress or (lambda _: None)
     drop_unpriced = (
@@ -207,7 +233,12 @@ def search_explore(
     )
     allowed = frozenset(parsed_include_airports or ())
     blocked = frozenset(parsed_exclude_airports or ())
-    origins = expand_nearby_origins(origin, nearby=nearby, exclude_airports=parsed_exclude_airports)
+    if members:
+        origins = tuple((code, f"metro {origin}") for code in members if code not in blocked)
+    else:
+        origins = expand_nearby_origins(
+            origin, nearby=nearby, exclude_airports=parsed_exclude_airports
+        )
     if not origins:
         return ExploreReport(
             searched_at=datetime.now(timezone.utc),
@@ -219,6 +250,7 @@ def search_explore(
             fetch_ms=0,
             currency=currency,
             empty_reason="filtered_out",
+            warnings=tuple(warnings),
         )
     client = source or GoogleFlightsHttpSource(currency=currency, country=country, proxy=proxy)
 
@@ -294,6 +326,8 @@ def search_explore(
         pricing_errors: list[QueryFailure] = []
         succeeded = empty = 0
         shop_cards = 0
+        window_misses = 0
+        month_window_shop = _covers_rest_of_month(start, days)
         for index, (place, shop) in enumerate(zip(chosen, shops, strict=True)):
             if batch is None:
                 report_progress(f"[{index + 1}/{len(chosen)}] pricing {place.iata}")
@@ -305,12 +339,23 @@ def search_explore(
             )
             if not isinstance(cards, BaseException):
                 shop_cards += len(cards)
+            window_miss = False
             if isinstance(cards, BaseException):
-                pricing_errors.append(QueryFailure(query=shop, error=classify_failure(cards)))
+                failure = classify_failure(cards)
+                # month= still shops one date. An empty answer that day is not
+                # "no flights" for the month.
+                if failure.code == SearchErrorCode.NO_RESULTS and month_window_shop:
+                    window_miss = True
+                    empty += 1
+                else:
+                    pricing_errors.append(QueryFailure(query=shop, error=failure))
             elif cheapest is None:
                 empty += 1
+                window_miss = month_window_shop and len(cards) == 0
             else:
                 succeeded += 1
+            if window_miss:
+                window_misses += 1
             if drop_unpriced and cheapest is None:
                 continue
             dest = ExploreDestination(
@@ -324,15 +369,20 @@ def search_explore(
                 stops_compare=compare,
                 google_flights_url=google_flights_url(shop, currency=currency, country=country),
                 baggage_buffer=cheapest.baggage_buffer if cheapest is not None else None,
+                empty_reason="not_loaded" if window_miss else None,
+                shopped_date=start.isoformat() if window_miss else None,
             )
             priced.append(dest)
         stop_reason, stop_note = explore_stop(error, pricing_errors)
         empty_reason = None
         if not priced and error is None and not pricing_errors:
-            if catalog_count == 0 or (places and not shop_cards):
+            if window_misses and month_window_shop:
+                empty_reason = "not_loaded"
+            elif catalog_count == 0 or (places and not shop_cards):
                 empty_reason = "provider_empty"
             else:
                 empty_reason = "filtered_out"
+        attempted = len(chosen) + int(error is not None)
         return ExploreReport(
             searched_at=datetime.now(timezone.utc),
             origin=code,
@@ -350,7 +400,7 @@ def search_explore(
                     "from": start.isoformat(),
                     "days": days,
                 },
-                attempted=len(chosen) + int(error is not None),
+                attempted=attempted,
                 succeeded=succeeded,
                 empty=empty,
                 failed=len(pricing_errors) + int(error is not None),
@@ -362,12 +412,116 @@ def search_explore(
             nearby_label=nearby_label,
             currency=currency,
             empty_reason=empty_reason,
+            warnings=() if members else tuple(warnings),
         )
 
+    def _limited(report: ExploreReport) -> bool:
+        if report.error is not None and report.error.rate_limited:
+            return True
+        return any(row.error.rate_limited for row in report.pricing_errors)
+
     try:
-        return one_or_many([explore_origin(code, label) for code, label in origins])
+        if not members:
+            return one_or_many([explore_origin(code, label) for code, label in origins])
+        reports: list[ExploreReport] = []
+        for code, label in origins:
+            report = explore_origin(code, label)
+            reports.append(report)
+            if _limited(report):
+                break
+        ran = {report.origin for report in reports}
+        skipped = tuple(code for code, _label in origins if code not in ran)
+        return _merge_metro_reports(
+            origin, reports, sort=sort, warnings=tuple(warnings), skipped=skipped
+        )
     finally:
         client.close()
+
+
+def _prefer_destination(
+    current: ExploreDestination, candidate: ExploreDestination
+) -> ExploreDestination:
+    """Cheapest owned fare. An unpriced row does not replace a fare."""
+    if current.price is None:
+        return candidate
+    if candidate.price is None or candidate.price >= current.price:
+        return current
+    return candidate
+
+
+def _merge_metro_reports(
+    origin: str,
+    reports: Sequence[ExploreReport],
+    *,
+    sort: FlightSort,
+    warnings: Tuple[str, ...],
+    skipped: Tuple[str, ...],
+) -> ExploreReport:
+    """One explore report for a metro: cheapest fare per destination, with its airport."""
+    chosen: dict[str, ExploreDestination] = {}
+    order: list[str] = []
+    for report in reports:
+        for dest in report.destinations:
+            stamped = replace(dest, origin_airport=report.origin)
+            current = chosen.get(dest.iata)
+            if current is None:
+                chosen[dest.iata] = stamped
+                order.append(dest.iata)
+                continue
+            chosen[dest.iata] = _prefer_destination(current, stamped)
+    destinations = _rank_explore_destinations(tuple(chosen[iata] for iata in order), sort)
+    pricing_errors = tuple(row for report in reports for row in report.pricing_errors)
+    error = next((report.error for report in reports if report.error is not None), None)
+    for report in reports:
+        if report.error is not None and report.error.rate_limited:
+            error = report.error
+            break
+    coverages = tuple(report.coverage for report in reports if report.coverage is not None)
+    stop_reason, stop_note = explore_stop(error, pricing_errors)
+    if skipped:
+        stop_reason = "rate_limited"
+        stop_note = f"not sent after rate limit: {', '.join(skipped)}; {stop_note}"
+    if destinations:
+        empty_reason = None
+    elif any(report.empty_reason == "not_loaded" for report in reports):
+        empty_reason = "not_loaded"
+    elif error is not None or pricing_errors:
+        empty_reason = None
+    else:
+        empty_reason = reports[0].empty_reason
+    first = reports[0]
+    return ExploreReport(
+        searched_at=reports[-1].searched_at,
+        origin=origin,
+        start_date=first.start_date,
+        days=first.days,
+        destinations=destinations,
+        fetch_backend="explore",
+        fetch_ms=sum(report.fetch_ms or 0 for report in reports),
+        error=error,
+        pricing_errors=pricing_errors,
+        coverage=SearchCoverage(
+            scope={
+                "kind": "explore_shortlist",
+                "origin": origin,
+                "from": first.start_date.isoformat(),
+                "days": first.days,
+                "airports": [report.origin for report in reports],
+            },
+            attempted=sum(item.attempted for item in coverages),
+            succeeded=sum(item.succeeded for item in coverages),
+            empty=sum(item.empty for item in coverages),
+            failed=sum(item.failed for item in coverages),
+            complete=False,
+            strategy="heuristic",
+            stopping_reason=stop_reason,
+            unsearched=stop_note,
+        ),
+        nearby_label=f"metro {origin}",
+        currency=first.currency,
+        empty_reason=empty_reason,
+        warnings=warnings,
+    )
 
 
 def _cheapest_shop(
