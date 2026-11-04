@@ -225,6 +225,35 @@ class RecordingGateTests(_State):
         self.assertEqual(rows[0]["query_key"], rows[1]["query_key"])
         self.assertNotEqual(rows[0]["query_key"], rows[2]["query_key"])
 
+    def test_page_and_clock_filters_split_the_query_key(self) -> None:
+        report = _flight_report(500.0)
+        base = {
+            "depart_before": None,
+            "arrive_after": None,
+            "less_emissions": False,
+            "hide_separate_tickets": False,
+        }
+        (plain,) = history.flight_observations(report, base)
+        for name, value in (
+            ("depart_before", 12),
+            ("arrive_after", 18),
+            ("less_emissions", True),
+            ("hide_separate_tickets", True),
+        ):
+            with self.subTest(name):
+                (row,) = history.flight_observations(report, {**base, name: value})
+                self.assertNotEqual(row["query_key"], plain["query_key"])
+                self.assertEqual(row["filters"][name], value)
+
+    def test_unset_switches_keep_the_key_of_older_rows(self) -> None:
+        report = _flight_report(500.0)
+        (row,) = history.flight_observations(
+            report, {"less_emissions": False, "hide_separate_tickets": False}
+        )
+        (older,) = history.flight_observations(report, {})
+        self.assertEqual(row["query_key"], older["query_key"])
+        self.assertNotIn("less_emissions", row["filters"])
+
 
 class ImmutabilityAndBoundsTests(_State):
     def test_malformed_query_rows_are_skipped_and_preserved_on_append(self) -> None:

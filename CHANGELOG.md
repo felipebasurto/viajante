@@ -9,6 +9,12 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Fixed
+
+- Price history keeps flight searches apart when they differ in `depart_before`,
+  `arrive_after`, `less_emissions`, or `hide_separate_tickets`. Searches that
+  leave them unset keep their existing query key.
+
 ## [1.5.2] - 2026-10-19
 
 ### Added
