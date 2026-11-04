@@ -1,0 +1,61 @@
+name: canary
+
+# A few real searches against Google, weekly and on demand. Separate from test.yml on
+# purpose: a Google change or an IP block on a shared runner must never fail a pull request.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --no-dev
+      - id: run
+        run: uv run --no-sync python scripts/canary.py "$RUNNER_TEMP/canary"
+        continue-on-error: true
+        env:
+          VIAJANTE_STATE_DIR: ${{ runner.temp }}/viajante-state
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: canary-reports
+          path: ${{ runner.temp }}/canary
+          if-no-files-found: ignore
+      - name: Open or update the markup-drift issue
+        if: steps.run.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create markup-drift --color D93F0B \
+            --description "The weekly live canary failed" 2>/dev/null || true
+          {
+            cat "$RUNNER_TEMP/canary/summary.md" 2>/dev/null || echo "The canary produced no summary."
+            echo
+            echo "Reports are in the run's artifact: $RUN_URL"
+          } > "$RUNNER_TEMP/body.md"
+          existing=$(gh issue list --label markup-drift --state open --limit 1 \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --label markup-drift \
+              --title "Live canary failed" --body-file "$RUNNER_TEMP/body.md"
+          fi
+      - name: Fail the run when the canary failed
+        if: steps.run.outcome == 'failure'
+        run: exit 1

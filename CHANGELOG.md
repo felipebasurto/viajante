@@ -16,6 +16,10 @@ history up to commit 6ee0fb7.
   marketing carrier) and `duration_minutes` (the segment alone). Both were returned by
   Google and unread; checked against live JFK-BOS and MAD-BCN pages. Detail cards carry
   neither, and a missing fact stays absent.
+- A weekly live canary (`.github/workflows/canary.yml`, `scripts/canary.py`) runs three real
+  searches (JFK-LHR one-way and round trip, a Google hotels search), uploads the reports,
+  and opens or updates one `markup-drift` issue when any is not a priced success. It is
+  separate from `test.yml`, never retries, and cannot fail a pull request.
 
 ### Fixed
 
