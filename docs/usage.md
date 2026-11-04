@@ -715,8 +715,8 @@ parsed fields. The report types and JSON fields are defined in
 | `no_results` | The search returned no results. |
 | `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
 | `rejected` | The provider rejected the request. |
-| `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 is reported without assuming its cause. |
-| `markup_drift` | The response could not be read in the expected page or `ds:1` format. |
+| `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 or an error frame in place of results is reported without assuming its cause, and the batch is not replayed. |
+| `markup_drift` | The response could not be read in the expected page, `ds:1` or Explore catalog format, including a catalog that lists destination cards but no priced rows. |
 | `cards_unparsed` | A public page loaded, but some itinerary cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |
@@ -796,6 +796,11 @@ Each tool result starts with a shared envelope: `status`, `completeness`,
 list). Only `empty_reason: provider_empty` means the provider found nothing;
 `filtered_out` means filters removed results the provider returned, and
 `not_loaded` means the search did not complete.
+
+A public sweep's `provider_empty` is the results page's own answer. For one route and date
+the page answered empty while `--fetch detail` listed itineraries, and the two
+responses cannot be told apart on the page. When a decision rests on an empty
+sweep, re-run that query with an explicit `--fetch detail`.
 
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request
