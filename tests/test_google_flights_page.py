@@ -46,6 +46,44 @@ class GoogleFlightsPageTests(unittest.TestCase):
         self.assertEqual(cards[0].price, "€129")
         self.assertEqual(cards[0].booking_token, "owned-token")
 
+    def test_segments_carry_the_operating_carrier_and_their_own_duration(self) -> None:
+        # Live shape, 2026-11-04 (JFK-BOS): leg[2] is the operating carrier's text, only
+        # when it differs from the marketing carrier; leg[11] is the segment in minutes.
+        def leg(operated_by: object, minutes: object) -> list[object]:
+            row: list[object] = [None] * 23
+            row[2] = operated_by
+            row[3] = "JFK"
+            row[6] = "BOS"
+            row[8] = [8, 0]
+            row[10] = [9, 35]
+            row[11] = minutes
+            row[22] = ["AA", "4618", None, "American"]
+            return row
+
+        def page_for(*legs: list[object]) -> tuple:
+            flight: list[object] = ["AA", ["American"], list(legs), "JFK", None, [8, 0], "BOS"]
+            flight += [None, [9, 35], 95]
+            data = [None, None, [[[flight, [[None, 129], "tok"]]], None, False], [[], 0, False]]
+            return parse_shopping_page(_page(data), currency="USD")
+
+        (card,) = page_for(leg("Republic Airways as American Eagle", 95))
+        segment = card.legs[0].segments[0]
+        self.assertEqual(segment.operated_by, "Republic Airways as American Eagle")
+        self.assertEqual(segment.duration_minutes, 95)
+        self.assertEqual(segment.to_dict()["operated_by"], "Republic Airways as American Eagle")
+        self.assertEqual(segment.to_dict()["duration_minutes"], 95)
+
+        (card,) = page_for(leg(None, None))
+        segment = card.legs[0].segments[0]
+        self.assertIsNone(segment.operated_by)
+        self.assertIsNone(segment.duration_minutes)
+        self.assertNotIn("operated_by", segment.to_dict())
+        self.assertNotIn("duration_minutes", segment.to_dict())
+
+        (card,) = page_for(leg("  ", True))
+        self.assertIsNone(card.legs[0].segments[0].operated_by)
+        self.assertIsNone(card.legs[0].segments[0].duration_minutes)
+
     def test_recognized_empty_slots_remain_empty_not_markup_drift(self) -> None:
         empty = [None, None, [[], None, False], [[], 0, False]]
         with self.assertRaises(EmptyShoppingResults):
@@ -60,6 +98,19 @@ class GoogleFlightsPageTests(unittest.TestCase):
         empty = [header, route_echo, None, None, None, None, None, catalog] + [None] * 16
         with self.assertRaises(EmptyShoppingResults):
             parse_shopping_page(_page(empty), currency="EUR")
+
+    def test_rendered_frame_without_price_bounds_is_not_proof_of_no_flights(self) -> None:
+        # Live shape, 2026-11-04: AGP-JNB on 2027-02-12 gave this frame to the HTTP client
+        # (price bounds null) while the browser page listed eight itineraries. The frame
+        # is the one a route with no flights also gets, so it cannot say "no flights".
+        header = [None, [[1, 2, 3], None, None, None, None, [[1]]], 0, "req"]
+        route_echo = [[[[["AGP", 0], "Malaga"]], [[["JNB", 0], "Johannesburg"]]]]
+        catalog = [None, [[["ONEWORLD", "Oneworld"]]]]
+        unloaded = [header, route_echo, None, None, None, None, None, catalog] + [None] * 16
+        with self.assertRaises(CompactParseMiss) as raised:
+            parse_shopping_page(_page(unloaded), currency="EUR")
+        self.assertNotIsInstance(raised.exception, EmptyShoppingResults)
+        self.assertIn("availability is not disproved", str(raised.exception))
 
     def test_null_itinerary_slots_without_a_rendered_frame_stay_markup_drift(self) -> None:
         for data in (

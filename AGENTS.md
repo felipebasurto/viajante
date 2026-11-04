@@ -171,10 +171,12 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   every path (the page echoes no basic-economy filter). `less_emissions` and
   `hide_separate_tickets` are refused on detail, round-trip, and multi-city. Never
   silently drop a filter.
-- A sweep `provider_empty` is the page's own answer, not proof. A live check found a
-  route and date (`AGP-JNB` 2027-02-12) where the page answered empty and `--fetch detail`
-  listed itineraries, with identical frames. Do not claim more than the page said; when a
-  decision rests on an empty sweep, re-run explicit `--fetch detail` (issue #88).
+- A results frame with null itinerary slots is `provider_empty` only when it carries the
+  route's price bounds (`ds:1` `data[7][0]`): the page then knew the route's fares and the
+  query's filters emptied the list. Without the bounds the page never loaded fares and the
+  frame is the same one a route with no flights gets (`AGP-JNB` 2027-02-12: the browser
+  listed eight itineraries). That frame is `markup_drift` with a message that availability
+  is not disproved; `--fetch detail` reads the page's own results.
 - A missing filter echo on a page is `markup_drift`, never an unfiltered result.
   The page applied an airline exclusion in a live check, but the page does not prove
   it for every card, so the loop still drops excluded and carrier-unknown cards.

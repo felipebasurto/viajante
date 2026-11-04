@@ -797,10 +797,11 @@ list). Only `empty_reason: provider_empty` means the provider found nothing;
 `filtered_out` means filters removed results the provider returned, and
 `not_loaded` means the search did not complete.
 
-A public sweep's `provider_empty` is the results page's own answer. For one route and date
-the page answered empty while `--fetch detail` listed itineraries, and the two
-responses cannot be told apart on the page. When a decision rests on an empty
-sweep, re-run that query with an explicit `--fetch detail`.
+A public sweep says `provider_empty` only when the results page carries the route's price
+bounds and the query's filters emptied the list. A page with neither itineraries nor price
+bounds did not load its results (the browser page fetches them separately), so it is
+`markup_drift` with "availability is not disproved". Re-run that query with an explicit
+`--fetch detail`.
 
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request
@@ -943,7 +944,10 @@ upgrading; confirm the executing version before using new parameters.
 ## Owned segment times
 
 Flight segments may include `arrival_date`, `departure_timezone` and
-`arrival_timezone`. Missing facts remain absent; completeness reports
+`arrival_timezone`. Google's page also returns, per segment, `operated_by` (the
+operating carrier's own text, such as "Republic Airways as American Eagle", present only
+when it differs from the marketing carrier) and `duration_minutes` (the segment alone,
+layovers excluded). Detail cards carry neither. Missing facts remain absent; completeness reports
 `segment_dates` and `segment_timezones` as known or unknown. To validate
 selected rows locally:
 
