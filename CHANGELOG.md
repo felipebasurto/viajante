@@ -35,7 +35,6 @@ history up to commit 6ee0fb7.
   search, uncut, takes about 77 s, so an MCP client timeout below that needs a lower
   `deadline_seconds`.
 
-
 ## [1.5.3] - 2026-11-04
 
 ### Added
