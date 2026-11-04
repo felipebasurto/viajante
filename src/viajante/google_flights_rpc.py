@@ -31,6 +31,19 @@ class UnpricedShoppingResults(CompactParseMiss):
     """Itineraries decoded, but none carried a price."""
 
 
+class ShoppingErrorFrame(CompactParseMiss):
+    """Provider answered with an owned error frame instead of shopping data.
+
+    The frame is ``[status, None, [[...ErrorResponse...]]]``: a backend status
+    where the itinerary groups would be, so it says nothing about availability.
+    It is a ``CompactParseMiss`` so unupdated call sites keep their behavior.
+    """
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        super().__init__(f"provider error frame (status {status})")
+
+
 class EmptyShoppingResults(Exception):
     """Shopping RPC returned itinerary slots with no priced offers."""
 
@@ -104,6 +117,9 @@ def parse_shopping_data(data: object, *, currency: str) -> tuple[RawFlightCard, 
     """Parse Google Flights' decoded shopping-data array from any owned transport."""
     if not isinstance(data, list):
         raise CompactParseMiss("shopping data is not a list")
+    status = error_frame_status(data)
+    if status is not None:
+        raise ShoppingErrorFrame(status)
     rows = _offered_itineraries(data)
     if not any(_looks_like_itinerary(row) for row in rows):
         if _has_itinerary_slots(data):
@@ -212,6 +228,37 @@ def parse_price_insight(data: object, *, currency: str) -> Optional[PriceInsight
         page_label="",
         history=history,
     )
+
+
+_ERROR_RESPONSE_PREFIX = "type.googleapis.com/"
+_ERROR_RESPONSE_SUFFIX = "ErrorResponse"
+
+
+def _has_error_response_type(obj: object, *, depth: int = 0) -> bool:
+    if isinstance(obj, str):
+        return obj.startswith(_ERROR_RESPONSE_PREFIX) and obj.endswith(_ERROR_RESPONSE_SUFFIX)
+    if depth >= 3 or not isinstance(obj, list):
+        return False
+    return any(_has_error_response_type(item, depth=depth + 1) for item in obj)
+
+
+def error_frame_status(data: object) -> Optional[int]:
+    """Status of a provider error frame, else None.
+
+    Both the public page's ds:1 data and decoded wrb.fr shopping data carry
+    ``[status, None, [[...ErrorResponse...]]]`` when the backend search fails.
+    Three items with an integer status first cannot be a rendered results frame
+    (header list, route echo list, itinerary slots), and the ErrorResponse type
+    marker keeps any other short payload on the markup-miss path.
+    """
+    if not (isinstance(data, list) and len(data) == 3):
+        return None
+    status, separator, payload = data
+    if not isinstance(status, int) or isinstance(status, bool) or separator is not None:
+        return None
+    if not _has_error_response_type(payload):
+        return None
+    return status
 
 
 def _wrb_data_string(obj: object) -> Optional[str]:

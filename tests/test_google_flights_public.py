@@ -19,6 +19,7 @@ from viajante.flight_filters import OfferFilters
 from viajante.flights import _run_search
 from viajante.google_flights import (
     SWEEP_RETRY_BACKOFF_SECONDS,
+    SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
     NoFlightsFound,
     SweepHttpResponse,
@@ -92,6 +93,20 @@ def _ds1(catalog):
     return (
         '<script class="ds:1">AF_initDataCallback('
         f"{{key:'ds:1',data:{json.dumps(data)}}});</script>"
+    )
+
+
+def _ds1_error_frame(status: int = 13) -> str:
+    # Live shape, captured 2026-10-16: ds:1 = [status, null, [[...ErrorResponse...]]]
+    # when the backend fails a burst of day shops.
+    frame = [
+        status,
+        None,
+        [["type.googleapis.com/travel.frontend.flights.ErrorResponse", [[None, [[1]]], 0]]],
+    ]
+    return (
+        '<script class="ds:1">AF_initDataCallback('
+        f"{{key:'ds:1',data:{json.dumps(frame)}}});</script>"
     )
 
 
@@ -498,6 +513,124 @@ class PublicContextTests(unittest.TestCase):
             source.fetch(query)
         self.assertEqual(caught.exception.diagnostics["attempts"], 2)
         self.assertEqual(client.calls, 2)
+
+
+class PublicErrorFrameTests(unittest.TestCase):
+    def test_error_frame_page_is_blocked_not_markup_drift(self):
+        source = _source()
+        response = SweepHttpResponse(
+            200, _context() + _ds1_error_frame(13), "https://www.google.com/travel/flights"
+        )
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            source._parse_response(response, response.url, FlightQuery("HAN", "SIN", OUT, adults=2))
+        self.assertIsNone(caught.exception.status)
+        self.assertEqual((caught.exception.diagnostics or {}).get("rpc_status"), 13)
+        self.assertIn("availability is not disproved", str(caught.exception))
+
+    def test_error_frame_days_are_blocked_and_not_replayed(self):
+        class GetManyOnly:
+            def __init__(self):
+                self.calls = 0
+
+            def get_many(self, urls, *, timeout):
+                self.calls += 1
+                return [
+                    SweepHttpResponse(200, _context() + _ds1_error_frame(13), url) for url in urls
+                ]
+
+            def get(self, *args, **kwargs):
+                raise AssertionError("a blocked calendar batch must not start a fresh GET")
+
+        client = GetManyOnly()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        report = search_dates(
+            "HAN",
+            "SIN",
+            date(2026, 11, 14),
+            date(2026, 11, 15),
+            adults=2,
+            max_stops=0,
+            currency="EUR",
+            source=source,
+        )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual([row.status for row in report.days], ["error", "error"])
+        self.assertTrue(all(row.error is not None for row in report.days))
+        self.assertTrue(all(row.error.code.value == "blocked" for row in report.days))
+
+    def test_frame_day_suppresses_replay_for_the_whole_batch(self):
+        # Intended behavior, grounded in fetch_many: any GoogleFlightsBlocked with
+        # status in {None, 403, 429} skips _plan_replay for the batch, so a
+        # transport-failure sibling loses the replay it would otherwise get.
+        # A provider block stops all NEW requests; in-flight siblings still finish.
+        class MixedGetMany:
+            def __init__(self):
+                self.calls = 0
+
+            def get_many(self, urls, *, timeout):
+                self.calls += 1
+                return [
+                    SweepHttpResponse(200, _context() + _ds1_error_frame(13), urls[0]),
+                    SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "curl: (28) timeout", urls[1]),
+                ]
+
+            def get(self, *args, **kwargs):
+                raise AssertionError("no fresh GET after a provider block")
+
+        client = MixedGetMany()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        report = search_dates(
+            "HAN",
+            "SIN",
+            date(2026, 11, 14),
+            date(2026, 11, 15),
+            adults=2,
+            max_stops=0,
+            currency="EUR",
+            source=source,
+        )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual([row.status for row in report.days], ["error", "error"])
+        self.assertEqual(report.days[0].error.code.value, "blocked")
+        self.assertEqual(report.days[1].error.code.value, "fetch_failed")
+
+    def test_transport_failure_without_a_block_still_replays_once(self):
+        # Control: the suppression above comes from the block, not from the
+        # transport failure itself, which keeps its one replay.
+        day = date(2026, 11, 14)
+        card = _card("HAN", "SIN", day, "08:00", "TA101", "€41")
+
+        class FlakyOnce:
+            def __init__(self):
+                self.calls = 0
+
+            def get_many(self, urls, *, timeout):
+                self.calls += 1
+                if self.calls == 1:
+                    return [
+                        SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "curl: (28) timeout", url)
+                        for url in urls
+                    ]
+                return [SweepHttpResponse(200, _context(), url) for url in urls]
+
+            def get(self, *args, **kwargs):
+                raise AssertionError("replays stay inside get_many")
+
+        client = FlakyOnce()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        with patch("viajante.google_flights_public.parse_shopping_page", return_value=(card,)):
+            report = search_dates(
+                "HAN",
+                "SIN",
+                day,
+                day,
+                adults=2,
+                max_stops=0,
+                currency="EUR",
+                source=source,
+            )
+        self.assertEqual(client.calls, 2)
+        self.assertEqual([row.status for row in report.days], ["ok"])
 
 
 class PublicCalendarIntegrationTests(unittest.TestCase):

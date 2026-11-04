@@ -60,6 +60,24 @@ history up to commit 6ee0fb7.
   `price_insight`.
 
 ## [1.5.1] - 2026-10-19
+- A public results page whose ds:1 data is the provider's error frame
+  (`[status, null, [[...ErrorResponse...]]]`, seen under burst day shops) is now
+  classified as a provider block with the frame status in diagnostics, not as
+  `markup_drift`. The frame neither proves nor disproves availability, and the
+  batch no longer spends its one replay on it. Once a provider block is seen in a
+  batch, the whole-batch replay is suppressed: no new requests are issued for
+  that batch (requests already in flight may still finish). Batches whose only
+  failures are transport errors still replay once. Dates, flex, explore pricing and
+  split legs surface these days as `blocked` with the "cause is unknown;
+  availability is not disproved" message, matching the RPC transport's
+  status-13 handling.
+- `compare_awards` no longer says "award evidence is required" when `evidence`
+  was supplied with a non-string type; the message now names the four valid
+  string values.
+- `validate_itinerary`'s evidence failure names the offending legs and their
+  statuses instead of a bare "an error or missing result was selected".
+
+## [1.5.1] - 2026-10-13
 
 ### Added
 
