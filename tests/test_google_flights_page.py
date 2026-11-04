@@ -99,6 +99,19 @@ class GoogleFlightsPageTests(unittest.TestCase):
         with self.assertRaises(EmptyShoppingResults):
             parse_shopping_page(_page(empty), currency="EUR")
 
+    def test_rendered_frame_without_price_bounds_is_not_proof_of_no_flights(self) -> None:
+        # Live shape, 2026-11-04: AGP-JNB on 2027-02-12 gave this frame to the HTTP client
+        # (price bounds null) while the browser page listed eight itineraries. The frame
+        # is the one a route with no flights also gets, so it cannot say "no flights".
+        header = [None, [[1, 2, 3], None, None, None, None, [[1]]], 0, "req"]
+        route_echo = [[[[["AGP", 0], "Malaga"]], [[["JNB", 0], "Johannesburg"]]]]
+        catalog = [None, [[["ONEWORLD", "Oneworld"]]]]
+        unloaded = [header, route_echo, None, None, None, None, None, catalog] + [None] * 16
+        with self.assertRaises(CompactParseMiss) as raised:
+            parse_shopping_page(_page(unloaded), currency="EUR")
+        self.assertNotIsInstance(raised.exception, EmptyShoppingResults)
+        self.assertIn("availability is not disproved", str(raised.exception))
+
     def test_null_itinerary_slots_without_a_rendered_frame_stay_markup_drift(self) -> None:
         for data in (
             [None, None, None, None],

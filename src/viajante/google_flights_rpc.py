@@ -124,6 +124,11 @@ def parse_shopping_data(data: object, *, currency: str) -> tuple[RawFlightCard, 
     if not any(_looks_like_itinerary(row) for row in rows):
         if _has_itinerary_slots(data):
             raise EmptyShoppingResults()
+        if _is_unloaded_results_frame(data):
+            raise CompactParseMiss(
+                "results page carried no itineraries and no price bounds for the route; "
+                "its results may load separately, so availability is not disproved"
+            )
         raise CompactParseMiss("no itinerary groups in shopping payload")
     cards: list[RawFlightCard] = []
     for row in rows:
@@ -401,7 +406,10 @@ def _has_itinerary_slots(data: list[Any]) -> bool:
     if len(data) > 3 and isinstance(data[2], list):
         return True
     # A rendered results frame (header, route echo, filter catalog) with both slots null
-    # is how the public page answers a query with no matching flights.
+    # answers a query with no matching flights only when it also carries the route's price
+    # bounds: the page then knew the route's fares and the query's filters emptied the list.
+    # Without them the page never loaded fares for the route (the browser fetches them
+    # separately), and the frame is the same one a query with no flights gets.
     return (
         len(data) > 7
         and data[2] is None
@@ -411,6 +419,35 @@ def _has_itinerary_slots(data: list[Any]) -> bool:
         and bool(data[1])
         and isinstance(data[7], list)
         and bool(data[7])
+        and _has_price_bounds(data[7])
+    )
+
+
+def _is_unloaded_results_frame(data: list[Any]) -> bool:
+    return (
+        len(data) > 7
+        and data[2] is None
+        and data[3] is None
+        and isinstance(data[1], list)
+        and bool(data[1])
+        and isinstance(data[7], list)
+        and bool(data[7])
+    )
+
+
+def _has_price_bounds(filters: list[Any]) -> bool:
+    """The page's price-range bounds (``data[7][0]``: ``[[None, low], [None, high]]``)."""
+    bounds = filters[0] if filters else None
+    return (
+        isinstance(bounds, list)
+        and bool(bounds)
+        and all(
+            isinstance(row, list)
+            and len(row) > 1
+            and isinstance(row[1], (int, float))
+            and not isinstance(row[1], bool)
+            for row in bounds
+        )
     )
 
 

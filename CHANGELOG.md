@@ -17,6 +17,20 @@ history up to commit 6ee0fb7.
   Google and unread; checked against live JFK-BOS and MAD-BCN pages. Detail cards carry
   neither, and a missing fact stays absent.
 
+### Fixed
+
+- A public results frame with null itinerary slots is `provider_empty` only when it carries
+  the route's price bounds. Without them the page did not load its results (`AGP-JNB` on
+  2027-02-12: the sweep said `provider_empty` while `--fetch detail` listed eight
+  itineraries), so it is `markup_drift` with "availability is not disproved" and the
+  caller re-runs with explicit `--fetch detail`. A query the filters emptied still carries
+  the bounds and stays `provider_empty`.
+- `deadline_seconds` bounds the browser waits of `--fetch detail`. A multi-city detail
+  search with `deadline_seconds=30` returned after 62.7 s because each Playwright wait kept
+  its fixed 60 s or 20 s timeout; it now returns the `deadline` partial at 30.1 s. The same
+  search, uncut, takes about 77 s, so an MCP client timeout below that needs a lower
+  `deadline_seconds`.
+
 ## [1.5.3] - 2026-11-04
 
 ### Added

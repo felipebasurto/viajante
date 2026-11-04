@@ -167,6 +167,22 @@ def checkpoint() -> None:
         control.checkpoint()
 
 
+def bounded_ms(milliseconds: int) -> int:
+    """A browser wait in ms, cut to the time the search deadline has left.
+
+    A spent deadline raises ``SearchDeadline`` first, so a wait never outlives it by its
+    own fixed timeout. Without a control or a deadline the wait is unchanged.
+    """
+    control = current_control()
+    if control is None:
+        return milliseconds
+    control.checkpoint()
+    if control.deadline_at is None:
+        return milliseconds
+    left = int((control.deadline_at - control.clock()) * 1000)
+    return max(1, min(milliseconds, left))
+
+
 def check_cancelled() -> None:
     """Discard a cancelled result without cutting evidence completed at a deadline."""
     control = current_control()
