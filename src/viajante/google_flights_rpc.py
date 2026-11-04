@@ -891,9 +891,29 @@ def _segments_from_flight(flight: list[Any]) -> tuple[RawSegment, ...]:
                 arrival_date=_leg_date(leg[21] if len(leg) > 21 else None),
                 departure_timezone=_airport_timezone(leg[3] if len(leg) > 3 else None),
                 arrival_timezone=_airport_timezone(leg[6] if len(leg) > 6 else None),
+                operated_by=_leg_operator(leg),
+                duration_minutes=_leg_minutes(leg),
             )
         )
     return tuple(segments)
+
+
+def _leg_operator(leg: list[Any]) -> Optional[str]:
+    """The provider's operating-carrier text (``leg[2]``), display text and not a code.
+
+    Example: "Republic Airways as American Eagle". Absent when the marketing carrier
+    operates the flight.
+    """
+    value = leg[2] if len(leg) > 2 else None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _leg_minutes(leg: list[Any]) -> Optional[int]:
+    """The segment's own duration in minutes (``leg[11]``), layovers excluded."""
+    value = leg[11] if len(leg) > 11 else None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 @dataclass(frozen=True)

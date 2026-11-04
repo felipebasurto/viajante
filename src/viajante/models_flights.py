@@ -327,6 +327,8 @@ class RawSegment:
     arrival_date: Optional[date] = None
     departure_timezone: Optional[str] = None
     arrival_timezone: Optional[str] = None
+    operated_by: Optional[str] = None
+    duration_minutes: Optional[int] = None
 
     def to_dict(self) -> Mapping[str, object]:
         payload: dict[str, object] = {
@@ -344,6 +346,8 @@ class RawSegment:
         _put_present(payload, "departure_timezone", self.departure_timezone)
         _put_present(payload, "arrival_timezone", self.arrival_timezone)
         _put_present(payload, "carrier", self.carrier)
+        _put_present(payload, "operated_by", self.operated_by)
+        _put_present(payload, "duration_minutes", self.duration_minutes)
         return payload
 
 
