@@ -10,7 +10,7 @@ from copy import deepcopy
 from datetime import date
 from typing import Mapping, Optional, Sequence
 
-from viajante.airports import lookup_airports, parse_exclude_regions
+from viajante.airports import lookup_airports, metro_members, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.control import (
     SearchControl,
@@ -691,7 +691,10 @@ def search_explore_tool(
             raise ValueError("start or month is required")
         start_date = date.fromisoformat(start)
     validate_explore_window(start_date, days)
-    currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    members = metro_members(origin)
+    currency, baggage_buffer = resolve_quote_and_buffer(
+        currency, members[0] if members else origin, baggage_buffer
+    )
     report = _with_search_lock(
         lambda: search_explore(
             origin,

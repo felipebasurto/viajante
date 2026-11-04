@@ -9,6 +9,68 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-11-04
+
+### Added
+
+- `search_explore` accepts a metro origin (MIL, NYC, and the rest of the owned
+  table). It runs one explore per member airport, sequentially, keeps the
+  cheapest fare per destination, records `origin_airport`, and stops when a
+  search is rate-limited. `--nearby` with a metro code is an error.
+- A public flight page that parses some itinerary cards and skips others keeps the
+  parsed rows and marks that query `partial` with `cards_unparsed` (`seen` and
+  `parsed` in its `page_errors`). A page where every card fails stays
+  `markup_drift`. Route matching and local filters are not unparsed cards.
+
+### Changed
+
+- `top` above 30 on `search_explore` is clamped to 30 and named in `warnings`. It
+  is no longer rejected.
+- A `month` explore still shops only the start date. An empty shop that day
+  is `not_loaded` with `shopped_date`, not `no_results`. The envelope does
+  not say `provider_empty` for the month. A one-day shop that returns no
+  cards stays `provider_empty`.
+
+### Fixed
+
+- A public results page whose ds:1 data is the provider's error frame
+  (`[status, null, [[...ErrorResponse...]]]`, seen under burst day shops) is now
+  classified as a provider block with the frame status in diagnostics, not as
+  `markup_drift`. The frame neither proves nor disproves availability, and the
+  batch no longer spends its one replay on it. Once a provider block is seen in a
+  batch, the whole-batch replay is suppressed: no new requests are issued for
+  that batch (requests already in flight may still finish). Batches whose only
+  failures are transport errors still replay once. Dates, flex, explore pricing and
+  split legs surface these days as `blocked` with the "cause is unknown;
+  availability is not disproved" message, matching the RPC transport's
+  status-13 handling.
+- `search_explore` treats `net::ERR_CONNECTION_CLOSED` and other Chromium
+  `net::ERR_*` failures as a transport error. The Explore page load is retried
+  once, the same rule as a public-page GET, and the envelope is `failed` /
+  `fetch_failed`. A consent, sorry, or other block page is still `blocked`.
+- An Explore catalog response with no `wrb.fr` payload is `markup_drift` unless that
+  page is a block. `wrb.fr` rows are read even when they are not the first row
+  of a chunk, and a payload that is already a list is read as the same catalog.
+- An Explore catalog that lists destination cards but no priced rows is
+  `markup_drift`, not `provider_empty`. A catalog with no cards stays empty.
+- Price history keeps flight searches apart when they differ in `depart_before`,
+  `arrive_after`, `less_emissions`, or `hide_separate_tickets`. Searches that
+  leave them unset keep their existing query key. Rows recorded before this
+  release cannot be split after the fact.
+- `compare_awards` no longer says "award evidence is required" when `evidence`
+  was supplied with a non-string type; the message now names the four valid
+  string values.
+- `validate_itinerary`'s evidence failure names the offending legs and their
+  statuses instead of a bare "an error or missing result was selected".
+
+### Known limits
+
+- A public results page can answer with a frame that has no itinerary slots for a
+  route and date whose results the browser page loads separately (`AGP-JNB` on
+  2027-02-12: sweep `provider_empty`, `--fetch detail` lists eight itineraries). The
+  frame is identical to one for a query with no flights, so the sweep cannot tell
+  them apart. Re-run an empty result that matters with explicit `--fetch detail`.
+
 ## [1.5.2] - 2026-10-19
 
 ### Added

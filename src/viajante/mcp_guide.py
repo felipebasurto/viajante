@@ -115,7 +115,12 @@ with observed_at_basis (fetch: when viajante asked; provider is reserved). Only
 provider_empty may be told to a traveller as "no flights/hotels found". filtered_out
 means viajante's own filters removed the provider's rows; not_loaded means the
 search did not complete and availability is unknown. partial means some queries
-failed or part of the window is missing: read the per-query rows. Offline tools
+failed, part of the window is missing, or a loaded public page kept some itinerary
+cards and skipped others: read the per-query rows. error_code cards_unparsed means
+the page offered more itinerary cards than were parsed. The parsed rows stay; that
+query's page_errors carry seen and parsed. Those rows are not a complete answer.
+A page where every card failed is markup_drift. Filters (filtered_out) and route
+or date matching are not unparsed cards. Offline tools
 report status ok and are complete unless they say otherwise (unknown checks,
 unallocated nights). get_guide carries the envelope too, beside its guide key.
 
@@ -219,14 +224,19 @@ blocked, stop that request: a separate browser's consent or prices are not MCP
 evidence. fetch=detail applies only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
 product cannot require 3+ stops.
-A metro code (LON, NYC, PAR, TYO, and the rest of the owned table) named on a
+A metro code (LON, NYC, PAR, TYO, MIL, and the rest of the owned table) named on a
 search_flights or search_trip route expands to its member airports. One call
 sends at most 18 provider queries (LON has six members, NYC three). A plan
 that would send more is rejected before anything is fetched. A route
 whose origin and destination resolve to the same metro, including an
 airport that belongs to the other side's metro, is rejected. lookup_airports
 with the code lists its members. A metro code is never inferred from an airport
-or a city.
+or a city. search_explore accepts the same table as an origin: one catalog per
+member airport, sequential, stopped when a search is rate_limited. Destinations
+are merged; the cheapest fare is kept and origin_airport is the airport it came
+from. top above 30 is clamped to 30 and named in warnings. A month window still
+shops one date; an empty shop that day is not_loaded for that shopped_date,
+not no_results and not provider_empty for the month.
 search_hidden_city is Skiplagged, not Google. After a named-route
 search_flights on a hub or leisure trunk, the caller may run it once
 sequentially. Do not mix evidence. Skip when bags were named.

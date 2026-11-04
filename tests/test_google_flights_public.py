@@ -3,8 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from random import Random
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
@@ -14,8 +15,11 @@ import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
 from viajante.envelope import stamp_search
+from viajante.flight_filters import OfferFilters
+from viajante.flights import _run_search
 from viajante.google_flights import (
     SWEEP_RETRY_BACKOFF_SECONDS,
+    SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
     NoFlightsFound,
     SweepHttpResponse,
@@ -38,6 +42,7 @@ from viajante.models import (
     RawSegment,
     RoundTrip,
 )
+from viajante.storage import reports_payload
 
 OUT = date(2026, 11, 14)
 BACK = date(2026, 11, 25)
@@ -88,6 +93,20 @@ def _ds1(catalog):
     return (
         '<script class="ds:1">AF_initDataCallback('
         f"{{key:'ds:1',data:{json.dumps(data)}}});</script>"
+    )
+
+
+def _ds1_error_frame(status: int = 13) -> str:
+    # Live shape, captured 2026-10-16: ds:1 = [status, null, [[...ErrorResponse...]]]
+    # when the backend fails a burst of day shops.
+    frame = [
+        status,
+        None,
+        [["type.googleapis.com/travel.frontend.flights.ErrorResponse", [[None, [[1]]], 0]]],
+    ]
+    return (
+        '<script class="ds:1">AF_initDataCallback('
+        f"{{key:'ds:1',data:{json.dumps(frame)}}});</script>"
     )
 
 
@@ -494,6 +513,124 @@ class PublicContextTests(unittest.TestCase):
             source.fetch(query)
         self.assertEqual(caught.exception.diagnostics["attempts"], 2)
         self.assertEqual(client.calls, 2)
+
+
+class PublicErrorFrameTests(unittest.TestCase):
+    def test_error_frame_page_is_blocked_not_markup_drift(self):
+        source = _source()
+        response = SweepHttpResponse(
+            200, _context() + _ds1_error_frame(13), "https://www.google.com/travel/flights"
+        )
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            source._parse_response(response, response.url, FlightQuery("HAN", "SIN", OUT, adults=2))
+        self.assertIsNone(caught.exception.status)
+        self.assertEqual((caught.exception.diagnostics or {}).get("rpc_status"), 13)
+        self.assertIn("availability is not disproved", str(caught.exception))
+
+    def test_error_frame_days_are_blocked_and_not_replayed(self):
+        class GetManyOnly:
+            def __init__(self):
+                self.calls = 0
+
+            def get_many(self, urls, *, timeout):
+                self.calls += 1
+                return [
+                    SweepHttpResponse(200, _context() + _ds1_error_frame(13), url) for url in urls
+                ]
+
+            def get(self, *args, **kwargs):
+                raise AssertionError("a blocked calendar batch must not start a fresh GET")
+
+        client = GetManyOnly()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        report = search_dates(
+            "HAN",
+            "SIN",
+            date(2026, 11, 14),
+            date(2026, 11, 15),
+            adults=2,
+            max_stops=0,
+            currency="EUR",
+            source=source,
+        )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual([row.status for row in report.days], ["error", "error"])
+        self.assertTrue(all(row.error is not None for row in report.days))
+        self.assertTrue(all(row.error.code.value == "blocked" for row in report.days))
+
+    def test_frame_day_suppresses_replay_for_the_whole_batch(self):
+        # Intended behavior, grounded in fetch_many: any GoogleFlightsBlocked with
+        # status in {None, 403, 429} skips _plan_replay for the batch, so a
+        # transport-failure sibling loses the replay it would otherwise get.
+        # A provider block stops all NEW requests; in-flight siblings still finish.
+        class MixedGetMany:
+            def __init__(self):
+                self.calls = 0
+
+            def get_many(self, urls, *, timeout):
+                self.calls += 1
+                return [
+                    SweepHttpResponse(200, _context() + _ds1_error_frame(13), urls[0]),
+                    SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "curl: (28) timeout", urls[1]),
+                ]
+
+            def get(self, *args, **kwargs):
+                raise AssertionError("no fresh GET after a provider block")
+
+        client = MixedGetMany()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        report = search_dates(
+            "HAN",
+            "SIN",
+            date(2026, 11, 14),
+            date(2026, 11, 15),
+            adults=2,
+            max_stops=0,
+            currency="EUR",
+            source=source,
+        )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual([row.status for row in report.days], ["error", "error"])
+        self.assertEqual(report.days[0].error.code.value, "blocked")
+        self.assertEqual(report.days[1].error.code.value, "fetch_failed")
+
+    def test_transport_failure_without_a_block_still_replays_once(self):
+        # Control: the suppression above comes from the block, not from the
+        # transport failure itself, which keeps its one replay.
+        day = date(2026, 11, 14)
+        card = _card("HAN", "SIN", day, "08:00", "TA101", "€41")
+
+        class FlakyOnce:
+            def __init__(self):
+                self.calls = 0
+
+            def get_many(self, urls, *, timeout):
+                self.calls += 1
+                if self.calls == 1:
+                    return [
+                        SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "curl: (28) timeout", url)
+                        for url in urls
+                    ]
+                return [SweepHttpResponse(200, _context(), url) for url in urls]
+
+            def get(self, *args, **kwargs):
+                raise AssertionError("replays stay inside get_many")
+
+        client = FlakyOnce()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        with patch("viajante.google_flights_public.parse_shopping_page", return_value=(card,)):
+            report = search_dates(
+                "HAN",
+                "SIN",
+                day,
+                day,
+                adults=2,
+                max_stops=0,
+                currency="EUR",
+                source=source,
+            )
+        self.assertEqual(client.calls, 2)
+        self.assertEqual([row.status for row in report.days], ["ok"])
 
 
 class PublicCalendarIntegrationTests(unittest.TestCase):
@@ -943,3 +1080,124 @@ class UnpricedPageTests(unittest.TestCase):
     def test_unpriced_flights_without_a_sent_cap_stay_markup_drift(self) -> None:
         with self.assertRaisesRegex(GoogleFlightsMarkupError, "no priced offers"):
             self._parse(self._unpriced_page(price_chip=False), None)
+
+
+def _itinerary_row(origin: str, dest: str, hour: int, price: int = 420) -> list[object]:
+    """One public-page itinerary row with an owned segment the route check can match."""
+    day = [OUT.year, OUT.month, OUT.day]
+    dep = [hour, 0]
+    arr = [hour + 2, 0]
+    leg: list[object] = [None] * 23
+    leg[3] = origin
+    leg[6] = dest
+    leg[8] = dep
+    leg[10] = arr
+    leg[11] = 120
+    leg[20] = day
+    leg[21] = day
+    leg[22] = ["BA", "178", None, "British Airways"]
+    flight: list[object] = [None] * 12
+    flight[0] = "BA"
+    flight[1] = ["British Airways"]
+    flight[2] = [leg]
+    flight[3] = origin
+    flight[5] = dep
+    flight[6] = dest
+    flight[8] = arr
+    flight[9] = 120
+    return [flight, [[None, price], "tok"]]
+
+
+def _results_page(rows: list[object]) -> str:
+    data = [None, None, [rows, None, False], [[], 0, False]]
+    return (
+        "<html><body>"
+        + _context(adults=1, currency="USD")
+        + "<script class=\"ds:1\">AF_initDataCallback({key:'ds:1',data:"
+        + json.dumps(data)
+        + "});</script></body></html>"
+    )
+
+
+class _FixedPage:
+    def __init__(self, html: str) -> None:
+        self.html = html
+
+    def get(self, url: str, timeout: float | None = None) -> SweepHttpResponse:
+        return SweepHttpResponse(200, self.html, url)
+
+
+def _search_page(html: str, *, filters: OfferFilters | None = None):
+    source = PublicGoogleFlightsHttpSource(currency="USD", client=_FixedPage(html))
+    report = _run_search(
+        (FlightQuery("JFK", "LHR", OUT, max_stops=0, adults=1),),
+        top=8,
+        source=source,
+        sleep=lambda _seconds: None,
+        random_gen=Random(0),
+        now=lambda: datetime(2026, 10, 27),
+        currency="USD",
+        filters=filters or OfferFilters(),
+    )
+    return report, stamp_search(reports_payload(report))
+
+
+class UnparsedCardTests(unittest.TestCase):
+    def test_one_malformed_card_keeps_parsed_rows_and_marks_the_query_partial(self) -> None:
+        good = _itinerary_row("JFK", "LHR", 8, 420)
+        malformed = _itinerary_row("JFK", "LHR", 12, 900)
+        malformed[1] = None
+        report, payload = _search_page(_results_page([good, malformed]))
+        query = report.queries[0]
+        self.assertEqual(query.status, "ok")
+        self.assertEqual(len(query.offers), 1)
+        self.assertEqual(query.offers[0].price, 420)
+        self.assertEqual(query.raw_count, 1)
+        self.assertEqual(len(query.page_errors), 1)
+        error = query.page_errors[0]
+        self.assertEqual(error.code.value, "cards_unparsed")
+        self.assertEqual(error.diagnostics, {"seen": 2, "parsed": 1})
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["error_code"], "cards_unparsed")
+        self.assertIsNone(payload["empty_reason"])
+        row = payload["queries"][0]
+        self.assertEqual(row["page_errors"][0]["diagnostics"], {"seen": 2, "parsed": 1})
+
+    def test_every_card_failing_stays_markup_drift(self) -> None:
+        first = _itinerary_row("JFK", "LHR", 8)
+        second = _itinerary_row("JFK", "LHR", 12)
+        first[1] = None
+        second[1] = None
+        report, payload = _search_page(_results_page([first, second]))
+        self.assertEqual(report.queries[0].status, "error")
+        self.assertEqual(report.queries[0].error.code.value, "markup_drift")
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["completeness"], "blocked")
+        self.assertEqual(payload["error_code"], "markup_drift")
+        self.assertNotIn("cards_unparsed", json.dumps(payload))
+
+    def test_route_matching_and_local_filters_are_not_unparsed(self) -> None:
+        kept = _itinerary_row("JFK", "LHR", 8, 400)
+        other_route = _itinerary_row("JFK", "CDG", 10, 300)
+        report, payload = _search_page(_results_page([kept, other_route]))
+        self.assertEqual(report.queries[0].raw_count, 1)
+        self.assertEqual(report.queries[0].offers[0].price, 400)
+        self.assertEqual(report.queries[0].page_errors, ())
+        self.assertEqual(payload["completeness"], "complete")
+        self.assertIsNone(payload["error_code"])
+
+        early = _itinerary_row("JFK", "LHR", 8, 400)
+        late = _itinerary_row("JFK", "LHR", 21, 500)
+        report, payload = _search_page(
+            _results_page([early, late]),
+            filters=OfferFilters(depart_after=18 * 60),
+        )
+        self.assertEqual(report.queries[0].raw_count, 2)
+        self.assertEqual(report.queries[0].eligible_count, 1)
+        self.assertEqual(report.queries[0].offers[0].price, 500)
+        self.assertEqual(report.queries[0].page_errors, ())
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["completeness"], "complete")
+        self.assertIsNone(payload["error_code"])
+        self.assertIsNone(payload["empty_reason"])

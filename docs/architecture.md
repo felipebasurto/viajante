@@ -297,7 +297,15 @@ cannot carry top-level fields without breaking its shape).
   It does not guess a winner from failed or unpriced days.
 - **Explore** reads the catalog request the Explore page issues in Chromium
   (one adult, economy), then shops each owned destination over the public
-  page. A status 13 on the catalog stops it and records the shared cooldown.
+  page on the start date only. A connection failure loading that page
+  (`net::ERR_*`) is a transport error: one retry, then `fetch_failed`, not a
+  block. A catalog body with no `wrb.fr` payload is markup drift, or a block
+  when the body is a consent, sorry, or other block page. A metro origin fans
+  out to its member airports, sequentially, and stops on a rate limit. A
+  status 13 on the catalog stops it and records the shared cooldown. An empty
+  shop inside a `month` window is `not_loaded` for that date, not
+  `provider_empty` for the month. A one-day shop that returns no cards stays
+  `provider_empty`.
 
 ## Hotels
 
@@ -412,6 +420,16 @@ improvement loops.
   filter drops the extra rows). A tighter one could drop rows the local filter keeps,
   and nothing in the echo reveals it. Price, duration, and layover echoes are checked
   for range; the emissions and separate-ticket echoes are checked for presence.
+- **An empty results frame is ambiguous.** The public page answers a query with no
+  flights with a frame whose itinerary slots (`data[2]`, `data[3]`, `data[5]`) are null.
+  For some route and date pairs it answers the same way while the browser page loads
+  the itineraries separately: `AGP-JNB` on 2027-02-12 gave a sweep `provider_empty`
+  and eight itineraries on `--fetch detail`, and `MAD-JNB` the same day and `AGP-JNB`
+  in December returned rows. Nothing in the frame or the page text separates the two
+  cases, and sending the shopping RPC the browser uses is out of scope. The sweep keeps
+  reporting the page's answer as `provider_empty`; an empty result that matters is
+  re-run with explicit `--fetch detail`. Whether an empty frame may still claim
+  `provider_empty` is open (issue #88).
 - **Detail mode cannot price return legs**; `auto` routes packaged trips to
   sweep for that reason.
 - **Booking.com has no HTTP path**; it needs Playwright and is slow by design.

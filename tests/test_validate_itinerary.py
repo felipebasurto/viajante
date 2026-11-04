@@ -201,6 +201,10 @@ class ValidateItineraryTests(unittest.TestCase):
         report = validate_itinerary([row], {}, currency="USD")
         self.assertFalse(report.feasible)
         self.assertEqual(_status(report, "evidence"), "fail")
+        detail = next(check.detail for check in report.checks if check.constraint == "evidence")
+        self.assertIn("legs[0]", detail)
+        self.assertIn("'error'", detail)
+        self.assertIn("status 'ok'", detail)
 
     def test_query_mutation_fails_binding(self) -> None:
         row = _row(

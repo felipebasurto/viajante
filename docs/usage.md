@@ -144,8 +144,8 @@ viajante flights NYC-LON:2026-11-15 --currency USD
 airports. Each expanded query carries `nearby_label` `metro NYC`, and
 `--exclude-airports` still removes members. Only a code you name expands: `JFK`
 searches `JFK` alone. Metro codes work on one-way and `--trip rt` routes in
-`flights` and `trip`, not on open-jaw or multi-city routes, and not in
-`dates`, `flex`, or `explore`. Combining `--nearby` with a metro code
+`flights` and `trip`, and as a `explore` origin, not on open-jaw or multi-city
+routes, and not in `dates` or `flex`. Combining `--nearby` with a metro code
 is an error, because expanding only the other side would drop part of the
 request. Name metros or airports on both sides instead (`NYC-LON`).
 A route whose two ends are the same metro is rejected: `LON-LON`, `JFK-NYC`,
@@ -416,8 +416,18 @@ never sends that request directly. The request must echo the named origin (or
 a same-city airport) and date, and each priced catalog row must prove its
 origin and destination, otherwise the read fails or the row is dropped. Only
 the page's default one-adult economy state can be proven, so a non-default
-party or cabin is refused before networking. Owned destinations are then
-shopped over the public page as ordinary one-way searches. `--exclude-regions` is explore-only and excludes
+party or cabin is refused before networking. A metro origin (NYC, MIL, and the
+rest of the owned table) runs that catalog once per member airport, in order,
+and merges destinations: the cheapest fare is kept and `origin_airport` names
+the airport. A rate limit stops the airports that have not run. `--nearby`
+with a metro code is an error. `--top` above 30 is clamped to 30 and named in
+`warnings`. Owned destinations are then
+shopped over the public page as ordinary one-way searches on the start date
+only, even when `--month` names the rest of the month. An empty shop on
+that date is `not_loaded` with `shopped_date`. It is not `no_results` and not
+`provider_empty` for the month. A one-day shop that returns no cards stays
+`provider_empty`.
+`--exclude-regions` is explore-only and excludes
 destinations by owned IANA time-zone prefix. Unnamed sort is by price. A raw RPC status 13
 on the catalog stops the search and records the shared Google cooldown. A raw status 13 on the catalog request can stop the read, so an empty or blocked
 explore proves nothing about destinations; name routes and use `flights`,
@@ -705,8 +715,9 @@ parsed fields. The report types and JSON fields are defined in
 | `no_results` | The search returned no results. |
 | `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
 | `rejected` | The provider rejected the request. |
-| `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 is reported without assuming its cause. |
-| `markup_drift` | The response could not be read in the expected page or `ds:1` format. |
+| `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 or an error frame in place of results is reported without assuming its cause, and the batch is not replayed. |
+| `markup_drift` | The response could not be read in the expected page, `ds:1` or Explore catalog format, including a catalog that lists destination cards but no priced rows. |
+| `cards_unparsed` | A public page loaded, but some itinerary cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |
 
@@ -785,6 +796,11 @@ Each tool result starts with a shared envelope: `status`, `completeness`,
 list). Only `empty_reason: provider_empty` means the provider found nothing;
 `filtered_out` means filters removed results the provider returned, and
 `not_loaded` means the search did not complete.
+
+A public sweep's `provider_empty` is the results page's own answer. For one route and date
+the page answered empty while `--fetch detail` listed itineraries, and the two
+responses cannot be told apart on the page. When a decision rests on an empty
+sweep, re-run that query with an explicit `--fetch detail`.
 
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request

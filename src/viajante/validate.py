@@ -186,7 +186,17 @@ def _query_dates(
 
 def _evidence_check(legs: Sequence[Mapping[str, object]]) -> ConstraintCheck:
     if any(row.get("status") != "ok" for row in legs):
-        return _status("evidence", "fail", "an error or missing result was selected")
+        bad = ", ".join(
+            f"legs[{index}] status {row.get('status')!r}"
+            for index, row in enumerate(legs)
+            if row.get("status") != "ok"
+        )
+        return _status(
+            "evidence",
+            "fail",
+            f"an error or missing result was selected ({bad}); "
+            "select offers from results with status 'ok'",
+        )
     evidence = []
     for index, row in enumerate(legs):
         offer = _mapping(row.get("offer"), role=f"legs[{index}].offer")

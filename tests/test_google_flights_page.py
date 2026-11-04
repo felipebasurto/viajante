@@ -10,6 +10,8 @@ from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
+    ShoppingErrorFrame,
+    error_frame_status,
     raw_rpc_error_status,
     rpc_error_status,
 )
@@ -67,6 +69,41 @@ class GoogleFlightsPageTests(unittest.TestCase):
         ):
             with self.subTest(data=data), self.assertRaises(CompactParseMiss):
                 parse_shopping_page(_page(data), currency="EUR")
+
+    def test_provider_error_frame_is_an_error_frame_not_markup_drift(self) -> None:
+        # Live shape, captured 2026-10-16: the page answers a burst of day shops
+        # with ds:1 = [13, null, [[...ErrorResponse...]]] instead of results.
+        frame = [
+            13,
+            None,
+            [
+                [
+                    "type.googleapis.com/travel.frontend.flights.ErrorResponse",
+                    [[None, [[1, 2, 3], None, None, None, None, [[0]]], 0, "x", "y"], 0],
+                ]
+            ],
+        ]
+        with self.assertRaises(ShoppingErrorFrame) as caught:
+            parse_shopping_page(_page(frame), currency="EUR")
+        self.assertEqual(caught.exception.status, 13)
+        self.assertIsInstance(caught.exception, CompactParseMiss)
+
+    def test_error_frame_status_requires_the_exact_frame_shape(self) -> None:
+        # Captured shape: the ErrorResponse type string sits at data[2][0][0].
+        payload = [["type.googleapis.com/travel.frontend.flights.ErrorResponse", []]]
+        self.assertEqual(error_frame_status([13, None, payload]), 13)
+        self.assertEqual(error_frame_status([3, None, payload]), 3)
+        for data in (
+            [13, None, None],  # no payload
+            [13, None, [["other.type", []]]],  # no ErrorResponse marker
+            [13, "x", payload],  # separator slot not null
+            [True, None, payload],  # bool is not a status int
+            [None, None, payload],  # no status
+            [13, None, payload, None],  # four items is not the frame
+            [None, None, [[], None, False], [[], 0, False]],  # empty results frame
+        ):
+            with self.subTest(data=data):
+                self.assertIsNone(error_frame_status(data))
 
     def test_raw_rpc_status_keeps_errorresponse_visible(self) -> None:
         error_response = ')]}\'\n\n[["wrb.fr",null,null,null,null,[13],"generic"]]'

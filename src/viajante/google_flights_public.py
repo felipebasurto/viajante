@@ -14,6 +14,7 @@ from viajante.control import SearchDeadline, checkpoint
 from viajante.google_flights import (
     RPC_THROTTLE_STATUS,
     SEARCH_URL,
+    SWEEP_RETRY_BACKOFF_SECONDS,
     SWEEP_TRANSPORT_STATUS,
     GoogleFlightsBlocked,
     GoogleFlightsHttpSource,
@@ -40,6 +41,7 @@ from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
     RawFlightCard,
+    ShoppingErrorFrame,
     UnpricedShoppingResults,
     explore_request_constraints,
     explore_request_echo,
@@ -177,6 +179,35 @@ def classify_failure(exc: BaseException) -> SearchError:
             message=str(exc) or "Google Flights markup could not be parsed.",
         )
     return classify_provider_failure(exc)
+
+
+def _catalog_parse_error(body: str, exc: CompactParseMiss) -> BaseException:
+    """A catalog body with no readable ``wrb.fr`` payload.
+
+    A consent or sorry page is a block, and the message names the marker.
+    Other HTML is markup drift: the page did not return a catalog. A bare
+    miss that is not HTML is also drift, not a fetch failure and not a block.
+    No owned capture shows this catalog inside ``AF_initDataCallback``, so an
+    HTML page is not mined for destinations.
+    """
+    if looks_blocked(body):
+        return GoogleFlightsBlocked(
+            "Google Explore returned a block page instead of a catalog. " + str(exc)
+        )
+    sample = body.lstrip()[:4000].casefold()
+    if "consent.google" in sample or "/sorry/" in sample:
+        marker = "consent.google" if "consent.google" in sample else "/sorry/"
+        return GoogleFlightsBlocked(
+            "Google Explore returned an interstitial ("
+            + marker
+            + ") instead of a catalog. "
+            + str(exc)
+        )
+    if sample.startswith("<") or "<html" in sample or "<!doctype" in sample:
+        return GoogleFlightsMarkupError(
+            "Google Explore catalog response was HTML without a wrb.fr payload. " + str(exc)
+        )
+    return GoogleFlightsMarkupError(str(exc))
 
 
 def _carrier_catalog_tokens(data: object) -> set[str] | None:
@@ -361,6 +392,8 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self.scope_bound = False
         self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
         self._price_insights: dict[Trip, tuple[PriceInsight | None, str | None]] = {}
+        # Per trip, per page URL: itinerary rows offered, and how many became cards.
+        self._card_pages: dict[int, dict[str, tuple[int, int]]] = {}
         self._stopped_error: GoogleFlightsBlocked | None = None
         self._explore_browser = explore_session(
             html_lang=self._html_lang,
@@ -424,6 +457,16 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 if trip is not None:
                     self._verify_carrier_filters(html, (), trip)
                 raise NoFlightsFound() from exc
+            except ShoppingErrorFrame as exc:
+                # An owned error frame is the provider's answer, not unreadable markup:
+                # like an RPC error status it neither proves nor disproves availability.
+                diagnostics = response_diagnostics(response, url)
+                diagnostics["rpc_status"] = exc.status
+                raise GoogleFlightsBlocked(
+                    f"Google Flights answered with error status {exc.status} and no results. "
+                    "The cause is unknown; availability is not disproved.",
+                    diagnostics=diagnostics,
+                ) from exc
             except UnpricedShoppingResults as exc:
                 provider = getattr(trip, "provider", None)
                 if provider is None or provider.max_price is None:
@@ -439,6 +482,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 self._price_insights[trip] = self._insight_from_page(html)
             if trip is not None:
                 self._verify_carrier_filters(html, cards, trip)
+                self._note_parsed_cards(trip, url, cards)
             return cards
 
     def _verify_context(self, html: str, trip: Trip) -> None:
@@ -558,6 +602,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         _validate_capabilities(trip)
         self.partial_error = None
         self.scope_bound = False
+        self._reset_parsed_cards(trip)
         cards, _html = self._read_page_retry(trip)
         matched = tuple(card for card in cards if _matches_leg(card, trip.legs[0]))
         if not matched:
@@ -621,6 +666,35 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
 
     def metadata_for(self, trip: Trip):
         return self._query_meta.get(trip, (None, False))
+
+    def _reset_parsed_cards(self, trip: Trip) -> None:
+        self._card_pages.pop(id(trip), None)
+
+    def _note_parsed_cards(self, trip: Trip, url: str, cards: tuple) -> None:
+        seen = getattr(cards, "seen", None)
+        if not isinstance(seen, int):
+            return
+        self._card_pages.setdefault(id(trip), {})[url] = (seen, len(cards))
+
+    def card_parse_error(self, trip: Trip) -> SearchError | None:
+        """A page_error when this trip's pages offered more itinerary rows than parsed.
+
+        Route matching and local filters are not counted: ``seen`` and ``parsed`` are
+        taken when the page is decoded, before either drop. Zero parsed cards stays
+        the markup error the decoder already raised.
+        """
+        pages = self._card_pages.get(id(trip))
+        if not pages:
+            return None
+        seen = sum(row[0] for row in pages.values())
+        parsed = sum(row[1] for row in pages.values())
+        if parsed == 0 or parsed >= seen:
+            return None
+        return SearchError(
+            code=SearchErrorCode.CARDS_UNPARSED,
+            message=f"{parsed} of {seen} itinerary cards parsed.",
+            diagnostics={"seen": seen, "parsed": parsed},
+        )
 
     def price_insight_for(self, trip: Trip) -> tuple[PriceInsight | None, str | None]:
         """Insight from the results page. Selected-outbound return pages are not read."""
@@ -801,6 +875,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     )
                     continue
                 try:
+                    self._reset_parsed_cards(trips[index])
                     cards = self._parse_response(response, url, trips[index], capture_insight=True)
                     matched = tuple(
                         card for card in cards if _matches_leg(card, trips[index].legs[0])
@@ -927,6 +1002,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         )
         for index, url, response in zip(pending, urls, responses, strict=True):
             try:
+                self._reset_parsed_cards(trips[index])
                 cards = self._parse_response(response, url, trips[index], capture_insight=True)
                 matched = tuple(card for card in cards if _matches_leg(card, trips[index].legs[0]))
                 if not matched:
@@ -1069,7 +1145,10 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             raise GoogleFlightsMarkupError(
                 "Google Explore catalog request did not echo the default occupancy."
             )
-        catalog = parse_explore_catalog(body, origins=accepted)
+        try:
+            catalog = parse_explore_catalog(body, origins=accepted)
+        except CompactParseMiss as exc:
+            raise _catalog_parse_error(body, exc) from exc
         if catalog.origin_echo is not None and catalog.origin_echo not in accepted:
             raise GoogleFlightsMarkupError(
                 f"Google Explore catalog echoed origin {catalog.origin_echo}, "
@@ -1083,6 +1162,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             raise GoogleFlightsMarkupError(
                 "Google Explore priced rows did not prove the requested origin."
             )
+        if catalog.cards and not catalog.priced:
+            # Destination cards with no priced slot is a moved slot as likely as an
+            # empty answer, so it cannot be told to a traveller as "no destinations".
+            raise GoogleFlightsMarkupError(
+                "Google Explore catalog listed destination cards but no priced rows."
+            )
         return catalog.places
 
     def _explore_page(self, url: str) -> list[tuple[object, str]]:
@@ -1092,6 +1177,17 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         state = rate_limit_status()
         if state is not None:
             raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+        try:
+            return capture_catalog(self._explore_browser, url, self._raise_explore_failure)
+        except SweepTransportError:
+            # One replay, the same rule as a public-page GET. A recorded cooldown
+            # is not a transport error and is not replayed.
+            if rate_limit_status() is not None:
+                raise
+        reset = getattr(self._explore_browser, "reset", None)
+        if callable(reset):
+            reset()
+        self._sleep(SWEEP_RETRY_BACKOFF_SECONDS)
         return capture_catalog(self._explore_browser, url, self._raise_explore_failure)
 
     def _raise_explore_failure(

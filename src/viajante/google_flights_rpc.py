@@ -31,6 +31,19 @@ class UnpricedShoppingResults(CompactParseMiss):
     """Itineraries decoded, but none carried a price."""
 
 
+class ShoppingErrorFrame(CompactParseMiss):
+    """Provider answered with an owned error frame instead of shopping data.
+
+    The frame is ``[status, None, [[...ErrorResponse...]]]``: a backend status
+    where the itinerary groups would be, so it says nothing about availability.
+    It is a ``CompactParseMiss`` so unupdated call sites keep their behavior.
+    """
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        super().__init__(f"provider error frame (status {status})")
+
+
 class EmptyShoppingResults(Exception):
     """Shopping RPC returned itinerary slots with no priced offers."""
 
@@ -85,21 +98,43 @@ def parse_shopping_body(text: str, *, currency: str) -> tuple[RawFlightCard, ...
     return parse_shopping_data(data, currency=currency)
 
 
+class ShoppingCards(tuple[RawFlightCard, ...]):
+    """Parsed cards plus how many itinerary rows the payload offered.
+
+    ``seen`` is the row count. ``len(self)`` is how many became cards. A caller that
+    only reads the cards can keep treating this as a tuple.
+    """
+
+    seen: int
+
+    def __new__(cls, cards: tuple[RawFlightCard, ...], *, seen: int) -> "ShoppingCards":
+        self = super().__new__(cls, cards)
+        self.seen = seen
+        return self
+
+
 def parse_shopping_data(data: object, *, currency: str) -> tuple[RawFlightCard, ...]:
     """Parse Google Flights' decoded shopping-data array from any owned transport."""
     if not isinstance(data, list):
         raise CompactParseMiss("shopping data is not a list")
-    items = _collect_itineraries(data)
-    if not items:
+    status = error_frame_status(data)
+    if status is not None:
+        raise ShoppingErrorFrame(status)
+    rows = _offered_itineraries(data)
+    if not any(_looks_like_itinerary(row) for row in rows):
         if _has_itinerary_slots(data):
             raise EmptyShoppingResults()
         raise CompactParseMiss("no itinerary groups in shopping payload")
-    cards = tuple(
-        card for item in items if (card := _itinerary_to_card(item, currency=currency)) is not None
-    )
+    cards: list[RawFlightCard] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        card = _itinerary_to_card(row, currency=currency)
+        if card is not None:
+            cards.append(card)
     if not cards:
         raise UnpricedShoppingResults("itineraries had no priced offers")
-    return cards
+    return ShoppingCards(tuple(cards), seen=len(rows))
 
 
 # Confirmed on the public results page: 1 low, 2/3/4 typical, 5 high.
@@ -195,6 +230,37 @@ def parse_price_insight(data: object, *, currency: str) -> Optional[PriceInsight
     )
 
 
+_ERROR_RESPONSE_PREFIX = "type.googleapis.com/"
+_ERROR_RESPONSE_SUFFIX = "ErrorResponse"
+
+
+def _has_error_response_type(obj: object, *, depth: int = 0) -> bool:
+    if isinstance(obj, str):
+        return obj.startswith(_ERROR_RESPONSE_PREFIX) and obj.endswith(_ERROR_RESPONSE_SUFFIX)
+    if depth >= 3 or not isinstance(obj, list):
+        return False
+    return any(_has_error_response_type(item, depth=depth + 1) for item in obj)
+
+
+def error_frame_status(data: object) -> Optional[int]:
+    """Status of a provider error frame, else None.
+
+    Both the public page's ds:1 data and decoded wrb.fr shopping data carry
+    ``[status, None, [[...ErrorResponse...]]]`` when the backend search fails.
+    Three items with an integer status first cannot be a rendered results frame
+    (header list, route echo list, itinerary slots), and the ErrorResponse type
+    marker keeps any other short payload on the markup-miss path.
+    """
+    if not (isinstance(data, list) and len(data) == 3):
+        return None
+    status, separator, payload = data
+    if not isinstance(status, int) or isinstance(status, bool) or separator is not None:
+        return None
+    if not _has_error_response_type(payload):
+        return None
+    return status
+
+
 def _wrb_data_string(obj: object) -> Optional[str]:
     if (
         isinstance(obj, list)
@@ -256,23 +322,45 @@ def first_wrb_data(
     return None
 
 
+def _rpc_rows(obj: object) -> list:
+    """Rows of one batchexecute chunk.
+
+    A chunk is one RPC row, or a list of rows. The first row is not always
+    ``wrb.fr``; the status walker already scans every row, and so does this.
+    """
+    if isinstance(obj, list) and obj and isinstance(obj[0], list):
+        return [row for row in obj if isinstance(row, list)]
+    return [obj]
+
+
+def _wrb_data_payload(obj: object) -> str | list | None:
+    """The ``wrb.fr`` data slot: a JSON string, or the same value already decoded."""
+    if (
+        isinstance(obj, list)
+        and obj
+        and isinstance(obj[0], list)
+        and obj[0]
+        and obj[0][0] == "wrb.fr"
+    ):
+        obj = obj[0]
+    if not (isinstance(obj, list) and len(obj) >= 3 and obj[0] == "wrb.fr"):
+        return None
+    data = obj[2]
+    if isinstance(data, str) or isinstance(data, list):
+        return data
+    return None
+
+
 def wrb_data_strings(text: str) -> tuple[str, ...]:
     """Every string payload on every ``wrb.fr`` row in a response body, in order."""
-    found: list[str] = []
+    return tuple(item for item in _wrb_payloads(text) if isinstance(item, str))
+
+
+def _wrb_payloads(text: str) -> tuple[str | list, ...]:
+    found: list[str | list] = []
     for obj in _wrb_chunk_objects(text):
-        rows = (
-            obj
-            if (
-                isinstance(obj, list)
-                and obj
-                and isinstance(obj[0], list)
-                and obj[0]
-                and obj[0][0] == "wrb.fr"
-            )
-            else [obj]
-        )
-        for row in rows:
-            data = _wrb_data_string(row)
+        for row in _rpc_rows(obj):
+            data = _wrb_data_payload(row)
             if data is not None:
                 found.append(data)
     return tuple(found)
@@ -327,12 +415,17 @@ def _has_itinerary_slots(data: list[Any]) -> bool:
 
 
 def _collect_itineraries(data: list[Any]) -> list[Any]:
+    return [item for item in _offered_itineraries(data) if _looks_like_itinerary(item)]
+
+
+def _offered_itineraries(data: list[Any]) -> list[Any]:
+    """Itinerary rows the page listed, including ones that will not become cards."""
     found: list[Any] = []
     seen: set[int] = set()
     for index in (2, 3):
         if index >= len(data):
             continue
-        for item in _iter_group(data[index]):
+        for item in _offered_in_group(data[index]):
             marker = id(item)
             if marker in seen:
                 continue
@@ -341,14 +434,12 @@ def _collect_itineraries(data: list[Any]) -> list[Any]:
     return found
 
 
-def _iter_group(group: object) -> list[Any]:
+def _offered_in_group(group: object) -> list[Any]:
     if not isinstance(group, list) or not group:
         return []
     first = group[0]
-    if isinstance(first, list) and first:
-        nested = [item for item in first if _looks_like_itinerary(item)]
-        if nested:
-            return nested
+    if isinstance(first, list) and first and any(_looks_like_itinerary(item) for item in first):
+        return list(first)
     return [item for item in group if _looks_like_itinerary(item)]
 
 
@@ -880,7 +971,10 @@ def parse_explore_catalog(text: str, *, origins: frozenset[str]) -> ExploreCatal
     proves it was priced from an accepted origin code.
     """
     payloads: list[Any] = []
-    for raw in wrb_data_strings(text):
+    for raw in _wrb_payloads(text):
+        if isinstance(raw, list):
+            payloads.append(raw)
+            continue
         try:
             payloads.append(json.loads(raw))
         except json.JSONDecodeError:
