@@ -144,8 +144,8 @@ viajante flights NYC-LON:2026-11-15 --currency USD
 airports. Each expanded query carries `nearby_label` `metro NYC`, and
 `--exclude-airports` still removes members. Only a code you name expands: `JFK`
 searches `JFK` alone. Metro codes work on one-way and `--trip rt` routes in
-`flights` and `trip`, not on open-jaw or multi-city routes, and not in
-`dates`, `flex`, or `explore`. Combining `--nearby` with a metro code
+`flights` and `trip`, and as a `explore` origin, not on open-jaw or multi-city
+routes, and not in `dates` or `flex`. Combining `--nearby` with a metro code
 is an error, because expanding only the other side would drop part of the
 request. Name metros or airports on both sides instead (`NYC-LON`).
 A route whose two ends are the same metro is rejected: `LON-LON`, `JFK-NYC`,
