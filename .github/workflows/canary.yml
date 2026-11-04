@@ -35,8 +35,17 @@ jobs:
           name: canary-reports
           path: ${{ runner.temp }}/canary
           if-no-files-found: ignore
-      - name: Open or update the markup-drift issue
+      - id: drift
+        name: Tell a layout failure from a block
         if: steps.run.outcome == 'failure'
+        run: |
+          # A block from a shared runner IP is not a layout change: it fails the job (so the
+          # run notifies) but opens no issue. Anything else that is not a priced success does.
+          count=$(jq '[.[] | select(.outcome != "ok" and .error_code != "blocked")] | length' \
+            "$RUNNER_TEMP/canary/summary.json" 2>/dev/null || echo 1)
+          echo "layout_failures=$count" >> "$GITHUB_OUTPUT"
+      - name: Open or update the markup-drift issue
+        if: steps.run.outcome == 'failure' && steps.drift.outputs.layout_failures != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

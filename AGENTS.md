@@ -405,7 +405,8 @@ uv run viajante bench
   score. Update `bench-baseline.json` only when a human merges a win.
 - The weekly canary workflow is the only scheduled live run. It sends three searches (a
   one-way and a round trip on JFK-LHR, a Google hotels search), never retries, and on a
-  failure opens or comments on one `markup-drift` issue. A blocked or rate-limited run
-  fails the job like any other; it proves nothing about the layout.
+  failure that is not a block opens or comments on one `markup-drift` issue. A blocked run
+  fails the job and opens no issue: a shared runner IP being blocked proves nothing about
+  the layout.
 - Playwright is the extra `viajante[browser]`. The MCP extra is `viajante[mcp]`.
 - Known limits and open debt: [docs/architecture.md](docs/architecture.md#known-limits-and-debt).
