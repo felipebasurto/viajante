@@ -41,6 +41,7 @@ from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
     RawFlightCard,
+    ShoppingErrorFrame,
     UnpricedShoppingResults,
     explore_request_constraints,
     explore_request_echo,
@@ -456,6 +457,16 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 if trip is not None:
                     self._verify_carrier_filters(html, (), trip)
                 raise NoFlightsFound() from exc
+            except ShoppingErrorFrame as exc:
+                # An owned error frame is the provider's answer, not unreadable markup:
+                # like an RPC error status it neither proves nor disproves availability.
+                diagnostics = response_diagnostics(response, url)
+                diagnostics["rpc_status"] = exc.status
+                raise GoogleFlightsBlocked(
+                    f"Google Flights answered with error status {exc.status} and no results. "
+                    "The cause is unknown; availability is not disproved.",
+                    diagnostics=diagnostics,
+                ) from exc
             except UnpricedShoppingResults as exc:
                 provider = getattr(trip, "provider", None)
                 if provider is None or provider.max_price is None:

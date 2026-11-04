@@ -84,6 +84,23 @@ class AwardOfferTests(unittest.TestCase):
         self.assertEqual(offer.evidence, "user_supplied")
         self.assertEqual(offer.program, "smiles")
 
+    def test_non_string_evidence_names_the_valid_values(self) -> None:
+        for bad in ({"kind": "user_supplied"}, 1, ["user_supplied"]):
+            with (
+                self.subTest(bad=bad),
+                self.assertRaisesRegex(ValueError, "award evidence must be a string"),
+            ):
+                award_offer_from_mapping(
+                    {
+                        "origin": "GRU",
+                        "destination": "EZE",
+                        "departure_date": "2026-11-20",
+                        "program": "Smiles",
+                        "points": 40000,
+                        "evidence": bad,
+                    }
+                )
+
 
 class TransferPathTests(unittest.TestCase):
     def test_funded_path_covers(self) -> None:

@@ -108,7 +108,9 @@ def award_offer_from_mapping(raw: Mapping[str, Any]) -> AwardOffer:
     if not isinstance(points, int) or isinstance(points, bool):
         raise ValueError("award points must be an integer")
     if not isinstance(evidence, str):
-        raise ValueError("award evidence is required")
+        raise ValueError(
+            "award evidence must be a string: 'confirmed', 'user_supplied', 'cached' or 'estimated'"
+        )
     cabin = raw.get("cabin", "economy")
     if cabin not in ("economy", "premium-economy", "business", "first"):
         raise ValueError(f"invalid cabin: {cabin!r}")
