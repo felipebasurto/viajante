@@ -9,6 +9,8 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-11-04
+
 ### Added
 
 - Flight segments from the public page carry `operated_by` (the operating carrier's own
