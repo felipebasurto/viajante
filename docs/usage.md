@@ -943,7 +943,10 @@ upgrading; confirm the executing version before using new parameters.
 ## Owned segment times
 
 Flight segments may include `arrival_date`, `departure_timezone` and
-`arrival_timezone`. Missing facts remain absent; completeness reports
+`arrival_timezone`. Google's page also returns, per segment, `operated_by` (the
+operating carrier's own text, such as "Republic Airways as American Eagle", present only
+when it differs from the marketing carrier) and `duration_minutes` (the segment alone,
+layovers excluded). Detail cards carry neither. Missing facts remain absent; completeness reports
 `segment_dates` and `segment_timezones` as known or unknown. To validate
 selected rows locally:
 

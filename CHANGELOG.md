@@ -9,6 +9,14 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Added
+
+- Flight segments from the public page carry `operated_by` (the operating carrier's own
+  text, such as "Republic Airways as American Eagle", present only when it differs from the
+  marketing carrier) and `duration_minutes` (the segment alone). Both were returned by
+  Google and unread; checked against live JFK-BOS and MAD-BCN pages. Detail cards carry
+  neither, and a missing fact stays absent.
+
 ## [1.5.3] - 2026-11-04
 
 ### Added
