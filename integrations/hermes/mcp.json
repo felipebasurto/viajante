@@ -4,7 +4,7 @@
     "viajante": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@viajante/mcp@1.5.3"]
+      "args": ["-y", "@viajante/mcp@1.5.4"]
     }
   }
 }

@@ -85,6 +85,7 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Saved on-demand `watch` and the `price_history` / `watch_price` tool bodies: `src/viajante/watch.py`; their CLI: `src/viajante/history_cli.py`
 - Search control (cancel, deadline, progress): `src/viajante/control.py`
 - Repo junk cleaner: `scripts/clean-repo.py`
+- Weekly live canary (three real searches, never gates a pull request): `scripts/canary.py`, `.github/workflows/canary.yml`
 
 ## Public contract
 
@@ -170,10 +171,12 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   every path (the page echoes no basic-economy filter). `less_emissions` and
   `hide_separate_tickets` are refused on detail, round-trip, and multi-city. Never
   silently drop a filter.
-- A sweep `provider_empty` is the page's own answer, not proof. A live check found a
-  route and date (`AGP-JNB` 2027-02-12) where the page answered empty and `--fetch detail`
-  listed itineraries, with identical frames. Do not claim more than the page said; when a
-  decision rests on an empty sweep, re-run explicit `--fetch detail` (issue #88).
+- A results frame with null itinerary slots is `provider_empty` only when it carries the
+  route's price bounds (`ds:1` `data[7][0]`): the page then knew the route's fares and the
+  query's filters emptied the list. Without the bounds the page never loaded fares and the
+  frame is the same one a route with no flights gets (`AGP-JNB` 2027-02-12: the browser
+  listed eight itineraries). That frame is `markup_drift` with a message that availability
+  is not disproved; `--fetch detail` reads the page's own results.
 - A missing filter echo on a page is `markup_drift`, never an unfiltered result.
   The page applied an airline exclusion in a live check, but the page does not prove
   it for every card, so the loop still drops excluded and carrier-unknown cards.
@@ -400,5 +403,9 @@ uv run viajante bench
 - `viajante bench` is the keep-or-revert gate. Do not optimize `score_ms`. Live
   Google runs only with `VIAJANTE_BENCH_LIVE=1`, and that extra time is never the
   score. Update `bench-baseline.json` only when a human merges a win.
+- The weekly canary workflow is the only scheduled live run. It sends three searches (a
+  one-way and a round trip on JFK-LHR, a Google hotels search), never retries, and on a
+  failure opens or comments on one `markup-drift` issue. A blocked or rate-limited run
+  fails the job like any other; it proves nothing about the layout.
 - Playwright is the extra `viajante[browser]`. The MCP extra is `viajante[mcp]`.
 - Known limits and open debt: [docs/architecture.md](docs/architecture.md#known-limits-and-debt).

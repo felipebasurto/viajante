@@ -9,6 +9,34 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-11-04
+
+### Added
+
+- Flight segments from the public page carry `operated_by` (the operating carrier's own
+  text, such as "Republic Airways as American Eagle", present only when it differs from the
+  marketing carrier) and `duration_minutes` (the segment alone). Both were returned by
+  Google and unread; checked against live JFK-BOS and MAD-BCN pages. Detail cards carry
+  neither, and a missing fact stays absent.
+- A weekly live canary (`.github/workflows/canary.yml`, `scripts/canary.py`) runs three real
+  searches (JFK-LHR one-way and round trip, a Google hotels search), uploads the reports,
+  and opens or updates one `markup-drift` issue when any is not a priced success. It is
+  separate from `test.yml`, never retries, and cannot fail a pull request.
+
+### Fixed
+
+- A public results frame with null itinerary slots is `provider_empty` only when it carries
+  the route's price bounds. Without them the page did not load its results (`AGP-JNB` on
+  2027-02-12: the sweep said `provider_empty` while `--fetch detail` listed eight
+  itineraries), so it is `markup_drift` with "availability is not disproved" and the
+  caller re-runs with explicit `--fetch detail`. A query the filters emptied still carries
+  the bounds and stays `provider_empty`.
+- `deadline_seconds` bounds the browser waits of `--fetch detail`. A multi-city detail
+  search with `deadline_seconds=30` returned after 62.7 s because each Playwright wait kept
+  its fixed 60 s or 20 s timeout; it now returns the `deadline` partial at 30.1 s. The same
+  search, uncut, takes about 77 s, so an MCP client timeout below that needs a lower
+  `deadline_seconds`.
+
 ## [1.5.3] - 2026-11-04
 
 ### Added
