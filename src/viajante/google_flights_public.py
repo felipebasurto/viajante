@@ -496,9 +496,15 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             "Number of infants in their own seat": trip.infants_in_seat,
             "Number of infants on lap": trip.infants_on_lap,
         }
+        # The live region is now a phrase ("1 adult passenger"). The count is
+        # aria-valuenow on the labelled control. Older pages only had the number.
         for label, expected in occupancy.items():
-            node = root.css_first(f'[aria-label="{label}"] [aria-live="polite"]')
-            if node is None or node.text(strip=True) != str(expected):
+            node = root.css_first(f'[aria-label="{label}"]')
+            echoed = node.attributes.get("aria-valuenow") if node is not None else None
+            if echoed is None and node is not None:
+                live = node.css_first('[aria-live="polite"]')
+                echoed = None if live is None else live.text(strip=True)
+            if echoed is None or str(echoed).strip() != str(expected):
                 raise GoogleFlightsMarkupError(
                     "Public page did not echo the requested passenger occupancy."
                 )

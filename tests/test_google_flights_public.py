@@ -431,6 +431,36 @@ class PublicContextTests(unittest.TestCase):
         # No carrier filters: the chip state is not asserted.
         source._verify_context(missing, FlightQuery("HAN", "SIN", OUT, adults=2))
 
+    def test_live_occupancy_counter_reads_aria_valuenow(self) -> None:
+        # Captured 2026-11-05: the live region says "1 adult passenger" and the
+        # bare number sits on an aria-hidden sibling. The labelled control's
+        # aria-valuenow is the count.
+        source = _source()
+        snippet = (
+            Path(__file__).parent
+            / "fixtures"
+            / "google_flights"
+            / "occupancy-snippet-2026-11-05.html"
+        ).read_text(encoding="utf-8")
+        page = (
+            '<button aria-label="Currency EUR"></button><div role="combobox">Economy</div>'
+            + snippet
+        )
+        query = FlightQuery("HAN", "SIN", OUT)
+        source._verify_context(page, query)
+        drifted = snippet.replace(
+            'aria-valuenow="1" aria-label="Number of adult passengers"',
+            'aria-valuenow="2" aria-label="Number of adult passengers"',
+            1,
+        )
+        self.assertNotEqual(drifted, snippet)
+        with self.assertRaisesRegex(GoogleFlightsMarkupError, "passenger occupancy"):
+            source._verify_context(
+                '<button aria-label="Currency EUR"></button>'
+                '<div role="combobox">Economy</div>' + drifted,
+                query,
+            )
+
     def test_alliance_include_requires_catalog_token_echo(self):
         source = _source()
         query = FlightQuery("HAN", "SIN", OUT, alliances=("star",))
