@@ -9,6 +9,15 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-11-05
+
+### Fixed
+
+- Public-page passenger counts are read from the occupancy control's `aria-valuenow`.
+  Google's control now puts a phrase in the aria-live region; the labelled element's
+  `aria-valuenow` is the count. Older pages that only have the bare number in aria-live
+  still match.
+
 ### Changed
 
 - The weekly canary runs two searches (a JFK-LHR one-way and a Google hotels search), not
@@ -516,7 +525,12 @@ history up to commit 6ee0fb7.
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.0...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.5...develop
+[1.5.5]: https://github.com/felipebasurto/viajante/compare/v1.5.4...v1.5.5
+[1.5.4]: https://github.com/felipebasurto/viajante/compare/v1.5.3...v1.5.4
+[1.5.3]: https://github.com/felipebasurto/viajante/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/felipebasurto/viajante/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/felipebasurto/viajante/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/felipebasurto/viajante/compare/v1.4.7...v1.5.0
 [1.4.7]: https://github.com/felipebasurto/viajante/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/felipebasurto/viajante/compare/v1.4.5...v1.4.6
