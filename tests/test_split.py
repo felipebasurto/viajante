@@ -32,15 +32,8 @@ from viajante.models import (
     SearchErrorCode,
     SearchReport,
 )
-from viajante.split import (
-    MAX_SPLIT_HUBS,
-    SplitItinerary,
-    SplitPart,
-    _instant,
-    _rank,
-    layover_hubs,
-    search_split_tickets,
-)
+from viajante.models_split import SplitItinerary, SplitPart
+from viajante.split import MAX_SPLIT_HUBS, _instant, _rank, layover_hubs, search_split_tickets
 from viajante.split_filters import SplitFilters
 
 

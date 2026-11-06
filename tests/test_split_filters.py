@@ -7,7 +7,8 @@ import _isolate  # noqa: F401
 from test_split import DAY, NEXT, FakeSearch, _hub_table, _offer, _packaged_via, _segment
 from viajante.flight_filters import OfferFilters
 from viajante.models import FlightQuery, RawJourneyLeg
-from viajante.split import SplitItinerary, SplitPart, _rank, search_split_tickets
+from viajante.models_split import SplitItinerary, SplitPart
+from viajante.split import _rank, search_split_tickets
 from viajante.split_filters import SplitFilters, passes
 
 # The hub table: JFK-LAX 08:00-11:30, a 3.5 h connection at LAX, LAX-NRT 15:00-23:00. Every

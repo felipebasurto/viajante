@@ -16,7 +16,7 @@ same rules as the one-way search. Nothing here converts money or invents a time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import Optional, Tuple
 
 from viajante.flight_filters import (
     OVERNIGHT_ANY,
@@ -24,9 +24,7 @@ from viajante.flight_filters import (
     _clock_minutes,
     _passes_clock_bound,
 )
-
-if TYPE_CHECKING:
-    from viajante.split import SplitItinerary
+from viajante.models_split import SplitItinerary
 
 
 @dataclass(frozen=True)
