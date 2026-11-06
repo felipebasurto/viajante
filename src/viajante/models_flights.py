@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import AbstractSet, Callable, Literal, Mapping, Optional, Sequence, Tuple, Union
 
 from viajante.models_common import (
+    MAX_STOPS_CHOICES,
     EmptyReason,
     EvidenceCompleteness,
     EvidenceKnowledge,
@@ -80,7 +81,7 @@ class FlightLeg:
         destination = _normalize_iata(self.destination, role="destination")
         if origin == destination:
             raise ValueError("origin and destination must differ")
-        if self.max_stops not in (0, 1, 2):
+        if self.max_stops not in MAX_STOPS_CHOICES:
             raise ValueError("max_stops must be 0, 1, or 2")
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "destination", destination)
@@ -167,7 +168,7 @@ class FlightQuery:
         destination = _normalize_iata(self.destination, role="destination")
         if origin == destination:
             raise ValueError("origin and destination must differ")
-        if self.max_stops not in (0, 1, 2):
+        if self.max_stops not in MAX_STOPS_CHOICES:
             raise ValueError("max_stops must be 0, 1, or 2")
         _require_shop_fields(self)
         object.__setattr__(self, "origin", origin)
@@ -230,7 +231,7 @@ class RoundTrip:
             raise ValueError("origin and destination must differ")
         if self.return_date <= self.departure_date:
             raise ValueError("return_date must be after departure_date")
-        if self.max_stops not in (0, 1, 2):
+        if self.max_stops not in MAX_STOPS_CHOICES:
             raise ValueError("max_stops must be 0, 1, or 2")
         _require_shop_fields(self)
         object.__setattr__(self, "origin", origin)

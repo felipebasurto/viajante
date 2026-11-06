@@ -35,6 +35,7 @@ from viajante.models import (
     SearchErrorCode,
     SearchReport,
 )
+from viajante.models_common import MAX_STOPS_CHOICES
 from viajante.models_split import (
     MAX_OTHER_CURRENCY_ROWS,
     PackagedQuote,
@@ -419,7 +420,7 @@ def validate_split_request(
         raise ValueError(f"max_hubs must be between 1 and {MAX_SPLIT_HUBS}")
     if not math.isfinite(min_connection_hours) or min_connection_hours < 0:
         raise ValueError("min_connection_hours must be a non-negative number")
-    if leg_max_stops not in (0, 1, 2):
+    if leg_max_stops not in MAX_STOPS_CHOICES:
         raise ValueError("leg_max_stops must be 0, 1, or 2")
     if top <= 0:
         raise ValueError("top must be positive")

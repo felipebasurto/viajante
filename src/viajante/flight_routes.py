@@ -9,6 +9,7 @@ from typing import Any, Literal, Optional, Sequence, Tuple
 
 from viajante.airports import get_airport, metro_members, metro_of, same_city_iata
 from viajante.models import FlightCabin, FlightLeg, FlightQuery, MultiCity, RoundTrip, Trip
+from viajante.models_common import MAX_STOPS_CHOICES
 
 _ROUTE_SPEC_RE = re.compile(r"^[A-Za-z]{3}-[A-Za-z]{3}:")
 
@@ -281,7 +282,7 @@ def parse_route_specs(
     infants_in_seat: int = 0,
     infants_on_lap: int = 0,
 ) -> Tuple[FlightQuery, ...]:
-    if max_stops not in (0, 1, 2):
+    if max_stops not in MAX_STOPS_CHOICES:
         raise ValueError("max_stops must be 0, 1, or 2")
     occupancy = {
         "adults": adults,

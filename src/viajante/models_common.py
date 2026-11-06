@@ -16,6 +16,8 @@ DEFAULT_TOP = 8
 
 # Fetch/browser locale is English so owned card parsers stay on English evidence.
 FETCH_LANGUAGE = "en"
+# The product searches at most two stops; a route cannot ask for 3+.
+MAX_STOPS_CHOICES: Tuple[int, ...] = (0, 1, 2)
 
 FETCH_LOCALE = "en-US"
 
