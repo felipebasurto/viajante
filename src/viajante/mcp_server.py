@@ -178,8 +178,6 @@ class ProgressRelay:
                 value = max(float(indexed.group(1)), floor + 0.001)
                 new_total = float(indexed.group(2))
                 if self._total is None or new_total != self._total:
-                    # A new phase whose total cannot hold the value reports without a total,
-                    # rather than dropping every later line against the old one.
                     total = new_total if value <= new_total else None
                 else:
                     total = new_total
@@ -376,7 +374,6 @@ def _tool_error_text(name: str, exc: Exception) -> str:
         return _TOOL_ERROR_PREFIX.format(name=name) + body
     text = str(cause)
     if text.startswith('{"error"'):
-        # A handler's own argument check raises the same JSON body; it gets the same prefix.
         return _TOOL_ERROR_PREFIX.format(name=name) + text
     return text
 
@@ -421,7 +418,6 @@ def _wire_type(hint: Any) -> Any:
 
 
 def _room_rates_flag(value: object) -> bool:
-    # Reject before bool coercion, which would treat "yes" as true.
     if not isinstance(value, bool):
         raise ValueError("room_rates must be a boolean")
     return value

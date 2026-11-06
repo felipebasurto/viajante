@@ -221,7 +221,6 @@ def _by_code() -> dict[str, Airport]:
 
 
 def is_known_iata(code: str) -> bool:
-    # Known-code checks skip the city/name scan tables used by lookup_airports.
     text = code.strip().upper()
     return len(text) == 3 and text.isalpha() and text in _by_code()
 

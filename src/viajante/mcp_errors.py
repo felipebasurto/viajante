@@ -23,7 +23,6 @@ INVALID_PARAMETER = "invalid_parameter"
 SEARCH_IN_PROGRESS = "search_in_progress"
 _BUSY_PHRASE = "already running in this process"
 
-# Messages that name a concept rather than a parameter. First tool parameter that exists wins.
 _ALIASES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple(
     (re.compile(pattern), fields)
     for pattern, fields in (

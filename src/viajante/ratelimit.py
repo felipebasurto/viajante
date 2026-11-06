@@ -47,8 +47,6 @@ def _read_rate_limit(file: str, now: float) -> Optional[dict]:
         at, until = float(state["at"]), float(state["until"])
     except (OSError, ValueError, TypeError, KeyError, OverflowError):
         return None
-    # A stamp more than one cap from now would hold the provider off for good or overflow the
-    # clock format. NaN and inf fail these comparisons too; the span check bounds `at`.
     cap = RATE_LIMIT_MAX_COOLDOWN_SECONDS
     if not now - cap <= until <= now + cap:
         return None
@@ -57,7 +55,6 @@ def _read_rate_limit(file: str, now: float) -> Optional[dict]:
     # Records written before these fields existed stay readable: their provenance is
     # unknown rather than guessed.
     state = dict(state)
-    # isinstance first: an unhashable basis (a list or dict) would make the set lookup raise.
     if not isinstance(state.get("basis"), str) or state["basis"] not in _COOLDOWN_BASES:
         state["basis"] = "unknown"
     if state.get("cause") not in _CAUSE_OF_BASIS.values():
@@ -65,7 +62,6 @@ def _read_rate_limit(file: str, now: float) -> Optional[dict]:
     for key in ("viajante_version", "endpoint"):
         if not isinstance(state.get(key), str):
             state[key] = None
-    # A cooldown length that is not a number in range is unknown: 0, as for records without one.
     if not (isinstance(state.get("cooldown_s"), (int, float)) and 0 <= state["cooldown_s"] <= cap):
         state["cooldown_s"] = 0
     return state

@@ -121,7 +121,6 @@ def passes(itinerary: SplitItinerary, filters: SplitFilters) -> bool:
     if filters.exclude_airports and airports & set(filters.exclude_airports):
         return False
     if filters.include_airports:
-        # Include: the trip destination (last ticket of a hub split, outbound of a pair).
         destination = (
             itinerary.parts[-1].query.destination
             if itinerary.kind == "hub"

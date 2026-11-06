@@ -89,8 +89,6 @@ class ChromiumSession:
             try:
                 self._start()
             except BaseException:
-                # A half-started session (a driver with no browser, or no context) is torn
-                # down here, so a failed start never leaves a driver running.
                 self._teardown()
                 raise
             if not self._atexit_registered:

@@ -188,7 +188,6 @@ class DateCalendarReport:
     def __post_init__(self) -> None:
         _store_naive_utc(self)
         _store_nearby_label(self)
-        # A row built without its day fare (by hand, not by a search) carries only its price.
         object.__setattr__(
             self,
             "summary",
@@ -341,7 +340,6 @@ class FlexSearchReport:
                 error.code for row in self.days for error in row.page_errors
             ]
             cut = _deadline_stop(codes + [self.error.code if self.error else None])
-            # A shop cut by the deadline is one more unit that was attempted and failed.
             shop_cut = self.error is not None and self.error.code == SearchErrorCode.DEADLINE
             coverage_complete = (
                 cut is None

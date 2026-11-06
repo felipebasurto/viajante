@@ -153,7 +153,6 @@ def _city_decision(result, offer):
         and (country is None or airport.country == country)
     ]
     if not hits:
-        # The stored search named a city the catalogue cannot place: inconclusive, not caller error.
         return None, "room rates require an unambiguous city; use City or City, ISO country"
     groups = _places(hits)
     point = _point(offer)
@@ -198,7 +197,6 @@ def _accept_quotes(detail: dict, quotes: dict, rooms) -> dict:
     detail["room_quotes"] = quotes
     detail["echo"] = echo
     _lift(detail, stamp_search(dict(quotes)))
-    # Absence of an echo is not a confident match: never ok/complete.
     if echo == "unknown" and detail["status"] == "ok" and detail["completeness"] == "complete":
         detail["completeness"] = "partial"
     return detail

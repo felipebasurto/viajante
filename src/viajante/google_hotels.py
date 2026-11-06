@@ -146,7 +146,6 @@ class GoogleHotelsSource:
             try:
                 cards.extend(self._page(response, post.url).cards[:limit])
             except SearchDeadline:
-                # The price page already arrived; only the widening page was cut.
                 note_cut()
                 continue
             except SweepTransportError as exc:
@@ -162,7 +161,6 @@ class GoogleHotelsSource:
             except HotelsRejected as exc:
                 page_errors.append(SearchError(code=SearchErrorCode.REJECTED, message=str(exc)))
             except EmptyHotelResults:
-                # A relevance page with no priced stays is an answer, not a failure.
                 continue
         params = hotel_navigation_params(query, currency=self._currency, html_lang=self._html_lang)
         return HotelPage(

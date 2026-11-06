@@ -116,7 +116,6 @@ def _error(
     """Count one provider error. Returns the empty reason it implies for its row."""
     code = str(error.get("code", "fetch_failed"))
     if code == "no_results":
-        # An error code only rides along with the reason it actually supports.
         if empty_as == "provider_empty":
             tally.empty_codes.append((empty_as, code))
         setattr(tally, empty_as, getattr(tally, empty_as) + 1)
@@ -207,8 +206,6 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
             if isinstance(row, dict):
                 _date_row(row, tally, provider)
     elif isinstance(node.get("destinations"), list):
-        # A catalog destination whose price shop failed or came back empty carries no
-        # price: it proves nothing, so it is unproven rather than usable.
         priced = sum(
             isinstance(row, Mapping) and row.get("price") is not None
             for row in node["destinations"]
@@ -233,7 +230,6 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
         elif not isinstance(error, Mapping):
             tally.provider_empty += 1
         elif error.get("code") == "no_results" and node.get("requested_name"):
-            # An exact-name match over the provider's list did not resolve one hotel.
             _error(error, tally, provider, empty_as="filtered_out")
         else:
             _error(error, tally, provider)
@@ -242,7 +238,6 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
         error = node.get("error")
         if isinstance(error, Mapping) and not node["offers"]:
             if error.get("code") == "currency_mismatch":
-                # The provider priced the route; the caller's named keep removed every row.
                 tally.empty_codes.append(("filtered_out", "currency_mismatch"))
                 tally.filtered_out += 1
             else:
@@ -272,8 +267,6 @@ def _retry_after(tally: _Tally, now: Optional[float]) -> tuple[Optional[str], Op
     if not until:
         return None, None
     end, seconds = max(until, key=lambda pair: pair[0])
-    # The error already rounded its end up to a whole second and derived its seconds from
-    # it; repeat both instead of deriving a second, slightly different pair.
     return _iso_z(end), seconds if seconds is not None else max(1, math.ceil(end - current))
 
 
@@ -294,14 +287,11 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
         status, empty_reason = worst, "not_loaded"
     else:
         status = "no_results"
-        # The weakest claim wins. Unproven units cannot be called empty, and nothing
-        # attempted (every query removed locally) is a filter outcome, not an empty answer.
         empty_reason = _answer_reason(
             not_loaded=bool(tally.not_loaded),
             provider_only=tally.provider_empty and not tally.filtered_out,
         )
     if failures:
-        # A deadline cut is a stop we chose, not a provider refusal: what ran stays partial.
         cut = all(code == "deadline" for _, code, _ in failures)
         completeness = "partial" if answered or cut else "blocked"
     else:
@@ -312,7 +302,6 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
             (code for reason, code in tally.empty_codes if reason == empty_reason), None
         )
     units = answered + tally.not_loaded + len(failures)
-    # A request answered from a recorded cooldown never reached the provider: nothing was observed.
     observed = tally.observed if not units or units > tally.unsent else []
     retry_after, retry_after_seconds = _retry_after(tally, now)
     payload.update(
@@ -384,8 +373,6 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
         status, empty_reason = worst, "not_loaded"
     else:
         status = "no_results"
-        # The packaged fare is a baseline, not a pairing input: when legs were searched
-        # they alone decide whether the provider had nothing to pair.
         if legs:
             only_provider = leg_empty == len(legs)
         else:
@@ -394,7 +381,6 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
             not_loaded=bool(tally.not_loaded), provider_only=only_provider
         )
     if failures:
-        # As in stamp_search, a deadline cut is a chosen stop, not a provider refusal.
         cut = all(code == "deadline" for _, code, _ in failures)
         completeness = "partial" if itineraries or answered or cut else "blocked"
     else:
@@ -407,7 +393,6 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
     if error_code is None and empty_reason == "provider_empty":
         error_code = "no_results"
     retry_after, retry_after_seconds = _retry_after(tally, now)
-    # Nothing was observed when every counted failure was a recorded cooldown and nothing answered.
     units = answered + len(failures)
     observed = payload.get("searched_at") if (not units or units > tally.unsent) else None
     payload.update(

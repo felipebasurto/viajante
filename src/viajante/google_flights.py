@@ -176,8 +176,6 @@ _BLOCKED_MEMO = threading.local()
 
 
 def looks_blocked(html: str, final_url: str = "") -> bool:
-    # One response is checked up to three times on the way in. Remember the last page
-    # by identity, so its lowercase copy and RPC scan run once per response.
     memo = getattr(_BLOCKED_MEMO, "entry", None)
     if memo is not None and memo[0] is html and memo[1] == final_url:
         return memo[2]
@@ -459,7 +457,6 @@ class ChromeSweepClient:
         try:
             return wait_for_future(future, max(timeout + 5.0, 10.0))
         except FutureTimeout:
-            # Stop the requests still queued on the loop; nothing should run unawaited.
             future.cancel()
             raise
 
@@ -602,7 +599,6 @@ class ChromeSweepClient:
                 )
             )
         except SearchDeadline:
-            # Responses that already arrived are real; only the rest were not loaded.
             return _settle_batch(out, sent, jobs, deadline=True)
         except FutureTimeout:
             return _settle_batch(out, sent, jobs, deadline=False)

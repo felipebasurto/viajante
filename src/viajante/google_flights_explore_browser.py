@@ -27,7 +27,6 @@ from viajante.storage import default_state_dir
 _EXPLORE_CATALOG_SERVICE = "GetExploreDestinations"
 _EXPLORE_CATALOG_WAIT_MS = 45_000
 
-# check(body, *, response=None, retry_after_seconds=None) raises for a block, throttle or error.
 Check = Callable[..., None]
 
 
@@ -117,7 +116,6 @@ def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tu
         checkpoint()
         for _post, response, retry_after in captured:
             check(response.text, response=response, retry_after_seconds=retry_after)
-        # Keep Playwright pumping response events while checking control between sleeps.
         for elapsed in range(0, CONSENT_SETTLE_MS, 250):
             checkpoint()
             page.wait_for_timeout(min(250, CONSENT_SETTLE_MS - elapsed))

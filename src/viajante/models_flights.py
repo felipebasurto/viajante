@@ -661,7 +661,6 @@ class PriceInsight:
 
 RECOMMENDATION_SCHEMA_VERSION = 2
 
-# First name is relaxed first: clock preferences, then duration, then bags, stops last.
 RELAX_ORDER: Tuple[str, ...] = (
     "arrive_before",
     "arrive_after",
@@ -675,6 +674,7 @@ RELAX_ORDER: Tuple[str, ...] = (
 )
 Status = Literal["met", "unmet", "unknown"]
 PriceComparison = Literal["compared", "skipped_mixed_currency", "skipped_unknown_currency"]
+
 
 @dataclass(frozen=True)
 class Requirements:

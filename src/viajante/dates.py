@@ -707,7 +707,6 @@ def cheapest_priced_day(
         return None
 
     def sort_key(row: DatePriceRow) -> tuple[float, int, date]:
-        # The same metric that picked the row's winner: fare plus the named buffer.
         cost = (row.price or 0.0) + (row.baggage_buffer or 0)
         delta = abs((row.departure_date - around).days)
         return (cost, delta, row.departure_date)
@@ -771,7 +770,6 @@ def _flex_report_for_seed(
     else:
         row_errors = [row.error for row in days if row.error is not None]
         if row_errors:
-            # A provider block outranks every other row failure, wherever its row falls.
             error = next(
                 (err for err in row_errors if err.code == SearchErrorCode.BLOCKED),
                 row_errors[0],
@@ -793,7 +791,6 @@ def _flex_report_for_seed(
             shop = _day_trip(seed, chosen, stay)
             report_progress(f"chosen {chosen.isoformat()}; pricing that day")
             backend = "calendar_then_sweep"
-            # The sweep already fetched this day; a second fetch would repeat the same pages.
             cards = cards_by_day.get(chosen, ())
             eligible = offers_from_cards(cards, shop, filters, baggage_buffer=baggage_buffer)
             ranked = _rank_offers(eligible, top=top, sort=sort)
@@ -802,8 +799,6 @@ def _flex_report_for_seed(
             else:
                 offers = ranked
             compare = compare_nonstop_vs_one_stop(eligible)
-            # The typical is built from each day's cheapest eligible fare, so the label uses that
-            # same base, not the shown offers (top may hide the cheapest bare fare).
             day_fare = min((offer.price for offer in eligible), default=None)
     label = vs_typical(day_fare, typical) if day_fare is not None else None
     url_trip = shop or _day_trip(seed, chosen or around, stay)
@@ -1207,8 +1202,6 @@ def _sweep_per_day(
                 note(index, day)
         return tuple(rows)
 
-    # The public source batches a round-trip window. Sources without that method
-    # stay on the day loop below. A deadline day is a row and emits no progress.
     window = getattr(source, "fetch_round_trip_window", None)
     if callable(window) and all(isinstance(query, RoundTrip) for _day, query in day_queries):
 

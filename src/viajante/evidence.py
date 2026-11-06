@@ -77,9 +77,6 @@ def selection_records(payload: Mapping[str, object], report=None) -> dict[str, o
             return
         queries = node.get("queries")
         if isinstance(queries, list):
-            # A typed hotel report is what a later read opens. A bare hotel
-            # payload is itself the snapshot. Flight reports have queries too;
-            # their offers have no total_price and are skipped below.
             owner = typed if hasattr(typed, "queries") else None
             if owner is None and typed is None:
                 owner = node
@@ -182,7 +179,6 @@ class _Owned:
     def owns_amount(self, value: float, currency: Optional[str]) -> bool:
         # ponytail: rounding tolerance is max(1, 0.5%); a caller rounding a JPY fare to
         # the nearest thousand is flagged. Upgrade: per-currency minor-unit tolerance.
-        # A zero (an unnamed baggage buffer, an unchanged price) owns only zero.
         return any(
             (currency is None or currency == code)
             and abs(value - owned) <= (max(1.0, owned * 0.005) if owned else 0.0)

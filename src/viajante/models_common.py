@@ -12,7 +12,6 @@ from typing import Literal, Mapping, Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata
 
-# Results a search returns per query when the caller does not name a top count.
 DEFAULT_TOP = 8
 
 # Fetch/browser locale is English so owned card parsers stay on English evidence.
@@ -384,7 +383,6 @@ class SearchError:
     code: SearchErrorCode
     message: str
     rate_limited: bool = False
-    # Epoch seconds a recorded cooldown ends; None unless a cooldown file named one.
     retry_until: Optional[float] = None
     timeout: bool = False
     diagnostics: Optional[Mapping[str, object]] = None
@@ -395,8 +393,6 @@ class SearchError:
             payload["rate_limited"] = True
             now = time.time()
             if self.retry_until is not None and self.retry_until > now:
-                # Round up once: the ISO instant is never earlier than the real end, and
-                # the seconds come from that same instant.
                 end = math.ceil(self.retry_until)
                 payload["retry_after"] = datetime.fromtimestamp(end, timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%SZ"

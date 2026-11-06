@@ -97,7 +97,6 @@ from viajante.trip import search_trip, stay_window_from_trips
 from viajante.validate import validate_itinerary
 
 _SEARCH_LOCK = threading.Lock()
-# Guards _CACHE: a replay read and a fill can come from different threads.
 _CACHE_LOCK = threading.Lock()
 CACHE_SECONDS = 300.0
 _CACHE: dict[tuple[str, str], tuple[float, dict, dict]] = {}
@@ -190,7 +189,6 @@ def _cached(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         validate_deadline_seconds(kwargs.get("deadline_seconds"))
-        # A complete result does not depend on how long the caller was willing to wait.
         keyed = sorted((k, v) for k, v in kwargs.items() if k != "deadline_seconds")
         key = (fn.__name__, repr((args, keyed)))
         now = time.monotonic()
@@ -433,7 +431,6 @@ def search_split_tickets_tool(
         leg_max_stops=leg_max_stops,
         top=top,
     )
-    # The hub list is `via`; the offer filters judge the journey and the hub connection.
     shop = _shop_filters(
         depart_window=depart_window,
         arrive_before=arrive_before,
@@ -1110,7 +1107,6 @@ def split_stay_costs_tool(
         stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
     )
     payload = stamp_local(dict(report.to_dict()), partial=bool(report.unallocated_nights))
-    # Shares are arithmetic on caller totals: evidence only when a search owns every input.
     inputs = [stay.total for stay in report.stays]
     if report.fee_per_person_night is not None:
         inputs.append(report.fee_per_person_night)
@@ -1157,7 +1153,6 @@ def recheck_offer_tool(
         )
     )
     stamp_recheck(result)
-    # Caller-typed values are not provider evidence: leave them out of the ledger.
     owned = dict(result)
     if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
         del owned["previous"]
@@ -1167,8 +1162,6 @@ def recheck_offer_tool(
             closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
             closest["differences"] = _without_previous(closest["differences"])
             owned["closest_candidate"] = closest
-    # Record only a check that ran to a provider answer (a match, a substitution, or a
-    # completed not_found). An unsent or failed check, or incomplete_identity, proves nothing.
     if result["check_completed"]:
         record(owned)
     return result
@@ -1178,7 +1171,6 @@ def verify_answer_tool(answer: str) -> Mapping[str, object]:
     payload = dict(verify_answer_evidence(answer))
     if payload["ok"]:
         return stamp_local(payload)
-    # status mirrors the verdict so it never reads "ok" beside "ok": false.
     nothing = not payload["searches"]
     return stamp_local(
         payload,
@@ -1196,13 +1188,10 @@ def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Ma
     def action():
         return get_hotel_details(report, query_index, offer_index, room_rates=room_rates)
 
-    # A read does not enter the evidence ledger or the selection store.
     # room_rates false stays off the search lock; the server runs it on the lookup worker.
     detail = _with_search_lock(action) if room_rates else action()
     detail["original_quote"]["offer"]["selection_id"] = selection_id
     quotes = detail.get("room_quotes")
     if room_rates and quotes and quotes.get("rates") and not failure_codes(quotes):
-        # Only the separate, newly fetched quote is new provider evidence.
-        # Local reads do not renew the original snapshot or ledger.
         record(quotes)
     return detail

@@ -149,7 +149,6 @@ class SplitItinerary:
             payload["timing_note"] = None if self.timing_proven else TIMING_UNPROVEN_NOTE
         saved = self.savings
         if saved is not None and self.packaged is not None:
-            # Both amounts are non-negative so each direction is a verifiable positive number.
             comparison: dict[str, object] = {
                 "direction": "cheaper" if saved > 0 else "costlier" if saved < 0 else "same",
                 "currency": self.currency,

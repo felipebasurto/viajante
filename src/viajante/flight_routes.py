@@ -527,8 +527,6 @@ def keep_included_dest_trips(
     allowed = _named_iata(include_airports)
     if not allowed:
         return tuple(trips)
-    # The return leg of a kept trip (ORIGIN-DEST:OUT:BACK sugar) stays with that trip, since
-    # it leaves the included destination; dropping it would lose the return with no note.
     included = {_ends(trip) for trip in trips if trip_dest_in_include_list(trip, allowed)}
     return tuple(
         trip

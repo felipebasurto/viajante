@@ -57,12 +57,10 @@ DEFAULT_MIN_CONNECTION_HOURS = 3.0
 DEFAULT_SPLIT_HUBS = 3
 # Hard ceiling: each hub costs 2 searches (3 with overnight), so at most 15 extra searches.
 MAX_SPLIT_HUBS = 5
-# Airports a caller may name explicitly as connection points (``via``).
 MAX_VIA = 5
 SPLIT_LEG_TOP = 10
-# Rows kept from each non-requested currency group and from the unknown-total group.
 
-# ISO 4217 minor units for the currencies that are not 2-digit; used only to round a sum.
+
 def _offer_currency(offer: FlightOffer, report: SearchReport) -> str:
     return offer.evidence.currency if offer.evidence is not None else report.currency
 
@@ -292,7 +290,6 @@ def pair_mixed_one_ways(
     for code in dict.fromkeys(row.currency for row in (*proven, *unproven)):
         if code is None:
             continue
-        # Per currency: the cheapest proven pair, else the cheapest unproven one.
         pool = [row for row in proven if row.currency == code] or [
             row for row in unproven if row.currency == code
         ]
@@ -326,7 +323,6 @@ def _rank(
     ranked: list[SplitItinerary] = []
     omitted = 0
     for code in order:
-        # Unproven timing never sorts above proven timing.
         group = sorted(
             groups[code],
             key=lambda row: (
@@ -514,7 +510,6 @@ def search_split_tickets(
                 ),
             ]
             report_progress("split: outbound and return as separate one-way tickets")
-            # Each ticket is a whole journey, so the bounds apply to both before their top rows.
             report = search(
                 trips,
                 top=SPLIT_LEG_TOP,
@@ -566,7 +561,6 @@ def search_split_tickets(
             if head_bounds == tail_bounds:
                 report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)
             else:
-                # A clock bound binds one end of the journey, so each end is its own search.
                 # ponytail: with named clock bounds a hub costs two sequential sweeps instead of
                 # one. Upgrade: merge them once the provider takes per-query clock filters.
                 head = search(trips[:1], top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)

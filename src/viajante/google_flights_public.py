@@ -275,7 +275,6 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
     """
     sides = (outbound, returned)
     if any(side.airline_codes is None and not side.airline for side in sides):
-        # One leg's carrier is unknown, so the package carrier is unknown too.
         codes, airline = None, ""
     else:
         codes = None
@@ -389,7 +388,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self.scope_bound = False
         self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
         self._price_insights: dict[Trip, tuple[PriceInsight | None, str | None]] = {}
-        # Per trip, per page URL: itinerary rows offered, and how many became cards.
         self._card_pages: dict[int, dict[str, tuple[int, int]]] = {}
         self._stopped_error: GoogleFlightsBlocked | None = None
         self._explore_browser = explore_session(
@@ -453,7 +451,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 self._stopped_error = exc
             raise
         html = response.text
-        # The context, ds:1 and carrier checks all read this page: parse its tree once.
         with shared_page_tree(html):
             if trip is not None:
                 self._verify_context(html, trip)
@@ -481,7 +478,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 self._verify_carrier_filters(html, (), trip)
                 raise NoFlightsFound() from exc
             except CompactParseMiss as exc:
-                # Missing bootstrap data cannot prove the provider returned no flights.
                 raise GoogleFlightsMarkupError(str(exc)) from exc
             if capture_insight and trip is not None:
                 # A bad insight slot must not fail the search that already parsed.
@@ -1004,7 +1000,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         return slots, halt, client
 
     def fetch_many(self, trips: Sequence[Trip]):
-        # The HTTP client multiplexes GETs at the configured concurrency for OWs.
         if not trips:
             return []
         if all(isinstance(trip, RoundTrip) for trip in trips):

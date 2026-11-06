@@ -107,7 +107,6 @@ def validate_layover_hours(
             "min_layover_hours",
             "max_duration_hours",
         )
-    # NaN compares False to everything, so "< 0" alone let nan/inf silently disable a bound.
     if max_layover_hours is not None and (
         not math.isfinite(max_layover_hours) or max_layover_hours < 0
     ):
@@ -448,7 +447,6 @@ def _satisfies_no_overnight(
     for code in codes:
         for city, overnight in events:
             if overnight is False:
-                # Provably not a night, so it cannot be one at the named city.
                 continue
             if _overnight_city_match(city, code) is not False:
                 return False

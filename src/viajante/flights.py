@@ -303,8 +303,6 @@ def _run_search(
         )
 
     def _maybe_reset(failure: SearchError) -> None:
-        # Empty/rejected/markup are owned outcomes. Drop TLS only when a
-        # retry might succeed, or when the session may be poisoned (blocked).
         if should_retry(failure) or failure.code == SearchErrorCode.BLOCKED:
             source.reset()
 
@@ -317,8 +315,8 @@ def _run_search(
             _attempt,
             classify=classify_failure,
             on_failure=_maybe_reset,
-            give_up=lambda exc, failure: not should_retry(
-                failure, transport=isinstance(exc, SweepTransportError)
+            give_up=lambda exc, failure: (
+                not should_retry(failure, transport=isinstance(exc, SweepTransportError))
             ),
             backoff=lambda attempt: retry_backoff(attempt, random_gen),
             sleep=sleep,
@@ -383,7 +381,6 @@ def _run_search(
     blocked: Optional[SearchError] = None
     for index, trip in enumerate(trips):
         if blocked is not None:
-            # Google refused the earlier query: send nothing more, and say so per trip.
             results.append(
                 _stamp(
                     QueryFailure(

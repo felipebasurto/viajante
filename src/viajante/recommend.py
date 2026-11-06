@@ -45,8 +45,6 @@ SHORTLIST_SIZE = 3
 MAX_STOPS = 2  # the product searches at most two stops
 
 
-
-
 def _fastest_duration(offers: Sequence[FlightOffer]) -> Optional[float]:
     hours = [offer.duration_hours for offer in offers if offer.duration_hours is not None]
     return min(hours) if hours else None

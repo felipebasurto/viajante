@@ -163,8 +163,6 @@ def _normalize_offer(
         return None
     packaged = len(raw.legs) > 1
     if packaged:
-        # Stops and duration describe the whole package: the worst leg's stops, the summed
-        # leg time. An unknown leg makes the total unknown; the outbound alone is not the trip.
         stops_count, duration_hours = _package_totals(raw.legs)
     airline = raw.airline or ""
     requested = bags is not None or carry_on is not None
