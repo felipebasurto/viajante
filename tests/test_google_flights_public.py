@@ -6,6 +6,7 @@ import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from random import Random
+from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
@@ -33,7 +34,12 @@ from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
     PublicGoogleFlightsHttpSource,
 )
-from viajante.google_flights_rpc import RawFlightCard, _collect_itineraries, _wrb_json
+from viajante.google_flights_rpc import (
+    RawFlightCard,
+    _looks_like_itinerary,
+    _offered_itineraries,
+    _wrb_json,
+)
 from viajante.models import (
     FlightQuery,
     MultiCity,
@@ -1075,6 +1081,11 @@ class SharedPageTreeTests(unittest.TestCase):
             self.assertIsNot(page_tree(other), first)
 
         self.assertIsNot(page_tree(page), first)
+
+
+def _collect_itineraries(data: list[Any]) -> list[Any]:
+    """The itinerary rows the page listed, as the test fixture edits them."""
+    return [item for item in _offered_itineraries(data) if _looks_like_itinerary(item)]
 
 
 class UnpricedPageTests(unittest.TestCase):

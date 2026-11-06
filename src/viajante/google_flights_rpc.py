@@ -446,10 +446,6 @@ def _has_price_bounds(filters: list[Any]) -> bool:
     )
 
 
-def _collect_itineraries(data: list[Any]) -> list[Any]:
-    return [item for item in _offered_itineraries(data) if _looks_like_itinerary(item)]
-
-
 def _offered_itineraries(data: list[Any]) -> list[Any]:
     """Itinerary rows the page listed, including ones that will not become cards."""
     found: list[Any] = []
@@ -917,8 +913,7 @@ class ExploreCatalogPage:
 
     ``places`` are priced rows joined to city cards; ``origin_echo`` is the
     provider-stamped origin code; ``currencies`` are the stamps inside priced
-    offer tokens. ``unreadable_priced`` counts priced rows whose token could
-    not prove the requested origin.
+    offer tokens.
     """
 
     places: tuple[CompactExplorePlace, ...]
@@ -926,7 +921,6 @@ class ExploreCatalogPage:
     currencies: frozenset[str]
     cards: int
     priced: int
-    unreadable_priced: int
 
 
 @dataclass(frozen=True)
@@ -1063,7 +1057,6 @@ def parse_explore_catalog(text: str, *, origins: frozenset[str]) -> ExploreCatal
     seen: set[str] = set()
     currencies: set[str] = set()
     priced = 0
-    unreadable = 0
     for payload in payloads[1:]:
         for entry in _explore_priced_entries(payload):
             if not isinstance(entry, list) or len(entry) <= 6:
@@ -1072,20 +1065,17 @@ def parse_explore_catalog(text: str, *, origins: frozenset[str]) -> ExploreCatal
             flight = entry[6]
             iata = flight[5] if isinstance(flight, list) and len(flight) > 5 else None
             if not (isinstance(iata, str) and len(iata) == 3 and iata.isalpha()):
-                unreadable += 1
                 continue
             iata = iata.upper()
             price = entry[1]
             token = price[1] if isinstance(price, list) and len(price) > 1 else None
             fields = _explore_token_fields(token)
             if fields is None:
-                unreadable += 1
                 continue
             token_origin, token_dest, currency_tag = fields
             if currency_tag:
                 currencies.add(currency_tag)
             if token_origin not in origins or token_dest != iata:
-                unreadable += 1
                 continue
             card = cards.get(entry[0])
             if card is None or iata in seen:
@@ -1098,7 +1088,6 @@ def parse_explore_catalog(text: str, *, origins: frozenset[str]) -> ExploreCatal
         currencies=frozenset(currencies),
         cards=len(cards),
         priced=priced,
-        unreadable_priced=unreadable,
     )
 
 

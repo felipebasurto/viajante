@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import unittest
 from datetime import date, datetime, timezone
 
 import _isolate  # noqa: F401
+from _json_contract import assert_json_serialisable, assert_no_forbidden_keys
 from viajante.models import (
     DatePriceRow,
     FlexSearchReport,
@@ -38,16 +38,6 @@ REPORT_KEYS = {
 }
 RT_REPORT_KEYS = REPORT_KEYS | {"nights", "return_date"}
 FLEX_FETCH_BACKENDS = {"calendar", "calendar_then_sweep"}
-FORBIDDEN_KEYS = {
-    "co2",
-    "co2_kg",
-    "emissions",
-    "carbon",
-    "price_eur",
-    "typical_eur",
-    "baggage_buffer_eur",
-    "price_usd",
-}
 
 
 def _offer() -> FlightOffer:
@@ -180,12 +170,10 @@ class FlexJsonContractTests(unittest.TestCase):
         self.assertEqual(set(data["error"]), {"code", "message"})
 
     def test_forbidden_keys_are_absent(self) -> None:
-        blob = json.dumps(self.data)
-        for key in FORBIDDEN_KEYS:
-            self.assertNotIn(f'"{key}"', blob)
+        assert_no_forbidden_keys(self, self.data)
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
-        json.loads(json.dumps(self.data, ensure_ascii=False))
+        assert_json_serialisable(self.data)
 
     def test_stops_compare_is_an_extra_key_from_the_shop(self) -> None:
         compare = StopsCompare(

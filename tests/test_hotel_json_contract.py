@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import unittest
 from datetime import date, datetime, timedelta, timezone
 
 import _isolate  # noqa: F401
+from _json_contract import assert_json_serialisable, assert_no_forbidden_keys
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -85,15 +85,6 @@ OFFER_KEYS = {
     "distance_km",
 }
 ERROR_KEYS = {"code", "message"}
-FORBIDDEN_KEYS = {
-    "co2",
-    "co2_kg",
-    "emissions",
-    "carbon",
-    "total_price_eur",
-    "price_eur",
-    "price_usd",
-}
 
 
 def _offer() -> HotelOffer:
@@ -195,12 +186,10 @@ class HotelJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["schema_version"], 2)
 
     def test_forbidden_keys_are_absent(self) -> None:
-        blob = json.dumps(self.data)
-        for key in FORBIDDEN_KEYS:
-            self.assertNotIn(f'"{key}"', blob)
+        assert_no_forbidden_keys(self, self.data)
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
-        json.loads(json.dumps(self.data, ensure_ascii=False))
+        assert_json_serialisable(self.data)
 
     def test_google_hotels_report_is_not_labelled_booking(self) -> None:
         report = HotelSearchReport(

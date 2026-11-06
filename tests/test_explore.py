@@ -1997,7 +1997,6 @@ class PublicExploreCatalogTests(unittest.TestCase):
         page = parse_explore_catalog(body, origins=frozenset({"JFK"}))
         self.assertEqual(page.places, ())
         self.assertEqual(page.priced, 1)
-        self.assertEqual(page.unreadable_priced, 1)
 
     def test_catalog_without_cards_is_a_parse_miss(self):
         with self.assertRaises(CompactParseMiss):

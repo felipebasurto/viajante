@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import unittest
 from datetime import date, datetime, timezone
 
 import _isolate  # noqa: F401
+from _json_contract import assert_json_serialisable, assert_no_forbidden_keys
 from viajante.models import (
     ExploreDestination,
     ExploreReport,
@@ -33,16 +33,6 @@ DESTINATION_TYPICAL_KEYS = {"typical", "vs_typical", "vs_typical_pct", "typical_
 DESTINATION_SHOP_CLOCK_KEYS = {"duration_hours", "departure", "arrival"}
 ERROR_KEYS = {"code", "message"}
 EXPLORE_FETCH_BACKENDS = {"explore"}
-FORBIDDEN_KEYS = {
-    "co2",
-    "co2_kg",
-    "emissions",
-    "carbon",
-    "price_eur",
-    "typical_eur",
-    "baggage_buffer_eur",
-    "price_usd",
-}
 
 
 def _report(*, with_error: bool = False) -> ExploreReport:
@@ -106,15 +96,13 @@ class ExploreJsonContractTests(unittest.TestCase):
         self.assertIn(self.data["fetch_backend"], EXPLORE_FETCH_BACKENDS)
 
     def test_forbidden_keys_are_absent(self) -> None:
-        blob = json.dumps(self.data)
-        for key in FORBIDDEN_KEYS:
-            self.assertNotIn(f'"{key}"', blob)
+        assert_no_forbidden_keys(self, self.data)
 
     def test_timestamp_is_utc_iso_with_a_trailing_z(self) -> None:
         self.assertEqual(self.data["searched_at"], "2026-08-11T10:32:00Z")
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
-        json.loads(json.dumps(self.data, ensure_ascii=False))
+        assert_json_serialisable(self.data)
 
     def test_stops_compare_is_an_extra_dest_key_from_shop(self) -> None:
         dest = ExploreDestination(
