@@ -17,6 +17,7 @@ from viajante.dates import search_dates, search_flex
 from viajante.envelope import stamp_search
 from viajante.flight_filters import OfferFilters
 from viajante.flights import _run_search
+from viajante.google_capabilities import GoogleFlightsUnsupported, validate_capabilities
 from viajante.google_flights import (
     SWEEP_RETRY_BACKOFF_SECONDS,
     SWEEP_TRANSPORT_STATUS,
@@ -30,9 +31,7 @@ from viajante.google_flights import (
 from viajante.google_flights_page import page_tree, shared_page_tree
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
-    GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
-    _validate_capabilities,
 )
 from viajante.google_flights_rpc import RawFlightCard, _collect_itineraries, _wrb_json
 from viajante.models import (
@@ -249,7 +248,7 @@ class PublicFlightsSourceTests(unittest.TestCase):
             FlightQuery("HAN", "SIN", OUT, alliances=("star",)),
         ):
             with self.subTest(query=query):
-                _validate_capabilities(query)
+                validate_capabilities(query)
 
     def test_round_trip_replaces_outbound_package_reference_with_provider_total(self) -> None:
         source = _source()

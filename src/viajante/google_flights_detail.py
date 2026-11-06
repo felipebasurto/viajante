@@ -17,6 +17,11 @@ from viajante.control import (
     bounded_ms,
     checkpoint,
 )
+from viajante.google_capabilities import (
+    GoogleFlightsUnsupported,
+    matches_leg,
+    validate_capabilities,
+)
 from viajante.google_flights import (
     SCRAPE_LANGUAGE,
     GoogleFlightsBlocked,
@@ -359,9 +364,6 @@ class GoogleFlightsSource:
         return self._config
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        # Inline: google_flights_public imports this module, so a top-level import would cycle.
-        from viajante.google_flights_public import GoogleFlightsUnsupported, _validate_capabilities
-
         # Detail reads no page echo, so a bag or carrier filter it sends stays unproven.
         unproven = [key for key in _DETAIL_UNPROVEN if getattr(trip, key, None) is not None]
         if unproven:
@@ -371,7 +373,7 @@ class GoogleFlightsSource:
                 + ". The public-page sweep verifies carry-on and airline or alliance includes."
             )
         # The public page bootstraps no multi-city results; the browser UI renders them.
-        _validate_capabilities(trip, allow_multi_city=True)
+        validate_capabilities(trip, allow_multi_city=True)
         if isinstance(trip, MultiCity):
             return self._fetch_multi(trip)
         return parse_flight_cards(
@@ -493,9 +495,6 @@ class GoogleFlightsSource:
         The index counts every ``ul.Rk10dc li`` in document order so the row can
         be clicked back with ``locator(CARD_SELECTOR).nth(index)``.
         """
-        # Inline import, same cycle as in fetch().
-        from viajante.google_flights_public import _matches_leg
-
         page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
         checkpoint()
         html = page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
@@ -503,7 +502,7 @@ class GoogleFlightsSource:
         parser = LexborHTMLParser(html)
         for position, item in enumerate(parser.css(CARD_SELECTOR)):
             card = _extract_card(item)
-            if card is not None and _matches_leg(card, leg):
+            if card is not None and matches_leg(card, leg):
                 matched.append((position, card))
         if not matched:
             raise GoogleFlightsMarkupError(

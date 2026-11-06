@@ -16,6 +16,7 @@ from viajante.envelope import stamp_search
 from viajante.explore import MAX_EXPLORE_TOP, month_window, search_explore
 from viajante.flight_filters import parse_depart_window, parse_named_clock
 from viajante.flight_offers import _normalize_offer
+from viajante.google_capabilities import GoogleFlightsUnsupported
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     NoFlightsFound,
@@ -24,7 +25,6 @@ from viajante.google_flights import (
 )
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
-    GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
 )
 from viajante.google_flights_rpc import (

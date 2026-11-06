@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import _isolate  # noqa: F401
 from viajante import google_flights
 from viajante.flight_offers import _normalize_offer
+from viajante.google_capabilities import GoogleFlightsUnsupported
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     GoogleFlightsMarkupError,
@@ -33,7 +34,6 @@ from viajante.google_flights_detail import (
     parse_flight_cards,
     parse_http_flight_cards,
 )
-from viajante.google_flights_public import GoogleFlightsUnsupported
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
