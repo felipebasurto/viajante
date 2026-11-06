@@ -3,9 +3,9 @@ offers, per-query outcomes, and the flight search report."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Literal, Mapping, Optional, Sequence, Tuple, Union
+from typing import AbstractSet, Callable, Literal, Mapping, Optional, Sequence, Tuple, Union
 
 from viajante.models_common import (
     EmptyReason,
@@ -34,10 +34,6 @@ from viajante.models_common import (
     _store_nearby_label,
     format_typical_deal,
 )
-
-if TYPE_CHECKING:
-    # recommend.py builds on these models; the import is for annotations only.
-    from viajante.recommend import Recommendation
 
 
 def _require_shop_fields(trip: Trip) -> None:
@@ -663,6 +659,130 @@ class PriceInsight:
         }
 
 
+RECOMMENDATION_SCHEMA_VERSION = 2
+
+# First name is relaxed first: clock preferences, then duration, then bags, stops last.
+RELAX_ORDER: Tuple[str, ...] = (
+    "arrive_before",
+    "arrive_after",
+    "depart_after",
+    "depart_before",
+    "depart_window",
+    "max_duration",
+    "carry_on",
+    "bags",
+    "max_stops",
+)
+Status = Literal["met", "unmet", "unknown"]
+PriceComparison = Literal["compared", "skipped_mixed_currency", "skipped_unknown_currency"]
+
+@dataclass(frozen=True)
+class Requirements:
+    """Hard requirements the caller named. ``None`` means not stated."""
+
+    max_stops: Optional[int] = None
+    depart_window: Optional[Tuple[int, int]] = None
+    depart_after: Optional[int] = None
+    arrive_before: Optional[int] = None
+    depart_before: Optional[int] = None
+    arrive_after: Optional[int] = None
+    max_duration: Optional[float] = None
+    carry_on: Optional[int] = None
+    bags: Optional[int] = None
+
+    def stated(self) -> Tuple[str, ...]:
+        return tuple(name for name in RELAX_ORDER if getattr(self, name) is not None)
+
+    def describe(self, name: str) -> object:
+        value = getattr(self, name)
+        if name == "depart_window":
+            return f"{_hhmm(value[0])}-{_hhmm(value[1])}"
+        if name in ("depart_after", "arrive_before", "depart_before", "arrive_after"):
+            return _hhmm(value)
+        return value
+
+    def to_dict(self) -> Mapping[str, object]:
+        return {name: self.describe(name) for name in self.stated()}
+
+
+def _hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+@dataclass(frozen=True)
+class ShortlistEntry:
+    labels: Tuple[str, ...]
+    offer: FlightOffer
+    score: float
+    breakdown: Mapping[str, Optional[float]]
+    requirements: Mapping[str, Status]
+    highlights: Tuple[str, ...]
+    tradeoffs: Tuple[str, ...]
+    departure_slot: Optional[str]
+
+    def to_dict(self, listed_ids: AbstractSet[str], currency: str) -> Mapping[str, object]:
+        """Reference the offer by ``evidence_id``; embed it when ``offers`` does not list it.
+
+        An offer without evidence cannot be matched, so it is embedded too.
+        """
+        evidence_id = self.offer.evidence.evidence_id if self.offer.evidence else None
+        payload: dict[str, object] = {
+            "labels": list(self.labels),
+            "evidence_id": evidence_id,
+            "google_flights_url": self.offer.google_flights_url,
+            "score": self.score,
+            "breakdown": dict(self.breakdown),
+            "departure_slot": self.departure_slot,
+            "requirements": dict(self.requirements),
+            "highlights": list(self.highlights),
+            "tradeoffs": list(self.tradeoffs),
+        }
+        if evidence_id is None or evidence_id not in listed_ids:
+            payload["offer"] = self.offer.to_dict(currency)
+        return payload
+
+
+@dataclass(frozen=True)
+class Recommendation:
+    requirements: Requirements
+    relaxed_requirements: Tuple[str, ...]
+    weights: Mapping[str, float]
+    price_comparison: PriceComparison
+    compared: int
+    duplicates_removed: int
+    slow_connections_hidden: int
+    entries: Tuple[ShortlistEntry, ...]
+    notes: Tuple[str, ...]
+    schema_version: int = RECOMMENDATION_SCHEMA_VERSION
+
+    def map_offers(self, fn: Callable[[FlightOffer], FlightOffer]) -> "Recommendation":
+        return replace(
+            self, entries=tuple(replace(entry, offer=fn(entry.offer)) for entry in self.entries)
+        )
+
+    def to_dict(self, listed_ids: AbstractSet[str], currency: str) -> Mapping[str, object]:
+        """Compact payload: an offer in the query's ``offers`` is referenced, not embedded.
+
+        ``listed_ids`` holds the ``evidence_id`` of every offer the query serializes; the
+        currency formats an embedded offer. Weights are emitted only when price is not
+        compared, since that is the only case where they differ from ``SCORE_WEIGHTS``.
+        """
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "requirements": dict(self.requirements.to_dict()),
+            "relaxed_requirements": list(self.relaxed_requirements),
+            "price_comparison": self.price_comparison,
+            "compared": self.compared,
+            "duplicates_removed": self.duplicates_removed,
+            "slow_connections_hidden": self.slow_connections_hidden,
+            "shortlist": [entry.to_dict(listed_ids, currency) for entry in self.entries],
+            "notes": list(self.notes),
+        }
+        if self.price_comparison != "compared":
+            payload["weights"] = dict(self.weights)
+        return payload
+
+
 @dataclass(frozen=True)
 class QuerySuccess:
     query: Trip
@@ -672,7 +792,7 @@ class QuerySuccess:
     google_flights_url: Optional[str] = None
     stops_compare: Optional[StopsCompare] = None
     empty_reason: Optional[EmptyReason] = None
-    recommendation: Optional["Recommendation"] = None
+    recommendation: Optional[Recommendation] = None
     page_errors: Tuple[SearchError, ...] = ()
     scope_bound: bool = False
     nearby_dates: Optional[NearbyDates] = None

@@ -40,7 +40,8 @@ from viajante.models import (
     TripTotal,
     VsTypical,
 )
-from viajante.recommend import Requirements, recommend_offers
+from viajante.models_flights import Requirements
+from viajante.recommend import recommend_offers
 from viajante.storage import write_json_atomic
 
 FUTURE_DATE = date.today() + timedelta(days=30)

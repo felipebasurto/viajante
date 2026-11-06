@@ -17,9 +17,10 @@ from viajante.flight_filters import (
 from viajante.flight_routes import _trip_max_stops
 from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import FlightOffer, RawJourneyLeg, StopsCompare, StopsCompareSide, Trip
+from viajante.models_flights import Recommendation, Requirements
 from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import normalize_clock, parse_duration_hours, parse_price, parse_stops_count
-from viajante.recommend import Recommendation, Requirements, hide_slow_connections, recommend_offers
+from viajante.recommend import hide_slow_connections, recommend_offers
 
 UNKNOWN_DURATION_SORTS_LAST = float("inf")
 

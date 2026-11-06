@@ -26,13 +26,8 @@ from viajante.models import (
     RawSegment,
     RoundTrip,
 )
-from viajante.recommend import (
-    RELAX_ORDER,
-    SCORE_WEIGHTS,
-    Requirements,
-    departure_slot,
-    recommend_offers,
-)
+from viajante.models_flights import RELAX_ORDER, Requirements
+from viajante.recommend import SCORE_WEIGHTS, departure_slot, recommend_offers
 
 
 def make(

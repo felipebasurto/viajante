@@ -22,7 +22,7 @@ from viajante.google_flights import GoogleFlightsMarkupError
 from viajante.google_flights_public import _verify_provider_echo
 from viajante.mcp_handlers import search_flights_tool
 from viajante.models import FlightQuery, ProviderShop, RoundTrip
-from viajante.recommend import RELAX_ORDER, Requirements
+from viajante.models_flights import RELAX_ORDER, Requirements
 from viajante.tfs import encode_tfs
 
 DAY = date(2026, 12, 4)

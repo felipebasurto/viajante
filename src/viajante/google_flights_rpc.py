@@ -356,11 +356,6 @@ def _wrb_data_payload(obj: object) -> str | list | None:
     return None
 
 
-def wrb_data_strings(text: str) -> tuple[str, ...]:
-    """Every string payload on every ``wrb.fr`` row in a response body, in order."""
-    return tuple(item for item in _wrb_payloads(text) if isinstance(item, str))
-
-
 def _wrb_payloads(text: str) -> tuple[str | list, ...]:
     found: list[str | list] = []
     for obj in _wrb_chunk_objects(text):
