@@ -94,6 +94,7 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
             _fixture("flights_jfk_mia_oneway"),
             departure_date=NOV_17,
         )
+        self.assertEqual(len(offers), 8)
         self.assertTrue(all(offer.ticketed_destination is None for offer in offers))
 
     def test_one_stop_layover_comes_from_the_table_row(self) -> None:
@@ -106,6 +107,7 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
         self.assertEqual(one_stop[0].layover_city, "BOS")
         self.assertFalse(one_stop[0].hidden_city)
         nonstop = [offer for offer in offers if offer.stops_count == 0]
+        self.assertEqual(len(nonstop), 7)
         self.assertTrue(all(offer.layover_city is None for offer in nonstop))
 
     def test_layover_is_unknown_when_the_table_text_is_gone(self) -> None:

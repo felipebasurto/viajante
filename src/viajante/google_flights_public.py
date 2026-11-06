@@ -359,6 +359,19 @@ _HIDE_SEPARATE_CHIP = (
     "Hide separate & self-transfer tickets, Separate & self-transfer tickets, Selected"
 )
 _TIMES_CHIP = "Times, Selected"
+_ECHOED_PROVIDER_FIELDS = frozenset(
+    {
+        "max_price",
+        "earliest_departure_hour",
+        "latest_departure_hour",
+        "earliest_arrival_hour",
+        "latest_arrival_hour",
+        "max_duration_minutes",
+        "max_layover_minutes",
+        "less_emissions",
+        "hide_separate_tickets",
+    }
+)
 
 
 def _chip_minutes(match: re.Match[str]) -> int | None:
@@ -374,6 +387,15 @@ def _verify_provider_echo(labels: set[str | None], provider: ProviderShop) -> No
     A looser echoed bound only keeps more rows, which the caller's local filter trims.
     A tighter one could drop rows the local filter keeps, so it is a markup drift.
     """
+    unsupported = [
+        name
+        for name, value in vars(provider).items()
+        if name not in _ECHOED_PROVIDER_FIELDS and value is not None and value is not False
+    ]
+    if unsupported:
+        raise GoogleFlightsMarkupError(
+            "Public page cannot verify the requested provider options: " + ", ".join(unsupported)
+        )
     chips = {label for label in labels if label}
     clock_fields = (
         provider.earliest_departure_hour,

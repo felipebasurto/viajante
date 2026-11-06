@@ -119,15 +119,15 @@ class Requirements:
 
 
 def _status(offer: FlightOffer, name: str, value: object) -> Status:
-    """Mirror the hard filters: an unknown clock or a direct-only ask is not proven."""
+    """An unknown observation cannot establish a hard requirement."""
     if name == "max_stops":
         if offer.stops_count is None:
-            return "unknown" if value >= 1 else "unmet"
+            return "unknown"
         return "met" if offer.stops_count <= value else "unmet"
     if name in ("depart_window", "depart_after", "depart_before"):
         minutes = clock_minutes(offer.departure)
         if minutes is None:
-            return "unmet"
+            return "unknown"
         if name == "depart_window":
             return "met" if value[0] <= minutes <= value[1] else "unmet"
         if name == "depart_before":
@@ -136,7 +136,7 @@ def _status(offer: FlightOffer, name: str, value: object) -> Status:
     if name in ("arrive_before", "arrive_after"):
         minutes = clock_minutes(offer.arrival)
         if minutes is None:
-            return "unmet"
+            return "unknown"
         if name == "arrive_before":
             return "met" if minutes <= value else "unmet"
         return "met" if minutes >= value else "unmet"
@@ -347,7 +347,7 @@ def recommend_offers(
             candidates = [
                 row
                 for row in rows
-                if all(status != "unmet" or name in dropped for name, status in row[1].items())
+                if all(status == "met" or name in dropped for name, status in row[1].items())
             ]
             if candidates:
                 relaxed = dropped

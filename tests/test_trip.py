@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.flight_filters import parse_named_clock
-from viajante.flight_offers import _normalize_offer
 from viajante.flight_routes import expand_nearby_trips, parse_flight_plan, parse_route_specs
 from viajante.google_flights import RawFlightCard
 from viajante.models import (
@@ -491,7 +490,7 @@ class TripJoinTests(unittest.TestCase):
 
 
 class TripShopFilterTests(unittest.TestCase):
-    def test_named_bags_via_airlines_price_cap_drop_the_same_cards_as_flights(self) -> None:
+    def test_named_bags_via_airlines_price_cap_filter_trip_offers(self) -> None:
         silent = _card(
             airline_codes=("IB",),
             stops="1 stop",
@@ -535,13 +534,10 @@ class TripShopFilterTests(unittest.TestCase):
         )
         cards = (silent, too_few, enough, via_dxb, ryanair, over_cap)
         filters = dict(bags=1, carry_on=1, via=("LIS",), airlines=("IB",), price_cap=200)
-        expected = [_normalize_offer(card, 1, baggage_buffer=0, **filters) for card in cards]
-        kept = [offer.price for offer in expected if offer is not None]
         report, source = _search_trip_cards(*cards, **filters)
         result = report.flights.queries[0]
         self.assertEqual(type(result).__name__, "QuerySuccess")
-        self.assertEqual([offer.price for offer in result.offers], kept)
-        self.assertEqual(kept, [40.0, 55.0])
+        self.assertEqual([offer.price for offer in result.offers], [40.0, 55.0])
         self.assertEqual(source.fetched_queries[0].bags, 1)
         self.assertEqual(source.fetched_queries[0].carry_on, 1)
         self.assertEqual(source.fetched_queries[0].airlines, ("IB",))
@@ -581,15 +577,9 @@ class TripShopFilterTests(unittest.TestCase):
             arrive_before=parse_named_clock("10:00", role="arrive-before"),
             depart_after=parse_named_clock("18:00", role="depart-after"),
         )
-        expected = [
-            _normalize_offer(card, 1, baggage_buffer=0, **filters)
-            for card in (on_time, late_arrive, early_depart, silent)
-        ]
-        kept = [offer.price for offer in expected if offer is not None]
         report, _source = _search_trip_cards(on_time, late_arrive, early_depart, silent, **filters)
         result = report.flights.queries[0]
-        self.assertEqual([offer.price for offer in result.offers], kept)
-        self.assertEqual(kept, [90.0])
+        self.assertEqual([offer.price for offer in result.offers], [90.0])
         unnamed, _ = _search_trip_cards(on_time, late_arrive, early_depart, silent)
         unnamed_result = unnamed.flights.queries[0]
         self.assertEqual(
@@ -623,7 +613,7 @@ class TripShopFilterTests(unittest.TestCase):
         self.assertEqual(result.offers, ())
         self.assertIsNone(report.trip_total)
 
-    def test_exclude_via_and_exclude_airlines_match_normalize(self) -> None:
+    def test_exclude_via_and_exclude_airlines_filter_trip_offers(self) -> None:
         keep = _card(stops="1 stop", layover_city="OPO", airline_codes=("IB",), price="€100")
         drop_via = _card(stops="1 stop", layover_city="LIS", airline_codes=("IB",), price="€80")
         drop_airline = _card(
@@ -635,12 +625,9 @@ class TripShopFilterTests(unittest.TestCase):
         )
         cards = (keep, drop_via, drop_airline)
         filters = dict(exclude_via=("LIS",), exclude_airlines=("FR",))
-        expected = [_normalize_offer(card, 1, baggage_buffer=0, **filters) for card in cards]
-        kept = [offer.price for offer in expected if offer is not None]
         report, _source = _search_trip_cards(*cards, **filters)
         result = report.flights.queries[0]
-        self.assertEqual([offer.price for offer in result.offers], kept)
-        self.assertEqual(kept, [100.0])
+        self.assertEqual([offer.price for offer in result.offers], [100.0])
         self.assertIsNotNone(report.trip_total)
         assert report.trip_total is not None
         self.assertEqual(report.trip_total.flight_fare, 100.0)

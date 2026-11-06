@@ -130,9 +130,11 @@ def _selected(report):
 class ItineraryEvidenceRegressions(unittest.TestCase):
     def test_unknown_stops_and_missing_layovers_never_pass_bounds(self):
         query = FlightQuery("JFK", "LHR", FUTURE)
-        report = _search(query, _Source((_card(stops=None, duration=None),)))
+        report = _search(query, _Source((_card(),)))
+        selected = _selected(report)
+        selected["offer"].update({"stops": None, "stops_count": None, "legs": []})
         result = validate_itinerary(
-            [_selected(report)], {"min_layover": 0.5, "max_layover": 1}, currency="USD"
+            [selected], {"min_layover": 0.5, "max_layover": 1}, currency="USD"
         )
         self.assertIsNone(result.feasible)
         checks = {row.constraint: row.status for row in result.checks}

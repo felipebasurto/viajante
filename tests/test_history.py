@@ -237,6 +237,9 @@ class RecordingGateTests(_State):
         for name, value in (
             ("depart_before", 12),
             ("arrive_after", 18),
+            ("max_layover_hours", 3.0),
+            ("min_layover_hours", 1.0),
+            ("max_duration_hours", 8.0),
             ("less_emissions", True),
             ("hide_separate_tickets", True),
         ):

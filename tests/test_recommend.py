@@ -179,14 +179,22 @@ class RelaxationTests(unittest.TestCase):
     def test_unknown_stop_count_cannot_prove_direct_only(self) -> None:
         rec = recommend([make(stops=None)], Requirements(max_stops=0))
         self.assertEqual(rec.relaxed_requirements, ("max_stops",))
+        self.assertEqual(rec.entries[0].requirements["max_stops"], "unknown")
+
+    def test_unknown_duration_must_be_relaxed_before_selection(self) -> None:
+        offer = make(hours=None)
+        self.assertIsNone(recommend([offer], Requirements(max_duration=4), relax=False))
+        rec = recommend([offer], Requirements(max_duration=4))
+        self.assertEqual(rec.relaxed_requirements, ("max_duration",))
+        self.assertEqual(rec.entries[0].requirements["max_duration"], "unknown")
 
     def test_unknown_bag_is_unconfirmed_not_unmet(self) -> None:
         rec = recommend([make(bags=None), make(bags=0, dep="12:00")], Requirements(bags=1))
-        self.assertEqual(rec.relaxed_requirements, ())
-        entry = rec.entries[0]
+        self.assertEqual(rec.relaxed_requirements, ("bags",))
+        entry = next(e for e in rec.entries if e.requirements["bags"] == "unknown")
         self.assertEqual(entry.requirements["bags"], "unknown")
         self.assertIn("Requested bags 1 is not confirmed on this card", entry.tradeoffs)
-        self.assertTrue(all(e.requirements["bags"] != "unmet" for e in rec.entries))
+        self.assertIsNone(recommend([make(bags=None)], Requirements(bags=1), relax=False))
 
     def test_known_bag_shortfall_is_unmet(self) -> None:
         offers = [make(bags=2, price=700), make(bags=0, price=400, dep="12:00")]

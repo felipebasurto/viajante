@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import unittest
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 from unittest.mock import patch
@@ -130,6 +131,14 @@ class EchoVerificationTest(unittest.TestCase):
 
     def test_every_echoed_option_passes(self) -> None:
         _verify_provider_echo(set(self.ECHOED), self.PROVIDER)
+
+    def test_unrecognised_active_provider_option_fails_closed(self) -> None:
+        @dataclass(frozen=True)
+        class FutureOption(ProviderShop):
+            new_filter: bool = True
+
+        with self.assertRaisesRegex(GoogleFlightsMarkupError, "new_filter"):
+            _verify_provider_echo(set(self.ECHOED), FutureOption())
 
     def test_missing_time_chip_is_markup_drift(self) -> None:
         labels = self.ECHOED - {"Times, Selected"}
@@ -264,19 +273,13 @@ class OverlayTest(unittest.TestCase):
 class LocalClockTest(unittest.TestCase):
     def test_depart_before_is_an_inclusive_local_bound(self) -> None:
         filters = parse_offer_filters(depart_before=18 * 60)
-        self.assertIsNotNone(
-            _normalize_offer(card(departure="18:00"), 1, **filters.normalizer_kwargs())
-        )
-        self.assertIsNone(
-            _normalize_offer(card(departure="18:01"), 1, **filters.normalizer_kwargs())
-        )
+        self.assertIsNotNone(_normalize_offer(card(departure="18:00"), 1, **vars(filters)))
+        self.assertIsNone(_normalize_offer(card(departure="18:01"), 1, **vars(filters)))
 
     def test_arrive_after_is_an_inclusive_local_bound(self) -> None:
         filters = parse_offer_filters(arrive_after=8 * 60)
-        self.assertIsNotNone(
-            _normalize_offer(card(arrival="08:00"), 1, **filters.normalizer_kwargs())
-        )
-        self.assertIsNone(_normalize_offer(card(arrival="07:59"), 1, **filters.normalizer_kwargs()))
+        self.assertIsNotNone(_normalize_offer(card(arrival="08:00"), 1, **vars(filters)))
+        self.assertIsNone(_normalize_offer(card(arrival="07:59"), 1, **vars(filters)))
 
     def test_new_clock_bounds_are_relaxable_requirements(self) -> None:
         requirements = Requirements(depart_before=18 * 60, arrive_after=8 * 60)

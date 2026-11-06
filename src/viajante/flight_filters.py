@@ -230,23 +230,6 @@ class OfferFilters:
     def named(self) -> bool:
         return any(value is not None for value in vars(self).values())
 
-    def normalizer_kwargs(self) -> dict[str, object]:
-        """The post-filter keywords ``_normalize_offer`` takes, each named here."""
-        return {
-            "max_layover_hours": self.max_layover_hours,
-            "min_layover_hours": self.min_layover_hours,
-            "max_duration_hours": self.max_duration_hours,
-            "depart_window": self.depart_window,
-            "arrive_before": self.arrive_before,
-            "depart_after": self.depart_after,
-            "depart_before": self.depart_before,
-            "arrive_after": self.arrive_after,
-            "via": self.via,
-            "exclude_via": self.exclude_via,
-            "no_overnight": self.no_overnight,
-            "require_overnight": self.require_overnight,
-        }
-
 
 NO_OFFER_FILTERS = OfferFilters()
 
@@ -532,9 +515,7 @@ def _passes_clock_bound(clock_text: Optional[str], bound: Optional[int], *, befo
 
 def _eligible_stops(stops: Optional[str], max_stops: int) -> bool:
     count = parse_stops_count(stops)
-    if count is not None:
-        return count <= max_stops
-    return max_stops >= 1
+    return count is not None and count <= max_stops
 
 
 def _passes_bag_request(
@@ -615,8 +596,14 @@ def _passes_layover_bounds(
         return False
     if stops == 0:
         return True
-    complete = len(layovers) == stops and all(item.hours is not None for item in layovers)
-    hours = [item.hours for item in layovers if item.hours is not None]
+    if summary is not None and (not math.isfinite(summary) or summary < 0):
+        summary = None
+    hours = [
+        item.hours
+        for item in layovers
+        if item.hours is not None and math.isfinite(item.hours) and item.hours >= 0
+    ]
+    complete = len(layovers) == stops and len(hours) == stops
     longest = max([summary, *hours]) if summary is not None else max(hours) if complete else None
     shortest = min(hours) if complete else summary if stops == 1 else None
     if stops == 1 and summary is not None and shortest is not None:

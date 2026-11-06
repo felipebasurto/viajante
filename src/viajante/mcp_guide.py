@@ -158,8 +158,9 @@ and their order do not change, and nothing in the block tells you what to book. 
   a per-offer status of `met`,
   `unmet` or `unknown`. `max_stops` appears even when it is only the default, so its presence
   does not mean you named a stop limit.
-- `relaxed_requirements`: the named requirements that were dropped so an entry could exist.
+- `relaxed_requirements`: the requirements that were dropped so an entry could exist.
   An entry that relaxed one is not an exact match on that requirement; read this list first.
+  An unknown field does not prove a requirement, so selecting it names that relaxation.
   When the query row has empty_reason filtered_out (envelope status no_results when every
   query is filtered_out) and a recommendation, offers is empty because your named filters
   removed every row, and the recommendation is a relaxed pick, not an exact match. Say which

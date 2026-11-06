@@ -571,6 +571,10 @@ class DatesDeadlineCancelTests(unittest.TestCase):
             bags=1,
             baggage_buffer=0,
         )
+        self.assertEqual(
+            [row.departure_date for row in report.days],
+            [date(2099, 1, day) for day in (14, 15, 16)],
+        )
         self.assertTrue(all(row.status == "error" for row in report.days))
         self.assertTrue(all(row.error.code == SearchErrorCode.REJECTED for row in report.days))
 

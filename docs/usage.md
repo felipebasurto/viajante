@@ -205,10 +205,9 @@ provider returned nothing. It adds to `offers`; it never replaces them, and
 are relaxed, and `relaxed_requirements` names exactly which. Ties relax the earlier name
 first in this order: `arrive_before`, `arrive_after`, `depart_after`, `depart_before`,
 `depart_window`, `max_duration`, `carry_on`, `bags`, `max_stops`. Each shortlist entry
-shows `met`, `unmet`, or
-`unknown` per requirement. An unknown departure/arrival clock, or an unknown
-stop count under `--max-stops 0`, cannot prove a requirement; unknown bag counts
-or duration stay `unknown` and are called out in `tradeoffs`. Other filters
+shows `met`, `unmet`, or `unknown` per requirement. Unknown clocks, stop counts,
+bag counts, and durations cannot prove a requirement; they stay `unknown` and are
+called out in `tradeoffs`. Any unproven requirement is named when relaxed. Other filters
 (`--price-cap`, airlines, `--via`, overnight, layover bounds) are never relaxed,
 and round-trip and multi-city packages are not relaxed at all. A relaxed pick
 may fail a filter that emptied `offers`, so read `relaxed_requirements` before

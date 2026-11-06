@@ -1221,7 +1221,7 @@ class NearbyExploreTests(unittest.TestCase):
         self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= set(origins))
         self.assertNotIn("BQH", origins)
         self.assertTrue(all(row.nearby_label for row in reports))
-        self.assertEqual(reports[0].to_dict()["nearby_label"], reports[0].nearby_label)
+        self.assertEqual(reports[0].to_dict()["nearby_label"], "nearby London LHR")
         self.assertEqual(on_source.explore_origins, origins)
 
     def test_nearby_unknown_city_does_not_invent_codes(self) -> None:
