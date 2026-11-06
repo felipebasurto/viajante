@@ -6,7 +6,6 @@ import contextlib
 import errno
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Iterator, Mapping, Optional
 
@@ -99,6 +98,9 @@ def exclusive_lock(data_file: Path) -> Iterator[None]:
 
 def write_bytes_atomic(data: bytes, destination: Path) -> None:
     """Write through a temp file beside the target, fsync, then rename over it."""
+    # Imported here: tempfile loads shutil and bz2, which every startup would otherwise pay for.
+    import tempfile
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     stream = tempfile.NamedTemporaryFile(
         dir=destination.parent, prefix=destination.name + ".", delete=False

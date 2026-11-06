@@ -16,6 +16,7 @@ from viajante.google_flights import (
     SweepTransportError,
     cooldown_client,
     dispatch_posts,
+    is_rate_limited_response,
     reset_shared_chrome_sweep_client,
     shared_chrome_sweep_client,
 )
@@ -41,7 +42,6 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
-from viajante.ratelimit import rate_limit_status
 
 HTTP_TIMEOUT_SECONDS = 30
 
@@ -73,15 +73,11 @@ def _transient(response: SweepHttpResponse) -> bool:
 
 
 def _widening_block(exc: HotelsBlocked) -> SearchError:
-    until = None
-    if exc.rate_limited:
-        state = rate_limit_status()
-        until = state["until"] if state else None
     return SearchError(
         code=SearchErrorCode.BLOCKED,
         message=str(exc),
         rate_limited=exc.rate_limited,
-        retry_until=until,
+        retry_until=exc.retry_until,
     )
 
 
@@ -121,7 +117,8 @@ class GoogleHotelsSource:
             posts.append(SweepPost(url, body, HOTELS_POST_HEADERS))
         responses = dispatch_posts(client, posts, timeout=self._timeout)
         lost = [i for i, r in enumerate(responses) if _transient(r)]
-        if lost:
+        blocked = any(is_rate_limited_response(response) for response in responses)
+        if lost and not blocked:
             # One replay on a fresh session; a second transport failure is final (the
             # hotel loop does not retry it).
             self.reset()
@@ -132,6 +129,16 @@ class GoogleHotelsSource:
                 strict=True,
             ):
                 responses[i] = again
+        blocked_response = next(
+            (r for r in responses if r.request_sent and is_rate_limited_response(r)), None
+        ) or next((r for r in responses if is_rate_limited_response(r)), None)
+        if blocked_response is not None and responses[0].stopped and not responses[0].request_sent:
+            responses[0] = replace(responses[0], status=0, retry_until=blocked_response.retry_until)
+        if blocked_response is not None and (
+            _transient(responses[0])
+            or (responses[0].status in {403, 503} and not is_rate_limited_response(responses[0]))
+        ):
+            self._page(blocked_response, blocked_response.url)
         first = self._page(responses[0], posts[0].url)
         cards = list(first.cards[:limit])
         page_errors = []
@@ -175,9 +182,21 @@ class GoogleHotelsSource:
         if response.deadline:
             raise SearchDeadline()
         advice = response.rate_limit
+        if response.stopped and response.status == 0:
+            raise HotelsBlocked(
+                response.rate_limit or response.text,
+                rate_limited=True,
+                retry_until=response.retry_until,
+            )
+        if response.status < 400 and is_rate_limited_response(response):
+            raise HotelsBlocked(
+                advice or "Google Hotels returned RPC status 13; its cause is unknown.",
+                rate_limited=True,
+                retry_until=response.retry_until,
+            )
         if advice and response.status < 400:
             # A data-less RPC status 13 envelope: the cooldown is already recorded.
-            raise HotelsBlocked(advice, rate_limited=True)
+            raise HotelsBlocked(advice, rate_limited=True, retry_until=response.retry_until)
         if response.status == SWEEP_TRANSPORT_STATUS:
             raise SweepTransportError(
                 f"Google Hotels request failed before any response: {response.text}",
@@ -185,13 +204,14 @@ class GoogleHotelsSource:
             )
         if response.status == 429 and advice:
             message = advice if advice.startswith(NOT_SENT) else f"Google Hotels HTTP 429. {advice}"
-            raise HotelsBlocked(message, rate_limited=True)
+            raise HotelsBlocked(message, rate_limited=True, retry_until=response.retry_until)
         if response.status in {403, 429, 503} or _looks_blocked(f"{response.text} {response.url}"):
             # A multiplexed job never sent because a sibling was 429'd carries the
             # status but no advice; it is still a rate limit, not a content block.
             raise HotelsBlocked(
                 f"Google Hotels HTTP {response.status} from {url}",
                 rate_limited=response.status == 429,
+                retry_until=response.retry_until if response.status == 429 else None,
             )
         if _server_error(response.status):
             raise SweepTransportError(f"Google Hotels HTTP {response.status} from {url}")

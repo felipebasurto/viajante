@@ -241,7 +241,9 @@ Only failures that can succeed on a second try are retried:
   state dir (2 min, or the named Retry-After up to 30 min). While it runs, every Google search in
   any viajante process on the machine fails instantly with `Not sent.` and
   `rate_limited: true`. A named `Retry-After` takes precedence over the guessed
-  delay; a proxied response does not pause the machine's direct searches.
+  delay: it replaces a running cooldown only when it ends later. A guessed 429 that
+  arrives during a running cooldown never extends or shortens it. A proxied response
+  does not pause the machine's direct searches.
 - A raw data-less RPC status 13 is preserved in additive diagnostics even when
   the body also resembles a shopping `ErrorResponse`. For a direct session it
   records the existing guessed cooldown; it is not replayed and pending work

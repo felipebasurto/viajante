@@ -706,6 +706,15 @@ class WatchValidationTests(_State):
             watch.save_watch("lis", "hotel", stay)
         self.assertEqual([w["kind"] for w in watch.list_watches()], ["hotel"])
 
+    def test_saving_a_flight_watch_neither_searches_nor_records_evidence(self) -> None:
+        with (
+            patch("viajante.mcp_handlers.search_flights", side_effect=AssertionError("searched")),
+            patch("viajante.mcp_handlers.record", side_effect=AssertionError("recorded")),
+            patch("viajante.mcp_handlers._with_search_lock", side_effect=AssertionError("locked")),
+        ):
+            watch.save_watch("flight", "flight", self.params())
+        self.assertEqual([w["name"] for w in watch.list_watches()], ["flight"])
+
     def test_saving_under_an_existing_name_replaces_that_watch(self) -> None:
         watch.save_watch("w", "flight", self.params())
         watch.save_watch("w", "flight", self.params(adults=2))
@@ -733,6 +742,12 @@ class ArgumentOnlyChecksTests(_State):
         ({"top": 0}, {"top": 0}, "top must be positive"),
         ({"fetch": "bogus"}, {"fetch": "bogus"}, "fetch must be 'auto', 'sweep', or 'detail'"),
         ({"sort": "bogus"}, {"sort": "bogus"}, None),
+        ({"country": "XYZ"}, {"country": "XYZ"}, None),
+        (
+            {"fetch": "detail", "less_emissions": True},
+            {"fetch": "detail", "less_emissions": True},
+            None,
+        ),
         (
             {"max_duration": -1},
             {"max_duration_hours": -1},

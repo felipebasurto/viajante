@@ -125,6 +125,11 @@ class DriftIsNotSlowness(unittest.TestCase):
         )
         return source._fetch_html(page.url)
 
+    def test_detail_config_passes_proxy_to_chromium_session(self) -> None:
+        with patch("viajante.google_flights_detail.ChromiumSession") as session:
+            GoogleFlightsSource(Path("unused"), currency="USD", proxy="http://proxy.example:8080")
+        self.assertEqual(session.call_args.args[1].proxy, "http://proxy.example:8080")
+
     def test_loaded_page_without_markers_is_markup_drift_after_probe_only(self) -> None:
         page = _DriftPage(ready_state="complete")
         with self.assertRaises(GoogleFlightsMarkupError) as raised:

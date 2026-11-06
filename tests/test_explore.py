@@ -499,7 +499,7 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(nonstop, 1, baggage_buffer=0, **filters))
         self.assertIsNotNone(_normalize_offer(short_hop, 1, baggage_buffer=0, **filters))
         self.assertIsNone(_normalize_offer(overnight, 1, baggage_buffer=0, **filters))
-        self.assertIsNotNone(_normalize_offer(silent, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(silent, 1, baggage_buffer=0, **filters))
         self.assertIsNone(_normalize_offer(long_elapsed, 1, baggage_buffer=0, **filters))
         source = FakeExploreSource(
             (
@@ -514,9 +514,8 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source, **filters)
-        self.assertEqual([row.iata for row in report.destinations], ["LIS", "OPO"])
-        self.assertEqual(report.destinations[0].price, 40.0)
-        self.assertEqual(report.destinations[1].price, 90.0)
+        self.assertEqual([row.iata for row in report.destinations], ["OPO"])
+        self.assertEqual(report.destinations[0].price, 90.0)
         unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})

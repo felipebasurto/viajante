@@ -17,7 +17,6 @@ from datetime import date, datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 from viajante.airports import is_known_iata
 from viajante.control import (
@@ -39,10 +38,10 @@ from viajante.models import (
 )
 from viajante.ratelimit import (
     SKIPLAGGED_RATE_LIMIT_FILE,
-    cooldown_until,
     note_rate_limited,
     rate_limit_advice,
     rate_limit_status,
+    recorded_expiry,
 )
 
 SKIPLAGGED_MCP_URL = "https://mcp.skiplagged.com/mcp"
@@ -61,6 +60,10 @@ class SkiplaggedError(RuntimeError):
 
 class SkiplaggedRateLimited(SkiplaggedError):
     """Skiplagged answered HTTP 429. Retrying right away only extends the block."""
+
+    def __init__(self, message: str, *, retry_until: Optional[float] = None) -> None:
+        super().__init__(message)
+        self.retry_until = retry_until
 
 
 class SkiplaggedShapeError(SkiplaggedError):
@@ -85,7 +88,7 @@ def _guard_cooldown(rpc: RpcPost) -> None:
     state = rate_limit_status(file=SKIPLAGGED_RATE_LIMIT_FILE)
     if state is not None:
         advice = rate_limit_advice(state, sent=False, provider="Skiplagged")
-        raise SkiplaggedRateLimited(advice)
+        raise SkiplaggedRateLimited(advice, retry_until=state["until"])
 
 
 def _pace(rpc: RpcPost) -> None:
@@ -117,7 +120,8 @@ def _check_status(status: int, rpc: RpcPost, headers: Mapping[str, str], url: st
     if _is_live(rpc):
         state = note_rate_limited(retry_after, file=SKIPLAGGED_RATE_LIMIT_FILE, endpoint=url)
         raise SkiplaggedRateLimited(
-            rate_limit_advice(state, provider="Skiplagged", reason="HTTP 429")
+            rate_limit_advice(state, provider="Skiplagged", reason="HTTP 429"),
+            retry_until=recorded_expiry(state),
         )
     raise SkiplaggedRateLimited("Skiplagged is rate-limiting this machine (HTTP 429).")
 
@@ -142,6 +146,9 @@ def _rpc_post(
     payload: dict[str, Any],
     headers: Mapping[str, str],
 ) -> tuple[int, Mapping[str, str], str]:
+    # Imported here: urllib.request loads ssl, email and http, which startup need not pay for.
+    from urllib.request import Request, urlopen
+
     request = Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -454,7 +461,7 @@ def _classify(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc),
             rate_limited=True,
-            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+            retry_until=exc.retry_until,
         )
     if isinstance(exc, SkiplaggedShapeError):
         return SearchError(

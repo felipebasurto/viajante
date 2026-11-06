@@ -1807,7 +1807,7 @@ class ShopFilterTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(nonstop, 1, **filters))
         self.assertIsNotNone(_normalize_offer(short_hop, 1, **filters))
         self.assertIsNone(_normalize_offer(long_hop, 1, **filters))
-        self.assertIsNotNone(_normalize_offer(silent, 1, **filters))
+        self.assertIsNone(_normalize_offer(silent, 1, **filters))
         self.assertIsNone(_normalize_offer(long_elapsed, 1, **filters))
         source = _flex_shop_source(nonstop, short_hop, long_hop, silent, long_elapsed)
         report = search_flex(
@@ -1820,7 +1820,7 @@ class ShopFilterTests(unittest.TestCase):
             sort="fare",
             **filters,
         )
-        self.assertEqual([offer.price for offer in report.offers], [55.0, 70.0, 90.0])
+        self.assertEqual([offer.price for offer in report.offers], [70.0, 90.0])
         unnamed = search_flex(
             "JFK",
             "LHR",
@@ -1872,8 +1872,9 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(report.days[0].price, 45.0)
         self.assertEqual(report.days[1].status, "empty")
         self.assertIsNone(report.days[1].price)
-        self.assertEqual(report.days[2].status, "ok")
-        self.assertEqual(report.days[2].price, 20.0)
+        self.assertEqual(report.days[2].status, "empty")
+        self.assertEqual(report.days[2].empty_reason, "filtered_out")
+        self.assertIsNone(report.days[2].price)
         unnamed_source = FakeDaySource(
             cards={
                 date(2026, 9, 1): (short, overnight),

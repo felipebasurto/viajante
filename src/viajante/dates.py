@@ -26,7 +26,7 @@ from viajante.flight_routes import (
     keep_included_dest_trips,
     normalize_trip_kind,
 )
-from viajante.google_flights import RawFlightCard, google_flights_url
+from viajante.google_flights import GoogleFlightsBlocked, RawFlightCard, google_flights_url
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource as GoogleFlightsHttpSource
 from viajante.google_flights_public import classify_failure
 from viajante.models import (
@@ -53,6 +53,7 @@ from viajante.models import (
 from viajante.models_common import DEFAULT_TOP, empty_reason_for_rows
 from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.quote import resolve_baggage_buffer, resolve_quote_currency
+from viajante.ratelimit import NOT_SENT
 from viajante.typical import typical_from_daily_prices, vs_typical, with_typical
 
 MAX_DATE_WINDOW_DAYS = 31
@@ -768,8 +769,13 @@ def _flex_report_for_seed(
         error = classify_failure(exc)
         days = _error_rows(start, end, error, nights=stay)
     else:
-        if any(row.error is not None for row in days):
-            error = next(row.error for row in days if row.error is not None)
+        row_errors = [row.error for row in days if row.error is not None]
+        if row_errors:
+            # A provider block outranks every other row failure, wherever its row falls.
+            error = next(
+                (err for err in row_errors if err.code == SearchErrorCode.BLOCKED),
+                row_errors[0],
+            )
         typical = typical_from_daily_prices(
             [
                 _day_minimum_fare(cards_by_day.get(row.departure_date), seed, row, stay, filters)
@@ -1219,7 +1225,13 @@ def _sweep_per_day(
             rows.extend(row_for(day, query, exc) for day, query in day_queries[len(rows) :])
         return tuple(rows)
 
+    # A provider block ends the window's sends here, whatever the source does on its own.
+    # Each later day is a not-sent row, so no request reaches the provider after a block.
+    blocked: Optional[SearchError] = None
     for index, (day, day_query) in enumerate(day_queries, start=1):
+        if blocked is not None:
+            rows.append(row_for(day, day_query, _not_sent_after_block(blocked)))
+            continue
         try:
             checkpoint()
         except SearchDeadline as exc:
@@ -1236,8 +1248,21 @@ def _sweep_per_day(
                 for rest_day, rest_query in day_queries[index:]
             )
             return tuple(rows)
+        if isinstance(result, BaseException):
+            failure = classify_failure(result)
+            if failure.code == SearchErrorCode.BLOCKED:
+                blocked = failure
         note(index, day)
     return tuple(rows)
+
+
+def _not_sent_after_block(blocked: SearchError) -> GoogleFlightsBlocked:
+    """The error for a day not sent because an earlier day in the window was blocked."""
+    return GoogleFlightsBlocked(
+        NOT_SENT + "Remaining days stopped after a provider block.",
+        status=429 if blocked.rate_limited else None,
+        retry_until=blocked.retry_until,
+    )
 
 
 def _fetch_or_exception(

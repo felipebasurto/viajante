@@ -32,11 +32,10 @@ from viajante.models import (
 )
 from viajante.orchestration import (
     MAX_ATTEMPTS,
-    NON_RETRIABLE_CODES,
     classify_failure,
     retry_backoff_seconds,
+    should_retry,
 )
-from viajante.ratelimit import SKIPLAGGED_RATE_LIMIT_FILE, cooldown_until
 from viajante.skiplagged import (
     SKIPLAGGED_MCP_URL,
     RpcPost,
@@ -347,7 +346,7 @@ def skiplagged_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc),
             rate_limited=True,
-            retry_until=cooldown_until(str(exc), SKIPLAGGED_RATE_LIMIT_FILE),
+            retry_until=exc.retry_until,
         )
     if isinstance(exc, (SkiplaggedNoHotels, SkiplaggedAmbiguousName)):
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
@@ -569,7 +568,7 @@ def search_hotel_rooms(
             break
         except Exception as exc:  # noqa: BLE001 - typed into the report below
             error = skiplagged_failure(exc)
-            if error.code in NON_RETRIABLE_CODES:
+            if not should_retry(error):
                 break
             if attempt + 1 < MAX_ATTEMPTS:
                 sleep(retry_backoff_seconds(attempt, random_gen))

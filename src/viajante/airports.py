@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import marshal
 from dataclasses import dataclass
-from importlib.resources import files
 from typing import Mapping, Optional, Sequence, Tuple
 
 # Passenger airports that should outrank general-aviation / municipal fields
@@ -165,9 +164,17 @@ _BY_CITY_COUNTRY: Optional[dict[tuple[str, str], tuple[Airport, ...]]] = None
 NEARBY_MAX = 5
 
 
+def _package_file(package: str, name: str):
+    """A resource file of an installed package. importlib.resources loads tempfile and shutil
+    when imported, so it is imported on first use instead of at startup."""
+    from importlib.resources import files
+
+    return files(package).joinpath(name)
+
+
 def _load_iata_airports() -> dict[str, Airport]:
     """Load iata/name/city/country. Prefer the marshal blob; geo still uses airportsdata."""
-    cached = files("viajante").joinpath("iata_rows.marshal")
+    cached = _package_file("viajante", "iata_rows.marshal")
     try:
         payload = marshal.loads(cached.read_bytes())
         return {
@@ -180,7 +187,7 @@ def _load_iata_airports() -> dict[str, Airport]:
 
 def _load_iata_airports_from_csv() -> dict[str, Airport]:
     """Read only the fields we publish. Skip DictReader and numeric columns."""
-    source = files("airportsdata").joinpath("airports.csv")
+    source = _package_file("airportsdata", "airports.csv")
     by_code: dict[str, Airport] = {}
     with source.open(encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)
@@ -257,7 +264,7 @@ def _airport_geo_index() -> dict[str, tuple[str, float, float]]:
     cached = _GEO
     if cached is not None:
         return cached
-    source = files("airportsdata").joinpath("airports.csv")
+    source = _package_file("airportsdata", "airports.csv")
     geo: dict[str, tuple[str, float, float]] = {}
     with source.open(encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)

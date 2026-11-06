@@ -7,7 +7,6 @@ it, so a stale install's limit can be told apart from this one's.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import math
 import time
@@ -16,7 +15,7 @@ from typing import Mapping, Optional
 from urllib.parse import urlsplit
 
 from viajante.runtime import package_version
-from viajante.storage import default_state_dir, write_json_atomic
+from viajante.storage import default_state_dir, exclusive_lock, write_json_atomic
 
 GOOGLE_RATE_LIMIT_FILE = "google-rate-limit.json"
 SKIPLAGGED_RATE_LIMIT_FILE = "skiplagged-rate-limit.json"
@@ -97,6 +96,8 @@ def note_rate_limited(
     endpoint: Optional[str] = None,
 ) -> dict:
     """Record a real rate limit in the state dir so the next search in any process waits."""
+    if retry_after is not None and not math.isfinite(retry_after):
+        retry_after = None
     if basis is None:
         basis = (
             "provider_retry_after"
@@ -109,11 +110,6 @@ def note_rate_limited(
     if cause not in _CAUSE_OF_BASIS.values():
         raise ValueError(f"invalid cooldown cause: {cause!r}")
     current = time.time() if now is None else now
-    previous = _read_rate_limit(file, current)
-    if previous is not None and previous["until"] > current:
-        return previous
-    if retry_after is not None and not math.isfinite(retry_after):
-        retry_after = None
     cooldown = RATE_LIMIT_COOLDOWN_SECONDS
     if retry_after is not None and retry_after > 0:
         cooldown = min(retry_after, RATE_LIMIT_MAX_COOLDOWN_SECONDS)
@@ -126,9 +122,30 @@ def note_rate_limited(
         "viajante_version": package_version(),
         "endpoint": endpoint_label(endpoint) if endpoint else None,
     }
-    with contextlib.suppress(OSError):
-        write_json_atomic(state, default_state_dir() / file)
-    return state
+    # A running cooldown stands against a guess: a burst of bare 429s never extends it. Only a
+    # named Retry-After can move it, and only later; a shorter named one never shortens it.
+    try:
+        path = default_state_dir() / file
+        with exclusive_lock(path):
+            previous = _read_rate_limit(file, current)
+            if previous is not None and previous["until"] > current:
+                named_and_later = (
+                    basis == "provider_retry_after" and state["until"] > previous["until"]
+                )
+                if not named_and_later:
+                    return {**previous, "persisted": True}
+            write_json_atomic(state, path)
+        return {**state, "persisted": True}
+    except OSError:
+        previous = _read_rate_limit(file, current)
+        if previous is not None and previous["until"] > current:
+            return {**previous, "persisted": True}
+        return {**state, "persisted": False}
+
+
+def recorded_expiry(state: Mapping[str, object]) -> Optional[float]:
+    """Only a persisted cooldown can pause a later process."""
+    return float(state["until"]) if state.get("persisted", True) else None
 
 
 def _provenance(state: Mapping[str, object]) -> str:
@@ -160,20 +177,13 @@ def rate_limit_advice(
         observation = f"{provider} returned RPC status 13; its cause is unknown"
     else:
         observation = f"{provider} is rate-limiting this machine"
+    if state.get("persisted") is False:
+        return (
+            f"{prefix}{observation} ({reason}). Viajante could not save the cooldown. "
+            "Tell the user to wait; do not retry or switch fetch mode."
+        )
     return (
         f"{prefix}{observation} ({reason} at {clock(state['at'])} UTC{_provenance(state)}). "
         f"Viajante pauses {provider} {PAUSE_PHRASE} {clock(state['until'])} UTC (~{minutes} min). "
         "Tell the user to wait; do not retry or switch fetch mode."
     )
-
-
-def cooldown_until(message: str, file: str = GOOGLE_RATE_LIMIT_FILE) -> Optional[float]:
-    """End of the recorded cooldown, only when this failure carries its advice.
-
-    A proxied 429 records no cooldown, so a direct cooldown that happens to be running
-    must not be attributed to it.
-    """
-    if PAUSE_PHRASE not in message:
-        return None
-    state = rate_limit_status(file=file)
-    return None if state is None else float(state["until"])

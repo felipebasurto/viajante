@@ -56,10 +56,10 @@ from viajante.models import (
 from viajante.models_common import DEFAULT_TOP, ISO_4217_CODES
 from viajante.orchestration import (
     MAX_ATTEMPTS,
-    NON_RETRIABLE_CODES,
     classify_failure,
     inter_query_delay_seconds,
     retry_backoff_seconds,
+    should_retry,
     sweep_inter_query_delay_seconds,
 )
 from viajante.parsers import (
@@ -72,7 +72,6 @@ from viajante.parsers import (
     parse_unit_hints,
 )
 from viajante.quote import HOTEL_CURRENCY_REQUIRED, resolve_quote_currency
-from viajante.ratelimit import cooldown_until
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged_hotels import (
     SKIPLAGGED_HOTEL_CURRENCY,
@@ -274,10 +273,11 @@ def _sorted_deduplicated_offers(
 
 
 def _gives_up(exc: BaseException, failure: SearchError) -> bool:
-    """True when another attempt cannot change the outcome: a non-retriable code, or a
-    Booking results timeout or sweep transport error (the page will not appear on retry)."""
-    return failure.code in NON_RETRIABLE_CODES or isinstance(
-        exc, (BookingResultsTimeout, SweepTransportError)
+    """True when another attempt cannot change the outcome: the shared retry rule says no, or
+    a Booking results timeout (the page will not appear on retry). A sweep transport error is
+    final under the same rule, because it is passed as transport."""
+    return isinstance(exc, BookingResultsTimeout) or not should_retry(
+        failure, transport=isinstance(exc, SweepTransportError)
     )
 
 
@@ -299,7 +299,7 @@ def _classify_hotel_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc) if exc.rate_limited else "Google Hotels blocked the sweep.",
             rate_limited=exc.rate_limited,
-            retry_until=cooldown_until(str(exc)) if exc.rate_limited else None,
+            retry_until=exc.retry_until if exc.rate_limited else None,
         )
     if isinstance(exc, HotelsParseMiss):
         return SearchError(

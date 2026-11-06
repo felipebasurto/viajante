@@ -804,7 +804,7 @@ class NearbyDates:
 
 QueryResult = Union[QuerySuccess, QueryFailure]
 
-FetchBackend = Literal["sweep", "detail", "sweep_then_detail"]
+FetchBackend = Literal["sweep", "detail"]
 
 
 def _query_coverage(results: Sequence[QueryResult]) -> SearchCoverage:

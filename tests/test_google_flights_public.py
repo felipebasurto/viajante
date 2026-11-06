@@ -23,6 +23,7 @@ from viajante.google_flights import (
     GoogleFlightsBlocked,
     NoFlightsFound,
     SweepHttpResponse,
+    SweepTransportError,
     reset_shared_chrome_sweep_client,
     shared_chrome_sweep_client,
 )
@@ -1231,3 +1232,96 @@ class UnparsedCardTests(unittest.TestCase):
         self.assertEqual(payload["completeness"], "complete")
         self.assertIsNone(payload["error_code"])
         self.assertIsNone(payload["empty_reason"])
+
+
+class BatchFailureAfterSendTests(unittest.TestCase):
+    """A batch that fails after its requests went out settles each trip and never raises.
+
+    flights.py re-runs a batch that raises query by query, so a raise here would send the
+    queries that were already answered a second time.
+    """
+
+    def test_one_way_batch_error_after_send_settles_each_trip_without_resending(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.batches: list[list[str]] = []
+
+            def get_many(self, urls, *, timeout):
+                self.batches.append(list(urls))
+                raise RuntimeError("batch broke after sending")
+
+            def close(self) -> None:
+                return None
+
+        client = Client()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        results = source.fetch_many(
+            [FlightQuery("HAN", "SIN", OUT, adults=2), FlightQuery("HAN", "SIN", BACK, adults=2)]
+        )
+        self.assertEqual(len(client.batches), 1)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(isinstance(item, RuntimeError) for item in results))
+
+    def test_replay_error_keeps_the_first_answers_and_sends_no_further_batch(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.batches: list[list[str]] = []
+
+            def get_many(self, urls, *, timeout):
+                self.batches.append(list(urls))
+                if len(self.batches) == 1:
+                    return [
+                        SweepHttpResponse(200, "answered", urls[0]),
+                        SweepHttpResponse(SWEEP_TRANSPORT_STATUS, "TimeoutError: lost", urls[1]),
+                    ]
+                raise RuntimeError("replay batch broke after sending")
+
+            def close(self) -> None:
+                return None
+
+        client = Client()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        answered = _card("HAN", "SIN", OUT, "08:00", "TA101", "€100")
+
+        def parse(response, url, trip=None, **_extra):
+            if response.text == "answered":
+                return (answered,)
+            raise SweepTransportError("TimeoutError: lost")
+
+        with (
+            patch.object(source, "_parse_response", side_effect=parse),
+            patch.object(source, "_sleep"),
+        ):
+            results = source.fetch_many(
+                [
+                    FlightQuery("HAN", "SIN", OUT, adults=2),
+                    FlightQuery("HAN", "SIN", BACK, adults=2),
+                ]
+            )
+        self.assertEqual(len(client.batches), 2)
+        self.assertEqual(results[0], (answered,))
+        self.assertIsInstance(results[1], SweepTransportError)
+
+    def test_round_trip_batch_error_after_send_settles_each_trip_without_resending(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.batches: list[list[str]] = []
+
+            def get_many(self, urls, *, timeout):
+                self.batches.append(list(urls))
+                raise RuntimeError("round-trip batch broke after sending")
+
+            def close(self) -> None:
+                return None
+
+        client = Client()
+        source = PublicGoogleFlightsHttpSource(currency="EUR", client=client)
+        results = source.fetch_many(
+            [
+                RoundTrip("HAN", "SIN", OUT, BACK, adults=2, max_stops=0),
+                RoundTrip("HAN", "SIN", OUT, BACK + timedelta(days=1), adults=2, max_stops=0),
+            ]
+        )
+        self.assertEqual(len(client.batches), 1)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(isinstance(item, RuntimeError) for item in results))

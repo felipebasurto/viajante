@@ -31,6 +31,13 @@ _VS_TYPICAL: tuple[VsTypical, ...] = get_args(VsTypical)
 NEAR_TYPICAL_RATIO = 0.10
 
 
+def require_mapping(value: object, *, role: str) -> Mapping[str, object]:
+    """Read a caller-supplied JSON object without guessing its shape."""
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{role} must be an object")
+    return value
+
+
 def format_money(amount: float, currency: str, *, width: int = 0) -> str:
     """Owned amount in the quote currency. € only when currency is EUR."""
     number = f"{amount:{width}.0f}" if width else f"{amount:.0f}"

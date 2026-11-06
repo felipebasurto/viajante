@@ -338,12 +338,14 @@ class GoogleFlightsSource:
         *,
         currency: str,
         country: Optional[str] = None,
+        proxy: Optional[str] = None,
     ) -> None:
         self._config = config or BrowserSessionConfig(
             state_filename=STATE_FILENAME,
             locale=FETCH_LOCALE,
             html_lang=SCRAPE_LANGUAGE,
             currency=currency,
+            proxy=proxy,
             country=country,
         )
         self._session = session or ChromiumSession(state_dir, self._config)
@@ -398,7 +400,9 @@ class GoogleFlightsSource:
         if not self._started:
             state = rate_limit_status()
             if state is not None:
-                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+                raise GoogleFlightsBlocked(
+                    rate_limit_advice(state, sent=False), status=429, retry_until=state["until"]
+                )
             self._started = True
         self.partial_error = None
         self.scope_bound = True  # Bounded first-journey coverage, like the RT cap.
@@ -570,7 +574,9 @@ class GoogleFlightsSource:
         if not self._started:
             state = rate_limit_status()
             if state is not None:
-                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+                raise GoogleFlightsBlocked(
+                    rate_limit_advice(state, sent=False), status=429, retry_until=state["until"]
+                )
             self._started = True
         page = self._session.new_page()
         try:

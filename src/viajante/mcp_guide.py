@@ -22,8 +22,8 @@ If country, destination or currency is not proven, ask. Unnamed baggage_buffer i
 bags / carry_on: carry_on is verified on the page, checked bags are refused; see get_guide.
 Empty is not absent: no_results, blocked, markup_drift or an empty shortlist is not proof
 that nothing exists. Say what was searched; do not claim availability either way.
-Rate limits: if an error has rate_limited true, wait until retry_after (UTC) and tell the
-user. Do not retry, switch fetch mode or fan out other searches; they send nothing.
+Rate limits: if an error has rate_limited true, tell the user to wait; include retry_after
+(UTC) when known. Do not retry, switch fetch mode or fan out other searches.
 One search at a time per process: a busy error is not an MCP timeout; do not retry it blindly.
 deadline_seconds stops a search early: rows with error code deadline were not loaded, not empty.
 search_hidden_city is Skiplagged (USD), not Google: run it at most once, after a named-route
@@ -136,10 +136,10 @@ uv tool may execute different package versions. Do not assume uvx updates either
 
 ## Rate limits and cooldowns
 
-If an error has rate_limited true, tell the user to wait until the UTC time
-named in its message.
-Do not retry, switch fetch mode, or fan out other searches; they are paused
-locally and send nothing. An identical successful search within 5 minutes
+If an error has rate_limited true, tell the user to wait. When it names a UTC
+time, include it.
+Do not retry, switch fetch mode, or fan out other searches. A recorded cooldown
+pauses Google searches locally. An identical successful search within 5 minutes
 comes back cached (cached: true) without a new request. The replay cache holds
 at most 20 entries; a new successful search drops the oldest.
 

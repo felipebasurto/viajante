@@ -7,6 +7,7 @@ from typing import Mapping, Optional, Sequence
 
 from viajante.flight_filters import _overnight_from_owned_clocks
 from viajante.models import ConstraintCheck, ItineraryValidationReport, normalize_currency
+from viajante.models_common import require_mapping as _mapping
 from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import parse_stops_count
 from viajante.temporal import local_instant, segment_instant
@@ -35,12 +36,6 @@ _SUPPORTED_CONSTRAINTS = {
     "travel_end",
     "travel_start",
 }
-
-
-def _mapping(value: object, *, role: str) -> Mapping[str, object]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{role} must be an object")
-    return value
 
 
 def _items(value: object, *, role: str) -> tuple[object, ...]:

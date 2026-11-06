@@ -37,12 +37,12 @@ from viajante.models import (
     Trip,
     normalize_currency,
 )
+from viajante.models_common import require_mapping as _mapping
 from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import normalize_clock, parse_stops_count
 from viajante.ratelimit import NOT_SENT
 from viajante.storage import write_json_atomic
-from viajante.temporal import _zone_instants
-from viajante.validate import _mapping
+from viajante.temporal import zone_instants
 
 SCHEMA_VERSION = 1
 # ponytail: a one-way shop returns every card in one request, so compare them all. A packaged
@@ -346,7 +346,7 @@ def _departed(day: date, clock: Optional[str], origin: str, now: datetime) -> bo
         return day < now.astimezone().date()
     if minutes is not None:
         civil = datetime.combine(day, time(minutes // 60, minutes % 60))
-        instants = _zone_instants(civil, geo[0])
+        instants = zone_instants(civil, geo[0])
         if instants:
             return all(instant <= now for instant in instants)
     return day < now.astimezone(ZoneInfo(geo[0])).date()

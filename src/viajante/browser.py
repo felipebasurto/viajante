@@ -86,25 +86,34 @@ class ChromiumSession:
     def _ensure_context(self) -> object:
         if self._context is None:
             self._state_dir.mkdir(parents=True, exist_ok=True)
-            self._pw = _sync_playwright().start()
-            launch_options: dict[str, object] = {"headless": True}
-            if self._config.proxy:
-                launch_options["proxy"] = _playwright_proxy(self._config.proxy)
-            self._browser = self._pw.chromium.launch(**launch_options)
-            options: dict[str, object] = {
-                "locale": self._config.locale,
-                "storage_state": str(self._state_path) if self._state_path.exists() else None,
-            }
-            if self._config.viewport is not None:
-                options["viewport"] = dict(self._config.viewport)
-            if self._config.user_agent is not None:
-                options["user_agent"] = self._config.user_agent
-            self._context = self._browser.new_context(**options)
-            self._context.route("**/*", self._block_heavy_resources)
+            try:
+                self._start()
+            except BaseException:
+                # A half-started session (a driver with no browser, or no context) is torn
+                # down here, so a failed start never leaves a driver running.
+                self._teardown()
+                raise
             if not self._atexit_registered:
                 atexit.register(self.close)
                 self._atexit_registered = True
         return self._context
+
+    def _start(self) -> None:
+        self._pw = _sync_playwright().start()
+        launch_options: dict[str, object] = {"headless": True}
+        if self._config.proxy:
+            launch_options["proxy"] = _playwright_proxy(self._config.proxy)
+        self._browser = self._pw.chromium.launch(**launch_options)
+        options: dict[str, object] = {
+            "locale": self._config.locale,
+            "storage_state": str(self._state_path) if self._state_path.exists() else None,
+        }
+        if self._config.viewport is not None:
+            options["viewport"] = dict(self._config.viewport)
+        if self._config.user_agent is not None:
+            options["user_agent"] = self._config.user_agent
+        self._context = self._browser.new_context(**options)
+        self._context.route("**/*", self._block_heavy_resources)
 
     def _block_heavy_resources(self, route) -> None:
         if route.request.resource_type in self._config.blocked_types():

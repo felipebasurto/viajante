@@ -1002,6 +1002,42 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(report.queries[0], QuerySuccess)
         self.assertEqual(report.queries[0].offers[0].price, 120.0)
 
+    def test_round_trip_filters_check_return_journey_and_its_layovers(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2027, 4, 1), date(2027, 4, 7), max_stops=1)
+        outbound = RawJourneyLeg("08:00", "16:00", "8 h", "Nonstop")
+
+        def return_leg(departure: str, inbound: str, onward: str) -> RawJourneyLeg:
+            return RawJourneyLeg(
+                departure,
+                "21:00",
+                "8 h",
+                "1 stop",
+                segments=(
+                    RawSegment(origin="LHR", destination="BOS", arrival=inbound),
+                    RawSegment(origin="BOS", destination="JFK", departure=onward),
+                ),
+                layovers=(RawLayover(city="BOS", hours=2),),
+            )
+
+        cards = (
+            card(price="100 €", legs=(outbound, return_leg("08:00", "12:00", "14:00"))),
+            card(price="110 €", legs=(outbound, return_leg("06:00", "12:00", "14:00"))),
+            card(price="120 €", legs=(outbound, return_leg("08:00", "23:00", "01:00"))),
+        )
+        source = FakeSource({("JFK", "LHR", "2027-04-01", 1): cards})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights(
+                (trip,),
+                fetch="sweep",
+                currency="USD",
+                depart_after=7 * 60,
+                no_overnight=("any",),
+            )
+        result = report.queries[0]
+        assert isinstance(result, QuerySuccess)
+        self.assertEqual([offer.price for offer in result.offers], [100.0])
+        self.assertEqual((result.raw_count, result.eligible_count), (3, 1))
+
     def test_search_stamps_google_flights_urls(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource(
@@ -1114,6 +1150,13 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsInstance(report.fetch_ms, int)
         self.assertGreaterEqual(report.fetch_ms or 0, 0)
         self.assertTrue(source.closed)
+
+    def test_detail_passes_requested_proxy_to_browser_source(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2099, 9, 1), max_stops=1)
+        source = FakeSource({("JFK", "LHR", "2099-09-01", 1): (card(),)})
+        with patch("viajante.flights.GoogleFlightsSource", return_value=source) as detail:
+            search_flights((query,), top=1, fetch="detail", proxy="http://proxy.example:8080")
+        self.assertEqual(detail.call_args.kwargs["proxy"], "http://proxy.example:8080")
 
     def test_auto_uses_sweep_for_three_queries(self) -> None:
         queries = (

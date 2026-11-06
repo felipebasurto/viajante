@@ -184,6 +184,140 @@ def _search(client, pages: _Pages, **extra):
 
 
 class PublicRoundTripDateBatchTests(unittest.TestCase):
+    def test_return_rate_limit_is_reported_with_an_already_completed_package(self) -> None:
+        pages = _Pages(2, 2)
+        until = time.time() + 120
+
+        class Client(_BatchClient):
+            def get_many(self, urls, *, timeout):
+                if not self.batches:
+                    return super().get_many(urls, timeout=timeout)
+                self.batches.append(list(urls))
+                return [
+                    self._ok(urls[0]),
+                    SweepHttpResponse(429, "", urls[1], rate_limit="wait", retry_until=until),
+                ]
+
+        report, _ = _search(Client(pages), pages)
+        first, second = report.days
+        self.assertEqual(first.status, "ok")
+        self.assertEqual(first.price, 500)
+        self.assertEqual(len(first.page_errors), 1)
+        self.assertTrue(first.page_errors[0].rate_limited)
+        self.assertEqual(first.page_errors[0].retry_until, until)
+        self.assertTrue(second.error.rate_limited)
+
+    def test_return_429_takes_precedence_for_later_days_after_403(self) -> None:
+        pages = _Pages(2, 2)
+        until = time.time() + 120
+
+        class Client(_BatchClient):
+            def get_many(self, urls, *, timeout):
+                if not self.batches:
+                    return super().get_many(urls, timeout=timeout)
+                self.batches.append(list(urls))
+                return [
+                    SweepHttpResponse(403, "", urls[0]),
+                    SweepHttpResponse(429, "", urls[1], rate_limit="wait", retry_until=until),
+                ]
+
+        client = Client(pages)
+        report, _ = _search(client, pages)
+        self.assertEqual(len(client.batches), 2)
+        self.assertTrue(report.days[0].error.rate_limited)
+        self.assertEqual(report.days[0].error.retry_until, until)
+        self.assertTrue(report.days[1].error.rate_limited)
+        self.assertEqual(report.days[1].error.retry_until, until)
+
+    def test_later_429_is_preserved_after_a_concurrent_403(self) -> None:
+        pages = _Pages(3, 1)
+        until = time.time() + 120
+
+        class Client:
+            def get_many(self, urls, *, timeout):
+                return [
+                    SweepHttpResponse(403, "", urls[0]),
+                    SweepHttpResponse(429, "", urls[1], rate_limit="wait", retry_until=until),
+                    SweepHttpResponse(
+                        599,
+                        "transport stopped",
+                        urls[2],
+                        request_sent=False,
+                        attempts=0,
+                        stopped=True,
+                    ),
+                ]
+
+        report, _ = _search(Client(), pages)
+        self.assertFalse(report.days[0].error.rate_limited)
+        for row in report.days[1:]:
+            self.assertTrue(row.error.rate_limited)
+            self.assertEqual(row.error.retry_until, until)
+        self.assertEqual(report.days[1].error.diagnostics["http_status"], 429)
+        self.assertFalse(report.days[2].error.diagnostics["request_sent"])
+
+    def test_unsent_return_before_block_stops_later_days_with_same_expiry(self) -> None:
+        pages = _Pages(2, 2)
+        until = time.time() + 120
+
+        class Client(_BatchClient):
+            def get_many(self, urls, *, timeout):
+                if not self.batches:
+                    return super().get_many(urls, timeout=timeout)
+                self.batches.append(list(urls))
+                return [
+                    SweepHttpResponse(
+                        0, "Not sent.", urls[0], request_sent=False, attempts=0, stopped=True
+                    ),
+                    SweepHttpResponse(
+                        429, "slow down", urls[1], rate_limit="wait", retry_until=until
+                    ),
+                ]
+
+        client = Client(pages)
+        report, _ = _search(client, pages)
+        self.assertEqual(len(client.batches), 2)
+        for row in report.days:
+            self.assertTrue(row.error.rate_limited)
+            self.assertEqual(row.error.retry_until, until)
+
+    def test_unsent_outbound_before_real_block_keeps_its_provenance(self) -> None:
+        pages = _Pages(2, 1)
+        until = time.time() + 120
+
+        class Client:
+            def __init__(self, status, body):
+                self.status, self.body = status, body
+                self.calls = 0
+
+            def get_many(self, urls, *, timeout):
+                self.calls += 1
+                return [
+                    SweepHttpResponse(
+                        0, "Not sent.", urls[0], request_sent=False, attempts=0, stopped=True
+                    ),
+                    SweepHttpResponse(
+                        self.status,
+                        self.body,
+                        urls[1],
+                        rate_limit="wait",
+                        retry_until=until,
+                        cooldown_basis="heuristic_http_429",
+                    ),
+                ]
+
+        rpc = ')]}\'\n\n[["wrb.fr",null,null,null,null,[13],"generic"]]'
+        for status, body in ((429, "slow down"), (200, rpc)):
+            with self.subTest(status=status):
+                client = Client(status, body)
+                report, _ = _search(client, pages)
+                self.assertEqual(client.calls, 1)
+                for row in report.days:
+                    self.assertTrue(row.error.rate_limited)
+                    self.assertEqual(row.error.retry_until, until)
+                self.assertFalse(report.days[0].error.diagnostics["request_sent"])
+                self.assertTrue(report.days[1].error.diagnostics["request_sent"])
+
     def setUp(self) -> None:
         self.addCleanup(self._clear_cooldown)
 

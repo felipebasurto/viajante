@@ -5,7 +5,7 @@ from typing import Mapping, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-def _zone_instants(value: datetime, zone: object) -> Optional[frozenset[datetime]]:
+def zone_instants(value: datetime, zone: object) -> Optional[frozenset[datetime]]:
     """UTC instants for a civil time. None when ``zone`` is not a usable IANA name.
 
     Empty when the wall time does not exist. Two when both DST folds do.
@@ -27,7 +27,7 @@ def _zone_instants(value: datetime, zone: object) -> Optional[frozenset[datetime
 
 
 def local_instant(value: datetime, zone: object) -> Optional[datetime]:
-    instants = _zone_instants(value, zone)
+    instants = zone_instants(value, zone)
     if not instants or len(instants) != 1:
         return None
     instant = next(iter(instants))

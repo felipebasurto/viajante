@@ -288,7 +288,7 @@ The public page bootstraps no multi-city results, so `auto` and `sweep` refuse
 `--trip multi` before any request. Use an explicit `--fetch detail` for
 multi-city; it drives the browser through each leg. It was checked live once, on 2026-10-08, with a two-leg route (MAD-LHR, LHR-AMS); Google's board markup can drift, so a `markup_drift` or timeout result is possible. Detail refuses bag and carrier filters.
 
-Flights, dates, and flex sweep requests accept `--proxy URL` (`proxy` in MCP).
+Flights (including detail), dates, flex, and explore accept `--proxy URL` (`proxy` in MCP).
 `VIAJANTE_SWEEP_MODE=standard` allows at most 8 concurrent GETs; `conservative`
 allows 2. Any other value fails before provider access. This is a local
 concurrency setting, not a provider quota guarantee. Browser detail requests have built-in pacing and run sequentially: 4.5 s plus up to 1.5 s of jitter between

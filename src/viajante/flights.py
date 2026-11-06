@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import threading
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, Optional, Protocol, Sequence, Tuple
 
@@ -145,6 +145,59 @@ def resolve_fetch_mode(fetch: FetchMode) -> Literal["sweep", "detail"]:
     if fetch in ("auto", "sweep"):
         return "sweep"
     raise ValueError("fetch must be 'auto', 'sweep', or 'detail'")
+
+
+@dataclass(frozen=True)
+class PreparedFlightSearch:
+    trips: tuple[Trip, ...]
+    currency: str
+    baggage_buffer: int
+    country: Optional[str]
+    backend: Literal["sweep", "detail"]
+
+
+def prepare_flight_search(
+    queries: Sequence[Trip],
+    *,
+    filters: OfferFilters,
+    exclude_airports: Optional[Sequence[str]],
+    include_airports: Optional[Sequence[str]],
+    currency: Optional[str],
+    baggage_buffer: Optional[int],
+    country: Optional[str],
+    airlines: Optional[Sequence[str]],
+    exclude_airlines: Optional[Sequence[str]],
+    alliances: Optional[Sequence[str]],
+    exclude_alliances: Optional[Sequence[str]],
+    fetch: FetchMode,
+    less_emissions: bool,
+    hide_separate_tickets: bool,
+) -> PreparedFlightSearch:
+    """Prepare the same provider request for execution and offline validation."""
+    if not queries:
+        raise ValueError("at least one query is required")
+    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
+    country = normalize_country(country)
+    kept = keep_included_dest_trips(queries, include_airports)
+    kept = drop_excluded_airport_trips(kept, exclude_airports)
+    planned = resolve_fetch_mode(fetch)
+    if kept:
+        kept = _overlay_carrier_filters(
+            kept,
+            airlines=airlines,
+            exclude_airlines=exclude_airlines,
+            alliances=alliances,
+            exclude_alliances=exclude_alliances,
+        )
+        kept = _overlay_provider_options(
+            kept,
+            filters,
+            planned=planned,
+            less_emissions=less_emissions,
+            hide_separate_tickets=hide_separate_tickets,
+        )
+    return PreparedFlightSearch(tuple(kept), currency, baggage_buffer, country, planned)
 
 
 class _SourceConfig(Protocol):
@@ -292,6 +345,8 @@ def _run_search(
     ):
         for index, trip in enumerate(trips):
             report_progress(f"[{index + 1}/{len(trips)}] {_progress_label(trip)}")
+        # fetch_many settles every failure after its first send per trip, so this fallback only
+        # sees a batch that raised before any request went out. A resend here cannot repeat one.
         try:
             checkpoint()
             batch_rows = fetch_batch(list(trips))
@@ -679,29 +734,27 @@ def search_flights(
         include_airports=include_airports,
         nearby_days=nearby_days,
     )
-    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
-    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
-    country = normalize_country(country)
     original = tuple(queries)
-    kept = keep_included_dest_trips(original, parsed_include_airports)
-    kept = drop_excluded_airport_trips(kept, parsed_exclude_airports)
-    if not kept:
-        return _empty_excluded_flight_report(original, currency=currency)
-    trips = _overlay_carrier_filters(
-        kept,
+    prepared = prepare_flight_search(
+        original,
+        filters=filters,
+        exclude_airports=parsed_exclude_airports,
+        include_airports=parsed_include_airports,
+        currency=currency,
+        baggage_buffer=baggage_buffer,
+        country=country,
         airlines=airlines,
         exclude_airlines=exclude_airlines,
         alliances=alliances,
         exclude_alliances=exclude_alliances,
-    )
-    planned = resolve_fetch_mode(fetch)
-    trips = _overlay_provider_options(
-        trips,
-        filters,
-        planned=planned,
+        fetch=fetch,
         less_emissions=less_emissions,
         hide_separate_tickets=hide_separate_tickets,
     )
+    currency, baggage_buffer, country = prepared.currency, prepared.baggage_buffer, prepared.country
+    trips, planned = prepared.trips, prepared.backend
+    if not trips:
+        return _empty_excluded_flight_report(original, currency=currency)
     report_progress = progress or (lambda _: None)
     started = time.perf_counter()
 
@@ -715,7 +768,9 @@ def search_flights(
         delay = sweep_inter_query_delay_seconds
         backoff = _zero_backoff
     else:
-        source = GoogleFlightsSource(default_state_dir(), currency=currency, country=country)
+        source = GoogleFlightsSource(
+            default_state_dir(), currency=currency, country=country, proxy=proxy
+        )
         delay = inter_query_delay_seconds
         backoff = retry_backoff_seconds
 
