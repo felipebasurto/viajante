@@ -9,6 +9,38 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.6] - 2026-11-06
+
+### Fixed
+
+- A flight or round-trip batch that fails after its requests went out no longer sends every
+  query again one by one. Each trip keeps the answer it already received; a trip without one
+  carries the batch's failure.
+- A date window stops sending requests after a provider block. The remaining days are
+  `Not sent.` rows, not new requests.
+- `search_flex` reports a provider block anywhere in its window as the error, instead of the
+  error of whichever day failed first.
+- A named `Retry-After` replaces a running Google cooldown only when it ends later. A guessed
+  429 that arrives during a cooldown no longer extends or shortens it.
+- A failed Chromium start no longer leaves its Playwright driver running.
+- The shared Chrome sweep client cannot be returned as `None` when a reset races with it.
+- The replay cache is guarded by a lock, so MCP worker threads do not read or evict entries
+  unsafely.
+
+### Changed
+
+- A named layover or duration filter drops an offer whose layover or duration is unknown. An
+  unknown value cannot prove a match. Round-trip package filters check each leg's own
+  evidence for clock windows, duration, stops and overnight stays.
+- The CLI and MCP server import less at startup: stdlib modules load only when a path uses
+  them. Measured on this machine, importing the CLI takes about 9% less CPU, and importing
+  the MCP server about 4% less.
+- `FetchBackend` no longer lists the unused `sweep_then_detail` literal.
+- The MCP guide and server instructions say to wait when `rate_limited` is true, and to
+  include `retry_after` when it is known.
+- The usage doc says `--proxy` applies to browser detail, as well as flights, dates, flex and
+  explore.
+
 ## [1.5.5] - 2026-11-05
 
 ### Fixed

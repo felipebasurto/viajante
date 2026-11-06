@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "viajante",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "description": "Flight and hotel search from your own machine: Google Flights, Google Hotels and Booking evidence over a local MCP server. No API keys.",
   "author": { "name": "Felipe Basurto", "url": "https://felipebasurto.com" },
   "homepage": "https://viajante.felipebasurto.com",

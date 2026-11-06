@@ -1,6 +1,6 @@
 {
   "name": "@viajante/mcp",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "mcpName": "io.github.felipebasurto/viajante",
   "description": "npx front door for viajante (Python flight and hotel search). Runs uvx against PyPI.",
   "license": "MIT",
