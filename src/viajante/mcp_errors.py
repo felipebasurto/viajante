@@ -21,7 +21,12 @@ from viajante.envelope import EnvelopeShapeError
 
 INVALID_PARAMETER = "invalid_parameter"
 SEARCH_IN_PROGRESS = "search_in_progress"
-_BUSY_PHRASE = "already running in this process"
+SEARCH_IN_PROGRESS_MESSAGE = "a viajante search is already running in this process"
+
+
+class SearchInProgress(ValueError):
+    """Raised when a search is already running in this process; matched by type, not text."""
+
 
 _ALIASES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple(
     (re.compile(pattern), fields)
@@ -105,7 +110,7 @@ def structured_error(exc: ValueError, params: Mapping[str, object]) -> ValueErro
     if is_internal(exc):
         return exc
     message = str(exc)
-    if _BUSY_PHRASE in message:
+    if isinstance(exc, SearchInProgress):
         body = error_body(SEARCH_IN_PROGRESS, message)
     else:
         body = error_body(INVALID_PARAMETER, message, infer_field(message, params))

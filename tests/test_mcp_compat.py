@@ -463,6 +463,15 @@ class InvalidParameterTests(_StateDir):
         self.assertIsNone(body["field"])
         self.assertIn("a viajante search is already running in this process", body["message"])
 
+    def test_busy_code_needs_the_busy_type_not_the_sentence(self) -> None:
+        from viajante.mcp_errors import SearchInProgress
+
+        sentence = "a viajante search is already running in this process"
+        typed = json.loads(str(structured_error(SearchInProgress(sentence), {})))
+        self.assertEqual(typed["error"]["code"], "search_in_progress")
+        plain = json.loads(str(structured_error(ValueError(sentence), {})))
+        self.assertEqual(plain["error"]["code"], "invalid_parameter")
+
     def test_handlers_still_raise_plain_value_errors(self) -> None:
         from viajante.mcp_handlers import search_explore_tool
 

@@ -35,7 +35,13 @@ from typing import (
 
 from viajante.control import SearchControl, active
 from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
-from viajante.mcp_errors import structured_error, unknown_arguments_body, validation_body
+from viajante.mcp_errors import (
+    SEARCH_IN_PROGRESS_MESSAGE,
+    SearchInProgress,
+    structured_error,
+    unknown_arguments_body,
+    validation_body,
+)
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
     compare_awards_tool,
@@ -65,7 +71,6 @@ from viajante.watch import price_history_tool, watch_price_tool
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viajante-mcp")
-_SEARCH_BUSY_MESSAGE = "a viajante search is already running in this process"
 _CANCEL_GRACE_SECONDS = 1.0
 _PROGRESS_INTERVAL_SECONDS = 0.25
 _INDEXED_PROGRESS = re.compile(r"^\s*\[(\d+)/(\d+)\]")
@@ -288,11 +293,11 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     if not _SEARCH_BUSY.acquire(blocking=False):
         holder = _CURRENT[0] if _CURRENT else None
         if holder is None or not holder[0].cancel.is_set():
-            _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+            _reraise(SearchInProgress(SEARCH_IN_PROGRESS_MESSAGE), kwargs)
         # A cancelled search is unwinding: give it a moment instead of a spurious busy error.
         await loop.run_in_executor(None, holder[1].wait, _CANCEL_GRACE_SECONDS)
         if not _SEARCH_BUSY.acquire(blocking=False):
-            _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+            _reraise(SearchInProgress(SEARCH_IN_PROGRESS_MESSAGE), kwargs)
     _CURRENT[:] = [(control, finished)]
 
     def run() -> _T:

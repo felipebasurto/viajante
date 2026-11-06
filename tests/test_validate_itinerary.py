@@ -162,6 +162,22 @@ class ValidateItineraryTests(unittest.TestCase):
         self.assertEqual(_status(report, "depart_after"), "fail")
         self.assertEqual(_status(report, "arrive_before"), "fail")
 
+    def test_clock_bounds_accept_the_search_grammar(self) -> None:
+        row = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="clock-grammar",
+            segments=[_segment("JFK", "LHR", departure="15:30", arrival="23:45")],
+        )
+        report = validate_itinerary(
+            [row],
+            {"depart_after": "3pm", "arrive_before": "11:50 pm"},
+            currency="USD",
+        )
+        self.assertEqual(_status(report, "depart_after"), "pass")
+        self.assertEqual(_status(report, "arrive_before"), "pass")
+
     def test_fare_total_mismatch_fails(self) -> None:
         row = _row(
             "JFK",

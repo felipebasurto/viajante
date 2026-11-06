@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Mapping, Optional, Sequence
 
-from viajante.flight_filters import _overnight_from_owned_clocks
+from viajante.flight_filters import _overnight_from_owned_clocks, parse_named_clock
 from viajante.models import ConstraintCheck, ItineraryValidationReport, normalize_currency
 from viajante.models_common import require_mapping as _mapping
 from viajante.parsers import clock_minutes as _clock_minutes
@@ -76,11 +76,12 @@ def _iso_date(value: object, *, role: str) -> date:
 
 
 def _clock(value: object, *, role: str) -> int:
+    # The grammar the search accepts for --depart-after / --arrive-before: 3pm, 3:30 pm, 15:30.
     if not isinstance(value, str):
-        raise ValueError(f"{role} must be HH:MM")
-    minutes = _clock_minutes(value)
+        raise ValueError(f"{role} must look like HH:MM")
+    minutes = parse_named_clock(value, role=role)
     if minutes is None:
-        raise ValueError(f"{role} must be HH:MM")
+        raise ValueError(f"{role} must look like HH:MM")
     return minutes
 
 

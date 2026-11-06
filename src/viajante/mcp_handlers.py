@@ -71,6 +71,7 @@ from viajante.hotels import (
     validate_max_distance,
     validate_near,
 )
+from viajante.mcp_errors import SEARCH_IN_PROGRESS_MESSAGE, SearchInProgress
 from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
     award_offer_from_mapping,
@@ -164,7 +165,7 @@ def _prepared_search(prepare):
 
 def _with_search_lock(fn):
     if not _SEARCH_LOCK.acquire(blocking=False):
-        raise ValueError("a viajante search is already running in this process")
+        raise SearchInProgress(SEARCH_IN_PROGRESS_MESSAGE)
     try:
         return fn()
     finally:
