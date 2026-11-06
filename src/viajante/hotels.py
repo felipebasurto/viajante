@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import math
 import random
 import re
@@ -55,10 +56,10 @@ from viajante.models import (
 )
 from viajante.models_common import DEFAULT_TOP, ISO_4217_CODES
 from viajante.orchestration import (
-    MAX_ATTEMPTS,
     classify_failure,
     inter_query_delay_seconds,
     retry_backoff_seconds,
+    run_attempts,
     should_retry,
     sweep_inter_query_delay_seconds,
 )
@@ -346,56 +347,24 @@ def _run_search(
             f"{query.check_in.isoformat()} -> {query.check_out.isoformat()}"
         )
         applied = build_filters(query, html_lang=html_lang, currency=currency)
-        outcome: Optional[HotelQueryResult] = None
-        failure: Optional[SearchError] = None
-        for attempt in range(MAX_ATTEMPTS):
-            try:
-                checkpoint()
-                page = source.fetch(query, applied, fetch_limit)
-                others = [_named_other_currency(raw.total_price, currency) for raw in page.cards]
-                if page.cards and all(others):
-                    # Every priced card names another ISO code: there is no owned quote in the
-                    # requested currency, and viajante never converts.
-                    other = others[0]
-                    outcome = HotelQueryFailure(
-                        query=query,
-                        applied=applied,
-                        error=SearchError(
-                            code=SearchErrorCode.CURRENCY_MISMATCH,
-                            message=f"Hotel prices are quoted in {other}, not {currency}. "
-                            "Viajante does not convert.",
-                        ),
-                    )
-                    break
-                normalized = tuple(
-                    _with_distance(offer, near)
-                    for raw, other in zip(page.cards, others, strict=True)
-                    if other is None and (offer := _normalize_card(raw)) is not None
-                )
-                eligible = tuple(
-                    offer
-                    for offer in normalized
-                    if _is_eligible(offer, query) and _within_radius(offer, near, max_distance_km)
-                )
-                ranked = _sorted_deduplicated_offers(eligible)
-                outcome = HotelQuerySuccess(
-                    query=query,
-                    applied=(replace(applied, url=page.search_url) if page.search_url else applied),
-                    raw_count=len(page.cards),
-                    eligible_count=len(ranked),
-                    offers=ranked[:top],
-                    resolved_place=page.resolved_place,
-                    place_bounds=page.place_bounds,
-                    page_errors=page.page_errors,
-                )
-                break
-            except Exception as exc:
-                failure = _classify_hotel_failure(exc)
-                source.reset()
-                if _gives_up(exc, failure):
-                    break
-                if attempt + 1 < MAX_ATTEMPTS:
-                    sleep(retry_backoff_seconds(attempt, random_gen))
+        outcome, failure = run_attempts(
+            functools.partial(
+                _fetch_hotel_query_once,
+                source,
+                query,
+                applied,
+                currency=currency,
+                near=near,
+                max_distance_km=max_distance_km,
+                top=top,
+                fetch_limit=fetch_limit,
+            ),
+            classify=_classify_hotel_failure,
+            on_failure=lambda _failure: source.reset(),
+            give_up=_gives_up,
+            backoff=lambda attempt: retry_backoff_seconds(attempt, random_gen),
+            sleep=sleep,
+        )
         if outcome is None:
             default_message = {
                 "google-hotels": "Google Hotels search failed.",
@@ -489,6 +458,56 @@ def validate_hotel_search_args(queries: Sequence[HotelQuery], *, top: int, sourc
             validate_search_party(query.adults, query.rooms)
             if query.entire_home:
                 raise ValueError("entire_home is not supported with source skiplagged")
+
+
+def _fetch_hotel_query_once(
+    source: _HotelSource,
+    query: HotelQuery,
+    applied: AppliedHotelFilters,
+    *,
+    currency: str,
+    near: Optional[Tuple[float, float]],
+    max_distance_km: Optional[float],
+    top: int,
+    fetch_limit: int,
+) -> HotelQueryResult:
+    checkpoint()
+    page = source.fetch(query, applied, fetch_limit)
+    others = [_named_other_currency(raw.total_price, currency) for raw in page.cards]
+    if page.cards and all(others):
+        # Every priced card names another ISO code: there is no owned quote in the
+        # requested currency, and viajante never converts.
+        other = others[0]
+        return HotelQueryFailure(
+            query=query,
+            applied=applied,
+            error=SearchError(
+                code=SearchErrorCode.CURRENCY_MISMATCH,
+                message=f"Hotel prices are quoted in {other}, not {currency}. "
+                "Viajante does not convert.",
+            ),
+        )
+    normalized = tuple(
+        _with_distance(offer, near)
+        for raw, other in zip(page.cards, others, strict=True)
+        if other is None and (offer := _normalize_card(raw)) is not None
+    )
+    eligible = tuple(
+        offer
+        for offer in normalized
+        if _is_eligible(offer, query) and _within_radius(offer, near, max_distance_km)
+    )
+    ranked = _sorted_deduplicated_offers(eligible)
+    return HotelQuerySuccess(
+        query=query,
+        applied=(replace(applied, url=page.search_url) if page.search_url else applied),
+        raw_count=len(page.cards),
+        eligible_count=len(ranked),
+        offers=ranked[:top],
+        resolved_place=page.resolved_place,
+        place_bounds=page.place_bounds,
+        page_errors=page.page_errors,
+    )
 
 
 @controlled

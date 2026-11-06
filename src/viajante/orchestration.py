@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Callable, Optional, Tuple, TypeVar
+
 from viajante.control import SearchDeadline, note_cut
 from viajante.models import SearchError, SearchErrorCode
+
+T = TypeVar("T")
 
 REQUEST_DELAY_SECONDS = 4.5
 REQUEST_JITTER_SECONDS = 1.5
@@ -93,3 +97,39 @@ def inter_query_delay_seconds(random_gen) -> float:
 
 def sweep_inter_query_delay_seconds(random_gen) -> float:
     return SWEEP_DELAY_SECONDS + random_gen.uniform(0, SWEEP_JITTER_SECONDS)
+
+
+def _ignore_failure(_failure: SearchError) -> None:
+    return None
+
+
+def run_attempts(
+    attempt: Callable[[], T],
+    *,
+    classify: Callable[[BaseException], SearchError],
+    give_up: Callable[[BaseException, SearchError], bool],
+    backoff: Callable[[int], float],
+    sleep: Callable[[float], None],
+    on_failure: Callable[[SearchError], None] = _ignore_failure,
+    start_attempt: int = 0,
+) -> Tuple[Optional[T], Optional[SearchError]]:
+    """Run ``attempt`` until it succeeds, a failure is final, or the attempts run out.
+
+    Returns ``(value, None)`` on success and ``(None, failure)`` otherwise. ``on_failure`` sees
+    every failure before the give-up decision, so a provider session reset happens there. A
+    wait comes only between two attempts that both run.
+    """
+    failure: Optional[SearchError] = None
+    for index in range(start_attempt, MAX_ATTEMPTS):
+        try:
+            return attempt(), None
+        except Exception as exc:
+            failure = classify(exc)
+            on_failure(failure)
+            if give_up(exc, failure):
+                break
+            if index + 1 < MAX_ATTEMPTS:
+                delay = backoff(index)
+                if delay > 0:
+                    sleep(delay)
+    return None, failure

@@ -73,9 +73,9 @@ from viajante.models import (
 )
 from viajante.models_common import DEFAULT_TOP
 from viajante.orchestration import (
-    MAX_ATTEMPTS,
     inter_query_delay_seconds,
     retry_backoff_seconds,
+    run_attempts,
     should_retry,
     sweep_inter_query_delay_seconds,
 )
@@ -309,22 +309,21 @@ def _run_search(
             source.reset()
 
     def _search_one(trip: Trip, *, start_attempt: int = 0) -> QueryResult:
-        outcome: Optional[QueryResult] = None
-        failure: Optional[SearchError] = None
-        for attempt in range(start_attempt, MAX_ATTEMPTS):
-            try:
-                checkpoint()
-                outcome = _success_from_cards(trip, source.fetch(trip))
-                break
-            except Exception as exc:
-                failure = classify_failure(exc)
-                _maybe_reset(failure)
-                if not should_retry(failure, transport=isinstance(exc, SweepTransportError)):
-                    break
-                if attempt + 1 < MAX_ATTEMPTS:
-                    delay = retry_backoff(attempt, random_gen)
-                    if delay > 0:
-                        sleep(delay)
+        def _attempt() -> QueryResult:
+            checkpoint()
+            return _success_from_cards(trip, source.fetch(trip))
+
+        outcome, failure = run_attempts(
+            _attempt,
+            classify=classify_failure,
+            on_failure=_maybe_reset,
+            give_up=lambda exc, failure: not should_retry(
+                failure, transport=isinstance(exc, SweepTransportError)
+            ),
+            backoff=lambda attempt: retry_backoff(attempt, random_gen),
+            sleep=sleep,
+            start_attempt=start_attempt,
+        )
         if outcome is None:
             outcome = QueryFailure(
                 query=trip,

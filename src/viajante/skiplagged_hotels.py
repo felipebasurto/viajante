@@ -31,9 +31,9 @@ from viajante.models import (
     SearchErrorCode,
 )
 from viajante.orchestration import (
-    MAX_ATTEMPTS,
     classify_failure,
     retry_backoff_seconds,
+    run_attempts,
     should_retry,
 )
 from viajante.skiplagged import (
@@ -528,50 +528,50 @@ def search_hotel_rooms(
         raise ValueError(f"rooms must be 1 to {MAX_DETAIL_ROOMS} for hotel room rates")
     random_gen = random_gen or random.Random()
     started = time.perf_counter()
-    error: Optional[SearchError] = None
-    report: Optional[HotelRoomsReport] = None
     resolved_id = hotel_id
-    for attempt in range(MAX_ATTEMPTS):
-        try:
-            checkpoint()
-            if resolved_id is None:
-                resolved_id, _matched = resolve_hotel_id(
-                    hotel_name or "",
-                    city or "",
-                    check_in,
-                    check_out,
-                    adults=adults,
-                    rooms=rooms,
-                    rpc=rpc,
-                )
-            result = _call_mcp(
-                {
-                    "hotelId": resolved_id,
-                    "checkin": check_in.isoformat(),
-                    "checkout": check_out.isoformat(),
-                    "numAdults": adults,
-                    "numRooms": rooms,
-                },
-                rpc=rpc,
-                tool=SKIPLAGGED_HOTEL_DETAILS_TOOL,
-            )
-            report = parse_rooms_report(
-                result,
-                hotel_id=str(resolved_id),
-                check_in=check_in,
-                check_out=check_out,
+
+    def _attempt() -> HotelRoomsReport:
+        nonlocal resolved_id
+        checkpoint()
+        if resolved_id is None:
+            resolved_id, _matched = resolve_hotel_id(
+                hotel_name or "",
+                city or "",
+                check_in,
+                check_out,
                 adults=adults,
                 rooms=rooms,
-                searched_at=datetime.now(timezone.utc),
+                rpc=rpc,
             )
-            report = replace(report, requested_name=hotel_name)
-            break
-        except Exception as exc:  # noqa: BLE001 - typed into the report below
-            error = skiplagged_failure(exc)
-            if not should_retry(error):
-                break
-            if attempt + 1 < MAX_ATTEMPTS:
-                sleep(retry_backoff_seconds(attempt, random_gen))
+        result = _call_mcp(
+            {
+                "hotelId": resolved_id,
+                "checkin": check_in.isoformat(),
+                "checkout": check_out.isoformat(),
+                "numAdults": adults,
+                "numRooms": rooms,
+            },
+            rpc=rpc,
+            tool=SKIPLAGGED_HOTEL_DETAILS_TOOL,
+        )
+        parsed = parse_rooms_report(
+            result,
+            hotel_id=str(resolved_id),
+            check_in=check_in,
+            check_out=check_out,
+            adults=adults,
+            rooms=rooms,
+            searched_at=datetime.now(timezone.utc),
+        )
+        return replace(parsed, requested_name=hotel_name)
+
+    report, error = run_attempts(
+        _attempt,
+        classify=skiplagged_failure,
+        give_up=lambda _exc, failure: not should_retry(failure),
+        backoff=lambda attempt: retry_backoff_seconds(attempt, random_gen),
+        sleep=sleep,
+    )
     fetch_ms = max(0, int((time.perf_counter() - started) * 1000))
     if report is None:
         report = HotelRoomsReport(
