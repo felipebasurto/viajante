@@ -179,7 +179,8 @@ def watch_price_tool(
         raise ValueError(f"no watch named {name!r}; save one with kind and params")
     validate_deadline_seconds(spec["params"].get("deadline_seconds"))
     with active(current_control() or SearchControl()), forced_recording() as written:
-        payload = inspect.unwrap(_TOOLS[spec["kind"]])(**spec["params"])
+        # Remove only the replay wrapper; preparation and the search lock still run.
+        payload = _TOOLS[spec["kind"]].__wrapped__(**spec["params"])
     read_error: Optional[str] = None
     try:
         stored = read_observations(strict=True)

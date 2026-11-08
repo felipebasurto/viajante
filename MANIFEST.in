@@ -2,3 +2,6 @@
 prune landing
 prune .impeccable
 exclude DESIGN.md PRODUCT.md
+
+include CHANGELOG.md llms.txt
+include docs/usage.md docs/architecture.md

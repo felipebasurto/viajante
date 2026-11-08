@@ -21,6 +21,7 @@ Homepage = "https://github.com/felipebasurto/viajante"
 Repository = "https://github.com/felipebasurto/viajante"
 Documentation = "https://github.com/felipebasurto/viajante/blob/main/docs/usage.md"
 Issues = "https://github.com/felipebasurto/viajante/issues"
+Changelog = "https://github.com/felipebasurto/viajante/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 mcp = ["mcp>=2.3.0,<3"]

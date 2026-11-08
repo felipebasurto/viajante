@@ -9,10 +9,18 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
-## [1.5.6] - 2026-11-06
+## [1.5.6] - 2026-11-08
 
 ### Fixed
 
+- `watch_price` bypasses the MCP replay cache for a fresh observation on every run,
+  including repeated calls in the same server process. Search preparation, the one-search
+  lock, cancellation and provider cooldowns still apply.
+- Booking keeps successfully parsed property cards when other attempted cards fail,
+  with `cards_unparsed`, `seen` and `parsed` diagnostics and a partial result envelope.
+  A page where every attempted card fails remains a parsing failure.
+- Busy MCP searches are classified by a typed `search_in_progress` error instead of
+  matching an exception message.
 - A flight or round-trip batch that fails after its requests went out no longer sends every
   query again one by one. Each trip keeps the answer it already received; a trip without one
   carries the batch's failure.
@@ -32,9 +40,12 @@ history up to commit 6ee0fb7.
 - A named layover or duration filter drops an offer whose layover or duration is unknown. An
   unknown value cannot prove a match. Round-trip package filters check each leg's own
   evidence for clock windows, duration, stops and overnight stays.
-- The CLI and MCP server import less at startup: stdlib modules load only when a path uses
-  them. Measured on this machine, importing the CLI takes about 9% less CPU, and importing
-  the MCP server about 4% less.
+- The source distribution includes the changelog, agent reference, usage and architecture
+  docs. PyPI metadata links to the changelog.
+- The CLI and MCP server defer stdlib imports until the paths that use them.
+- Search preparation is shared by execution and saved-watch validation. Retry handling is
+  shared across flights, hotels and room rates. Recommendation and split-ticket output
+  types live with their domain models; the public JSON keys are unchanged.
 - `FetchBackend` no longer lists the unused `sweep_then_detail` literal.
 - The MCP guide and server instructions say to wait when `rate_limited` is true, and to
   include `retry_after` when it is known.
