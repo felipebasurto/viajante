@@ -40,16 +40,17 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Flight post-filters (clocks, layover, via, overnight, bag requirements): `src/viajante/flight_filters.py`
 - Google-side one-way options (superset bounds, the echo each needs): `src/viajante/flight_provider.py`; echo checks: `_verify_provider_echo` in `src/viajante/google_flights_public.py`
 - Offer normalization, LCC buffer, flight ranking, per-query recommendation: `src/viajante/flight_offers.py`
+- Google refusals the public page cannot verify (`GoogleFlightsUnsupported`, capability preflight, leg match) shared by the public and detail transports: `src/viajante/google_capabilities.py`
 - Flight evidence stamps (Google Flights URLs, offer evidence): `src/viajante/flight_evidence.py`
 - Round-trip / multi-city next-leg completion and package filters: `src/viajante/flight_packages.py`
 - Search loop, `search_flights`, or `get_flights`: `src/viajante/flights.py`; Google failure classification: `src/viajante/google_flights_public.py` (`classify_failure`)
-- Per-query `recommendation` (requirements, relaxation, score, shortlist): `src/viajante/recommend.py`
+- Per-query `recommendation` algorithm (requirements, relaxation, score, shortlist): `src/viajante/recommend.py`; its output types and JSON: `src/viajante/models_flights.py`
 - Booking URL, chips, or DOM cards: `src/viajante/booking.py`
 - Hotel evidence filters or ranking: `src/viajante/hotels.py`
 - Google Hotels HTTP shortlist: `src/viajante/google_hotels.py`, `src/viajante/google_hotels_rpc.py`
 - Google Hotels navigation context: `src/viajante/google_hotels_url.py`
 - Executing package diagnostics: `src/viajante/runtime.py`
-- Delays or retry classification: `src/viajante/orchestration.py`
+- Delays, the attempt budget, retry classification and the shared retry driver (`run_attempts`): `src/viajante/orchestration.py`
 - Shared provider cooldown state: `src/viajante/ratelimit.py`
 - Chromium session: `src/viajante/browser.py`
 - `--save` or the state directory: `src/viajante/storage.py`
@@ -64,7 +65,7 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
 - Owned parse corpus: `tests/bench/`
-- Domain types or JSON keys: `src/viajante/models_common.py` (shared primitives, errors, evidence, coverage), `models_flights.py`, `models_dates_explore.py`, `models_hotels.py`, `models_trip.py`, `models_hidden_city.py`, `models_awards.py`, `models_stays.py`, `models_validation.py`; `models.py` only re-exports them
+- Domain types or JSON keys: `src/viajante/models_common.py` (shared primitives, errors, evidence, coverage, the max-stops rule), `models_flights.py` (flight types and recommendation output), `models_split.py`, `models_dates_explore.py`, `models_hotels.py`, `models_trip.py`, `models_hidden_city.py`, `models_awards.py`, `models_stays.py`, `models_validation.py`; `models.py` only re-exports them
 - Same-route median from requested priced days: `src/viajante/typical.py`
 - Raw card text to numbers/enums: `src/viajante/parsers.py`
 - Offline IATA lookup and metro groups: `src/viajante/airports.py`
@@ -72,7 +73,7 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Cheapest-per-day window and flex window: `src/viajante/dates.py`
 - Explore destinations from an origin: `src/viajante/explore.py`
 - Owned trip total (flight fare + hotel stay): `src/viajante/trip.py`
-- Opt-in split tickets: `src/viajante/split.py`
+- Opt-in split tickets (search loop): `src/viajante/split.py`; split domain types and JSON: `src/viajante/models_split.py`; named split filters: `src/viajante/split_filters.py`
 - Opt-in Skiplagged MCP (not Google mix-in): `src/viajante/skiplagged.py`; captured responses: `tests/fixtures/skiplagged/`
 - Skiplagged hotel search and room rates: `src/viajante/skiplagged_hotels.py`
 - Local award CPP, transfer table, imported offers: `src/viajante/points.py`
@@ -248,6 +249,10 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 
 ## Hotels
 
+- Booking keeps parsed cards when other attempted cards fail and stamps
+  `page_errors` with `cards_unparsed`, including `seen` and `parsed` counts.
+  The envelope is partial. If every attempted card fails, the page is markup drift.
+
 - Prices are total-stay. Keep requested filters, applied filters, and observed card
   evidence distinct. `filter applied; card silent` is not confirmed free cancellation.
 - Free cancellation is required by default. Only an explicit opt-out may include
@@ -285,6 +290,9 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   and one observation is no trend. Never forecast or estimate a missing day.
 - `watch_price` runs only when called: no scheduler, no notification. A proxy is
   never stored. `watch_price` is the one tool here that writes.
+- Every watch run bypasses the MCP replay cache for a fresh search, under the
+  one-search lock and provider cooldown. Only a successful priced search records
+  an observation; repeated calls are separate provider requests.
 - Only a missing log is an empty log. Any other read error stops an append or
   `--clear` and is reported.
 

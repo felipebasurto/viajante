@@ -11,6 +11,11 @@ from urllib.parse import urlencode
 from viajante.airports import same_city_iata
 from viajante.carriers import ALLIANCE_TFS_CODE, _airline_filter_hit
 from viajante.control import SearchDeadline, checkpoint
+from viajante.google_capabilities import (
+    GoogleFlightsUnsupported,
+    matches_leg,
+    validate_capabilities,
+)
 from viajante.google_flights import (
     RPC_THROTTLE_STATUS,
     SEARCH_URL,
@@ -51,7 +56,6 @@ from viajante.google_flights_rpc import (
 from viajante.models import (
     FlightCabin,
     FlightQuery,
-    MultiCity,
     PriceInsight,
     ProviderShop,
     RawJourneyLeg,
@@ -63,10 +67,10 @@ from viajante.models import (
 from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
-    cooldown_until,
     note_rate_limited,
     rate_limit_advice,
     rate_limit_status,
+    recorded_expiry,
 )
 from viajante.sweep_config import get_sweep_config
 from viajante.tfs import CABIN_SEAT, encode_explore_tfs, encode_tfs_selected_outbound
@@ -112,6 +116,35 @@ def _response_halts(response: SweepHttpResponse) -> bool:
     return looks_blocked(response.text, response.url)
 
 
+def _sent_batch_block(responses: Sequence[SweepHttpResponse]) -> SweepHttpResponse | None:
+    sent = [r for r in responses if r.request_sent and _response_halts(r)]
+    return next(
+        (r for r in sent if r.status == 429 or raw_rpc_error_status(r.text) == RPC_THROTTLE_STATUS),
+        sent[0] if sent else None,
+    )
+
+
+def _batch_block_provenance(responses: Sequence[SweepHttpResponse]) -> list[SweepHttpResponse]:
+    """Attach a sent block's provenance to siblings the batch did not send."""
+    block = _sent_batch_block(responses)
+    if block is None:
+        return list(responses)
+    limited = block.status == 429 or raw_rpc_error_status(block.text) == RPC_THROTTLE_STATUS
+    return [
+        replace(
+            r,
+            status=0,
+            text="Not sent. Remaining batch stopped after a provider block.",
+            rate_limited=limited,
+            retry_until=block.retry_until,
+            cooldown_basis=block.cooldown_basis,
+        )
+        if r.stopped and not r.request_sent
+        else r
+        for r in responses
+    ]
+
+
 def _response_retriable(response: SweepHttpResponse) -> bool:
     """Once-retry, matching ``_read_page_retry``: transport failures and HTTP 5xx only.
 
@@ -129,10 +162,6 @@ def _response_retriable(response: SweepHttpResponse) -> bool:
 
 EXPLORE_URL = "https://www.google.com/travel/explore"
 _EXPLORE_OCCUPANCY = [1, 0, 0, 0]
-
-
-class GoogleFlightsUnsupported(GoogleFlightsRejected):
-    """A requested capability cannot be represented by this transport."""
 
 
 NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
@@ -170,7 +199,7 @@ def classify_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BLOCKED,
             message=str(exc) or "Google Flights blocked the request.",
             rate_limited=exc.status == 429,
-            retry_until=cooldown_until(str(exc)) if exc.status == 429 else None,
+            retry_until=exc.retry_until if exc.status == 429 else None,
             diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsMarkupError):
@@ -246,7 +275,6 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
     """
     sides = (outbound, returned)
     if any(side.airline_codes is None and not side.airline for side in sides):
-        # One leg's carrier is unknown, so the package carrier is unknown too.
         codes, airline = None, ""
     else:
         codes = None
@@ -266,60 +294,6 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
     )
 
 
-def _validate_capabilities(trip: Trip, *, allow_multi_city: bool = False) -> None:
-    unsupported = [
-        key
-        for key in (
-            "bags",
-            "exclude_alliances",
-        )
-        if getattr(trip, key, None) is not None
-    ]
-    # A positive carry-on rides the tfs BaggageFilter and is verified by the
-    # page's Bags chip echo. Checked bags produce no provider echo on this
-    # transport, and a named 0 is the unselected state (no echo either);
-    # both stay refused like an unverifiable filter.
-    if trip.carry_on == 0:
-        unsupported.append("carry_on")
-    if isinstance(trip, MultiCity) and not allow_multi_city:
-        unsupported.append("multi_city")
-    if unsupported:
-        reasons = []
-        if "bags" in unsupported or "carry_on" in unsupported:
-            reasons.append("baggage-inclusive fares remain unknown")
-        if "exclude_alliances" in unsupported:
-            reasons.append(
-                "alliance exclusion is not verifiable: the public page "
-                "registers the filter but does not remove every "
-                "alliance-marketed itinerary"
-            )
-        if "multi_city" in unsupported:
-            reasons.append(
-                "the public page returns no multi-city results; request an explicit "
-                "browser detail search (--fetch detail) for multi-city packages"
-            )
-        message = (
-            "Not sent. Google Flights public-page transport cannot verify "
-            "these requested capabilities: "
-        ) + ", ".join(unsupported)
-        message += ". Remove them only for an explicitly separate scenario"
-        if reasons:
-            message += "; " + "; ".join(reasons)
-        raise GoogleFlightsUnsupported(message + ".")
-
-
-def _matches_leg(card: RawFlightCard, query) -> bool:
-    if len(card.legs) != 1 or not card.legs[0].segments:
-        return False
-    segments = card.legs[0].segments
-    return (
-        segments[0].origin == query.origin
-        and segments[-1].destination == query.destination
-        and segments[0].departure_date == query.departure_date
-        and len(segments) - 1 <= query.max_stops
-    )
-
-
 _PRICE_CHIP = re.compile(r"^up to (.*), Price, Selected$")
 _DURATION_CHIP = re.compile(r"^Under (?:(\d+) hr)?(?: ?(\d+) min)?, Duration, Selected$")
 _LAYOVER_CHIP = re.compile(
@@ -330,6 +304,19 @@ _HIDE_SEPARATE_CHIP = (
     "Hide separate & self-transfer tickets, Separate & self-transfer tickets, Selected"
 )
 _TIMES_CHIP = "Times, Selected"
+_ECHOED_PROVIDER_FIELDS = frozenset(
+    {
+        "max_price",
+        "earliest_departure_hour",
+        "latest_departure_hour",
+        "earliest_arrival_hour",
+        "latest_arrival_hour",
+        "max_duration_minutes",
+        "max_layover_minutes",
+        "less_emissions",
+        "hide_separate_tickets",
+    }
+)
 
 
 def _chip_minutes(match: re.Match[str]) -> int | None:
@@ -345,6 +332,15 @@ def _verify_provider_echo(labels: set[str | None], provider: ProviderShop) -> No
     A looser echoed bound only keeps more rows, which the caller's local filter trims.
     A tighter one could drop rows the local filter keeps, so it is a markup drift.
     """
+    unsupported = [
+        name
+        for name, value in vars(provider).items()
+        if name not in _ECHOED_PROVIDER_FIELDS and value is not None and value is not False
+    ]
+    if unsupported:
+        raise GoogleFlightsMarkupError(
+            "Public page cannot verify the requested provider options: " + ", ".join(unsupported)
+        )
     chips = {label for label in labels if label}
     clock_fields = (
         provider.earliest_departure_hour,
@@ -392,7 +388,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self.scope_bound = False
         self._query_meta: dict[Trip, tuple[BaseException | None, bool]] = {}
         self._price_insights: dict[Trip, tuple[PriceInsight | None, str | None]] = {}
-        # Per trip, per page URL: itinerary rows offered, and how many became cards.
         self._card_pages: dict[int, dict[str, tuple[int, int]]] = {}
         self._stopped_error: GoogleFlightsBlocked | None = None
         self._explore_browser = explore_session(
@@ -418,6 +413,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             raise GoogleFlightsBlocked(
                 "Not sent. Remaining search stopped after a provider block.",
                 status=error.status,
+                retry_until=error.retry_until,
                 diagnostics={
                     "http_status": None,
                     "rpc_status": None,
@@ -443,11 +439,18 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         try:
             raise_for_sweep_response(response, url)
         except GoogleFlightsBlocked as exc:
-            if exc.status in {None, 403, 429}:
+            if (
+                exc.status in {None, 403, 429}
+                and (response.request_sent or self._stopped_error is None)
+                and (
+                    self._stopped_error is None
+                    or self._stopped_error.status != 429
+                    or exc.status == 429
+                )
+            ):
                 self._stopped_error = exc
             raise
         html = response.text
-        # The context, ds:1 and carrier checks all read this page: parse its tree once.
         with shared_page_tree(html):
             if trip is not None:
                 self._verify_context(html, trip)
@@ -475,7 +478,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 self._verify_carrier_filters(html, (), trip)
                 raise NoFlightsFound() from exc
             except CompactParseMiss as exc:
-                # Missing bootstrap data cannot prove the provider returned no flights.
                 raise GoogleFlightsMarkupError(str(exc)) from exc
             if capture_insight and trip is not None:
                 # A bad insight slot must not fail the search that already parsed.
@@ -605,12 +607,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         )
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        _validate_capabilities(trip)
+        validate_capabilities(trip)
         self.partial_error = None
         self.scope_bound = False
         self._reset_parsed_cards(trip)
         cards, _html = self._read_page_retry(trip)
-        matched = tuple(card for card in cards if _matches_leg(card, trip.legs[0]))
+        matched = tuple(card for card in cards if matches_leg(card, trip.legs[0]))
         if not matched:
             raise GoogleFlightsMarkupError(
                 "Public-page rows did not prove the requested route, date and stops."
@@ -648,7 +650,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                         "Selected outbound echo was not proven on the return page."
                     )
                 for returned in returns:
-                    if _matches_leg(returned, trip.legs[1]):
+                    if matches_leg(returned, trip.legs[1]):
                         complete.append(_package_card(outbound, returned))
             except SearchDeadline:
                 if not complete:
@@ -755,7 +757,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 "public-page batch returned the wrong number of responses"
             )
         if any(response.deadline or _response_halts(response) for response in first):
-            return first, client
+            return _batch_block_provenance(first), client
         retry = [index for index, response in enumerate(first) if _response_retriable(response)]
         if not retry:
             return first, client
@@ -780,13 +782,14 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             # An unsent sibling's replay is its first send. Only a page that
             # was sent, failed, and was sent again is attempt 2.
             out[slot] = _replay_response(first[slot], response)
-        return out, client
+        return _batch_block_provenance(out), client
 
     @staticmethod
     def _not_sent_block(halt: GoogleFlightsBlocked) -> GoogleFlightsBlocked:
         return GoogleFlightsBlocked(
             "Not sent. Remaining search stopped after a provider block.",
             status=halt.status,
+            retry_until=halt.retry_until,
             diagnostics={
                 "http_status": None,
                 "rpc_status": None,
@@ -804,9 +807,10 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         return GoogleFlightsBlocked(
             "Outbound page arrived. Return pages were not sent after a provider block.",
             status=halt.status,
+            retry_until=halt.retry_until,
             diagnostics={
-                "http_status": halt.status,
-                "rpc_status": diagnostics.get("rpc_status"),
+                "http_status": None,
+                "rpc_status": None,
                 "request_sent": True,
                 "attempts": 1,
                 "endpoint": "www.google.com/travel/flights",
@@ -818,7 +822,9 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         results: list = [None] * len(trips)
         try:
             self._fill_round_trip_batch(client, trips, results, None)
-        except SearchDeadline as exc:
+        except Exception as exc:
+            # Answers already set stand. A trip without one carries the failure: a raise here
+            # would make the caller re-run the batch and send the answered trips again.
             for index, item in enumerate(results):
                 if item is None:
                     results[index] = exc
@@ -855,7 +861,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         chunk_size = get_sweep_config().concurrency
         for index, trip in enumerate(trips):
             try:
-                _validate_capabilities(trip)
+                validate_capabilities(trip)
             except Exception as exc:
                 results[index] = exc
         halt: GoogleFlightsBlocked | None = None
@@ -872,10 +878,36 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             outbound = [index for index in chunk if results[index] is None]
             urls = [self._url(trips[index]) for index in outbound]
             responses, client = self._get_pages(client, urls)
+            selected_block = _sent_batch_block(responses)
+            sent_block = next(
+                (
+                    (url, response)
+                    for url, response in zip(urls, responses, strict=True)
+                    if response is selected_block
+                ),
+                None,
+            )
             for index, url, response in zip(outbound, urls, responses, strict=True):
+                if (
+                    halt is None
+                    and response.stopped
+                    and not response.request_sent
+                    and sent_block is not None
+                ):
+                    try:
+                        raise_for_sweep_response(sent_block[1], sent_block[0])
+                    except GoogleFlightsBlocked as exc:
+                        halt = exc
                 if halt is not None:
+                    if sent_block is not None and response is sent_block[1]:
+                        try:
+                            raise_for_sweep_response(response, url)
+                        except GoogleFlightsBlocked as exc:
+                            halt = exc
                     results[index] = (
-                        self._stopped_after_outbound(halt)
+                        halt
+                        if sent_block is not None and response is sent_block[1]
+                        else self._stopped_after_outbound(halt)
                         if response.request_sent
                         else self._not_sent_block(halt)
                     )
@@ -884,7 +916,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     self._reset_parsed_cards(trips[index])
                     cards = self._parse_response(response, url, trips[index], capture_insight=True)
                     matched = tuple(
-                        card for card in cards if _matches_leg(card, trips[index].legs[0])
+                        card for card in cards if matches_leg(card, trips[index].legs[0])
                     )
                     if not matched:
                         raise GoogleFlightsMarkupError(
@@ -928,7 +960,10 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 except SearchDeadline as exc:
                     results[index] = exc
                 except Exception as exc:
-                    results[index] = exc
+                    results[index] = day_halt if day_halt and day_halt.status == 429 else exc
+                else:
+                    if day_halt is not None and day_halt.status == 429:
+                        self._query_meta[trips[index]] = (day_halt, True)
                 if on_day is not None:
                     on_day(index, results[index])
                 if day_halt is not None:
@@ -955,9 +990,9 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             except Exception as exc:
                 slots[slot_index] = exc
                 if (
-                    halt is None
-                    and isinstance(exc, GoogleFlightsBlocked)
+                    isinstance(exc, GoogleFlightsBlocked)
                     and exc.status in {None, 403, 429}
+                    and (halt is None or (halt.status != 429 and exc.status == 429))
                 ):
                     halt = exc
             else:
@@ -965,7 +1000,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         return slots, halt, client
 
     def fetch_many(self, trips: Sequence[Trip]):
-        # The HTTP client multiplexes GETs at the configured concurrency for OWs.
         if not trips:
             return []
         if all(isinstance(trip, RoundTrip) for trip in trips):
@@ -987,7 +1021,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         pending = []
         for index, trip in enumerate(trips):
             try:
-                _validate_capabilities(trip)
+                validate_capabilities(trip)
                 pending.append(index)
             except Exception as exc:
                 results[index] = exc
@@ -999,6 +1033,19 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             for index in pending:
                 results[index] = exc
             return results
+        try:
+            self._fill_one_way_batch(client, trips, pending, results)
+        except Exception as exc:
+            # Same rule as the round-trip batch: answers already set stand, and a trip without
+            # one carries the failure instead of the batch being re-run from the caller.
+            for index in pending:
+                if results[index] is None:
+                    results[index] = exc
+        return results
+
+    def _fill_one_way_batch(
+        self, client, trips: Sequence[Trip], pending: list[int], results: list
+    ) -> None:
         urls = [self._url(trips[index]) for index in pending]
         getter = getattr(client, "get_many", None)
         responses = (
@@ -1006,11 +1053,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             if callable(getter)
             else self._serial_gets(client, urls)
         )
+        responses = _batch_block_provenance(responses)
         for index, url, response in zip(pending, urls, responses, strict=True):
             try:
                 self._reset_parsed_cards(trips[index])
                 cards = self._parse_response(response, url, trips[index], capture_insight=True)
-                matched = tuple(card for card in cards if _matches_leg(card, trips[index].legs[0]))
+                matched = tuple(card for card in cards if matches_leg(card, trips[index].legs[0]))
                 if not matched:
                     raise GoogleFlightsMarkupError(
                         "Public-page rows did not prove the requested route, date and stops."
@@ -1033,6 +1081,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     if callable(getter)
                     else self._serial_gets(client, retry_urls)
                 )
+                retried = _batch_block_provenance(retried)
                 for index, url, response in zip(replay, retry_urls, retried, strict=True):
                     try:
                         cards = self._parse_response(
@@ -1042,7 +1091,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                             capture_insight=True,
                         )
                         matched = tuple(
-                            card for card in cards if _matches_leg(card, trips[index].legs[0])
+                            card for card in cards if matches_leg(card, trips[index].legs[0])
                         )
                         if not matched:
                             raise GoogleFlightsMarkupError(
@@ -1054,7 +1103,6 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                         results[index] = exc
                     except Exception as exc:
                         results[index] = exc
-        return results
 
     def _serial_gets(self, client, urls):
         responses = []
@@ -1182,7 +1230,9 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self._check_stopped("www.google.com/travel/explore")
         state = rate_limit_status()
         if state is not None:
-            raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+            raise GoogleFlightsBlocked(
+                rate_limit_advice(state, sent=False), status=429, retry_until=state["until"]
+            )
         try:
             return capture_catalog(self._explore_browser, url, self._raise_explore_failure)
         except SweepTransportError:
@@ -1214,6 +1264,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             cause = "HTTP 429" if response.status == 429 else f"RPC status {RPC_THROTTLE_STATUS}"
             reason = f"Google Explore catalog returned {cause}."
             basis = None
+            until = None
             if self._proxy is None:
                 checkpoint()
                 state = (
@@ -1225,9 +1276,11 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 )
                 reason = rate_limit_advice(state, reason=cause)
                 basis = state.get("basis", "unknown")
+                until = recorded_expiry(state)
             self._stopped_error = GoogleFlightsBlocked(
                 reason,
                 status=429,
+                retry_until=until,
                 diagnostics=response_diagnostics(
                     replace(response, cooldown_basis=basis), response.url
                 ),

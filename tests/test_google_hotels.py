@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import unittest
 from datetime import date, datetime
 from pathlib import Path
@@ -301,6 +302,152 @@ class _TransportDownClient:
 
 
 class GoogleHotelsFetchTests(unittest.TestCase):
+    def test_concurrent_forbidden_does_not_hide_sibling_rate_limit(self) -> None:
+        url = "https://www.google.com/travel/search"
+        until = time.time() + 120
+        rated = HotelQuery("Prague", date(2099, 12, 4), date(2099, 12, 7), min_rating=4.5)
+
+        class Batched:
+            def __init__(self, first):
+                self.first = first
+
+            def post_many(self, jobs, *, timeout):
+                blocked = SweepHttpResponse(429, "", url, rate_limit="wait", retry_until=until)
+                forbidden = SweepHttpResponse(403, "", url)
+                return [blocked, forbidden] if self.first else [forbidden, blocked]
+
+        for first in (True, False):
+            with self.subTest(rate_limit_first=first):
+                report = _run_search(
+                    (rated,),
+                    top=1,
+                    source=GoogleHotelsSource(client=Batched(first), currency="EUR"),
+                    sleep=lambda _: None,
+                    random_gen=Random(0),
+                    now=lambda: datetime(2026, 8, 10),
+                    provider="google-hotels",
+                    currency="EUR",
+                )
+                self.assertTrue(report.queries[0].error.rate_limited)
+                self.assertEqual(report.queries[0].error.retry_until, until)
+
+    def test_block_during_replay_is_not_hidden_by_a_transient_sibling(self) -> None:
+        url = "https://www.google.com/travel/search"
+        until = time.time() + 120
+        rated = HotelQuery("Prague", date(2099, 12, 4), date(2099, 12, 7), min_rating=4.5)
+
+        class Batched:
+            def __init__(self):
+                self.calls = 0
+
+            def post_many(self, jobs, *, timeout):
+                self.calls += 1
+                second = (
+                    SweepHttpResponse(500, "", url)
+                    if self.calls == 1
+                    else SweepHttpResponse(429, "", url, rate_limit="wait", retry_until=until)
+                )
+                return [SweepHttpResponse(500, "", url), second]
+
+        client = Batched()
+        report = _run_search(
+            (rated,),
+            top=1,
+            source=GoogleHotelsSource(client=client, currency="EUR"),
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            provider="google-hotels",
+            currency="EUR",
+        )
+        self.assertEqual(client.calls, 2)
+        error = report.queries[0].error
+        self.assertTrue(error.rate_limited)
+        self.assertEqual(error.retry_until, until)
+
+    def test_unsent_primary_keeps_the_sibling_block_expiry(self) -> None:
+        url = "https://www.google.com/travel/search"
+        until = time.time() + 120
+        rated = HotelQuery("Prague", date(2099, 12, 4), date(2099, 12, 7), min_rating=4.5)
+
+        class Batched:
+            def post_many(self, jobs, *, timeout):
+                return [
+                    SweepHttpResponse(
+                        0, "Not sent.", url, request_sent=False, attempts=0, stopped=True
+                    ),
+                    SweepHttpResponse(429, "", url, rate_limit="wait", retry_until=until),
+                ]
+
+        report = _run_search(
+            (rated,),
+            top=1,
+            source=GoogleHotelsSource(client=Batched(), currency="EUR"),
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            provider="google-hotels",
+            currency="EUR",
+        )
+        error = report.queries[0].error
+        self.assertTrue(error.rate_limited)
+        self.assertEqual(error.retry_until, until)
+        self.assertTrue(error.message.startswith("Not sent."))
+
+    def test_a_block_stops_serial_dispatch_and_transient_sibling_replay(self) -> None:
+        url = "https://www.google.com/travel/search"
+        rated = HotelQuery("Prague", date(2099, 12, 4), date(2099, 12, 7), min_rating=4.5)
+
+        class Serial:
+            def __init__(self):
+                self.calls = 0
+
+            def post(self, *args, **kwargs):
+                self.calls += 1
+                return SweepHttpResponse(429, "", url)
+
+        class Batched:
+            def __init__(self):
+                self.calls = 0
+
+            def post_many(self, jobs, *, timeout):
+                self.calls += 1
+                return [SweepHttpResponse(500, "", url), SweepHttpResponse(429, "", url)]
+
+        for client in (Serial(), Batched()):
+            with self.subTest(client=type(client).__name__):
+                report = _run_search(
+                    (rated,),
+                    top=1,
+                    source=GoogleHotelsSource(client=client, currency="EUR"),
+                    sleep=lambda _: None,
+                    random_gen=Random(0),
+                    now=lambda: datetime(2026, 8, 10),
+                    provider="google-hotels",
+                    currency="EUR",
+                )
+                self.assertEqual(client.calls, 1)
+                self.assertEqual(report.queries[0].error.code, SearchErrorCode.BLOCKED)
+                self.assertTrue(report.queries[0].error.rate_limited)
+
+    def test_unadvised_rpc_13_is_a_block_not_a_parse_error(self) -> None:
+        body = ')]}\'\n\n[["wrb.fr",null,null,null,null,[13],"generic"]]'
+        client = _ScriptedHotelClient([SweepHttpResponse(200, body, "https://www.google.com/")])
+        report = _run_search(
+            (QUERY,),
+            top=1,
+            source=GoogleHotelsSource(client=client, currency="EUR"),
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            provider="google-hotels",
+            currency="EUR",
+        )
+        error = report.queries[0].error
+        self.assertEqual(error.code, SearchErrorCode.BLOCKED)
+        self.assertTrue(error.rate_limited)
+        self.assertIsNone(error.retry_until)
+
     def test_failed_relevance_transport_keeps_primary_cards_and_marks_partial(self):
         from viajante.envelope import stamp_search
         from viajante.evidence import failure_codes

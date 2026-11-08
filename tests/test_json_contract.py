@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import unittest
 from datetime import date, datetime, timezone
 
 import _isolate  # noqa: F401
+from _json_contract import assert_json_serialisable, assert_no_forbidden_keys
 from viajante.google_flights import google_flights_url
 from viajante.models import (
     FlightLeg,
@@ -93,18 +93,6 @@ STOPS_COMPARE_SIDE_KEYS = {
     "layover_hours",
 }
 FLIGHT_FETCH_BACKENDS = {"sweep", "detail", "sweep_then_detail"}
-FORBIDDEN_KEYS = {
-    "co2",
-    "co2_kg",
-    "emissions",
-    "carbon",
-    "price_eur",
-    "typical_eur",
-    "cheapest_eur",
-    "baggage_buffer_eur",
-    "price_cap_eur",
-    "price_usd",
-}
 
 
 def _report() -> SearchReport:
@@ -383,12 +371,10 @@ class JsonContractTests(unittest.TestCase):
         self.assertIn(self.data["fetch_backend"], FLIGHT_FETCH_BACKENDS)
 
     def test_forbidden_keys_are_absent(self) -> None:
-        blob = json.dumps(self.data)
-        for key in FORBIDDEN_KEYS:
-            self.assertNotIn(f'"{key}"', blob)
+        assert_no_forbidden_keys(self, self.data)
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
-        json.loads(json.dumps(self.data, ensure_ascii=False))
+        assert_json_serialisable(self.data)
 
     def test_round_trip_query_carries_return_date_and_trip_kind(self) -> None:
         query = RoundTrip("JFK", "CDG", date(2026, 12, 3), date(2026, 12, 9))

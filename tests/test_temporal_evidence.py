@@ -60,9 +60,8 @@ class TemporalEvidenceTests(unittest.TestCase):
             arrival_timezone="Europe/London",
         )
         query = RoundTrip("JFK", "LHR", FUTURE, FUTURE + timedelta(days=3))
-        report = _search(
-            query, _Source([_card(legs=(RawJourneyLeg(None, None, segments=(raw,)),))])
-        )
+        outbound = RawJourneyLeg(None, None, stops="Nonstop", segments=(raw,))
+        report = _search(query, _Source([_card(legs=(outbound,))]))
         completeness = report.queries[0].offers[0].completeness
         self.assertEqual(completeness.segment_dates, "unknown")
         self.assertEqual(completeness.segment_timezones, "unknown")

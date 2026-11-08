@@ -17,6 +17,11 @@ from viajante.control import (
     bounded_ms,
     checkpoint,
 )
+from viajante.google_capabilities import (
+    GoogleFlightsUnsupported,
+    matches_leg,
+    validate_capabilities,
+)
 from viajante.google_flights import (
     SCRAPE_LANGUAGE,
     GoogleFlightsBlocked,
@@ -338,12 +343,14 @@ class GoogleFlightsSource:
         *,
         currency: str,
         country: Optional[str] = None,
+        proxy: Optional[str] = None,
     ) -> None:
         self._config = config or BrowserSessionConfig(
             state_filename=STATE_FILENAME,
             locale=FETCH_LOCALE,
             html_lang=SCRAPE_LANGUAGE,
             currency=currency,
+            proxy=proxy,
             country=country,
         )
         self._session = session or ChromiumSession(state_dir, self._config)
@@ -357,9 +364,6 @@ class GoogleFlightsSource:
         return self._config
 
     def fetch(self, trip: Trip) -> tuple[RawFlightCard, ...]:
-        # Inline: google_flights_public imports this module, so a top-level import would cycle.
-        from viajante.google_flights_public import GoogleFlightsUnsupported, _validate_capabilities
-
         # Detail reads no page echo, so a bag or carrier filter it sends stays unproven.
         unproven = [key for key in _DETAIL_UNPROVEN if getattr(trip, key, None) is not None]
         if unproven:
@@ -369,7 +373,7 @@ class GoogleFlightsSource:
                 + ". The public-page sweep verifies carry-on and airline or alliance includes."
             )
         # The public page bootstraps no multi-city results; the browser UI renders them.
-        _validate_capabilities(trip, allow_multi_city=True)
+        validate_capabilities(trip, allow_multi_city=True)
         if isinstance(trip, MultiCity):
             return self._fetch_multi(trip)
         return parse_flight_cards(
@@ -398,7 +402,9 @@ class GoogleFlightsSource:
         if not self._started:
             state = rate_limit_status()
             if state is not None:
-                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+                raise GoogleFlightsBlocked(
+                    rate_limit_advice(state, sent=False), status=429, retry_until=state["until"]
+                )
             self._started = True
         self.partial_error = None
         self.scope_bound = True  # Bounded first-journey coverage, like the RT cap.
@@ -489,9 +495,6 @@ class GoogleFlightsSource:
         The index counts every ``ul.Rk10dc li`` in document order so the row can
         be clicked back with ``locator(CARD_SELECTOR).nth(index)``.
         """
-        # Inline import, same cycle as in fetch().
-        from viajante.google_flights_public import _matches_leg
-
         page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
         checkpoint()
         html = page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
@@ -499,7 +502,7 @@ class GoogleFlightsSource:
         parser = LexborHTMLParser(html)
         for position, item in enumerate(parser.css(CARD_SELECTOR)):
             card = _extract_card(item)
-            if card is not None and _matches_leg(card, leg):
+            if card is not None and matches_leg(card, leg):
                 matched.append((position, card))
         if not matched:
             raise GoogleFlightsMarkupError(
@@ -570,7 +573,9 @@ class GoogleFlightsSource:
         if not self._started:
             state = rate_limit_status()
             if state is not None:
-                raise GoogleFlightsBlocked(rate_limit_advice(state, sent=False), status=429)
+                raise GoogleFlightsBlocked(
+                    rate_limit_advice(state, sent=False), status=429, retry_until=state["until"]
+                )
             self._started = True
         page = self._session.new_page()
         try:

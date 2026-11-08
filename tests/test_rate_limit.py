@@ -5,7 +5,9 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +24,7 @@ from viajante.google_flights import (
     SweepPost,
     _raise_if_blocked,
     note_rate_limited,
+    raise_for_sweep_response,
     rate_limit_status,
 )
 from viajante.google_flights_public import PublicGoogleFlightsHttpSource
@@ -45,6 +48,39 @@ class _StateDir(unittest.TestCase):
 
 
 class CooldownStateTests(_StateDir):
+    def test_concurrent_limits_keep_the_later_named_expiry(self) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+        second_done = threading.Event()
+        real_write = write_json_atomic
+
+        def slow_first_write(state, path):
+            if state["until"] == T0 + 120:
+                entered.set()
+                if not release.wait(5):
+                    raise AssertionError("first writer was not released")
+            real_write(state, path)
+
+        def later_limit():
+            note_rate_limited(retry_after=600, now=T0)
+            second_done.set()
+
+        with patch("viajante.ratelimit.write_json_atomic", side_effect=slow_first_write):
+            first = threading.Thread(target=note_rate_limited, kwargs={"now": T0})
+            second = threading.Thread(target=later_limit)
+            first.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                second.start()
+                self.assertFalse(second_done.wait(0.1))
+            finally:
+                release.set()
+                first.join(5)
+                if second.ident is not None:
+                    second.join(5)
+        self.assertTrue(second_done.is_set())
+        self.assertEqual(rate_limit_status(now=T0 + 1)["until"], T0 + 600)
+
     def test_first_429_starts_the_base_cooldown_and_a_burst_does_not_extend_it(self) -> None:
         first = note_rate_limited(now=T0)
         self.assertEqual(first["until"], T0 + RATE_LIMIT_COOLDOWN_SECONDS)
@@ -63,6 +99,7 @@ class CooldownStateTests(_StateDir):
         self.assertEqual(state["cooldown_s"], RATE_LIMIT_MAX_COOLDOWN_SECONDS)
         state = note_rate_limited(retry_after=float("inf"), now=T0 + 10_000)
         self.assertEqual(state["cooldown_s"], RATE_LIMIT_COOLDOWN_SECONDS)
+        self.assertEqual(state["basis"], "heuristic_http_429")
 
     def test_a_persisted_record_out_of_range_is_unreadable(self) -> None:
         write_json_atomic(
@@ -164,15 +201,27 @@ class CooldownGateTests(_StateDir):
         self.assertTrue(hotels.exception.rate_limited)
         error = classify_failure(flights.exception)
         self.assertTrue(error.rate_limited)
+        self.assertIsNotNone(error.retry_until)
+        self.assertEqual(hotels.exception.retry_until, error.retry_until)
         self.assertIs(error.to_dict()["rate_limited"], True)
 
-    def test_proxied_search_is_not_paused(self) -> None:
+    def test_proxied_search_is_paused_by_shared_cooldown(self) -> None:
         note_rate_limited()
         with patch("viajante.google_flights.shared_chrome_sweep_client") as client:
-            PublicGoogleFlightsHttpSource(
+            source = PublicGoogleFlightsHttpSource(
                 proxy="http://proxy.example:8080", currency="EUR"
-            )._ensure_client()
-        client.assert_called_once()
+            )
+            with self.assertRaises(GoogleFlightsBlocked):
+                source.fetch(FlightQuery("JFK", "LHR", date(2099, 1, 1)))
+        client.assert_not_called()
+
+    def test_proxied_explore_is_paused_by_shared_cooldown(self) -> None:
+        note_rate_limited()
+        source = PublicGoogleFlightsHttpSource(proxy="http://proxy.example:8080", currency="EUR")
+        with patch("viajante.google_flights_public.capture_catalog", return_value=[]) as capture:
+            with self.assertRaises(GoogleFlightsBlocked):
+                source._explore_page("https://www.google.com/travel/explore")
+        capture.assert_not_called()
 
 
 STATUS_13_BODY = ")]}'\n\n" + json.dumps(
@@ -207,6 +256,116 @@ def _exchange(
 
 
 class StatusThirteenTests(_StateDir):
+    def test_concurrent_429_wins_over_other_block_and_transport_stop(self) -> None:
+        until = time.time() + 120
+
+        class Batch:
+            def get_many(self, urls, *, timeout):
+                return [
+                    SweepHttpResponse(403, "", urls[0]),
+                    SweepHttpResponse(
+                        429, "slow down", urls[1], rate_limit="wait", retry_until=until
+                    ),
+                    SweepHttpResponse(
+                        599,
+                        "transport stopped",
+                        urls[2],
+                        request_sent=False,
+                        attempts=0,
+                        stopped=True,
+                    ),
+                ]
+
+        trips = [FlightQuery("JFK", "LHR", date(2099, 1, day)) for day in (1, 2, 3)]
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=Batch())
+        results = source.fetch_many(trips)
+        self.assertFalse(classify_failure(results[0]).rate_limited)
+        for result in results[1:]:
+            error = classify_failure(result)
+            self.assertTrue(error.rate_limited)
+            self.assertEqual(error.retry_until, until)
+        self.assertFalse(classify_failure(results[2]).diagnostics["request_sent"])
+
+    def test_later_forbidden_does_not_replace_a_recorded_429(self) -> None:
+        until = time.time() + 120
+
+        class Batch:
+            def get_many(self, urls, *, timeout):
+                return [
+                    SweepHttpResponse(429, "", urls[0], rate_limit="wait", retry_until=until),
+                    SweepHttpResponse(403, "", urls[1]),
+                ]
+
+        trips = [FlightQuery("JFK", "LHR", date(2099, 1, day)) for day in (1, 2)]
+        source = PublicGoogleFlightsHttpSource(currency="USD", client=Batch())
+        source.fetch_many(trips)
+        with self.assertRaises(GoogleFlightsBlocked) as stopped:
+            source.fetch(trips[0])
+        self.assertEqual(stopped.exception.status, 429)
+        self.assertEqual(stopped.exception.retry_until, until)
+
+    def test_one_way_batch_keeps_sent_block_for_unsent_siblings_and_later_calls(self) -> None:
+        until = time.time() + 120
+
+        class Batch:
+            def __init__(self, block_first):
+                self.block_first = block_first
+
+            def get_many(self, urls, *, timeout):
+                block = SweepHttpResponse(
+                    429, "slow down", urls[0], rate_limit="wait", retry_until=until
+                )
+                unsent = SweepHttpResponse(
+                    0, "Not sent.", urls[1], request_sent=False, attempts=0, stopped=True
+                )
+                return [block, unsent] if self.block_first else [unsent, block]
+
+        trips = [FlightQuery("JFK", "LHR", date(2099, 1, day)) for day in (1, 2)]
+        for block_first in (True, False):
+            with self.subTest(block_first=block_first):
+                source = PublicGoogleFlightsHttpSource(currency="USD", client=Batch(block_first))
+                results = source.fetch_many(trips)
+                for result in results:
+                    error = classify_failure(result)
+                    self.assertTrue(error.rate_limited)
+                    self.assertEqual(error.retry_until, until)
+                with self.assertRaises(GoogleFlightsBlocked) as stopped:
+                    source.fetch(trips[0])
+                self.assertEqual(stopped.exception.retry_until, until)
+
+    def test_failed_cooldown_write_does_not_promise_a_shared_pause(self) -> None:
+        with patch("viajante.ratelimit.write_json_atomic", side_effect=OSError("read only")):
+            response = _exchange("slow down", proxied=False, status_code=429)
+        self.assertIsNone(response.retry_until)
+        self.assertIn("could not save", response.rate_limit)
+        self.assertIsNone(rate_limit_status())
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            raise_for_sweep_response(response, CALENDAR_URL)
+        self.assertIsNone(classify_failure(caught.exception).retry_until)
+
+    def test_recorded_expiry_follows_response_not_advice_wording(self) -> None:
+        response = _exchange("slow down", proxied=False, status_code=429)
+        response = replace(response, rate_limit="provider asked to wait")
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            raise_for_sweep_response(response, CALENDAR_URL)
+        self.assertEqual(classify_failure(caught.exception).retry_until, response.retry_until)
+        with self.assertRaises(HotelsBlocked) as caught_hotel:
+            GoogleHotelsSource._page(response, CALENDAR_URL)
+        self.assertEqual(caught_hotel.exception.retry_until, response.retry_until)
+        with self.assertRaises(HotelsBlocked) as without_advice:
+            GoogleHotelsSource._page(replace(response, rate_limit=None), CALENDAR_URL)
+        self.assertEqual(without_advice.exception.retry_until, response.retry_until)
+
+    def test_proxy_response_does_not_inherit_existing_direct_expiry(self) -> None:
+        note_rate_limited()
+        response = _exchange("slow down", proxied=True, status_code=429)
+        with self.assertRaises(GoogleFlightsBlocked) as caught:
+            raise_for_sweep_response(response, CALENDAR_URL)
+        self.assertIsNone(classify_failure(caught.exception).retry_until)
+        with self.assertRaises(HotelsBlocked) as caught_hotel:
+            GoogleHotelsSource._page(response, CALENDAR_URL)
+        self.assertIsNone(caught_hotel.exception.retry_until)
+
     def test_direct_status_13_records_a_cooldown_and_says_why(self) -> None:
         out = _exchange(STATUS_13_BODY, proxied=False)
         self.assertEqual(out.status, 200)

@@ -1548,7 +1548,7 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(source.fetched_queries[-1].bags, 1)
         self.assertEqual(source.fetched_queries[-1].carry_on, 1)
 
-    def test_flex_shop_via_airlines_and_price_cap_match_normalize(self) -> None:
+    def test_flex_shop_via_airlines_and_price_cap_filter_offers(self) -> None:
         via_lis = _card(stops="1 stop", layover_city="LIS", airline_codes=("IB",), price="€120")
         via_dxb = _card(stops="1 stop", layover_city="DXB", airline_codes=("IB",), price="€90")
         nonstop = _card(stops="Nonstop", airline_codes=("IB",), price="€110")
@@ -1568,8 +1568,6 @@ class ShopFilterTests(unittest.TestCase):
         )
         cards = (via_lis, via_dxb, nonstop, ryanair, over_cap)
         filters = dict(via=("LIS",), airlines=("IB",), price_cap=200)
-        expected = [_normalize_offer(card, 1, baggage_buffer=0, **filters) for card in cards]
-        kept = [offer.price for offer in expected if offer is not None]
         source = _flex_shop_source(*cards)
         report = search_flex(
             "JFK",
@@ -1580,10 +1578,9 @@ class ShopFilterTests(unittest.TestCase):
             baggage_buffer=0,
             **filters,
         )
-        self.assertEqual([offer.price for offer in report.offers], kept)
-        self.assertEqual(kept, [120.0])
+        self.assertEqual([offer.price for offer in report.offers], [120.0])
 
-    def test_flex_shop_exclude_via_and_exclude_airlines_match_normalize(self) -> None:
+    def test_flex_shop_exclude_via_and_airlines_filter_offers(self) -> None:
         keep = _card(stops="1 stop", layover_city="OPO", airline_codes=("IB",), price="€100")
         drop_via = _card(stops="1 stop", layover_city="LIS", airline_codes=("IB",), price="€80")
         drop_airline = _card(
@@ -1595,8 +1592,6 @@ class ShopFilterTests(unittest.TestCase):
         )
         cards = (keep, drop_via, drop_airline)
         filters = dict(exclude_via=("LIS",), exclude_airlines=("FR",))
-        expected = [_normalize_offer(card, 1, baggage_buffer=0, **filters) for card in cards]
-        kept = [offer.price for offer in expected if offer is not None]
         source = _flex_shop_source(*cards)
         report = search_flex(
             "JFK",
@@ -1607,8 +1602,7 @@ class ShopFilterTests(unittest.TestCase):
             baggage_buffer=0,
             **filters,
         )
-        self.assertEqual([offer.price for offer in report.offers], kept)
-        self.assertEqual(kept, [100.0])
+        self.assertEqual([offer.price for offer in report.offers], [100.0])
 
     def test_dates_sweep_applies_the_same_shop_filters(self) -> None:
         too_few = _card(checked_bags=0, price="€38")
@@ -1807,7 +1801,7 @@ class ShopFilterTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(nonstop, 1, **filters))
         self.assertIsNotNone(_normalize_offer(short_hop, 1, **filters))
         self.assertIsNone(_normalize_offer(long_hop, 1, **filters))
-        self.assertIsNotNone(_normalize_offer(silent, 1, **filters))
+        self.assertIsNone(_normalize_offer(silent, 1, **filters))
         self.assertIsNone(_normalize_offer(long_elapsed, 1, **filters))
         source = _flex_shop_source(nonstop, short_hop, long_hop, silent, long_elapsed)
         report = search_flex(
@@ -1820,7 +1814,7 @@ class ShopFilterTests(unittest.TestCase):
             sort="fare",
             **filters,
         )
-        self.assertEqual([offer.price for offer in report.offers], [55.0, 70.0, 90.0])
+        self.assertEqual([offer.price for offer in report.offers], [70.0, 90.0])
         unnamed = search_flex(
             "JFK",
             "LHR",
@@ -1872,8 +1866,9 @@ class ShopFilterTests(unittest.TestCase):
         self.assertEqual(report.days[0].price, 45.0)
         self.assertEqual(report.days[1].status, "empty")
         self.assertIsNone(report.days[1].price)
-        self.assertEqual(report.days[2].status, "ok")
-        self.assertEqual(report.days[2].price, 20.0)
+        self.assertEqual(report.days[2].status, "empty")
+        self.assertEqual(report.days[2].empty_reason, "filtered_out")
+        self.assertIsNone(report.days[2].price)
         unnamed_source = FakeDaySource(
             cards={
                 date(2026, 9, 1): (short, overnight),
@@ -2470,7 +2465,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertNotIn("BQH", dests)
         self.assertTrue(all(row.origin == "BOS" for row in reports))
         self.assertTrue(all(row.nearby_label for row in reports))
-        self.assertEqual(reports[0].to_dict()["nearby_label"], reports[0].nearby_label)
+        self.assertEqual(reports[0].to_dict()["nearby_label"], "nearby London LHR")
         self.assertEqual({query.destination for query in on_source.fetched_queries}, dests)
 
     def test_dates_nearby_unknown_city_does_not_invent_codes(self) -> None:
@@ -2502,7 +2497,7 @@ class NearbyDateFlexTests(unittest.TestCase):
         self.assertNotIn("BQH", dests)
         self.assertTrue(all(row.origin == "BOS" for row in reports))
         self.assertTrue(all(row.nearby_label for row in reports))
-        self.assertEqual(reports[0].to_dict()["nearby_label"], reports[0].nearby_label)
+        self.assertEqual(reports[0].to_dict()["nearby_label"], "nearby London LHR")
         self.assertEqual(on_source.fetch_calls, len(reports) * 7)  # seven days, no second shop
         self.assertEqual({query.destination for query in on_source.fetched_queries}, dests)
 

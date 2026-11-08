@@ -35,7 +35,13 @@ from typing import (
 
 from viajante.control import SearchControl, active
 from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
-from viajante.mcp_errors import structured_error, unknown_arguments_body, validation_body
+from viajante.mcp_errors import (
+    SEARCH_IN_PROGRESS_MESSAGE,
+    SearchInProgress,
+    structured_error,
+    unknown_arguments_body,
+    validation_body,
+)
 from viajante.mcp_guide import GUIDE, INSTRUCTIONS
 from viajante.mcp_handlers import (
     compare_awards_tool,
@@ -65,7 +71,6 @@ from viajante.watch import price_history_tool, watch_price_tool
 _T = TypeVar("_T")
 _SEARCH_BUSY = threading.Lock()
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="viajante-mcp")
-_SEARCH_BUSY_MESSAGE = "a viajante search is already running in this process"
 _CANCEL_GRACE_SECONDS = 1.0
 _PROGRESS_INTERVAL_SECONDS = 0.25
 _INDEXED_PROGRESS = re.compile(r"^\s*\[(\d+)/(\d+)\]")
@@ -178,8 +183,6 @@ class ProgressRelay:
                 value = max(float(indexed.group(1)), floor + 0.001)
                 new_total = float(indexed.group(2))
                 if self._total is None or new_total != self._total:
-                    # A new phase whose total cannot hold the value reports without a total,
-                    # rather than dropping every later line against the old one.
                     total = new_total if value <= new_total else None
                 else:
                     total = new_total
@@ -290,11 +293,11 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     if not _SEARCH_BUSY.acquire(blocking=False):
         holder = _CURRENT[0] if _CURRENT else None
         if holder is None or not holder[0].cancel.is_set():
-            _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+            _reraise(SearchInProgress(SEARCH_IN_PROGRESS_MESSAGE), kwargs)
         # A cancelled search is unwinding: give it a moment instead of a spurious busy error.
         await loop.run_in_executor(None, holder[1].wait, _CANCEL_GRACE_SECONDS)
         if not _SEARCH_BUSY.acquire(blocking=False):
-            _reraise(ValueError(_SEARCH_BUSY_MESSAGE), kwargs)
+            _reraise(SearchInProgress(SEARCH_IN_PROGRESS_MESSAGE), kwargs)
     _CURRENT[:] = [(control, finished)]
 
     def run() -> _T:
@@ -376,7 +379,6 @@ def _tool_error_text(name: str, exc: Exception) -> str:
         return _TOOL_ERROR_PREFIX.format(name=name) + body
     text = str(cause)
     if text.startswith('{"error"'):
-        # A handler's own argument check raises the same JSON body; it gets the same prefix.
         return _TOOL_ERROR_PREFIX.format(name=name) + text
     return text
 
@@ -421,7 +423,6 @@ def _wire_type(hint: Any) -> Any:
 
 
 def _room_rates_flag(value: object) -> bool:
-    # Reject before bool coercion, which would treat "yes" as true.
     if not isinstance(value, bool):
         raise ValueError("room_rates must be a boolean")
     return value
@@ -865,7 +866,9 @@ def build_server():
         name, kind (flight or hotel) and params (the search_flights or search_hotels
         arguments): validate, save, then run. Saving under an existing name replaces that
         watch. With only name, run the saved search. The run records an observation even when
-        the history opt-in is off. A cached or rate-limited run records nothing. No scheduler
+        the history opt-in is off. Each run bypasses the replay cache for a fresh search,
+        under the one-search lock and provider cooldown. A rate-limited, failed or empty run
+        records nothing. No scheduler
         and no notification: do not call it in a loop.
         """
 

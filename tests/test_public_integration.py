@@ -14,6 +14,7 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
+from viajante.google_capabilities import GoogleFlightsUnsupported, validate_capabilities
 from viajante.google_flights import (
     ChromeSweepClient,
     GoogleFlightsBlocked,
@@ -25,9 +26,7 @@ from viajante.google_flights_detail import (
 )
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
-    GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
-    _validate_capabilities,
 )
 from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import (
@@ -571,6 +570,10 @@ class DatesDeadlineCancelTests(unittest.TestCase):
             bags=1,
             baggage_buffer=0,
         )
+        self.assertEqual(
+            [row.departure_date for row in report.days],
+            [date(2099, 1, day) for day in (14, 15, 16)],
+        )
         self.assertTrue(all(row.status == "error" for row in report.days))
         self.assertTrue(all(row.error.code == SearchErrorCode.REJECTED for row in report.days))
 
@@ -920,7 +923,7 @@ class DetailCapabilityTests(unittest.TestCase):
             adults=2,
         )
         with self.assertRaisesRegex(GoogleFlightsUnsupported, "--fetch detail"):
-            _validate_capabilities(trip)
+            validate_capabilities(trip)
 
 
 if __name__ == "__main__":

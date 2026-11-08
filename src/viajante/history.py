@@ -24,12 +24,13 @@ import re
 import sys
 import uuid
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 from viajante.control import check_cancelled
+from viajante.flight_filters import OfferFilters
 from viajante.models import HotelQuerySuccess, QuerySuccess
 from viajante.runtime import package_version
 from viajante.storage import (
@@ -67,18 +68,7 @@ _TRUE = frozenset({"1", "true", "yes", "on"})
 _FLIGHT_FILTERS = (
     "top",
     "sort",
-    "max_layover_hours",
-    "min_layover_hours",
-    "max_duration_hours",
-    "depart_window",
-    "arrive_before",
-    "depart_after",
-    "depart_before",
-    "arrive_after",
-    "via",
-    "exclude_via",
-    "no_overnight",
-    "require_overnight",
+    *(item.name for item in fields(OfferFilters)),
     "exclude_airports",
     "include_airports",
     "country",

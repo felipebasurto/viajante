@@ -37,6 +37,7 @@ from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tes
     note_rate_limited,
     rate_limit_advice,
     rate_limit_status,
+    recorded_expiry,
 )
 from viajante.sweep_config import get_sweep_config
 from viajante.tfs import encode_tfs
@@ -84,10 +85,12 @@ class GoogleFlightsBlocked(RuntimeError):
         *,
         status: Optional[int] = None,
         diagnostics: Optional[Mapping[str, object]] = None,
+        retry_until: Optional[float] = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.diagnostics = diagnostics
+        self.retry_until = retry_until
 
 
 class SweepTransportError(RuntimeError):
@@ -173,8 +176,6 @@ _BLOCKED_MEMO = threading.local()
 
 
 def looks_blocked(html: str, final_url: str = "") -> bool:
-    # One response is checked up to three times on the way in. Remember the last page
-    # by identity, so its lowercase copy and RPC scan run once per response.
     memo = getattr(_BLOCKED_MEMO, "entry", None)
     if memo is not None and memo[0] is html and memo[1] == final_url:
         return memo[2]
@@ -234,13 +235,15 @@ class SweepHttpResponse:
     attempts: int = 1
     stopped: bool = False
     cooldown_basis: Optional[str] = None
+    retry_until: Optional[float] = None
+    rate_limited: bool = False
 
 
 # Not an HTTP status: marks a multiplexed job whose request raised before any response.
 SWEEP_TRANSPORT_STATUS = 599
 
 
-# ponytail: Google answers a throttled IP with a data-less wrb.fr envelope, status 13.
+# A data-less status 13 is a stop signal; its cause is unknown.
 RPC_THROTTLE_STATUS = 13
 
 
@@ -295,6 +298,7 @@ class _CooldownClient:
     def __init__(self, state: Mapping[str, float]) -> None:
         self._advice = rate_limit_advice(state, sent=False)
         self._basis = str(state.get("basis", "unknown"))
+        self._until = float(state["until"])
 
     def _answer(self, url: str) -> SweepHttpResponse:
         return SweepHttpResponse(
@@ -306,6 +310,8 @@ class _CooldownClient:
             attempts=0,
             stopped=True,
             cooldown_basis=self._basis,
+            retry_until=self._until,
+            rate_limited=True,
         )
 
     def get(self, url: str, *, timeout: float) -> SweepHttpResponse:
@@ -451,7 +457,6 @@ class ChromeSweepClient:
         try:
             return wait_for_future(future, max(timeout + 5.0, 10.0))
         except FutureTimeout:
-            # Stop the requests still queued on the loop; nothing should run unawaited.
             future.cancel()
             raise
 
@@ -508,6 +513,7 @@ class ChromeSweepClient:
                 out,
                 rate_limit=rate_limit_advice(state),
                 cooldown_basis=state.get("basis", "unknown"),
+                retry_until=recorded_expiry(state),
             )
         elif out.status == 200 and raw_rpc_error_status(out.text) == RPC_THROTTLE_STATUS:
             state = note_rate_limited(
@@ -517,6 +523,7 @@ class ChromeSweepClient:
                 out,
                 rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}"),
                 cooldown_basis=state.get("basis", "unknown"),
+                retry_until=recorded_expiry(state),
             )
         return out
 
@@ -592,7 +599,6 @@ class ChromeSweepClient:
                 )
             )
         except SearchDeadline:
-            # Responses that already arrived are real; only the rest were not loaded.
             return _settle_batch(out, sent, jobs, deadline=True)
         except FutureTimeout:
             return _settle_batch(out, sent, jobs, deadline=False)
@@ -706,19 +712,19 @@ def shared_chrome_sweep_client(*, proxy: Optional[str] = None) -> ChromeSweepCli
     wanted = _normalize_proxy(proxy)
     mode = get_sweep_config().mode
     with _SHARED_CLIENT_LOCK:
-        if (
-            _SHARED_CLIENT is not None
-            and _SHARED_CLIENT_PROXY == wanted
-            and _SHARED_CLIENT_MODE == mode
-        ):
-            return _SHARED_CLIENT
-        old = _SHARED_CLIENT
-        _SHARED_CLIENT = ChromeSweepClient(proxy=wanted)
+        live = _SHARED_CLIENT
+        if live is not None and _SHARED_CLIENT_PROXY == wanted and _SHARED_CLIENT_MODE == mode:
+            return live
+        old = live
+        # Return this local, not the global: closing `old` below runs outside the lock,
+        # and a concurrent reset may already have cleared the global by the time we return.
+        client = ChromeSweepClient(proxy=wanted)
+        _SHARED_CLIENT = client
         _SHARED_CLIENT_PROXY = wanted
         _SHARED_CLIENT_MODE = mode
     if old is not None:
         old.close()
-    return _SHARED_CLIENT
+    return client
 
 
 def reset_shared_chrome_sweep_client() -> None:
@@ -741,9 +747,33 @@ def dispatch_posts(
     poster = getattr(client, "post_many", None)
     if callable(poster) and len(jobs) > 1:
         return list(poster(jobs, timeout=timeout))
-    return [
-        client.post(job.url, data=job.data, headers=job.headers, timeout=timeout) for job in jobs
-    ]
+    responses = []
+    stopped = False
+    for job in jobs:
+        if stopped:
+            responses.append(
+                SweepHttpResponse(
+                    0,
+                    "Not sent. Remaining batch stopped after a provider block.",
+                    job.url,
+                    request_sent=False,
+                    attempts=0,
+                    stopped=True,
+                )
+            )
+            continue
+        response = client.post(job.url, data=job.data, headers=job.headers, timeout=timeout)
+        responses.append(response)
+        stopped = is_rate_limited_response(response)
+    return responses
+
+
+def is_rate_limited_response(response: SweepHttpResponse) -> bool:
+    return (
+        response.status == 429
+        or raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS
+        or (response.stopped and response.status == 0)
+    )
 
 
 def _raise_if_blocked(
@@ -802,8 +832,9 @@ def raise_for_sweep_response(response: SweepHttpResponse, url: str) -> None:
     if response.stopped and not response.request_sent and response.status != SWEEP_TRANSPORT_STATUS:
         raise GoogleFlightsBlocked(
             response.rate_limit or response.text,
-            status=429 if response.rate_limit else None,
+            status=429 if response.rate_limited or response.rate_limit else None,
             diagnostics=diagnostics,
+            retry_until=response.retry_until,
         )
     raw_status = raw_rpc_error_status(response.text)
     if raw_status == RPC_THROTTLE_STATUS:
@@ -812,12 +843,16 @@ def raise_for_sweep_response(response: SweepHttpResponse, url: str) -> None:
             "availability is not disproved."
         )
         raise GoogleFlightsBlocked(
-            message, status=429 if response.rate_limit else None, diagnostics=diagnostics
+            message,
+            status=429,
+            diagnostics=diagnostics,
+            retry_until=response.retry_until,
         )
     try:
         _raise_if_blocked(response.status, response.text, response.url, url, response.rate_limit)
     except GoogleFlightsBlocked as exc:
         exc.diagnostics = diagnostics
+        exc.retry_until = response.retry_until
         raise
 
 
@@ -899,8 +934,7 @@ class GoogleFlightsHttpSource:
     def _ensure_client(self) -> SweepHttpClient:
         if self._injected_client is not None:
             return self._injected_client
-        if self._proxy is None:
-            self._cooldown, paused = cooldown_client(self._cooldown)
-            if paused is not None:
-                return paused
+        self._cooldown, paused = cooldown_client(self._cooldown)
+        if paused is not None:
+            return paused
         return shared_chrome_sweep_client(proxy=self._proxy)

@@ -269,6 +269,7 @@ def _country_map() -> dict[str, str]:
 
 
 _COUNTRY_CASH_CURRENCY = _country_map()
+KNOWN_CASH_CURRENCIES = frozenset(_COUNTRY_CASH_CURRENCY.values()) | {"EUR", "USD"}
 
 
 def cash_currency_for_country(country: Optional[str]) -> Optional[str]:

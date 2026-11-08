@@ -15,7 +15,7 @@ from typing import Iterable, Mapping, Optional
 from uuid import uuid4
 
 from viajante.airports import is_known_iata
-from viajante.quote import _COUNTRY_CASH_CURRENCY
+from viajante.quote import KNOWN_CASH_CURRENCIES
 
 LEDGER_SIZE = 20
 _MONEY_KEYS = frozenset(
@@ -38,7 +38,6 @@ _MONEY_KEYS = frozenset(
 )
 # Recommendation score maps reuse "price" as a key for a 0-1 score, not an amount.
 _SCORE_KEYS = frozenset({"breakdown", "weights"})
-_ISO_4217 = frozenset(_COUNTRY_CASH_CURRENCY.values()) | {"EUR", "USD"}
 _GLYPH_CURRENCY = {"€": "EUR", "£": "GBP", "₹": "INR", "₩": "KRW"}
 _URL = re.compile(r"https?://[^\s)\]>\"'`]+")
 _ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
@@ -78,9 +77,6 @@ def selection_records(payload: Mapping[str, object], report=None) -> dict[str, o
             return
         queries = node.get("queries")
         if isinstance(queries, list):
-            # A typed hotel report is what a later read opens. A bare hotel
-            # payload is itself the snapshot. Flight reports have queries too;
-            # their offers have no total_price and are skipped below.
             owner = typed if hasattr(typed, "queries") else None
             if owner is None and typed is None:
                 owner = node
@@ -183,7 +179,6 @@ class _Owned:
     def owns_amount(self, value: float, currency: Optional[str]) -> bool:
         # ponytail: rounding tolerance is max(1, 0.5%); a caller rounding a JPY fare to
         # the nearest thousand is flagged. Upgrade: per-currency minor-unit tolerance.
-        # A zero (an unnamed baggage buffer, an unchanged price) owns only zero.
         return any(
             (currency is None or currency == code)
             and abs(value - owned) <= (max(1.0, owned * 0.005) if owned else 0.0)
@@ -234,7 +229,7 @@ def verify_answer(answer: str) -> dict[str, object]:
     money_codes: set[str] = set()
     for match in _MONEY.finditer(rest):
         mark = match.group("pre") or match.group("post")
-        code = _GLYPH_CURRENCY.get(mark, mark if mark in _ISO_4217 else None)
+        code = _GLYPH_CURRENCY.get(mark, mark if mark in KNOWN_CASH_CURRENCIES else None)
         if len(mark) == 3 and code is None:
             continue
         checked += 1
@@ -247,7 +242,7 @@ def verify_answer(answer: str) -> dict[str, object]:
             if code not in owned.currencies:
                 flag("currency", text)
     for code in _CODE.findall(rest):
-        if code in money_codes or code in _ISO_4217 or not is_known_iata(code):
+        if code in money_codes or code in KNOWN_CASH_CURRENCIES or not is_known_iata(code):
             continue
         checked += 1
         if code not in owned.codes:

@@ -22,8 +22,8 @@ If country, destination or currency is not proven, ask. Unnamed baggage_buffer i
 bags / carry_on: carry_on is verified on the page, checked bags are refused; see get_guide.
 Empty is not absent: no_results, blocked, markup_drift or an empty shortlist is not proof
 that nothing exists. Say what was searched; do not claim availability either way.
-Rate limits: if an error has rate_limited true, wait until retry_after (UTC) and tell the
-user. Do not retry, switch fetch mode or fan out other searches; they send nothing.
+Rate limits: if an error has rate_limited true, tell the user to wait; include retry_after
+(UTC) when known. Do not retry, switch fetch mode or fan out other searches.
 One search at a time per process: a busy error is not an MCP timeout; do not retry it blindly.
 deadline_seconds stops a search early: rows with error code deadline were not loaded, not empty.
 search_hidden_city is Skiplagged (USD), not Google: run it at most once, after a named-route
@@ -136,10 +136,10 @@ uv tool may execute different package versions. Do not assume uvx updates either
 
 ## Rate limits and cooldowns
 
-If an error has rate_limited true, tell the user to wait until the UTC time
-named in its message.
-Do not retry, switch fetch mode, or fan out other searches; they are paused
-locally and send nothing. An identical successful search within 5 minutes
+If an error has rate_limited true, tell the user to wait. When it names a UTC
+time, include it.
+Do not retry, switch fetch mode, or fan out other searches. A recorded cooldown
+pauses Google searches locally. An identical successful search within 5 minutes
 comes back cached (cached: true) without a new request. The replay cache holds
 at most 20 entries; a new successful search drops the oldest.
 
@@ -158,8 +158,9 @@ and their order do not change, and nothing in the block tells you what to book. 
   a per-offer status of `met`,
   `unmet` or `unknown`. `max_stops` appears even when it is only the default, so its presence
   does not mean you named a stop limit.
-- `relaxed_requirements`: the named requirements that were dropped so an entry could exist.
+- `relaxed_requirements`: the requirements that were dropped so an entry could exist.
   An entry that relaxed one is not an exact match on that requirement; read this list first.
+  An unknown field does not prove a requirement, so selecting it names that relaxation.
   When the query row has empty_reason filtered_out (envelope status no_results when every
   query is filtered_out) and a recommendation, offers is empty because your named filters
   removed every row, and the recommendation is a relaxed pick, not an exact match. Say which
@@ -354,9 +355,9 @@ watch_price re-runs a saved search_flights or search_hotels argument set on dema
 change since the last observation of the same query and currency. A flight run also carries
 that search's `price_insight` (see Google price level). The stored observation log does not.
 It saves the watch and records its observation (even when the global opt-in is off), so it is
-not read-only. It takes the
-one-search lock, the cooldown and the 5-minute cache like any search; its envelope is the inner
-search's, with completeness partial when history could not be read (change is then null). It
+not read-only. Each run bypasses the replay cache for a fresh search, under the one-search
+lock and provider cooldown. Its envelope is the inner search's, with completeness partial
+when history could not be read (change is then null). It
 sends no notification and schedules nothing: do not call it in a loop, because Google rate-limits.
 Saving under an existing name replaces that watch, and kind is flight or hotel as in price_history.
 If the saved watches file cannot be read, the list is watches null with status failed, completeness

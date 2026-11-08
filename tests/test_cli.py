@@ -40,7 +40,8 @@ from viajante.models import (
     TripTotal,
     VsTypical,
 )
-from viajante.recommend import Requirements, recommend_offers
+from viajante.models_flights import Requirements
+from viajante.recommend import recommend_offers
 from viajante.storage import write_json_atomic
 
 FUTURE_DATE = date.today() + timedelta(days=30)
@@ -1883,6 +1884,9 @@ class HotelCliTests(unittest.TestCase):
 
 
 class TripCliTests(unittest.TestCase):
+    return_date = FUTURE_DATE + timedelta(days=4)
+    route = f"SIN-MEL:{FUTURE_DATE.isoformat()}:{return_date.isoformat()}"
+
     def test_trip_help_returns_zero_without_search(self) -> None:
         with patch("viajante.cli.search_trip") as search:
             buffer = io.StringIO()
@@ -1902,7 +1906,9 @@ class TripCliTests(unittest.TestCase):
             fetch_ms=10,
             queries=(
                 QuerySuccess(
-                    query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10), adults=2),
+                    query=RoundTrip(
+                        "SIN", "MEL", FUTURE_DATE, FUTURE_DATE + timedelta(days=4), adults=2
+                    ),
                     raw_count=1,
                     eligible_count=1,
                     offers=(_offer(price=412, baggage_buffer=0),),
@@ -1933,7 +1939,9 @@ class TripCliTests(unittest.TestCase):
             provider="google-hotels",
             queries=(
                 HotelQuerySuccess(
-                    query=HotelQuery("Melbourne", date(2026, 11, 6), date(2026, 11, 10), adults=2),
+                    query=HotelQuery(
+                        "Melbourne", FUTURE_DATE, FUTURE_DATE + timedelta(days=4), adults=2
+                    ),
                     applied=AppliedHotelFilters(chips=(), url="https://example.test"),
                     raw_count=1,
                     eligible_count=1,
@@ -1960,7 +1968,7 @@ class TripCliTests(unittest.TestCase):
                 code = main(
                     [
                         "trip",
-                        "SIN-MEL:2026-11-06:2026-11-10",
+                        self.route,
                         "--hotel",
                         "Melbourne",
                         "--trip",
@@ -1981,8 +1989,8 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(trips[0].adults, 2)
         self.assertEqual(hotel_query.adults, 2)
         self.assertEqual(hotel_query.location, "Melbourne")
-        self.assertEqual(hotel_query.check_in, date(2026, 11, 6))
-        self.assertEqual(hotel_query.check_out, date(2026, 11, 10))
+        self.assertEqual(hotel_query.check_in, FUTURE_DATE)
+        self.assertEqual(hotel_query.check_out, FUTURE_DATE + timedelta(days=4))
         self.assertEqual(search.call_args.kwargs["hotel_source"], "booking")
 
     def test_trip_omits_sum_when_total_missing(self) -> None:
@@ -1991,7 +1999,7 @@ class TripCliTests(unittest.TestCase):
             fetch_backend="sweep",
             queries=(
                 QuerySuccess(
-                    query=RoundTrip("SIN", "MEL", date(2026, 11, 6), date(2026, 11, 10)),
+                    query=RoundTrip("SIN", "MEL", FUTURE_DATE, FUTURE_DATE + timedelta(days=4)),
                     raw_count=1,
                     eligible_count=1,
                     offers=(_offer(price=412),),
@@ -2013,7 +2021,7 @@ class TripCliTests(unittest.TestCase):
                 code = main(
                     [
                         "trip",
-                        "SIN-MEL:2026-11-06:2026-11-10",
+                        self.route,
                         "--hotel",
                         "Melbourne",
                         "--trip",
@@ -2069,7 +2077,7 @@ class TripCliTests(unittest.TestCase):
             code = main(
                 [
                     "trip",
-                    "SIN-MEL:2026-11-06:2026-11-10",
+                    self.route,
                     "--hotel",
                     "Melbourne",
                     "--trip",
@@ -2138,7 +2146,7 @@ class TripCliTests(unittest.TestCase):
             code = main(
                 [
                     "trip",
-                    "SIN-MEL:2026-11-06:2026-11-10",
+                    self.route,
                     "--hotel",
                     "Melbourne",
                     "--trip",

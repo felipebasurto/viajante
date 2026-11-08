@@ -40,13 +40,9 @@ from viajante.models import (
     TripSearchReport,
     format_money,
 )
+from viajante.models_flights import Recommendation
+from viajante.models_split import MAX_OTHER_CURRENCY_ROWS, TIMING_UNPROVEN_NOTE, SplitReport
 from viajante.parsers import clock_minutes as _clock_minutes
-from viajante.recommend import Recommendation
-from viajante.split import (
-    MAX_OTHER_CURRENCY_ROWS,
-    TIMING_UNPROVEN_NOTE,
-    SplitReport,
-)
 from viajante.trip import (
     format_trip_total,
 )

@@ -10,15 +10,17 @@ from viajante.carriers import _normalize_airline, _passes_airline_filters
 from viajante.flight_filters import (
     OfferFilters,
     _meets_requirements,
+    _passes_layover_bounds,
     _passes_overnight_filters,
     _passes_via_filters,
 )
 from viajante.flight_routes import _trip_max_stops
-from viajante.google_flights import RawFlightCard
+from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import FlightOffer, RawJourneyLeg, StopsCompare, StopsCompareSide, Trip
+from viajante.models_flights import Recommendation, Requirements
 from viajante.parsers import clock_minutes as _clock_minutes
 from viajante.parsers import normalize_clock, parse_duration_hours, parse_price, parse_stops_count
-from viajante.recommend import Recommendation, Requirements, hide_slow_connections, recommend_offers
+from viajante.recommend import hide_slow_connections, recommend_offers
 
 UNKNOWN_DURATION_SORTS_LAST = float("inf")
 
@@ -151,31 +153,16 @@ def _normalize_offer(
     stops_count = parse_stops_count(raw.stops)
     layover_hours = raw.layover_hours
     duration_hours = parse_duration_hours(raw.duration)
-    if (
-        max_layover_hours is not None
-        and stops_count
-        and stops_count > 0
-        and layover_hours is not None
-        and layover_hours > max_layover_hours
-    ):
-        return None
-    # The summary layover is the longest connection, so a minimum must read every known one.
-    known_layovers = [
-        layover.hours for leg in raw.legs for layover in leg.layovers if layover.hours is not None
-    ]
-    shortest_layover = min(known_layovers) if known_layovers else layover_hours
-    if (
-        min_layover_hours is not None
-        and stops_count
-        and stops_count > 0
-        and shortest_layover is not None
-        and shortest_layover < min_layover_hours
+    if not _passes_layover_bounds(
+        stops_count,
+        layover_hours,
+        [layover for leg in raw.legs for layover in leg.layovers],
+        minimum=min_layover_hours,
+        maximum=max_layover_hours,
     ):
         return None
     packaged = len(raw.legs) > 1
     if packaged:
-        # Stops and duration describe the whole package: the worst leg's stops, the summed
-        # leg time. An unknown leg makes the total unknown; the outbound alone is not the trip.
         stops_count, duration_hours = _package_totals(raw.legs)
     airline = raw.airline or ""
     requested = bags is not None or carry_on is not None
@@ -217,12 +204,14 @@ def _normalize_offer(
         raw,
         offer,
         max_stops,
-        depart_window=depart_window,
-        arrive_before=arrive_before,
-        depart_after=depart_after,
-        depart_before=depart_before,
-        arrive_after=arrive_after,
-        max_duration_hours=max_duration_hours,
+        filters=OfferFilters(
+            depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
+            depart_before=depart_before,
+            arrive_after=arrive_after,
+            max_duration_hours=max_duration_hours,
+        ),
         bags=bags,
         carry_on=carry_on,
     ):
@@ -244,7 +233,7 @@ def _shop_offers(
     # a card may qualify through an alliance member we cannot verify locally.
     airlines = trip.airlines if not trip.alliances else None
     shared: dict[str, Any] = {
-        **filters.normalizer_kwargs(),
+        **vars(filters),
         "baggage_buffer": baggage_buffer,
         "airlines": airlines,
         "exclude_airlines": trip.exclude_airlines,
@@ -263,12 +252,7 @@ def _shop_offers(
             raw,
             offer,
             max_stops,
-            depart_window=filters.depart_window,
-            arrive_before=filters.arrive_before,
-            depart_after=filters.depart_after,
-            depart_before=filters.depart_before,
-            arrive_after=filters.arrive_after,
-            max_duration_hours=filters.max_duration_hours,
+            filters=filters,
             bags=trip.bags,
             carry_on=trip.carry_on,
         ):

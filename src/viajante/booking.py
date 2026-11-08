@@ -15,6 +15,8 @@ from viajante.models import (
     HotelPage,
     HotelQuery,
     RawHotelCard,
+    SearchError,
+    SearchErrorCode,
 )
 from viajante.storage import write_text_atomic
 
@@ -240,7 +242,17 @@ class BookingHotelsSource:
             if not cards:
                 self._record_failure(page)
                 raise RuntimeError("Booking property cards could not be parsed")
-            return HotelPage(cards=tuple(cards))
+            seen = len(provider_cards[:limit])
+            errors = ()
+            if len(cards) < seen:
+                errors = (
+                    SearchError(
+                        SearchErrorCode.CARDS_UNPARSED,
+                        "Some Booking property cards could not be parsed.",
+                        diagnostics={"seen": seen, "parsed": len(cards)},
+                    ),
+                )
+            return HotelPage(cards=tuple(cards), page_errors=errors)
         finally:
             with contextlib.suppress(Exception):
                 page.close()

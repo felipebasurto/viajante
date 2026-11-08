@@ -93,28 +93,6 @@ def _card(price: str = "$128", airline: str = "Delta") -> RawFlightCard:
     )
 
 
-class ValidateOnlyLedgerTests(unittest.TestCase):
-    def setUp(self) -> None:
-        evidence.clear()
-        self.addCleanup(evidence.clear)
-
-    def test_argument_check_takes_no_ledger_slot_and_no_cache_replay(self) -> None:
-        calls = []
-
-        @mcp_handlers._cached
-        def fake_search(value: int) -> dict:
-            # Argument checks run first; the lock is where a validate-only call stops.
-            mcp_handlers._with_search_lock(lambda: calls.append(value))
-            return {"status": "ok", "value": value}
-
-        mcp_handlers._CACHE.clear()
-        fake_search(1)  # a real search, cached and recorded once
-        before = len(evidence._ledger)
-        mcp_handlers.check_search_params(fake_search, {"value": 1})
-        self.assertEqual(len(evidence._ledger), before)
-        self.assertEqual(calls, [1])
-
-
 class _FlightSource:
     """Scripted per-destination responses; an Exception value is raised."""
 
@@ -316,7 +294,7 @@ class FlightEmptyReasonTests(_StateDirCase):
     def test_a_429_is_rate_limited_and_names_the_known_cooldown(self) -> None:
         start = time.time()
         advice = rate_limit_advice(note_rate_limited(300.0, start, file=GOOGLE_RATE_LIMIT_FILE))
-        responses = {"LHR": GoogleFlightsBlocked(advice, status=429)}
+        responses = {"LHR": GoogleFlightsBlocked(advice, status=429, retry_until=start + 300)}
         queries = (FlightQuery("JFK", "LHR", DAY, max_stops=1),)
         with (
             patch(
@@ -438,7 +416,7 @@ class HotelEmptyReasonTests(_StateDirCase):
     def test_not_loaded_on_a_hotel_rate_limit(self) -> None:
         start = time.time()
         advice = rate_limit_advice(note_rate_limited(120.0, start, file=GOOGLE_RATE_LIMIT_FILE))
-        report = _hotels(HotelsBlocked(advice, rate_limited=True))
+        report = _hotels(HotelsBlocked(advice, rate_limited=True, retry_until=start + 120))
         payload = stamp_search(reports_payload(report), now=start)
         self.assertEqual(
             (payload["status"], payload["completeness"], payload["empty_reason"]),

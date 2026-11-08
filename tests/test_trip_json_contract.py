@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import unittest
 from datetime import date, datetime, timezone
 
 import _isolate  # noqa: F401
+from _json_contract import assert_json_serialisable, assert_no_forbidden_keys
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -39,18 +39,6 @@ TOTAL_KEYS = {
     "total",
     "hotel_price_basis",
     "nights",
-}
-FORBIDDEN_KEYS = {
-    "co2",
-    "co2_kg",
-    "emissions",
-    "carbon",
-    "flight_fare_eur",
-    "hotel_stay_eur",
-    "total_eur",
-    "price_eur",
-    "total_price_eur",
-    "price_usd",
 }
 
 
@@ -169,12 +157,10 @@ class TripJsonContractTests(unittest.TestCase):
         self.assertEqual(self.data["currency"], "EUR")
 
     def test_forbidden_keys_are_absent(self) -> None:
-        blob = json.dumps(self.data)
-        for key in FORBIDDEN_KEYS:
-            self.assertNotIn(f'"{key}"', blob)
+        assert_no_forbidden_keys(self, self.data)
 
     def test_the_whole_report_is_json_serialisable(self) -> None:
-        json.loads(json.dumps(self.data, ensure_ascii=False))
+        assert_json_serialisable(self.data)
 
 
 if __name__ == "__main__":

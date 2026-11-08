@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import fields
 from datetime import date, datetime
 from random import Random
 from types import SimpleNamespace
@@ -12,7 +11,6 @@ import _isolate  # noqa: F401
 from viajante.airports import get_airport
 from viajante.flight_filters import (
     NO_OFFER_FILTERS,
-    OfferFilters,
     _overnight_from_owned_clocks,
     parse_depart_window,
     parse_named_clock,
@@ -560,7 +558,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
     def test_unlabelled_stops_are_rejected_when_only_direct_flights_are_wanted(self) -> None:
         unknown = card(stops="Unknown", price="90 €", departure="14:00", arrival="15:00")
         self.assertIsNone(_normalize_offer(unknown, max_stops=0))
-        self.assertIsNotNone(_normalize_offer(unknown, max_stops=1))
+        self.assertIsNone(_normalize_offer(unknown, max_stops=1))
 
     def test_eligible_count_is_zero_when_all_offers_fail_normalize(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=0)
@@ -1002,6 +1000,42 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(report.queries[0], QuerySuccess)
         self.assertEqual(report.queries[0].offers[0].price, 120.0)
 
+    def test_round_trip_filters_check_return_journey_and_its_layovers(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2027, 4, 1), date(2027, 4, 7), max_stops=1)
+        outbound = RawJourneyLeg("08:00", "16:00", "8 h", "Nonstop")
+
+        def return_leg(departure: str, inbound: str, onward: str) -> RawJourneyLeg:
+            return RawJourneyLeg(
+                departure,
+                "21:00",
+                "8 h",
+                "1 stop",
+                segments=(
+                    RawSegment(origin="LHR", destination="BOS", arrival=inbound),
+                    RawSegment(origin="BOS", destination="JFK", departure=onward),
+                ),
+                layovers=(RawLayover(city="BOS", hours=2),),
+            )
+
+        cards = (
+            card(price="100 €", legs=(outbound, return_leg("08:00", "12:00", "14:00"))),
+            card(price="110 €", legs=(outbound, return_leg("06:00", "12:00", "14:00"))),
+            card(price="120 €", legs=(outbound, return_leg("08:00", "23:00", "01:00"))),
+        )
+        source = FakeSource({("JFK", "LHR", "2027-04-01", 1): cards})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights(
+                (trip,),
+                fetch="sweep",
+                currency="USD",
+                depart_after=7 * 60,
+                no_overnight=("any",),
+            )
+        result = report.queries[0]
+        assert isinstance(result, QuerySuccess)
+        self.assertEqual([offer.price for offer in result.offers], [100.0])
+        self.assertEqual((result.raw_count, result.eligible_count), (3, 1))
+
     def test_search_stamps_google_flights_urls(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource(
@@ -1115,6 +1149,13 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertGreaterEqual(report.fetch_ms or 0, 0)
         self.assertTrue(source.closed)
 
+    def test_detail_passes_requested_proxy_to_browser_source(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2099, 9, 1), max_stops=1)
+        source = FakeSource({("JFK", "LHR", "2099-09-01", 1): (card(),)})
+        with patch("viajante.flights.GoogleFlightsSource", return_value=source) as detail:
+            search_flights((query,), top=1, fetch="detail", proxy="http://proxy.example:8080")
+        self.assertEqual(detail.call_args.kwargs["proxy"], "http://proxy.example:8080")
+
     def test_auto_uses_sweep_for_three_queries(self) -> None:
         queries = (
             FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1),
@@ -1225,6 +1266,33 @@ class FlightsOrchestrationTests(unittest.TestCase):
 
 
 class ShopOffersSinglePassTests(unittest.TestCase):
+    def test_named_bounds_require_known_duration_and_connections(self) -> None:
+        query = FlightQuery("JFK", "LHR", date(2099, 1, 1), max_stops=2)
+        partial = RawJourneyLeg(
+            departure="08:00",
+            arrival="17:00",
+            duration="9 h",
+            stops="2 stops",
+            layovers=(RawLayover("ORD", 2.0), RawLayover("DEN", None)),
+        )
+        cards = (
+            card(price="10 €", duration=""),
+            card(price="20 €", stops="1 stop", layover_hours=None, duration="4 h"),
+            card(price="25 €", stops="1 stop", layover_hours=float("nan"), duration="4 h"),
+            card(price="30 €", stops="2 stops", layover_hours=2.0, duration="9 h", legs=(partial,)),
+            card(price="40 €", stops="1 stop", layover_hours=2.0, duration="4 h"),
+        )
+        source = FakeSource({("JFK", "LHR", "2099-01-01", 2): cards})
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights(
+                (query,),
+                currency="EUR",
+                max_duration_hours=10,
+                min_layover_hours=1,
+                max_layover_hours=3,
+            )
+        self.assertEqual([offer.price for offer in report.queries[0].offers], [40.0])
+
     def test_one_parse_gives_the_enforced_and_relaxed_walks(self) -> None:
         cards = (
             card(price="100 €", departure="07:00", arrival="08:00", duration="1 h"),
@@ -1246,19 +1314,6 @@ class ShopOffersSinglePassTests(unittest.TestCase):
         trip = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         filters = parse_offer_filters(depart_window=(6 * 60, 12 * 60), max_duration_hours=5.0)
         pool, eligible = _shop_offers(cards, trip, filters, baggage_buffer=0)
-        enforced = [
-            offer
-            for raw in cards
-            if (offer := _normalize_offer(raw, 1, **vars(filters))) is not None
-        ]
-        relaxed = [
-            offer
-            for raw in cards
-            if (offer := _normalize_offer(raw, 1, enforce_requirements=False, **vars(filters)))
-            is not None
-        ]
-        self.assertEqual(eligible, enforced)
-        self.assertEqual(pool, relaxed)
         self.assertEqual([offer.price for offer in eligible], [100.0])
         self.assertEqual([offer.price for offer in pool], [100.0, 90.0, 80.0, 70.0])
 
@@ -1397,11 +1452,6 @@ class GetFlightsTests(unittest.TestCase):
 
 
 class OfferFilterTests(unittest.TestCase):
-    def test_normalizer_kwargs_names_every_offer_filter_field(self) -> None:
-        # A field left out of the normalizer's keywords would be dropped without any error.
-        names = {field.name for field in fields(OfferFilters)}
-        self.assertEqual(set(OfferFilters().normalizer_kwargs()), names)
-
     def test_include_airlines_keeps_matching_codes(self) -> None:
         iberia = card(airline="Iberia", airline_codes=("IB",), price="100 €")
         ryanair = card(airline="Ryanair", airline_codes=("FR",), price="40 €", departure="09:00")

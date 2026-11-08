@@ -151,7 +151,6 @@ def trip_kind_code(trip: Trip) -> int:
 
 def _varint(n: int) -> bytes:
     if n < 0:
-        # `n >>= 7` never reaches zero for a negative int, so refuse it here.
         raise ValueError("tfs varint must not be negative")
     out = bytearray()
     while True:

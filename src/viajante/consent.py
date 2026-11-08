@@ -39,7 +39,6 @@ def restore_consent_cookies(session: Any, *, now: Optional[float] = None) -> int
     except (OSError, ValueError, TypeError, KeyError, OverflowError):
         return 0
     clock = time.time() if now is None else now
-    # NaN, inf and a future stamp fail the chained test too: a clock we cannot trust is no record.
     if not isinstance(cookies, list) or not 0 <= clock - stored_at <= CONSENT_MAX_AGE_SECONDS:
         return 0
     loaded = 0

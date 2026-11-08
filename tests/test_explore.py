@@ -16,6 +16,7 @@ from viajante.envelope import stamp_search
 from viajante.explore import MAX_EXPLORE_TOP, month_window, search_explore
 from viajante.flight_filters import parse_depart_window, parse_named_clock
 from viajante.flight_offers import _normalize_offer
+from viajante.google_capabilities import GoogleFlightsUnsupported
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     NoFlightsFound,
@@ -24,7 +25,6 @@ from viajante.google_flights import (
 )
 from viajante.google_flights_public import (
     GoogleFlightsMarkupError,
-    GoogleFlightsUnsupported,
     PublicGoogleFlightsHttpSource,
 )
 from viajante.google_flights_rpc import (
@@ -499,7 +499,7 @@ class ExploreSearchTests(unittest.TestCase):
         self.assertIsNotNone(_normalize_offer(nonstop, 1, baggage_buffer=0, **filters))
         self.assertIsNotNone(_normalize_offer(short_hop, 1, baggage_buffer=0, **filters))
         self.assertIsNone(_normalize_offer(overnight, 1, baggage_buffer=0, **filters))
-        self.assertIsNotNone(_normalize_offer(silent, 1, baggage_buffer=0, **filters))
+        self.assertIsNone(_normalize_offer(silent, 1, baggage_buffer=0, **filters))
         self.assertIsNone(_normalize_offer(long_elapsed, 1, baggage_buffer=0, **filters))
         source = FakeExploreSource(
             (
@@ -514,9 +514,8 @@ class ExploreSearchTests(unittest.TestCase):
             },
         )
         report = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source, **filters)
-        self.assertEqual([row.iata for row in report.destinations], ["LIS", "OPO"])
-        self.assertEqual(report.destinations[0].price, 40.0)
-        self.assertEqual(report.destinations[1].price, 90.0)
+        self.assertEqual([row.iata for row in report.destinations], ["OPO"])
+        self.assertEqual(report.destinations[0].price, 90.0)
         unnamed = search_explore("NRT", date(2026, 9, 1), days=7, top=3, source=source)
         by_iata = {row.iata: row.price for row in unnamed.destinations}
         self.assertEqual(set(by_iata), {"OPO", "LIS", "FCO"})
@@ -1222,7 +1221,7 @@ class NearbyExploreTests(unittest.TestCase):
         self.assertTrue({"LHR", "LGW", "STN", "LTN", "LCY"} <= set(origins))
         self.assertNotIn("BQH", origins)
         self.assertTrue(all(row.nearby_label for row in reports))
-        self.assertEqual(reports[0].to_dict()["nearby_label"], reports[0].nearby_label)
+        self.assertEqual(reports[0].to_dict()["nearby_label"], "nearby London LHR")
         self.assertEqual(on_source.explore_origins, origins)
 
     def test_nearby_unknown_city_does_not_invent_codes(self) -> None:
@@ -1998,7 +1997,6 @@ class PublicExploreCatalogTests(unittest.TestCase):
         page = parse_explore_catalog(body, origins=frozenset({"JFK"}))
         self.assertEqual(page.places, ())
         self.assertEqual(page.priced, 1)
-        self.assertEqual(page.unreadable_priced, 1)
 
     def test_catalog_without_cards_is_a_parse_miss(self):
         with self.assertRaises(CompactParseMiss):

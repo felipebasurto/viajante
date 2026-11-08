@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import _isolate  # noqa: F401
 from viajante import google_flights
 from viajante.flight_offers import _normalize_offer
+from viajante.google_capabilities import GoogleFlightsUnsupported
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     GoogleFlightsMarkupError,
@@ -33,7 +34,6 @@ from viajante.google_flights_detail import (
     parse_flight_cards,
     parse_http_flight_cards,
 )
-from viajante.google_flights_public import GoogleFlightsUnsupported
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
@@ -494,11 +494,7 @@ class OwnedCardParserTests(unittest.TestCase):
         self.assertEqual(card.price, "1.234,56 €")
         skipped = _normalize_offer(card, max_stops=0)
         self.assertIsNone(skipped)
-        offer = _normalize_offer(card, max_stops=1)
-        assert offer is not None
-        self.assertEqual(offer.stops, "Sin escalas")
-        self.assertIsNone(offer.stops_count)
-        self.assertEqual(offer.price, 1234.56)
+        self.assertIsNone(_normalize_offer(card, max_stops=1))
 
     def test_cards_beat_stale_empty_state_markup(self) -> None:
         html = build_empty_page() + build_results_page(build_card(price="€88"))

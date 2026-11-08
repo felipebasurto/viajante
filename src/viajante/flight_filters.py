@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 from viajante.airports import get_airport, is_known_iata
-from viajante.google_flights import RawFlightCard
-from viajante.models import FlightOffer
+from viajante.google_flights_rpc import RawFlightCard
+from viajante.models import FlightOffer, RawJourneyLeg, RawLayover
 from viajante.parsers import clock_minutes as _clock_minutes
-from viajante.parsers import parse_stops_count
+from viajante.parsers import parse_duration_hours, parse_stops_count
 
 _CLOCK_TOKEN = re.compile(
     r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$",
@@ -107,7 +107,6 @@ def validate_layover_hours(
             "min_layover_hours",
             "max_duration_hours",
         )
-    # NaN compares False to everything, so "< 0" alone let nan/inf silently disable a bound.
     if max_layover_hours is not None and (
         not math.isfinite(max_layover_hours) or max_layover_hours < 0
     ):
@@ -230,23 +229,6 @@ class OfferFilters:
     def named(self) -> bool:
         return any(value is not None for value in vars(self).values())
 
-    def normalizer_kwargs(self) -> dict[str, object]:
-        """The post-filter keywords ``_normalize_offer`` takes, each named here."""
-        return {
-            "max_layover_hours": self.max_layover_hours,
-            "min_layover_hours": self.min_layover_hours,
-            "max_duration_hours": self.max_duration_hours,
-            "depart_window": self.depart_window,
-            "arrive_before": self.arrive_before,
-            "depart_after": self.depart_after,
-            "depart_before": self.depart_before,
-            "arrive_after": self.arrive_after,
-            "via": self.via,
-            "exclude_via": self.exclude_via,
-            "no_overnight": self.no_overnight,
-            "require_overnight": self.require_overnight,
-        }
-
 
 NO_OFFER_FILTERS = OfferFilters()
 
@@ -308,7 +290,7 @@ def _token_matches_via(token: str, code: str) -> bool:
     return folded in _via_aliases(code)
 
 
-def _connection_tokens(raw: RawFlightCard) -> Tuple[str, ...]:
+def _connection_tokens(raw: RawFlightCard | FlightOffer) -> Tuple[str, ...]:
     tokens: list[str] = []
     seen: set[str] = set()
 
@@ -340,7 +322,19 @@ def _connection_tokens(raw: RawFlightCard) -> Tuple[str, ...]:
     return tuple(tokens)
 
 
-def _connections_complete(raw: RawFlightCard) -> bool:
+def _leg_connections_complete(leg: RawJourneyLeg, stops: Optional[int]) -> bool:
+    if stops is None:
+        return False
+    if stops == 0:
+        return True
+    if sum(bool(layover.city) for layover in leg.layovers) >= stops:
+        return True
+    return len(leg.segments) == stops + 1 and all(
+        segment.origin and segment.destination for segment in leg.segments
+    )
+
+
+def _connections_complete(raw: RawFlightCard | FlightOffer) -> bool:
     """Owned locations for every connection, or an explicitly nonstop journey."""
     if not raw.legs:
         stops = parse_stops_count(raw.stops)
@@ -349,23 +343,15 @@ def _connections_complete(raw: RawFlightCard) -> bool:
         stops = parse_stops_count(leg.stops)
         if stops is None and len(raw.legs) == 1:
             stops = parse_stops_count(raw.stops)
-        if stops is None:
-            return False
-        if stops == 0:
-            continue
-        if sum(bool(layover.city) for layover in leg.layovers) >= stops:
-            continue
         if len(raw.legs) == 1 and stops == 1 and raw.layover_city:
             continue
-        if len(leg.segments) != stops + 1 or not all(
-            segment.origin and segment.destination for segment in leg.segments
-        ):
+        if not _leg_connections_complete(leg, stops):
             return False
     return True
 
 
 def _passes_via_filters(
-    raw: RawFlightCard,
+    raw: RawFlightCard | FlightOffer,
     *,
     via: Optional[Sequence[str]] = None,
     exclude_via: Optional[Sequence[str]] = None,
@@ -409,28 +395,34 @@ def _overnight_from_owned_clocks(
     return None
 
 
-def _layover_nights(raw: RawFlightCard) -> Tuple[tuple[Optional[str], Optional[bool]], ...]:
+def _leg_layover_nights(leg: RawJourneyLeg) -> Tuple[tuple[Optional[str], Optional[bool]], ...]:
     events: list[tuple[Optional[str], Optional[bool]]] = []
-    for leg in raw.legs:
-        segs = leg.segments
-        lays = leg.layovers
-        count = max(len(lays), max(0, len(segs) - 1))
-        for index in range(count):
-            city: Optional[str] = None
-            hours: Optional[float] = None
-            arr: Optional[str] = None
-            dep: Optional[str] = None
-            if index < len(lays):
-                city = lays[index].city
-                hours = lays[index].hours
-            if index + 1 < len(segs):
-                inbound = segs[index]
-                outbound = segs[index + 1]
-                arr = inbound.arrival
-                dep = outbound.departure
-                if not city:
-                    city = inbound.destination or outbound.origin
-            events.append((city, _overnight_from_owned_clocks(arr, dep, hours)))
+    segs = leg.segments
+    lays = leg.layovers
+    count = max(len(lays), max(0, len(segs) - 1))
+    for index in range(count):
+        city: Optional[str] = None
+        hours: Optional[float] = None
+        arr: Optional[str] = None
+        dep: Optional[str] = None
+        if index < len(lays):
+            city = lays[index].city
+            hours = lays[index].hours
+        if index + 1 < len(segs):
+            inbound = segs[index]
+            outbound = segs[index + 1]
+            arr = inbound.arrival
+            dep = outbound.departure
+            if not city:
+                city = inbound.destination or outbound.origin
+        events.append((city, _overnight_from_owned_clocks(arr, dep, hours)))
+    return tuple(events)
+
+
+def _layover_nights(
+    raw: RawFlightCard | FlightOffer,
+) -> Tuple[tuple[Optional[str], Optional[bool]], ...]:
+    events = [event for leg in raw.legs for event in _leg_layover_nights(leg)]
     if not events and (raw.layover_city or raw.layover_hours is not None):
         events.append(
             (raw.layover_city, _overnight_from_owned_clocks(None, None, raw.layover_hours))
@@ -455,7 +447,6 @@ def _satisfies_no_overnight(
     for code in codes:
         for city, overnight in events:
             if overnight is False:
-                # Provably not a night, so it cannot be one at the named city.
                 continue
             if _overnight_city_match(city, code) is not False:
                 return False
@@ -474,7 +465,7 @@ def _satisfies_require_overnight(
 
 
 def _passes_overnight_filters(
-    raw: RawFlightCard,
+    raw: RawFlightCard | FlightOffer,
     *,
     no_overnight: Optional[Sequence[str]] = None,
     require_overnight: Optional[Sequence[str]] = None,
@@ -500,10 +491,10 @@ def owned_clock(text: Optional[str]) -> Optional[str]:
     return text if _clock_minutes(text) is not None else None
 
 
-def _passes_depart_window(raw: RawFlightCard, window: Optional[Tuple[int, int]]) -> bool:
+def _passes_clock_window(clock: Optional[str], window: Optional[Tuple[int, int]]) -> bool:
     if window is None:
         return True
-    minutes = _clock_minutes(raw.departure)
+    minutes = _clock_minutes(clock)
     if minutes is None:
         return False
     start, end = window
@@ -522,9 +513,7 @@ def _passes_clock_bound(clock_text: Optional[str], bound: Optional[int], *, befo
 
 def _eligible_stops(stops: Optional[str], max_stops: int) -> bool:
     count = parse_stops_count(stops)
-    if count is not None:
-        return count <= max_stops
-    return max_stops >= 1
+    return count is not None and count <= max_stops
 
 
 def _passes_bag_request(
@@ -545,32 +534,111 @@ def _meets_requirements(
     offer: FlightOffer,
     max_stops: int,
     *,
-    depart_window: Optional[Tuple[int, int]],
-    arrive_before: Optional[int],
-    depart_after: Optional[int],
-    max_duration_hours: Optional[float],
+    filters: OfferFilters,
     bags: Optional[int],
     carry_on: Optional[int],
-    depart_before: Optional[int] = None,
-    arrive_after: Optional[int] = None,
 ) -> bool:
     """The requirements a recommendation may relax. Unknown clocks or stops cannot prove them."""
-    if not _eligible_stops(raw.stops, max_stops):
-        return False
-    if not _passes_depart_window(raw, depart_window):
-        return False
     if not _passes_bag_request(raw, bags=bags, carry_on=carry_on):
         return False
-    if (
-        max_duration_hours is not None
-        and offer.duration_hours is not None
-        and offer.duration_hours > max_duration_hours
+    return _passes_journey_bounds(
+        stops=raw.stops,
+        raw_departure=raw.departure,
+        departure=offer.departure,
+        arrival=offer.arrival,
+        duration=offer.duration_hours,
+        max_stops=max_stops,
+        filters=filters,
+    )
+
+
+def _passes_journey_bounds(
+    *,
+    stops: Optional[str],
+    raw_departure: Optional[str],
+    departure: Optional[str],
+    arrival: Optional[str],
+    duration: Optional[float],
+    max_stops: int,
+    filters: OfferFilters,
+) -> bool:
+    if not _eligible_stops(stops, max_stops):
+        return False
+    if not _passes_clock_window(raw_departure, filters.depart_window):
+        return False
+    if filters.max_duration_hours is not None and (
+        duration is None or duration > filters.max_duration_hours
     ):
         return False
-    if not _passes_clock_bound(offer.arrival, arrive_before, before=True):
+    return all(
+        (
+            _passes_clock_bound(arrival, filters.arrive_before, before=True),
+            _passes_clock_bound(arrival, filters.arrive_after, before=False),
+            _passes_clock_bound(departure, filters.depart_before, before=True),
+            _passes_clock_bound(departure, filters.depart_after, before=False),
+        )
+    )
+
+
+def _passes_layover_bounds(
+    stops: Optional[int],
+    summary: Optional[float],
+    layovers: Sequence[RawLayover],
+    *,
+    minimum: Optional[float],
+    maximum: Optional[float],
+) -> bool:
+    if minimum is None and maximum is None:
+        return True
+    if stops is None:
         return False
-    if not _passes_clock_bound(offer.arrival, arrive_after, before=False):
+    if stops == 0:
+        return True
+    if summary is not None and (not math.isfinite(summary) or summary < 0):
+        summary = None
+    hours = [
+        item.hours
+        for item in layovers
+        if item.hours is not None and math.isfinite(item.hours) and item.hours >= 0
+    ]
+    complete = len(layovers) == stops and len(hours) == stops
+    longest = max([summary, *hours]) if summary is not None else max(hours) if complete else None
+    shortest = min(hours) if complete else summary if stops == 1 else None
+    if stops == 1 and summary is not None and shortest is not None:
+        shortest = min(shortest, summary)
+    if maximum is not None and (longest is None or longest > maximum):
         return False
-    if not _passes_clock_bound(offer.departure, depart_before, before=True):
+    if minimum is not None and (shortest is None or shortest < minimum):
         return False
-    return _passes_clock_bound(offer.departure, depart_after, before=False)
+    return True
+
+
+def _passes_packaged_leg(leg: RawJourneyLeg, max_stops: int, filters: OfferFilters) -> bool:
+    """Apply journey-level constraints directly to the evidence of one package leg."""
+    if not _passes_journey_bounds(
+        stops=leg.stops,
+        raw_departure=leg.departure,
+        departure=leg.departure,
+        arrival=leg.arrival,
+        duration=parse_duration_hours(leg.duration),
+        max_stops=max_stops,
+        filters=filters,
+    ):
+        return False
+    if filters.no_overnight:
+        stops = parse_stops_count(leg.stops)
+        if not _leg_connections_complete(leg, stops):
+            return False
+        events = _leg_layover_nights(leg)
+        if not events:
+            if stops is None or stops > 0:
+                return False
+        elif not _satisfies_no_overnight(events, filters.no_overnight):
+            return False
+    return _passes_layover_bounds(
+        parse_stops_count(leg.stops),
+        None,
+        leg.layovers,
+        minimum=filters.min_layover_hours,
+        maximum=filters.max_layover_hours,
+    )

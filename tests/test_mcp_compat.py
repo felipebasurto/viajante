@@ -39,7 +39,6 @@ from viajante.models import SearchError, SearchErrorCode
 from viajante.ratelimit import (
     GOOGLE_RATE_LIMIT_FILE,
     SKIPLAGGED_RATE_LIMIT_FILE,
-    cooldown_until,
     note_rate_limited,
     rate_limit_advice,
     rate_limit_status,
@@ -464,6 +463,15 @@ class InvalidParameterTests(_StateDir):
         self.assertIsNone(body["field"])
         self.assertIn("a viajante search is already running in this process", body["message"])
 
+    def test_busy_code_needs_the_busy_type_not_the_sentence(self) -> None:
+        from viajante.mcp_errors import SearchInProgress
+
+        sentence = "a viajante search is already running in this process"
+        typed = json.loads(str(structured_error(SearchInProgress(sentence), {})))
+        self.assertEqual(typed["error"]["code"], "search_in_progress")
+        plain = json.loads(str(structured_error(ValueError(sentence), {})))
+        self.assertEqual(plain["error"]["code"], "invalid_parameter")
+
     def test_handlers_still_raise_plain_value_errors(self) -> None:
         from viajante.mcp_handlers import search_explore_tool
 
@@ -508,7 +516,9 @@ class RetryFieldTests(_StateDir):
     def test_google_flights_429_names_the_recorded_cooldown(self) -> None:
         state = note_rate_limited(300.0)
         advice = rate_limit_advice(state)
-        error = classify_failure(GoogleFlightsBlocked(advice, status=429))
+        error = classify_failure(
+            GoogleFlightsBlocked(advice, status=429, retry_until=state["until"])
+        )
         payload = error.to_dict()
         self.assertEqual(payload["message"], advice)
         self.assertGreater(payload["retry_after_seconds"], 290)
@@ -519,21 +529,23 @@ class RetryFieldTests(_StateDir):
         proxied = classify_failure(GoogleFlightsBlocked("Google Flights HTTP 429", status=429))
         self.assertTrue(proxied.rate_limited)
         self.assertNotIn("retry_after", proxied.to_dict())
-        self.assertIsNone(cooldown_until("Google Flights HTTP 429"))
 
     def test_google_hotels_429_names_the_recorded_cooldown(self) -> None:
-        advice = rate_limit_advice(note_rate_limited(120.0))
-        payload = _classify_hotel_failure(HotelsBlocked(advice, rate_limited=True)).to_dict()
+        state = note_rate_limited(120.0)
+        advice = rate_limit_advice(state)
+        payload = _classify_hotel_failure(
+            HotelsBlocked(advice, rate_limited=True, retry_until=state["until"])
+        ).to_dict()
         self.assertIn("retry_after", payload)
         self.assertLessEqual(payload["retry_after_seconds"], 121)
 
     def test_skiplagged_reads_its_own_cooldown_file(self) -> None:
-        advice = rate_limit_advice(
-            note_rate_limited(60.0, file=SKIPLAGGED_RATE_LIMIT_FILE), provider="Skiplagged"
-        )
-        payload = classify_skiplagged(SkiplaggedRateLimited(advice)).to_dict()
+        state = note_rate_limited(60.0, file=SKIPLAGGED_RATE_LIMIT_FILE)
+        advice = rate_limit_advice(state, provider="Skiplagged")
+        payload = classify_skiplagged(
+            SkiplaggedRateLimited(advice, retry_until=state["until"])
+        ).to_dict()
         self.assertLessEqual(payload["retry_after_seconds"], 61)
-        self.assertIsNone(cooldown_until(advice, GOOGLE_RATE_LIMIT_FILE))
 
 
 @NEEDS_SDK
@@ -617,6 +629,11 @@ class GuideTests(_StateDir):
         changed_transport_rules = {
             "search_dates is HTTP-calendar only and has no fetch parameter.",
             "Prefer bags / carry_on on the shopping request so Google prices the bag.",
+            # A proxied 429 or an unwritable state directory may have no recorded wait.
+            "If an error has rate_limited true, tell the user to wait until the UTC time "
+            "named in its message.",
+            "Do not retry, switch fetch mode, or fan out other searches;",
+            "they are paused locally and send nothing.",
             # install lines moved from git+https to the published npx / PyPI forms
             "uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp]' "
             "viajante-mcp Checkout:",
@@ -626,6 +643,8 @@ class GuideTests(_StateDir):
         missing = [s for s in sentences if s not in covered and s not in changed_transport_rules]
         self.assertIn("bounded per-day public-page GETs", covered)
         self.assertIn("refuses named checked bags", covered)
+        self.assertIn("include retry_after (UTC) when known", covered)
+        self.assertIn("When they are absent no cooldown was recorded", covered)
         self.assertEqual(missing, [])
 
     def test_guide_mentions_metro_codes_hotel_details_and_arrival_deadline(self) -> None:

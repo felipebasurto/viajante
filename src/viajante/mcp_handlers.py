@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextvars
 import functools
 import threading
 import time
@@ -58,7 +57,12 @@ from viajante.flight_routes import (
     expand_nearby_trips,
     parse_flight_plan,
 )
-from viajante.flights import DEFAULT_TOP, search_flights, validate_flight_search_args
+from viajante.flights import (
+    DEFAULT_TOP,
+    prepare_flight_search,
+    search_flights,
+    validate_flight_search_args,
+)
 from viajante.hotels import (
     HotelSourceName,
     resolve_hotel_currency,
@@ -67,6 +71,7 @@ from viajante.hotels import (
     validate_max_distance,
     validate_near,
 )
+from viajante.mcp_errors import SEARCH_IN_PROGRESS_MESSAGE, SearchInProgress
 from viajante.models import FlightCabin, HotelQuery
 from viajante.points import (
     award_offer_from_mapping,
@@ -93,6 +98,7 @@ from viajante.trip import search_trip, stay_window_from_trips
 from viajante.validate import validate_itinerary
 
 _SEARCH_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
 CACHE_SECONDS = 300.0
 _CACHE: dict[tuple[str, str], tuple[float, dict, dict]] = {}
 _SELECTION_CONTEXT = threading.local()
@@ -140,29 +146,26 @@ def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
             raise ValueError(f"{label} date is in the past: {value.isoformat()}")
 
 
-_VALIDATE_ONLY = contextvars.ContextVar("viajante_validate_only", default=False)
-
-
-class _Validated(Exception):
-    """Raised at the search lock while only checking arguments: nothing was sent."""
-
-
 def check_search_params(tool, params: Mapping[str, object]) -> None:
-    """Run a search tool's own argument checks and stop before any search or lock."""
-    token = _VALIDATE_ONLY.set(True)
-    try:
-        tool(**params)
-    except _Validated:
-        pass
-    finally:
-        _VALIDATE_ONLY.reset(token)
+    """Prepare a saved search without running it or accessing the replay cache."""
+    validate_deadline_seconds(params.get("deadline_seconds"))
+    tool.prepare(**params)
+
+
+def _prepared_search(prepare):
+    """Expose one preparation boundary to both execution and saved watches."""
+
+    @functools.wraps(prepare)
+    def run(*args, **kwargs):
+        return _with_search_lock(prepare(*args, **kwargs))
+
+    run.prepare = prepare
+    return run
 
 
 def _with_search_lock(fn):
-    if _VALIDATE_ONLY.get():
-        raise _Validated
     if not _SEARCH_LOCK.acquire(blocking=False):
-        raise ValueError("a viajante search is already running in this process")
+        raise SearchInProgress(SEARCH_IN_PROGRESS_MESSAGE)
     try:
         return fn()
     finally:
@@ -187,14 +190,11 @@ def _cached(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         validate_deadline_seconds(kwargs.get("deadline_seconds"))
-        if _VALIDATE_ONLY.get():
-            # Argument checks only: no replay, no ledger slot, and the lock stops the call.
-            return fn(*args, **kwargs)
-        # A complete result does not depend on how long the caller was willing to wait.
         keyed = sorted((k, v) for k, v in kwargs.items() if k != "deadline_seconds")
         key = (fn.__name__, repr((args, keyed)))
         now = time.monotonic()
-        hit = _CACHE.get(key)
+        with _CACHE_LOCK:
+            hit = _CACHE.get(key)
         if hit is not None and now - hit[0] < CACHE_SECONDS:
             check_cancelled()
             result = {**deepcopy(hit[1]), "cached": True}
@@ -208,11 +208,13 @@ def _cached(fn):
         selections = getattr(_SELECTION_CONTEXT, "records", {})
         _SELECTION_CONTEXT.records = {}
         if not control.cut and not failure_codes(result):
-            for stale in [k for k, (at, _, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
-                del _CACHE[stale]
-            if len(_CACHE) >= 20:
-                del _CACHE[next(iter(_CACHE))]
-            _CACHE[key] = (now, deepcopy(result), selections)
+            stored = deepcopy(result)
+            with _CACHE_LOCK:
+                for stale in [k for k, (at, _, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
+                    del _CACHE[stale]
+                if len(_CACHE) >= 20:
+                    del _CACHE[next(iter(_CACHE))]
+                _CACHE[key] = (now, stored, selections)
         return result
 
     return wrapper
@@ -223,6 +225,7 @@ def lookup_airports_tool(query: str, *, limit: int = 20) -> list[Mapping[str, st
 
 
 @_cached
+@_prepared_search
 def search_flights_tool(
     routes: Sequence[str],
     *,
@@ -309,7 +312,7 @@ def search_flights_tool(
     )
     search["depart_before"] = parse_named_clock(depart_before, role="depart-before")
     search["arrive_after"] = parse_named_clock(arrive_after, role="arrive-after")
-    validate_flight_search_args(
+    filters, excluded, included = validate_flight_search_args(
         top=top,
         sort=sort,
         fetch=fetch,
@@ -317,8 +320,22 @@ def search_flights_tool(
         nearby_days=nearby_days,
         **search,
     )
-    report = _with_search_lock(
-        lambda: search_flights(
+    prepare_flight_search(
+        trips,
+        filters=filters,
+        exclude_airports=excluded,
+        include_airports=included,
+        currency=currency,
+        baggage_buffer=baggage_buffer,
+        country=country,
+        fetch=fetch,  # type: ignore[arg-type]
+        less_emissions=less_emissions,
+        hide_separate_tickets=hide_separate_tickets,
+        **carriers,
+    )
+
+    def execute():
+        report = search_flights(
             trips,
             top=top,
             fetch=fetch,  # type: ignore[arg-type]
@@ -336,8 +353,9 @@ def search_flights_tool(
             **carriers,
             **search,
         )
-    )
-    return _searched(reports_payload(report), report)
+        return _searched(reports_payload(report), report)
+
+    return execute
 
 
 @_cached
@@ -414,7 +432,6 @@ def search_split_tickets_tool(
         leg_max_stops=leg_max_stops,
         top=top,
     )
-    # The hub list is `via`; the offer filters judge the journey and the hub connection.
     shop = _shop_filters(
         depart_window=depart_window,
         arrive_before=arrive_before,
@@ -806,6 +823,7 @@ def _near_point(near: Optional[Mapping[str, float]]) -> Optional[tuple[float, fl
 
 
 @_cached
+@_prepared_search
 def search_hotels_tool(
     location: Optional[str] = None,
     check_in: Optional[str] = None,
@@ -841,8 +859,9 @@ def search_hotels_tool(
     near_point = validate_near(_near_point(near))
     max_distance_km = validate_max_distance(max_distance_km, near_point)
     validate_hotel_search_args(queries, top=top, source=source)
-    report = _with_search_lock(
-        lambda: search_hotels(
+
+    def execute():
+        report = search_hotels(
             queries,
             top=top,
             source=source,
@@ -851,8 +870,9 @@ def search_hotels_tool(
             max_distance_km=max_distance_km,
             deadline_seconds=deadline_seconds,
         )
-    )
-    return _searched(reports_payload(report), report)
+        return _searched(reports_payload(report), report)
+
+    return execute
 
 
 @_cached
@@ -1088,7 +1108,6 @@ def split_stay_costs_tool(
         stays, roster, currency=currency, fee_per_person_night=fee_per_person_night
     )
     payload = stamp_local(dict(report.to_dict()), partial=bool(report.unallocated_nights))
-    # Shares are arithmetic on caller totals: evidence only when a search owns every input.
     inputs = [stay.total for stay in report.stays]
     if report.fee_per_person_night is not None:
         inputs.append(report.fee_per_person_night)
@@ -1135,7 +1154,6 @@ def recheck_offer_tool(
         )
     )
     stamp_recheck(result)
-    # Caller-typed values are not provider evidence: leave them out of the ledger.
     owned = dict(result)
     if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
         del owned["previous"]
@@ -1145,8 +1163,6 @@ def recheck_offer_tool(
             closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
             closest["differences"] = _without_previous(closest["differences"])
             owned["closest_candidate"] = closest
-    # Record only a check that ran to a provider answer (a match, a substitution, or a
-    # completed not_found). An unsent or failed check, or incomplete_identity, proves nothing.
     if result["check_completed"]:
         record(owned)
     return result
@@ -1156,7 +1172,6 @@ def verify_answer_tool(answer: str) -> Mapping[str, object]:
     payload = dict(verify_answer_evidence(answer))
     if payload["ok"]:
         return stamp_local(payload)
-    # status mirrors the verdict so it never reads "ok" beside "ok": false.
     nothing = not payload["searches"]
     return stamp_local(
         payload,
@@ -1174,13 +1189,10 @@ def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Ma
     def action():
         return get_hotel_details(report, query_index, offer_index, room_rates=room_rates)
 
-    # A read does not enter the evidence ledger or the selection store.
     # room_rates false stays off the search lock; the server runs it on the lookup worker.
     detail = _with_search_lock(action) if room_rates else action()
     detail["original_quote"]["offer"]["selection_id"] = selection_id
     quotes = detail.get("room_quotes")
     if room_rates and quotes and quotes.get("rates") and not failure_codes(quotes):
-        # Only the separate, newly fetched quote is new provider evidence.
-        # Local reads do not renew the original snapshot or ledger.
         record(quotes)
     return detail
