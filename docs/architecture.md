@@ -82,6 +82,7 @@ The MCP process holds one search lock: a second concurrent search fails
 immediately instead of queueing. Lookups, local stay arithmetic, `price_history`, and the two
 verifiers may run during a search. Identical successful searches within 5 minutes are replayed from an
 in-process cache (`cached: true`) instead of asking Google again.
+`watch_price` and `recheck_offer` bypass this replay cache for fresh searches.
 
 Loopback HTTP passes `transport_security` to `run()` explicitly, so the allowed Host and Origin
 list is viajante's and does not depend on the SDK default.

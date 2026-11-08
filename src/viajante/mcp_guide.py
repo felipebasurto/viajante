@@ -354,9 +354,9 @@ watch_price re-runs a saved search_flights or search_hotels argument set on dema
 change since the last observation of the same query and currency. A flight run also carries
 that search's `price_insight` (see Google price level). The stored observation log does not.
 It saves the watch and records its observation (even when the global opt-in is off), so it is
-not read-only. It takes the
-one-search lock, the cooldown and the 5-minute cache like any search; its envelope is the inner
-search's, with completeness partial when history could not be read (change is then null). It
+not read-only. Each run bypasses the replay cache for a fresh search, under the one-search
+lock and provider cooldown. Its envelope is the inner search's, with completeness partial
+when history could not be read (change is then null). It
 sends no notification and schedules nothing: do not call it in a loop, because Google rate-limits.
 Saving under an existing name replaces that watch, and kind is flight or hotel as in price_history.
 If the saved watches file cannot be read, the list is watches null with status failed, completeness

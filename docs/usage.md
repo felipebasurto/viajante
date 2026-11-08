@@ -651,9 +651,9 @@ viajante watch jfk-lhr --remove
 ```
 
 A watch run records its own observation even when the global opt-in is off. It
-goes through the normal search path, so it respects the Google cooldown, the
-5-minute cache (a cached run says so and records nothing), and the single
-search lock. A proxy is never stored in a watch. Saving builds the watch's
+bypasses the MCP replay cache for a fresh search each time, respecting the
+Google cooldown and the single search lock. A failed, empty or rate-limited run
+records nothing. A proxy is never stored in a watch. Saving builds the watch's
 queries first, so a bad route, date or filter is rejected and not persisted.
 Saving under an existing name replaces that watch. `--kind` is `flight` or
 `hotel`, the same words `history --kind` and the MCP tools use.
@@ -717,7 +717,7 @@ parsed fields. The report types and JSON fields are defined in
 | `rejected` | The provider rejected the request. |
 | `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 or an error frame in place of results is reported without assuming its cause, and the batch is not replayed. |
 | `markup_drift` | The response could not be read in the expected page, `ds:1` or Explore catalog format, including a catalog that lists destination cards but no priced rows. |
-| `cards_unparsed` | A public page loaded, but some itinerary cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
+| `cards_unparsed` | A public Flights or Booking page loaded, but some attempted cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |
 

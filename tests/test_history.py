@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -620,13 +621,62 @@ class WatchTests(_State):
         self.assertIsNone(item["change"])
         self.assertEqual(item["currency"], "GBP")
 
-    def test_cached_run_records_nothing_and_says_so(self) -> None:
-        self.run_watch(500.0, kind="flight", params=self.params())
-        result = self.run_watch(450.0)
-        self.assertTrue(result["cached"])
-        self.assertEqual(result["recorded"], 0)
-        self.assertIn("no observation", result["note"])
-        self.assertEqual(len(history.read_observations()), 1)
+    def test_repeated_watch_takes_two_fresh_observations(self) -> None:
+        with patch("viajante.mcp_handlers.time.monotonic", return_value=100):
+            first = self.run_watch(500.0, kind="flight", params=self.params())
+        with patch("viajante.mcp_handlers.time.monotonic", return_value=101):
+            second = self.run_watch(450.0, at=T0 + timedelta(seconds=1))
+        self.assertFalse(first["cached"])
+        self.assertFalse(second["cached"])
+        self.assertEqual(second["recorded"], 1)
+        self.assertEqual(second["results"][0]["change"]["price_change"], -50.0)
+        self.assertEqual(len(history.read_observations()), 2)
+
+    def test_watch_bypasses_an_existing_search_cache(self) -> None:
+        self.enable()
+        stub = history.recorded_flights(lambda *args, **kw: _flight_report(500.0))
+        with patch("viajante.mcp_handlers.search_flights", stub):
+            search_flights_tool(**self.params())
+        result = self.run_watch(450.0, kind="flight", params=self.params())
+        self.assertFalse(result["cached"])
+        self.assertEqual(result["results"][0]["current"]["cheapest"], 450.0)
+        self.assertEqual(len(history.read_observations()), 2)
+
+    def test_repeated_hotel_watch_takes_two_fresh_observations(self) -> None:
+        params = {
+            "location": "Lisbon",
+            "check_in": DEPART.isoformat(),
+            "check_out": (DEPART + timedelta(days=3)).isoformat(),
+            "currency": "GBP",
+        }
+        for seconds, price in ((0, 500.0), (1, 450.0)):
+            stub = history.recorded_hotels(
+                lambda *args, price=price, seconds=seconds, **kw: replace(
+                    _hotel_report(price, at=T0 + timedelta(seconds=seconds)),
+                    queries=(_hotel_report(price).queries[0],),
+                )
+            )
+            with patch("viajante.mcp_handlers.search_hotels", stub):
+                result = watch.watch_price_tool("hotel", kind="hotel", params=params)
+            self.assertFalse(result["cached"])
+            self.assertEqual(result["recorded"], 1)
+        self.assertEqual(result["results"][0]["change"]["price_change"], -50.0)
+        self.assertEqual(len(history.read_observations()), 2)
+
+    def test_fresh_watch_respects_search_lock(self) -> None:
+        watch.save_watch("nyc-lon", "flight", self.params())
+        with mcp_handlers._SEARCH_LOCK:
+            with self.assertRaisesRegex(ValueError, "search is already running"):
+                self.run_watch(500.0)
+        self.assertEqual(history.read_observations(), [])
+
+    def test_cancelled_watch_records_nothing(self) -> None:
+        watch.save_watch("nyc-lon", "flight", self.params())
+        control = SearchControl()
+        control.cancel.set()
+        with active(control), self.assertRaises(SearchCancelled):
+            self.run_watch(500.0)
+        self.assertEqual(history.read_observations(), [])
 
     def test_failed_search_records_nothing_and_reports_the_error(self) -> None:
         result = self.run_watch(kind="flight", params=self.params())
