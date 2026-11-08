@@ -2,7 +2,7 @@
 
 User-triggered only: no scheduler, no notification, no background loop. A watch is
 a named set of ``search_flights`` / ``search_hotels`` tool arguments. Running it
-goes through the normal tool (cooldown, 5-minute cache, one-search lock) and
+bypasses the replay cache, respects the cooldown and one-search lock, and
 records what that search really returned.
 """
 
@@ -14,6 +14,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
+from viajante.control import SearchControl, active, current_control, validate_deadline_seconds
 from viajante.envelope import ENVELOPE_KEYS, stamp_local
 from viajante.evidence import record
 from viajante.history import (
@@ -176,8 +177,9 @@ def watch_price_tool(
     spec = _load().get(name)
     if spec is None:
         raise ValueError(f"no watch named {name!r}; save one with kind and params")
-    with forced_recording() as written:
-        payload = _TOOLS[spec["kind"]](**spec["params"])
+    validate_deadline_seconds(spec["params"].get("deadline_seconds"))
+    with active(current_control() or SearchControl()), forced_recording() as written:
+        payload = inspect.unwrap(_TOOLS[spec["kind"]])(**spec["params"])
     read_error: Optional[str] = None
     try:
         stored = read_observations(strict=True)
@@ -218,11 +220,10 @@ def watch_price_tool(
             ):
                 result["note"] += " Observations in other currencies are never compared."
         results.append(result)
-    cached = bool(payload.get("cached"))
     out: dict[str, Any] = {
         "name": name,
         "kind": spec["kind"],
-        "cached": cached,
+        "cached": False,
         "recorded": len(written.entries),
         "results": results,
         "errors": _errors(payload),
@@ -232,12 +233,7 @@ def watch_price_tool(
         out["read_error"] = read_error
         if out["status"] == "ok":
             out["completeness"] = "partial"
-    if cached:
-        out["note"] = (
-            "Replayed from the 5-minute cache; no new request was sent and no observation "
-            "was recorded. Read price_history for the stored series."
-        )
-    elif not results and not out["errors"]:
+    if not results and not out["errors"]:
         out["note"] = "The search returned no priced offer, so nothing was recorded."
     if written.errors:
         out["recording_error"] = written.errors[0]

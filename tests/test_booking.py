@@ -5,6 +5,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from typing import List, Sequence
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import _isolate  # noqa: F401
@@ -22,6 +23,8 @@ from viajante.booking import (
     HotelPage,
     build_applied_filters,
 )
+from viajante.envelope import stamp_search
+from viajante.hotels import search_hotels
 from viajante.models import HotelQuery
 
 
@@ -314,6 +317,43 @@ class BookingHotelsSourceTests(unittest.TestCase):
             result = source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
 
         self.assertEqual([row.title for row in result.cards], ["Good"])
+        self.assertEqual(result.page_errors[0].code.value, "cards_unparsed")
+        self.assertEqual(result.page_errors[0].diagnostics, {"seen": 2, "parsed": 1})
+        self.assertTrue(page.closed)
+
+    def test_card_exception_keeps_rows_and_marks_envelope_partial(self) -> None:
+        broken = provider_card(title="Broken")
+        page = FakePage(cards=(broken, provider_card(title="Good")))
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self.source_for(page, Path(tmp))
+            original = source._extract_card
+
+            def extract(card):
+                if card is broken:
+                    raise ValueError("unexpected card")
+                return original(card)
+
+            with (
+                patch.object(source, "_extract_card", side_effect=extract),
+                patch("viajante.hotels.BookingHotelsSource", return_value=source),
+                patch("viajante.hotels.playwright_available", return_value=True),
+            ):
+                report = search_hotels([query()], source="booking", currency="EUR")
+        payload = stamp_search(dict(report.to_dict()))
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["error_code"], "cards_unparsed")
+        row = payload["queries"][0]
+        self.assertEqual([offer["title"] for offer in row["offers"]], ["Good"])
+        self.assertEqual(row["page_errors"][0]["diagnostics"], {"seen": 2, "parsed": 1})
+        self.assertTrue(page.closed)
+
+    def test_all_malformed_cards_still_fail_the_page(self) -> None:
+        page = FakePage(cards=(provider_card(title=None),))
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self.source_for(page, Path(tmp))
+            with self.assertRaisesRegex(RuntimeError, "could not be parsed"):
+                source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
         self.assertTrue(page.closed)
 
     def test_fetch_honors_limit(self) -> None:
@@ -330,6 +370,7 @@ class BookingHotelsSourceTests(unittest.TestCase):
             result = source.fetch(query(), build_applied_filters(query(), currency="EUR"), 2)
 
         self.assertEqual([row.title for row in result.cards], ["One", "Two"])
+        self.assertEqual(result.page_errors, ())
 
     def test_fetch_cleans_relative_link_and_keeps_rating_first_line(self) -> None:
         page = FakePage(cards=(provider_card(),))

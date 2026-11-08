@@ -866,7 +866,9 @@ def build_server():
         name, kind (flight or hotel) and params (the search_flights or search_hotels
         arguments): validate, save, then run. Saving under an existing name replaces that
         watch. With only name, run the saved search. The run records an observation even when
-        the history opt-in is off. A cached or rate-limited run records nothing. No scheduler
+        the history opt-in is off. Each run bypasses the replay cache for a fresh search,
+        under the one-search lock and provider cooldown. A rate-limited, failed or empty run
+        records nothing. No scheduler
         and no notification: do not call it in a loop.
         """
 

@@ -249,6 +249,10 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 
 ## Hotels
 
+- Booking keeps parsed cards when other attempted cards fail and stamps
+  `page_errors` with `cards_unparsed`, including `seen` and `parsed` counts.
+  The envelope is partial. If every attempted card fails, the page is markup drift.
+
 - Prices are total-stay. Keep requested filters, applied filters, and observed card
   evidence distinct. `filter applied; card silent` is not confirmed free cancellation.
 - Free cancellation is required by default. Only an explicit opt-out may include
@@ -286,6 +290,9 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   and one observation is no trend. Never forecast or estimate a missing day.
 - `watch_price` runs only when called: no scheduler, no notification. A proxy is
   never stored. `watch_price` is the one tool here that writes.
+- Every watch run bypasses the MCP replay cache for a fresh search, under the
+  one-search lock and provider cooldown. Only a successful priced search records
+  an observation; repeated calls are separate provider requests.
 - Only a missing log is an empty log. Any other read error stops an append or
   `--clear` and is reported.
 
