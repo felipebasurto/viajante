@@ -24,7 +24,7 @@ viajante does not book. It returns what the public travel pages show, with the l
 
 ## Operating Context
 
-The visitor reads the landing page on a desktop or phone, picks an assistant, copies that assistant's setup message, and pastes it into that assistant. Claude Desktop, Claude Code, and Muse Code install a local stdio server on the visitor's machine. ChatGPT on the web uses a Secure MCP Tunnel back to that machine. Grok Bot starts the server on its own computer. Instinct runs in a Python sandbox. Every message ends with the same fallback: write a Python file, import viajante, and run it, using get_flights for a route spec and search_hotels with HotelQuery plus a currency.
+The visitor reads the landing page on a desktop or phone, picks an assistant, copies that assistant's setup message, and pastes it into that assistant. Claude and ChatGPT ask Web or Desktop app before copying. Web keeps the browser limits: claude.ai needs a public connector URL, and ChatGPT on the web uses a Secure MCP Tunnel. Desktop adds a local server, Claude Desktop through claude_desktop_config.json and the ChatGPT desktop app through its MCP servers setting. Muse Code and Hermes Agent install a local server. Grok Bot starts the server on its own computer. Instinct runs in a Python sandbox. Every message ends with the same fallback: write a Python file, import viajante, and run it, using get_flights for a route spec and search_hotels with HotelQuery plus a currency.
 
 ## Capabilities and Constraints
 
@@ -32,7 +32,7 @@ The visitor reads the landing page on a desktop or phone, picks an assistant, co
 - Search results: prices, itinerary details, source text and links where the page provides them.
 - Interfaces: a command line (`viajante`), a Python library, and an MCP server over stdio.
 - Requires Python 3.10 or later. The npx route also needs `uv`.
-- Each assistant pill copies a different setup message. The visible label stays "Install in <name>".
+- Claude and ChatGPT open Web and Desktop app, then that pill copies its setup message. The other pills copy immediately. The visible label stays "Install in <name>".
 - Assistants that cannot start a program on the visitor's machine are told so in that message. The page does not offer a hosted viajante.
 - Undecided: whether a hosted version will ever exist. Not planned. The page must not imply one.
 
