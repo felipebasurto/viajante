@@ -154,7 +154,8 @@ h1 {
 
 .agent:active { transform: scale(0.97); }
 
-.agent:focus-visible {
+.agent:focus-visible,
+.where-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -165,6 +166,41 @@ h1 {
 .agent.grok { --p: var(--p-grok); --t: var(--t-grok); }
 .agent.muse { --p: var(--p-muse); --t: var(--t-muse); }
 .agent.instinct { --p: var(--p-instinct); --t: var(--t-instinct); }
+
+.choice { display: grid; gap: 8px; }
+
+.where {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.where.claude { --p: var(--p-claude); --t: var(--t-claude); }
+.where.chatgpt { --p: var(--p-chatgpt); --t: var(--t-chatgpt); }
+
+.where-btn {
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--p);
+  color: var(--t);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transition: filter 160ms ease, transform 160ms var(--ease-out);
+}
+
+.where-btn[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px currentColor; }
+
+@media (hover: hover) and (pointer: fine) {
+  .where-btn:hover { filter: brightness(0.97); }
+}
+
+.where-btn:active { transform: scale(0.97); }
 
 .ico {
   flex: none;
@@ -458,13 +494,13 @@ h1 {
   .hero > :nth-child(3) { animation-delay: 140ms; }
   .hero > :nth-child(5) { animation-delay: 300ms; }
   .hero > [data-picker] { animation: none; }
-  .hero .agent { animation: rise 520ms var(--ease-out) backwards; }
-  .hero .agent:nth-child(1) { animation-delay: 220ms; }
-  .hero .agent:nth-child(2) { animation-delay: 270ms; }
-  .hero .agent:nth-child(3) { animation-delay: 320ms; }
-  .hero .agent:nth-child(4) { animation-delay: 370ms; }
-  .hero .agent:nth-child(5) { animation-delay: 420ms; }
-  .hero .agent:nth-child(6) { animation-delay: 470ms; }
+  .hero .agents > * { animation: rise 520ms var(--ease-out) backwards; }
+  .hero .agents > :nth-child(1) { animation-delay: 220ms; }
+  .hero .agents > :nth-child(2) { animation-delay: 270ms; }
+  .hero .agents > :nth-child(3) { animation-delay: 320ms; }
+  .hero .agents > :nth-child(4) { animation-delay: 370ms; }
+  .hero .agents > :nth-child(5) { animation-delay: 420ms; }
+  .hero .agents > :nth-child(6) { animation-delay: 470ms; }
 }
 
 /* Scroll reveal: only hidden when JS is running (html.js), so no-JS readers see everything. */
@@ -632,14 +668,26 @@ h1 {
 
 <template id="picker">
   <div class="agents">
-    <button class="agent claude" type="button" data-agent data-name="Claude">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg></span>
-      <span class="agent-label">Install in Claude</span>
-    </button>
-    <button class="agent chatgpt" type="button" data-agent data-name="ChatGPT">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg></span>
-      <span class="agent-label">Install in ChatGPT</span>
-    </button>
+    <div class="choice">
+      <button class="agent claude" type="button" data-agent data-name="Claude" aria-expanded="false">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg></span>
+        <span class="agent-label">Install in Claude</span>
+      </button>
+      <div class="where claude" data-for="Claude" hidden role="group" aria-label="Where you use Claude">
+        <button class="where-btn" type="button" data-surface="web" data-restore="Web" aria-pressed="false">Web</button>
+        <button class="where-btn" type="button" data-surface="desktop" data-restore="Desktop app" aria-pressed="false">Desktop app</button>
+      </div>
+    </div>
+    <div class="choice">
+      <button class="agent chatgpt" type="button" data-agent data-name="ChatGPT" aria-expanded="false">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg></span>
+        <span class="agent-label">Install in ChatGPT</span>
+      </button>
+      <div class="where chatgpt" data-for="ChatGPT" hidden role="group" aria-label="Where you use ChatGPT">
+        <button class="where-btn" type="button" data-surface="web" data-restore="Web" aria-pressed="false">Web</button>
+        <button class="where-btn" type="button" data-surface="desktop" data-restore="Desktop app" aria-pressed="false">Desktop app</button>
+      </div>
+    </div>
     <button class="agent grok" type="button" data-agent data-name="Grok Bot">
       <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="11" fill="#111111"/><ellipse cx="13.3" cy="7" rx="0.7" ry="1.6" fill="#FFFFFF" transform="rotate(-25 13.3 7)"/><ellipse cx="18.9" cy="6.6" rx="0.7" ry="1.6" fill="#FFFFFF" transform="rotate(-25 18.9 6.6)"/></svg></span>
       <span class="agent-label">Install in Grok Bot</span>
@@ -677,25 +725,39 @@ h1 {
   for (var j = 0; j < items.length; j++) io.observe(items[j]);
 })();
 (function () {
+  var SURFACES = {
+    Claude: {
+      web: 'You are Claude on claude.ai in the browser. You cannot start a program on this computer. A custom connector needs a public HTTPS URL, and viajante is not hosted. Do not ask which client I use.',
+      desktop: 'You are Claude Desktop. Add viajante as a local MCP server on this computer. It needs uv and Python 3.10 or later. Merge this into claude_desktop_config.json and keep every existing server. Open the file from Settings, Developer, Edit Config. macOS: ~/Library/Application Support/Claude/claude_desktop_config.json. Windows: %APPDATA%\\Claude\\claude_desktop_config.json. Linux: ~/.config/Claude/claude_desktop_config.json. {"mcpServers":{"viajante":{"command":"npx","args":["-y","@viajante/mcp"]}}}. Without Node, use "command":"uvx" with "args":["--from","viajante[mcp]","viajante-mcp"] instead. Quit Claude Desktop completely and reopen it. viajante is not published as a desktop extension (.mcpb), so it is not in Settings, Desktop app, Extensions. If you are Claude Code, run: claude mcp add --scope user viajante -- npx -y @viajante/mcp. Then reload MCP and confirm the viajante tools are listed.'
+    },
+    ChatGPT: {
+      web: 'You are ChatGPT on the web. You cannot edit a local MCP config, and you cannot start npx on my computer. Do not ask which client I use. Logged out, chatgpt.com only shows sign-in, and this chat cannot add a plugin. viajante searches from my computer and has no login. To use it here, I sign in, then on my computer (uv and Python 3.10 or later) I create a Secure MCP Tunnel in OpenAI platform tunnel settings and associate it with this ChatGPT account. I leave this running: tunnel-client init --sample sample_mcp_stdio_local --profile viajante --tunnel-id TUNNEL_ID --mcp-command "npx -y @viajante/mcp" and then tunnel-client run --profile viajante. I add it at https://chatgpt.com/plugins with Add custom MCP server, name Viajante, connection Tunnel, authentication No authentication, then install it and call it with @Viajante.',
+      desktop: 'You are the ChatGPT desktop app. Add viajante as a local STDIO MCP server on this computer. It needs uv and Python 3.10 or later. Open Settings, select MCP servers, then Add server. Name it viajante, choose STDIO, and provide the server command npx -y @viajante/mcp. Save, then select Restart. The same server in ~/.codex/config.toml is [mcp_servers.viajante] with command "npx" and args ["-y", "@viajante/mcp"]. The desktop app shares that file with Codex CLI and the IDE extension. Without Node, use command "uvx" and args ["--from", "viajante[mcp]", "viajante-mcp"]. ChatGPT on the web does not read that file.'
+    }
+  };
   var MESSAGES = {
-    Claude: 'Set up viajante as a local MCP server on this computer. It needs uv and Python 3.10 or later. If you are Claude Code, run: claude mcp add --scope user viajante -- npx -y @viajante/mcp. Then reload MCP and confirm the viajante tools are listed. If you are Claude Desktop, merge this into claude_desktop_config.json and keep every existing server. macOS: ~/Library/Application Support/Claude/claude_desktop_config.json. Windows: %APPDATA%\\Claude\\claude_desktop_config.json. Then quit and reopen the app. {"mcpServers":{"viajante":{"command":"npx","args":["-y","@viajante/mcp"]}}}. Without Node, use "command":"uvx" with "args":["--from","viajante[mcp]","viajante-mcp"] instead. If this is claude.ai in the browser and you cannot start a program on this computer, a custom connector needs a public HTTPS URL, and viajante is not hosted.',
-    ChatGPT: 'You are ChatGPT on the web. You cannot edit a local MCP config, and you cannot start npx on my computer. Do not ask which client I use. Logged out, chatgpt.com only shows sign-in, and this chat cannot add a plugin. viajante searches from my computer and has no login. To use it here, I sign in, then on my computer (uv and Python 3.10 or later) I create a Secure MCP Tunnel in OpenAI platform tunnel settings and associate it with this ChatGPT account. I leave this running: tunnel-client init --sample sample_mcp_stdio_local --profile viajante --tunnel-id TUNNEL_ID --mcp-command "npx -y @viajante/mcp" and then tunnel-client run --profile viajante. I add it at https://chatgpt.com/plugins with Add custom MCP server, name Viajante, connection Tunnel, authentication No authentication, then install it and call it with @Viajante.',
     'Grok Bot': 'Add a custom MCP server named viajante that runs on your computer, not on my laptop. Command: npx. Arguments: -y @viajante/mcp. That computer needs uv and Python 3.10 or later. Do not use a localhost URL. There is no settings form; add it from this chat. When it is connected, list its tools. If uv or Python is missing, say so.',
     Muse: 'Add viajante to Muse Code user settings. The file is $XDG_CONFIG_HOME/muse/settings.json when that variable is set, otherwise ~/.config/muse/settings.json. Merge into the existing file and keep "schema_version": 1. Use the mcp_servers key, not mcpServers: {"schema_version":1,"mcp_servers":{"viajante":{"transport":"stdio","command":"npx","args":["-y","@viajante/mcp"],"mode":"optional"}}}. It needs uv and Python 3.10 or later. Then run /mcp and confirm viajante is connected. If you cannot write that file, say so.',
     'Hermes Agent': 'Add viajante as a local MCP server in Hermes Agent. It needs uv and Python 3.10 or later. Run: hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp. Without Node, run: hermes mcp add viajante --connect-timeout 300 --command uvx --args --from \'viajante[mcp]\' viajante-mcp. Then run /reload-mcp and confirm the viajante tools are listed.',
     Instinct: 'This assistant has a Python sandbox, not an MCP config. viajante is open source (https://github.com/felipebasurto/viajante, PyPI: viajante).'
   };
   var FALLBACK = ' When viajante tools are connected, use them for flight and hotel searches. If they are not, write a Python file and run it. If import viajante fails, run pip install viajante (Python 3.10 or later) and run the file again. If pip cannot reach PyPI, say so and stop. Copy these calls and do not invent others: from datetime import date; from viajante import get_flights, HotelQuery, search_hotels. get_flights takes a route spec, not a sentence: get_flights("JFK-LHR:2026-11-15", fetch="sweep"). Hotels require a currency: search_hotels([HotelQuery(location="London", check_in=date(2026, 11, 15), check_out=date(2026, 11, 20))], currency="GBP"). Print each result with to_dict(). Read status and empty_reason before the rows. Only provider_empty means none found. Do not invent a fare, a currency, or a home airport. Other searches are search_dates, search_flex, search_explore, and search_trip; read the installed signature before calling one.';
-  function messageFor(button) {
-    return (MESSAGES[button.getAttribute('data-name')] || MESSAGES.Claude) + FALLBACK;
+  function textFor(name, surface) {
+    var body = surface ? SURFACES[name][surface] : MESSAGES[name];
+    return body + FALLBACK;
   }
   var RESET_MS = 1600;
   var live = document.getElementById('live');
   var timers = new WeakMap();
   var tpl = document.getElementById('picker');
 
-  document.querySelectorAll('[data-picker]').forEach(function (mount) {
+  document.querySelectorAll('[data-picker]').forEach(function (mount, index) {
     mount.replaceChildren(tpl.content.cloneNode(true));
+    mount.querySelectorAll('.where').forEach(function (panel) {
+      var id = 'where-' + index + '-' + panel.getAttribute('data-for');
+      panel.id = id;
+      panel.previousElementSibling.setAttribute('aria-controls', id);
+    });
   });
 
   function legacyCopy(text) {
@@ -713,45 +775,113 @@ h1 {
   }
 
   function setLabel(button, text) {
-    button.querySelector('.agent-label').textContent = text;
+    var slot = button.querySelector('.agent-label');
+    (slot || button).textContent = text;
   }
 
-  function showCopied(button) {
-    var name = button.getAttribute('data-name');
+  function showCopied(button, restore, announcement) {
     clearTimeout(timers.get(button));
     setLabel(button, 'Copied');
-    live.textContent = 'Setup message copied for ' + name + '.';
+    live.textContent = announcement;
     timers.set(button, setTimeout(function () {
-      setLabel(button, 'Install in ' + name);
+      setLabel(button, restore);
       live.textContent = '';
     }, RESET_MS));
   }
 
-  function showFallback(button) {
+  function showFallback(button, text) {
     var manual = button.closest('[data-picker]').querySelector('.manual');
-    manual.textContent = messageFor(button);
+    manual.textContent = text;
     manual.hidden = false;
     manual.scrollIntoView({ block: 'center' });
     live.textContent = 'Copy is blocked in this view. The setup message is shown here. Select it and copy it.';
   }
 
-  function finish(button, ok) {
-    if (ok) showCopied(button);
-    else showFallback(button);
+  function copyMessage(button, text, restore, announcement) {
+    function finish(ok) {
+      if (ok) showCopied(button, restore, announcement);
+      else showFallback(button, text);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        finish(true);
+      }, function () {
+        finish(legacyCopy(text));
+      });
+    } else {
+      finish(legacyCopy(text));
+    }
   }
 
-  document.querySelectorAll('[data-agent]').forEach(function (button) {
-    button.addEventListener('click', function () {
-      var text = messageFor(button);
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function () {
-          finish(button, true);
-        }, function () {
-          finish(button, legacyCopy(text));
+  function closeChoices(mount) {
+    mount.querySelectorAll('[aria-expanded="true"]').forEach(function (button) {
+      button.setAttribute('aria-expanded', 'false');
+      var panel = document.getElementById(button.getAttribute('aria-controls'));
+      if (!panel) return;
+      panel.hidden = true;
+      panel.querySelectorAll('.where-btn').forEach(function (pill) {
+        pill.setAttribute('aria-pressed', 'false');
+        clearTimeout(timers.get(pill));
+        setLabel(pill, pill.getAttribute('data-restore'));
+      });
+    });
+  }
+
+  document.querySelectorAll('[data-picker]').forEach(function (mount) {
+    mount.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape') return;
+      var open = mount.querySelector('[aria-expanded="true"]');
+      if (!open) return;
+      closeChoices(mount);
+      open.focus();
+      live.textContent = '';
+    });
+
+    mount.querySelectorAll('[data-agent]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var name = button.getAttribute('data-name');
+        if (SURFACES[name]) {
+          var open = button.getAttribute('aria-expanded') === 'true';
+          closeChoices(mount);
+          if (!open) {
+            button.setAttribute('aria-expanded', 'true');
+            document.getElementById(button.getAttribute('aria-controls')).hidden = false;
+            live.textContent = 'Choose Web or Desktop app for ' + name + '.';
+          } else {
+            live.textContent = '';
+          }
+          return;
+        }
+        closeChoices(mount);
+        copyMessage(
+          button,
+          textFor(name),
+          'Install in ' + name,
+          'Setup message copied for ' + name + '.'
+        );
+      });
+    });
+
+    mount.querySelectorAll('.where-btn').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var panel = button.closest('.where');
+        var name = panel.getAttribute('data-for');
+        var surface = button.getAttribute('data-surface');
+        panel.querySelectorAll('.where-btn').forEach(function (other) {
+          var chosen = other === button;
+          other.setAttribute('aria-pressed', chosen ? 'true' : 'false');
+          if (chosen) return;
+          clearTimeout(timers.get(other));
+          setLabel(other, other.getAttribute('data-restore'));
         });
-      } else {
-        finish(button, legacyCopy(text));
-      }
+        var label = button.getAttribute('data-restore');
+        copyMessage(
+          button,
+          textFor(name, surface),
+          label,
+          label + ' setup message copied for ' + name + '.'
+        );
+      });
     });
   });
 })();
