@@ -297,8 +297,9 @@ cannot carry top-level fields without breaking its shape).
   window, capped at 31 days. Each day is an independent row; successful days
   remain visible when other days fail.
 - **Flex** uses the same bounded per-day GETs for its named window, chooses the
-  cheapest returned day, then makes one fresh public-page shop for that date.
-  It does not guess a winner from failed or unpriced days.
+  cheapest returned day, and ranks that day's offers from the cards those GETs
+  already fetched (`calendar_then_sweep`). It does not guess a winner from
+  failed or unpriced days.
 - **Explore** reads the catalog request the Explore page issues in Chromium
   (one adult, economy), then shops each owned destination over the public
   page on the start date only. A connection failure loading that page

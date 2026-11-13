@@ -1834,8 +1834,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default="sweep",
         choices=["auto", "sweep", "detail"],
         help=(
-            "Shops each day on the public results page, then one fresh shop on the chosen day. "
-            "detail is accepted and ignored."
+            "Shops each day on the public results page and ranks the chosen day from "
+            "those cards (calendar_then_sweep). detail is accepted and ignored."
         ),
     )
     _add_save_flag(flex)

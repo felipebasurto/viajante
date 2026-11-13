@@ -4,6 +4,7 @@ import io
 import unittest
 from contextlib import redirect_stdout
 from datetime import date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -2257,6 +2258,13 @@ class FlexCliTests(unittest.TestCase):
         self.assertIn("--nights", help_text)
         self.assertIn("viajante flex BOS-LHR", help_text)
         self.assertIn(str(MAX_FLEX_DAYS), help_text)
+        self.assertIn("calendar_then_sweep", help_text)
+        self.assertNotIn("fresh shop", help_text)
+        architecture = (
+            Path(__file__).resolve().parents[1].joinpath("docs", "architecture.md").read_text()
+        )
+        self.assertIn("`calendar_then_sweep`", architecture)
+        self.assertNotIn("one fresh public-page shop", architecture)
         self.assertIn("--bags", help_text)
         self.assertIn("--via", help_text)
         self.assertIn("--no-overnight", help_text)
