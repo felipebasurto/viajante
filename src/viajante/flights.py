@@ -38,6 +38,7 @@ from viajante.flight_routes import (
     _is_route_spec,
     _overlay_carrier_filters,
     _progress_label,
+    _reject_same_metro,
     as_trips,
     drop_excluded_airport_trips,
     expand_nearby_trips,
@@ -79,7 +80,7 @@ from viajante.orchestration import (
     should_retry,
     sweep_inter_query_delay_seconds,
 )
-from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
+from viajante.quote import resolve_baggage_buffer, resolve_trips_currency
 from viajante.ratelimit import NOT_SENT
 from viajante.storage import default_state_dir
 
@@ -176,7 +177,12 @@ def prepare_flight_search(
     """Prepare the same provider request for execution and offline validation."""
     if not queries:
         raise ValueError("at least one query is required")
-    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
+    for trip in queries:
+        origin = getattr(trip, "origin", None)
+        destination = getattr(trip, "destination", None)
+        if isinstance(origin, str) and isinstance(destination, str):
+            _reject_same_metro(origin, destination)
+    currency = resolve_trips_currency(currency, queries)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
     kept = keep_included_dest_trips(queries, include_airports)

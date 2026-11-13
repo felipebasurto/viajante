@@ -8,7 +8,7 @@ from typing import Sequence
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
-from viajante.airports import get_airport
+from viajante.airports import get_airport, place_label_codes
 from viajante.flight_filters import (
     NO_OFFER_FILTERS,
     _overnight_from_owned_clocks,
@@ -637,6 +637,28 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(by_fare[0].airline, "Ryanair")
         self.assertEqual(by_fare[1].airline, "Legacy")
 
+    def test_rank_keeps_itineraries_that_share_clocks_but_not_the_route(self) -> None:
+        shared = dict(
+            airline="BA",
+            departure="08:00",
+            arrival="16:00",
+            price_text="500 USD",
+            price=500.0,
+            duration="8 h",
+            duration_hours=8.0,
+            stops="1 stop",
+            stops_count=1,
+            baggage_buffer=0,
+            needs_bag_verify=False,
+        )
+        via_london = FlightOffer(**shared, layover_city="London", flight_numbers=("BA178", "BA456"))
+        via_paris = FlightOffer(**shared, layover_city="Paris", flight_numbers=("BA180", "BA790"))
+        ranked = _rank_offers((via_london, via_paris), top=5, sort="fare")
+        self.assertEqual(
+            [offer.flight_numbers for offer in ranked],
+            [("BA178", "BA456"), ("BA180", "BA790")],
+        )
+
     def test_raw_normalized_pairing(self) -> None:
         raw = card(
             airline="Air",
@@ -1036,6 +1058,79 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual([offer.price for offer in result.offers], [100.0])
         self.assertEqual((result.raw_count, result.eligible_count), (3, 1))
 
+    def test_package_duration_cap_is_per_journey(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2027, 6, 1), date(2027, 6, 8), max_stops=0)
+        legs = (
+            RawJourneyLeg("08:00", "14:00", "6 h", "Nonstop"),
+            RawJourneyLeg("09:00", "15:00", "6 h", "Nonstop"),
+        )
+        long_return = (
+            RawJourneyLeg("08:00", "14:00", "6 h", "Nonstop"),
+            RawJourneyLeg("09:00", "21:00", "12 h", "Nonstop"),
+        )
+        source = FakeSource(
+            {
+                ("JFK", "LHR", "2027-06-01", 0): (
+                    card(price="400 €", duration="6 h", stops="Nonstop", legs=legs),
+                    card(price="500 €", duration="6 h", stops="Nonstop", legs=long_return),
+                )
+            }
+        )
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights((trip,), fetch="sweep", currency="USD", max_duration_hours=8)
+        result = report.queries[0]
+        assert isinstance(result, QuerySuccess)
+        self.assertEqual([offer.price for offer in result.offers], [400.0])
+
+    def test_search_refuses_origins_that_do_not_share_a_currency(self) -> None:
+        day = date(2027, 6, 1)
+        mixed = (
+            FlightQuery("JFK", "LHR", day),
+            FlightQuery("LHR", "CDG", day),
+        )
+        same = (
+            FlightQuery("JFK", "LHR", day),
+            FlightQuery("LAX", "NRT", day),
+        )
+        source = FakeSource(
+            {
+                ("JFK", "LHR", day.isoformat(), 1): (card(),),
+                ("LHR", "CDG", day.isoformat(), 1): (card(),),
+                ("LAX", "NRT", day.isoformat(), 1): (card(),),
+            }
+        )
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source) as ctor:
+            with self.assertRaises(ValueError) as caught:
+                search_flights(mixed, fetch="sweep")
+        message = str(caught.exception)
+        self.assertIn("JFK USD", message)
+        self.assertIn("LHR GBP", message)
+        self.assertIn("--currency", message)
+        ctor.assert_not_called()
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source) as ctor:
+            search_flights(same, fetch="sweep")
+        self.assertEqual(ctor.call_args.kwargs["currency"], "USD")
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source) as ctor:
+            search_flights(mixed, fetch="sweep", currency="USD")
+        self.assertEqual(ctor.call_args.kwargs["currency"], "USD")
+
+    def test_search_rejects_a_same_metro_airport_pair(self) -> None:
+        day = date(2027, 6, 1)
+        metro = FlightQuery("LHR", "LGW", day)
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            with self.assertRaises(ValueError) as caught:
+                search_flights((metro,), fetch="sweep")
+        self.assertIn("origin LHR", str(caught.exception))
+        self.assertIn("destination LGW", str(caught.exception))
+        self.assertIn("same metro LON", str(caught.exception))
+        ctor.assert_not_called()
+        round_trip = RoundTrip("JFK", "EWR", day, date(2027, 6, 8))
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            with self.assertRaises(ValueError) as caught:
+                search_flights((round_trip,), fetch="sweep")
+        self.assertIn("same metro NYC", str(caught.exception))
+        ctor.assert_not_called()
+
     def test_search_stamps_google_flights_urls(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource(
@@ -1106,6 +1201,47 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(detailed.completeness.segment_clocks, "known")
         self.assertEqual(detailed.completeness.baggage, "known")
 
+    def test_a_layover_without_a_city_is_not_known(self) -> None:
+        unnamed = _normalize_offer(
+            card(
+                stops="1 stop",
+                layover_hours=2.0,
+                price="80 €",
+                legs=(
+                    RawJourneyLeg(
+                        departure="08:00",
+                        arrival="16:00",
+                        duration="8 h",
+                        stops="1 stop",
+                        layovers=(RawLayover(city=None, hours=2.0),),
+                    ),
+                ),
+            ),
+            1,
+        )
+        named = _normalize_offer(
+            card(
+                stops="1 stop",
+                layover_city="LIS",
+                layover_hours=2.0,
+                price="80 €",
+                legs=(
+                    RawJourneyLeg(
+                        departure="08:00",
+                        arrival="16:00",
+                        duration="8 h",
+                        stops="1 stop",
+                        layovers=(RawLayover(city="LIS", hours=2.0),),
+                    ),
+                ),
+            ),
+            1,
+        )
+        assert unnamed is not None and named is not None
+        self.assertEqual(unnamed.completeness.layovers, "unknown")
+        self.assertEqual(named.completeness.layovers, "known")
+        self.assertEqual(_normalize_offer(card(stops="Nonstop"), 1).completeness.layovers, "known")
+
     def test_search_closes_source(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource({("JFK", "LHR", "2026-09-01", 1): (card(airline="Air One"),)})
@@ -1171,7 +1307,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         )
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
             with patch("viajante.flights.GoogleFlightsSource") as detail:
-                report = search_flights(queries, top=1)
+                report = search_flights(queries, top=1, currency="USD")
         detail.assert_not_called()
         self.assertEqual(report.fetch_backend, "sweep")
 
@@ -1724,6 +1860,78 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNone(_normalize_offer(with_legs, 2, exclude_via=("IST",)))
         self.assertIsNone(_normalize_offer(with_legs, 2, via=("DXB",)))
         self.assertIsNone(_normalize_offer(silent, 2, exclude_via=("IST",)))
+
+    def test_a_city_label_does_not_prove_a_different_airport(self) -> None:
+        gatwick = card(
+            stops="1 stop",
+            layover_city="London",
+            layover_hours=10.0,
+            price="80 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="08:00",
+                    arrival="18:00",
+                    duration="10 h",
+                    stops="1 stop",
+                    segments=(
+                        RawSegment(origin="JFK", destination="LGW", arrival="22:00"),
+                        RawSegment(origin="LGW", destination="CDG", departure="08:00"),
+                    ),
+                    layovers=(RawLayover(city="London", hours=10.0),),
+                ),
+            ),
+        )
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, via=("LGW",)))
+        self.assertIsNone(_normalize_offer(gatwick, 1, via=("LHR",)))
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, exclude_via=("LHR",)))
+        self.assertIsNone(_normalize_offer(gatwick, 1, exclude_via=("LGW",)))
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, no_overnight=("LHR",)))
+        self.assertIsNone(_normalize_offer(gatwick, 1, require_overnight=("LHR",)))
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, require_overnight=("LGW",)))
+        london = card(
+            stops="1 stop",
+            layover_city="London",
+            layover_hours=10.0,
+            price="70 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="08:00",
+                    arrival="18:00",
+                    duration="10 h",
+                    stops="1 stop",
+                    segments=(
+                        RawSegment(origin="JFK", destination="London", arrival="22:00"),
+                        RawSegment(origin="London", destination="CDG", departure="08:00"),
+                    ),
+                    layovers=(RawLayover(city="London", hours=10.0),),
+                ),
+            ),
+        )
+        self.assertIsNone(_normalize_offer(london, 1, via=("LHR",)))
+        self.assertIsNone(_normalize_offer(london, 1, via=("LGW",)))
+        self.assertIsNone(_normalize_offer(london, 1, require_overnight=("LHR",)))
+        self.assertIsNone(_normalize_offer(london, 1, no_overnight=("LHR",)))
+        self.assertIsNone(_normalize_offer(london, 1, exclude_via=("LHR",)))
+        lisbon = get_airport("LIS")
+        rome = get_airport("FCO")
+        assert lisbon is not None and rome is not None
+        self.assertEqual(place_label_codes(lisbon.city), ("LIS",))
+        self.assertEqual(place_label_codes(rome.city), ("FCO",))
+        self.assertGreater(len(place_label_codes("London")), 1)
+        self.assertIsNotNone(
+            _normalize_offer(
+                card(stops="1 stop", layover_city=lisbon.city, layover_hours=2.0, price="74 €"),
+                1,
+                via=("LIS",),
+            )
+        )
+        self.assertIsNotNone(
+            _normalize_offer(
+                card(stops="1 stop", layover_city=rome.city, layover_hours=2.0, price="90 €"),
+                1,
+                via=("FCO",),
+            )
+        )
 
     def test_package_layover_is_unset_and_via_still_reads_every_journey(self) -> None:
         # The card summary is the outbound's longest layover, so it is also one of that leg's
