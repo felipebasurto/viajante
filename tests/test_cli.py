@@ -13,10 +13,20 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 import viajante
 from viajante.cli import main
-from viajante.cli_report import _format_clock, _join_cancellation_rows, _print_report
+from viajante.cli_report import (
+    _format_clock,
+    _join_cancellation_rows,
+    _print_dates_report,
+    _print_flex_report,
+    _print_report,
+)
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
+    DateCalendarReport,
+    DatePriceRow,
+    FlexSearchReport,
+    FlightLeg,
     FlightOffer,
     FlightQuery,
     HotelOffer,
@@ -25,6 +35,7 @@ from viajante.models import (
     HotelQuerySuccess,
     HotelSearchReport,
     LodgingKind,
+    MultiCity,
     PriceInsight,
     PropertyTypeEvidence,
     QueryFailure,
@@ -2229,6 +2240,110 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(len(trips), 1)
         self.assertEqual(trips[0].destination, "LHR")
         self.assertIsNone(trips[0].nearby_label)
+
+
+class IncompleteEvidencePrintTests(unittest.TestCase):
+    def test_flight_date_and_flex_print_limits_already_on_the_result(self) -> None:
+        unparsed = SearchError(
+            code=SearchErrorCode.CARDS_UNPARSED,
+            message="2 cards skipped",
+            diagnostics={"seen": 4, "parsed": 2},
+        )
+        round_trip = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="USD",
+            queries=(
+                QuerySuccess(
+                    query=RoundTrip("JFK", "LHR", date(2027, 3, 15), date(2027, 3, 22)),
+                    raw_count=0,
+                    eligible_count=0,
+                    offers=(),
+                    empty_reason="filtered_out",
+                    scope_bound=True,
+                    page_errors=(unparsed,),
+                    price_insight_error="markup_drift",
+                ),
+            ),
+        )
+        multi = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="USD",
+            queries=(
+                QuerySuccess(
+                    query=MultiCity(
+                        (
+                            FlightLeg("JFK", "LHR", date(2027, 4, 1)),
+                            FlightLeg("LHR", "NRT", date(2027, 4, 4)),
+                            FlightLeg("NRT", "SIN", date(2027, 4, 8)),
+                        )
+                    ),
+                    raw_count=1,
+                    eligible_count=1,
+                    offers=(_offer(),),
+                    scope_bound=True,
+                ),
+            ),
+        )
+        printed = _rendered(round_trip)
+        self.assertIn("empty_reason: filtered_out", printed)
+        self.assertIn("scope_bound: public_page_outbound_limit 8", printed)
+        self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", printed)
+        self.assertIn("price_insight_error: markup_drift", printed)
+        self.assertIn("scope_bound: multi_city_leader_limit 4", _rendered(multi))
+
+        day = date(2027, 3, 15)
+        calendar = DateCalendarReport(
+            searched_at=SEARCHED_AT,
+            origin="GRU",
+            destination="SIN",
+            start_date=day,
+            end_date=day,
+            days=(
+                DatePriceRow(
+                    departure_date=day,
+                    status="empty",
+                    empty_reason="provider_empty",
+                    scope_bound=True,
+                    page_errors=(unparsed,),
+                ),
+            ),
+            currency="BRL",
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            _print_dates_report(calendar)
+        dates = buffer.getvalue()
+        self.assertIn("scope_bound: public_page_outbound_limit 8", dates)
+        self.assertIn("2027-03-15", dates)
+        self.assertIn("provider_empty", dates)
+        self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", dates)
+
+        flex = FlexSearchReport(
+            searched_at=SEARCHED_AT,
+            origin="NRT",
+            destination="GRU",
+            around=day,
+            flex_days=1,
+            start_date=day,
+            end_date=day,
+            days=(
+                DatePriceRow(
+                    departure_date=day,
+                    price=400.0,
+                    scope_bound=True,
+                    page_errors=(unparsed,),
+                ),
+            ),
+            chosen_date=day,
+            offers=(_offer(),),
+            currency="JPY",
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            _print_flex_report(flex)
+        flexed = buffer.getvalue()
+        self.assertIn("scope_bound: public_page_outbound_limit 8", flexed)
+        self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", flexed)
 
 
 if __name__ == "__main__":

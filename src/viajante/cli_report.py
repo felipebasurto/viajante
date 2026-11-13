@@ -362,6 +362,35 @@ def _print_google_flights_url(url: Optional[str], *, indent: str = "    ") -> No
         print(f"{indent}{url}")
 
 
+def _print_page_errors(errors, *, indent: str = "  ") -> None:
+    for error in errors:
+        extra = ""
+        diagnostics = error.diagnostics or {}
+        bits = [f"{key} {diagnostics[key]}" for key in ("seen", "parsed") if key in diagnostics]
+        if bits:
+            extra = f" ({', '.join(bits)})"
+        print(f"{indent}{error.code.value}: {error.message}{extra}")
+
+
+def _print_flight_limits(result: QuerySuccess) -> None:
+    if result.empty_reason:
+        print(f"  empty_reason: {result.empty_reason}")
+    if result.scope_bound:
+        if isinstance(result.query, MultiCity):
+            limit = max(2, 8 // (len(result.query.legs) - 1))
+            print(f"  scope_bound: multi_city_leader_limit {limit}")
+        else:
+            print("  scope_bound: public_page_outbound_limit 8")
+    if result.price_insight_error:
+        print(f"  price_insight_error: {result.price_insight_error}")
+    _print_page_errors(result.page_errors)
+
+
+def _print_day_scope(days) -> None:
+    if any(row.scope_bound for row in days):
+        print("  scope_bound: public_page_outbound_limit 8")
+
+
 def _print_report(report, *, sort: FlightSort = "ranked") -> None:
     any_success = False
     currency = report.currency
@@ -378,6 +407,7 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
         )
         if isinstance(result, QuerySuccess):
             any_success = True
+            _print_flight_limits(result)
             if not result.offers:
                 print("  (no eligible offers)")
                 _print_google_flights_url(query_url, indent="  ")
@@ -754,14 +784,18 @@ def _print_dates_report(report: DateCalendarReport) -> None:
     if report.summary is not None:
         print(format_summary_line(report.summary, report.currency))
     print()
+    _print_day_scope(report.days)
     any_price = False
     currency = report.currency
     for row in report.days:
         if row.status == "error" and row.error is not None:
             print(f"  {row.departure_date.isoformat()}   ERROR: {row.error.message}")
+            _print_page_errors(row.page_errors, indent="    ")
             continue
         if row.price is None:
-            print(f"  {row.departure_date.isoformat()}      —")
+            reason = f"  {row.empty_reason}" if row.empty_reason else ""
+            print(f"  {row.departure_date.isoformat()}      —{reason}")
+            _print_page_errors(row.page_errors, indent="    ")
             continue
         any_price = True
         extra = ""
@@ -776,6 +810,7 @@ def _print_dates_report(report: DateCalendarReport) -> None:
         )
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare, currency))
+        _print_page_errors(row.page_errors, indent="    ")
     if any_price:
         print(VERIFY_BAGGAGE_LINE)
 
@@ -877,6 +912,11 @@ def _print_flex_report(report: FlexSearchReport) -> None:
         f"±{report.flex_days}  {report.start_date.isoformat()} .. {report.end_date.isoformat()}"
         f"{stay}{nearby} ==="
     )
+    _print_day_scope(report.days)
+    for row in report.days:
+        if row.empty_reason:
+            print(f"  {row.departure_date.isoformat()}  {row.empty_reason}")
+        _print_page_errors(row.page_errors)
     if report.error is not None and report.chosen_date is None:
         print(f"  ERROR: {report.error.message}")
         _print_google_flights_url(report.google_flights_url, indent="  ")
