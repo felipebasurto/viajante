@@ -1014,6 +1014,17 @@ class BoundedBrowserWaitTests(unittest.TestCase):
                 bounded_ms(60_000)
         self.assertTrue(control.cut)
 
+    def test_under_one_millisecond_left_raises_instead_of_waiting(self) -> None:
+        now = [0.0]
+        control = SearchControl(deadline_seconds=1, clock=lambda: now[0])
+        with active(control):
+            now[0] = 1 - 0.0004
+            with self.assertRaises(SearchDeadline):
+                bounded_ms(60_000)
+            now[0] = 1 - 0.0015
+            self.assertEqual(bounded_ms(60_000), 1)
+        self.assertTrue(control.cut)
+
 
 if __name__ == "__main__":
     unittest.main()
