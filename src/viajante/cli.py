@@ -448,6 +448,8 @@ def _run_flights(args: argparse.Namespace) -> int:
                 country=args.country,
                 proxy=getattr(args, "proxy", None) or None,
                 progress=lambda line: print(line, file=sys.stderr),
+                less_emissions=bool(getattr(args, "less_emissions", False)),
+                hide_separate_tickets=bool(getattr(args, "hide_separate_tickets", False)),
             )
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)

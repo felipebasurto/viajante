@@ -184,6 +184,26 @@ def _hub_table(second_dep: str = "15:00") -> dict:
 
 
 class HubSplitTests(unittest.TestCase):
+    def test_echo_only_filters_reach_every_leg_search(self) -> None:
+        seen: list[dict] = []
+
+        def search(trips, **kwargs):
+            seen.append(kwargs)
+            return FakeSearch(_hub_table())(trips, **kwargs)
+
+        search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            search=search,
+            less_emissions=True,
+            hide_separate_tickets=True,
+        )
+        self.assertTrue(seen)
+        for kwargs in seen:
+            self.assertIs(kwargs["less_emissions"], True)
+            self.assertIs(kwargs["hide_separate_tickets"], True)
+
     def test_hub_split_pairs_two_real_quotes_with_labels_and_links(self) -> None:
         fake = FakeSearch(_hub_table())
         report = search_split_tickets(

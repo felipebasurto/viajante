@@ -448,6 +448,8 @@ def search_split_tickets(
     search: SearchFn = search_flights,
     filters: Optional[SplitFilters] = None,
     baggage_buffer: int = 0,
+    less_emissions: bool = False,
+    hide_separate_tickets: bool = False,
 ) -> SplitReport:
     """Search split tickets for one one-way (via hubs) or one round-trip (mixed one-ways).
 
@@ -478,6 +480,8 @@ def search_split_tickets(
         proxy=proxy,
         progress=progress,
         baggage_buffer=baggage_buffer,
+        less_emissions=less_emissions,
+        hide_separate_tickets=hide_separate_tickets,
     )
 
     packaged_searched = packaged is None

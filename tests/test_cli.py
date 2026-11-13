@@ -350,6 +350,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(search.call_args.kwargs["currency"], "USD")
         self.assertEqual(search.call_args.kwargs["country"], "US")
 
+    def test_split_tickets_keep_echo_only_filters(self) -> None:
+        class _Split:
+            error = None
+
+            def to_dict(self):
+                return {}
+
+        with (
+            patch("viajante.cli.search_flights", return_value=_report()) as flights,
+            patch("viajante.cli.search_split_tickets", return_value=_Split()) as split,
+            patch("viajante.cli._print_report"),
+            patch("viajante.cli._print_split_report"),
+        ):
+            code = main(
+                [
+                    "flights",
+                    ROUTE,
+                    "--split-tickets",
+                    "--split-via",
+                    "BOS",
+                    "--less-emissions",
+                    "--hide-separate-tickets",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIs(flights.call_args.kwargs["less_emissions"], True)
+        self.assertIs(flights.call_args.kwargs["hide_separate_tickets"], True)
+        self.assertIs(split.call_args.kwargs["less_emissions"], True)
+        self.assertIs(split.call_args.kwargs["hide_separate_tickets"], True)
+
     def test_mixed_origin_routes_ask_for_currency_before_search(self) -> None:
         day = FUTURE_DATE.isoformat()
         mixed = [f"JFK-LHR:{day}", f"NRT-LHR:{day}"]
