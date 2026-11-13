@@ -341,18 +341,31 @@ def _leg_airport(leg: Any) -> Optional[str]:
 def _attribute_tokens(value: Any) -> Optional[set[str]]:
     if not isinstance(value, list):
         return None
-    return {str(item).strip().casefold() for item in value}
+    tokens = {str(item).strip().casefold() for item in value if str(item).strip()}
+    return tokens or None
 
 
 def _hidden_city(card: Mapping[str, Any], return_leg: Any) -> Optional[bool]:
-    """True or False from the legs' ``attributes``; None when no leg carries them."""
+    """True or False from every leg's attributes.
+
+    None when a leg has no attributes, unless another leg is hidden-city.
+    """
     legs = [card, return_leg] if isinstance(return_leg, dict) else [card]
-    seen = [
-        tokens for leg in legs if (tokens := _attribute_tokens(leg.get("attributes"))) is not None
-    ]
-    if not seen:
+    missing = False
+    hidden = False
+    for leg in legs:
+        attributes = leg.get("attributes") if isinstance(leg, Mapping) else None
+        tokens = _attribute_tokens(attributes)
+        if tokens is None:
+            missing = True
+            continue
+        if "hidden-city" in tokens:
+            hidden = True
+    if hidden:
+        return True
+    if missing:
         return None
-    return any("hidden-city" in tokens for tokens in seen)
+    return False
 
 
 def _stops(card: Mapping[str, Any]) -> Optional[int]:
