@@ -1205,6 +1205,47 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(detailed.completeness.segment_clocks, "known")
         self.assertEqual(detailed.completeness.baggage, "known")
 
+    def test_a_layover_without_a_city_is_not_known(self) -> None:
+        unnamed = _normalize_offer(
+            card(
+                stops="1 stop",
+                layover_hours=2.0,
+                price="80 €",
+                legs=(
+                    RawJourneyLeg(
+                        departure="08:00",
+                        arrival="16:00",
+                        duration="8 h",
+                        stops="1 stop",
+                        layovers=(RawLayover(city=None, hours=2.0),),
+                    ),
+                ),
+            ),
+            1,
+        )
+        named = _normalize_offer(
+            card(
+                stops="1 stop",
+                layover_city="LIS",
+                layover_hours=2.0,
+                price="80 €",
+                legs=(
+                    RawJourneyLeg(
+                        departure="08:00",
+                        arrival="16:00",
+                        duration="8 h",
+                        stops="1 stop",
+                        layovers=(RawLayover(city="LIS", hours=2.0),),
+                    ),
+                ),
+            ),
+            1,
+        )
+        assert unnamed is not None and named is not None
+        self.assertEqual(unnamed.completeness.layovers, "unknown")
+        self.assertEqual(named.completeness.layovers, "known")
+        self.assertEqual(_normalize_offer(card(stops="Nonstop"), 1).completeness.layovers, "known")
+
     def test_search_closes_source(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource({("JFK", "LHR", "2026-09-01", 1): (card(airline="Air One"),)})
