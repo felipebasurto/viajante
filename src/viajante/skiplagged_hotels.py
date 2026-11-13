@@ -740,6 +740,8 @@ def search_hotel_rooms(
         raise ValueError("hotel_id must be positive")
     if check_out <= check_in:
         raise ValueError("check_out must be after check_in")
+    if check_in < date.today():
+        raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
     if adults <= 0 or adults > MAX_SEARCH_ADULTS:
         raise ValueError(f"adults must be 1 to {MAX_SEARCH_ADULTS} with source skiplagged")
     if rooms <= 0 or rooms > MAX_DETAIL_ROOMS:

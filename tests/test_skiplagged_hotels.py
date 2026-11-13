@@ -594,6 +594,17 @@ class SkiplaggedNameLookupTests(unittest.TestCase):
         self.assertIsNone(report.hotel_id)
         self.assertEqual([c["name"] for c in calls], ["sk_hotels_search"])
 
+    def test_past_check_in_fails_before_any_request(self) -> None:
+        calls: list = []
+        with self.assertRaisesRegex(ValueError, "check-in date is in the past: 2020-01-01"):
+            search_hotel_rooms(
+                1,
+                date(2020, 1, 1),
+                date(2020, 1, 4),
+                rpc=_routing_rpc(_search_result(), {}, calls),
+            )
+        self.assertEqual(calls, [])
+
     def test_naming_rules_fail_before_any_request(self) -> None:
         for kwargs in (
             {"hotel_id": None},
