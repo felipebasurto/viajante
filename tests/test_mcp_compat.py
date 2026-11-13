@@ -10,6 +10,7 @@ import calendar
 import contextlib
 import http.client
 import importlib.util
+import inspect
 import io
 import json
 import math
@@ -27,7 +28,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import _isolate  # noqa: F401
-from viajante import mcp_server
+from viajante import mcp_handlers, mcp_server
 from viajante.envelope import EnvelopeShapeError
 from viajante.flights import classify_failure
 from viajante.google_flights import GoogleFlightsBlocked
@@ -46,6 +47,7 @@ from viajante.ratelimit import (
 from viajante.runtime import package_version
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged import _classify as classify_skiplagged
+from viajante.watch import watch_price_tool
 
 try:  # a dependency of the mcp extra, absent without it
     import jsonschema
@@ -672,6 +674,49 @@ class GuideTests(_StateDir):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, guide)
         self.assertIn("Also search_split_tickets", INSTRUCTIONS)
+
+    def test_guide_names_which_tools_accept_deadline_seconds(self) -> None:
+        handlers = (
+            ("search_flights", mcp_handlers.search_flights_tool),
+            ("search_dates", mcp_handlers.search_dates_tool),
+            ("search_flex", mcp_handlers.search_flex_tool),
+            ("search_explore", mcp_handlers.search_explore_tool),
+            ("search_hotels", mcp_handlers.search_hotels_tool),
+            ("search_trip", mcp_handlers.search_trip_tool),
+            ("search_split_tickets", mcp_handlers.search_split_tickets_tool),
+            ("search_hidden_city", mcp_handlers.search_hidden_city_tool),
+            ("search_hotel_rooms", mcp_handlers.search_hotel_rooms_tool),
+            ("recheck_offer", mcp_handlers.recheck_offer_tool),
+            ("get_hotel_details", mcp_handlers.get_hotel_details_tool),
+            ("watch_price", watch_price_tool),
+        )
+        takes = [
+            name
+            for name, fn in handlers
+            if "deadline_seconds" in inspect.signature(fn).parameters
+        ]
+        skips = [name for name, _fn in handlers if name not in takes]
+        guide = self._flat(GUIDE)
+        self.assertEqual(
+            takes,
+            [
+                "search_flights",
+                "search_dates",
+                "search_flex",
+                "search_explore",
+                "search_hotels",
+                "search_trip",
+            ],
+        )
+        self.assertIn(
+            "deadline_seconds is an argument of " + ", ".join(takes[:-1]) + " and " + takes[-1],
+            guide,
+        )
+        self.assertIn(
+            "Passing it to " + ", ".join(skips[:-1]) + " or " + skips[-1] + " is invalid_parameter",
+            guide,
+        )
+        self.assertIn("VIAJANTE_MCP_DEADLINE_SECONDS bounds those six", guide)
 
     def test_guide_tells_round_trip_date_sweeps_to_pass_a_deadline(self) -> None:
         guide = self._flat(GUIDE)

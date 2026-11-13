@@ -90,8 +90,13 @@ Progress, cancel, deadline: a search tool sends notifications/progress only when
 client sends a progressToken; they are informational and the result is still the reply.
 Cancelling the request stops the search at its next checkpoint and frees the lock; a
 cancelled search is not cached, recorded as evidence, or counted toward a cooldown.
-An optional deadline_seconds (or VIAJANTE_MCP_DEADLINE_SECONDS when the argument is
-unset) stops starting new queries after that many seconds and returns what finished:
+deadline_seconds is an argument of search_flights, search_dates, search_flex,
+search_explore, search_hotels and search_trip. Passing it to search_split_tickets,
+search_hidden_city, search_hotel_rooms, recheck_offer, get_hotel_details or
+watch_price is invalid_parameter. VIAJANTE_MCP_DEADLINE_SECONDS bounds those six
+when set, and fills an omitted deadline_seconds on the tools that take the
+argument. A deadline stops starting new queries after that many seconds and
+returns what finished:
 coverage.complete is false, coverage.stopping_reason is deadline, status is ok while
 any row has evidence (otherwise timeout), completeness is partial, and each unfinished
 query carries error code deadline with empty_reason not_loaded. That is availability
