@@ -272,6 +272,7 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
 
     The fare, token and bag evidence come from the return card, since that card priced the
     package. Carriers come from both legs, so an exclusion on either leg still applies.
+    Flight numbers are both legs in order, or unknown when either leg has none.
     """
     sides = (outbound, returned)
     if any(side.airline_codes is None and not side.airline for side in sides):
@@ -290,7 +291,11 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
         checked_bags=returned.checked_bags,
         carry_on=returned.carry_on,
         legs=(outbound.legs[0], returned.legs[0]),
-        flight_numbers=tuple((outbound.flight_numbers or ()) + (returned.flight_numbers or ())),
+        flight_numbers=(
+            outbound.flight_numbers + returned.flight_numbers
+            if outbound.flight_numbers and returned.flight_numbers
+            else None
+        ),
     )
 
 
