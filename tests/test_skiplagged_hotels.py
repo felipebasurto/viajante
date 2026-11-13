@@ -378,6 +378,77 @@ class SkiplaggedNameLookupTests(unittest.TestCase):
                 rpc=_routing_rpc(result, {}, []),
             )
 
+    def _city_page(self, slug: str, heading: str) -> dict:
+        result = _search_result(
+            url=f"https://skiplagged.com/hotels/1/{slug}-hotels/2026-12-01/2026-12-04"
+        )
+        result["content"][0]["text"] = result["content"][0]["text"].replace(
+            "# Hotels in Prague", f"# Hotels in {heading}"
+        )
+        return result
+
+    def test_accented_and_aliased_cities_match_the_catalogue_slug(self) -> None:
+        cases = (
+            ("São Paulo", "sao-paulo-brazil", "Sao Paulo"),
+            ("Zürich", "zurich-switzerland", "Zurich"),
+            ("Lisboa", "lisbon-portugal", "Lisbon"),
+            ("Ciudad de México", "mexico-city-mexico", "Mexico City"),
+        )
+        for city, slug, heading in cases:
+            with self.subTest(city=city):
+                self.assertEqual(
+                    resolve_hotel_id(
+                        "Czech Inn",
+                        city,
+                        *self.DAY,
+                        adults=3,
+                        rpc=_routing_rpc(self._city_page(slug, heading), {}, []),
+                    ),
+                    (25584, "Czech Inn"),
+                )
+
+    def test_country_or_region_name_matches_that_places_slug(self) -> None:
+        cases = (
+            ("Prague, Czech Republic", "prague-czech-republic", "Prague"),
+            ("Paris, France", "paris-france", "Paris"),
+            ("Paris, Texas", "paris-texas", "Paris"),
+            ("London, United Kingdom", "london-united-kingdom", "London"),
+            ("Tbilisi, Georgia", "tbilisi-georgia", "Tbilisi"),
+            ("San Jose, US", "san-jose-california", "San Jose"),
+        )
+        for city, slug, heading in cases:
+            with self.subTest(city=city, slug=slug):
+                self.assertEqual(
+                    resolve_hotel_id(
+                        "Czech Inn",
+                        city,
+                        *self.DAY,
+                        adults=3,
+                        rpc=_routing_rpc(self._city_page(slug, heading), {}, []),
+                    ),
+                    (25584, "Czech Inn"),
+                )
+
+    def test_slug_region_cannot_contradict_the_requested_country(self) -> None:
+        cases = (
+            ("Paris, FR", "paris-texas", "Paris", "different country"),
+            ("Paris, France", "paris-texas", "Paris", "different country"),
+            ("Paris, US", "paris-france", "Paris", "different country"),
+            ("Paris, Texas", "paris-france", "Paris", "different country"),
+            ("Paris, Texas", "paris-tennessee", "Paris", "different region"),
+            ("San Jose, CR", "san-jose-california", "San Jose", "different country"),
+        )
+        for city, slug, heading, reason in cases:
+            with self.subTest(city=city, slug=slug):
+                with self.assertRaisesRegex(SkiplaggedNoHotels, reason):
+                    resolve_hotel_id(
+                        "Czech Inn",
+                        city,
+                        *self.DAY,
+                        adults=3,
+                        rpc=_routing_rpc(self._city_page(slug, heading), {}, []),
+                    )
+
     def test_city_country_slug_and_provider_heading_keep_the_owned_city(self) -> None:
         result = _search_result(
             url=(

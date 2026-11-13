@@ -376,6 +376,171 @@ def _normalized_name(value: str) -> str:
     )
 
 
+# ponytail: English names only. An unknown suffix is not a country. Upgrade: ISO name list.
+_ISO_ALIAS = {"uk": "GB"}
+_SUBDIVISION_GROUPS = (
+    (
+        "US",
+        (
+            "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+            "connecticut", "delaware", "florida", "hawaii", "idaho", "illinois",
+            "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", "maryland",
+            "massachusetts", "michigan", "minnesota", "mississippi", "missouri",
+            "montana", "nebraska", "nevada", "new hampshire", "new jersey", "new mexico",
+            "new york", "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+            "pennsylvania", "rhode island", "south carolina", "south dakota", "tennessee",
+            "texas", "utah", "vermont", "virginia", "washington", "west virginia",
+            "wisconsin", "wyoming", "district of columbia", "puerto rico",
+        ),
+    ),
+    (
+        "CA",
+        (
+            "alberta", "british columbia", "manitoba", "new brunswick",
+            "newfoundland and labrador", "newfoundland", "nova scotia", "ontario",
+            "prince edward island", "quebec", "saskatchewan",
+        ),
+    ),
+    (
+        "AU",
+        (
+            "australian capital territory", "new south wales", "northern territory",
+            "queensland", "south australia", "tasmania", "victoria", "western australia",
+        ),
+    ),
+)
+_COUNTRY_GROUPS = (
+    (
+        "AR",
+        ("argentina",),
+    ),
+    ("AT", ("austria",)),
+    ("BE", ("belgium",)),
+    ("AU", ("australia",)),
+    ("BR", ("brazil",)),
+    ("CA", ("canada",)),
+    ("CH", ("switzerland",)),
+    ("CL", ("chile",)),
+    ("CN", ("china",)),
+    ("CO", ("colombia",)),
+    ("CR", ("costa rica",)),
+    ("CU", ("cuba",)),
+    ("CZ", ("czech republic", "czechia")),
+    ("DE", ("germany",)),
+    ("DK", ("denmark",)),
+    ("EG", ("egypt",)),
+    ("ES", ("spain",)),
+    ("FI", ("finland",)),
+    ("FR", ("france",)),
+    (
+        "GB",
+        ("england", "great britain", "northern ireland", "scotland", "united kingdom", "wales"),
+    ),
+    ("GR", ("greece",)),
+    ("HK", ("hong kong",)),
+    ("HR", ("croatia",)),
+    ("HU", ("hungary",)),
+    ("ID", ("indonesia",)),
+    ("IE", ("ireland",)),
+    ("IL", ("israel",)),
+    ("IN", ("india",)),
+    ("IS", ("iceland",)),
+    ("IT", ("italy",)),
+    ("JM", ("jamaica",)),
+    ("JP", ("japan",)),
+    ("KR", ("korea", "south korea")),
+    ("LU", ("luxembourg",)),
+    ("MA", ("morocco",)),
+    ("MX", ("mexico",)),
+    ("MY", ("malaysia",)),
+    ("NL", ("holland", "netherlands")),
+    ("NO", ("norway",)),
+    ("NZ", ("new zealand",)),
+    ("PA", ("panama",)),
+    ("PE", ("peru",)),
+    ("PH", ("philippines",)),
+    ("PL", ("poland",)),
+    ("PT", ("portugal",)),
+    ("QA", ("qatar",)),
+    ("RO", ("romania",)),
+    ("RU", ("russia",)),
+    ("SA", ("saudi arabia",)),
+    ("SE", ("sweden",)),
+    ("SG", ("singapore",)),
+    ("TH", ("thailand",)),
+    ("TR", ("turkey",)),
+    ("TW", ("taiwan",)),
+    ("UA", ("ukraine",)),
+    ("AE", ("united arab emirates",)),
+    ("US", ("u s", "u s a", "united states", "united states of america", "usa")),
+    ("VN", ("vietnam",)),
+    ("ZA", ("south africa",)),
+)
+_REGION_GROUPS = _SUBDIVISION_GROUPS + _COUNTRY_GROUPS
+_REGION_COUNTRY: dict[str, frozenset[str]] = {
+    name: frozenset({code}) for code, names in _REGION_GROUPS for name in names
+}
+# The US state and the country share this English name.
+_REGION_COUNTRY["georgia"] = frozenset({"US", "GE"})
+_SUBDIVISION = frozenset(name for _code, names in _SUBDIVISION_GROUPS for name in names) | {
+    "georgia"
+}
+
+
+def _matched_regions(text: str) -> list[tuple[str, frozenset[str]]]:
+    words = _normalized_name(text).split()
+    found: list[tuple[str, frozenset[str]]] = []
+    index = 0
+    while index < len(words):
+        hit: Optional[tuple[str, frozenset[str]]] = None
+        for size in range(min(7, len(words) - index), 0, -1):
+            phrase = " ".join(words[index : index + size])
+            codes = _REGION_COUNTRY.get(phrase)
+            if codes:
+                hit = (phrase, codes)
+                break
+        if hit is None:
+            index += 1
+            continue
+        found.append(hit)
+        index += len(hit[0].split())
+    return found
+
+
+def _country_for_city(suffix: str, countries: set[str]) -> Optional[str]:
+    """ISO country for a ``City, suffix`` qualifier, or None when it is unknown.
+
+    ``countries`` are the catalogue countries of that city. Georgia is the US
+    state when the city has a US airport, and the country when it does not.
+    """
+    text = _normalized_name(suffix)
+    if not text:
+        return None
+    if re.fullmatch(r"[a-z]{2}", text):
+        return _ISO_ALIAS.get(text, text.upper())
+    options: Optional[set[str]] = None
+    for _phrase, codes in _matched_regions(text):
+        options = set(codes) if options is None else options & set(codes)
+    if not options:
+        return None
+    if len(options) == 1:
+        return next(iter(options))
+    present = options & countries
+    if len(present) == 1:
+        return next(iter(present))
+    if "US" in present:
+        return "US"
+    return None
+
+
+def _slug_regions(place: str, catalog_city: str) -> list[tuple[str, frozenset[str]]]:
+    tokens = _normalized_name(place.replace("-", " ")).split()
+    city_tokens = _normalized_name(catalog_city).split()
+    if tokens[: len(city_tokens)] != city_tokens:
+        return []
+    return _matched_regions(" ".join(tokens[len(city_tokens) :]))
+
+
 def _provider_city_heading(text: str) -> Optional[tuple[str, Optional[str]]]:
     match = _HOTELS_HEADING.search(text)
     if match is None:
@@ -423,6 +588,8 @@ def resolve_hotel_id(
 
     The match is on the normalized name only (case, accents and punctuation ignored). Zero or
     several matches are typed errors that list what Skiplagged returned; nothing is guessed.
+    ``city`` is ``City`` or ``City, qualifier``. A qualifier is an ISO country (``UK`` is
+    ``GB``) or an English country or region name (``France``, ``Texas``).
     """
     result = _call_mcp(
         {
@@ -440,40 +607,81 @@ def resolve_hotel_id(
     page = parse_search_page(result)
     requested_city = city.split(",", 1)[0].strip()
     requested_canonical = canonical_city_name(requested_city)
-    requested_country = city.split(",", 1)[1].strip().upper() if "," in city else None
+    suffix = city.split(",", 1)[1].strip() if "," in city else ""
     heading = _provider_city_heading(_text(result))
-    if heading:
-        heading_city, heading_country = heading
-        if canonical_city_name(heading_city) != requested_canonical or (
-            requested_country and heading_country and requested_country != heading_country
-        ):
-            raise SkiplaggedNoHotels(
-                f"Skiplagged resolved {city!r} to {heading_city!r}; "
-                "the requested city was not searched. Nothing was guessed."
-            )
+    if heading and _normalized_name(canonical_city_name(heading[0])) != _normalized_name(
+        requested_canonical
+    ):
+        raise SkiplaggedNoHotels(
+            f"Skiplagged resolved {city!r} to {heading[0]!r}; "
+            "the requested city was not searched. Nothing was guessed."
+        )
+    catalog_city = None
+    city_hits: tuple = ()
     if page.resolved_place:
         resolved_city = _normalized_name(page.resolved_place.replace("-", " "))
-        requested_city = _normalized_name(requested_city)
-        if resolved_city != requested_city and not resolved_city.startswith(requested_city + " "):
+        requested_forms = {
+            _normalized_name(requested_city),
+            _normalized_name(requested_canonical),
+        }
+        if not any(
+            resolved_city == form or resolved_city.startswith(form + " ")
+            for form in requested_forms
+            if form
+        ):
             raise SkiplaggedNoHotels(
                 f"Skiplagged resolved {city!r} to {page.resolved_place!r}; "
                 "the requested city was not searched. Nothing was guessed."
             )
         catalog_city, city_hits = _longest_catalogue_city(page.resolved_place)
-        if catalog_city is not None and catalog_city != requested_canonical:
+        if catalog_city is not None and _normalized_name(catalog_city) != _normalized_name(
+            requested_canonical
+        ):
             raise SkiplaggedNoHotels(
                 f"Skiplagged resolved {city!r} to a different city ({catalog_city}); "
                 "the requested city was not searched. Nothing was guessed."
             )
-        if (
-            requested_country
-            and city_hits
-            and not any(airport.country == requested_country for airport in city_hits)
-        ):
+    requested_country = (
+        _country_for_city(suffix, {airport.country for airport in city_hits}) if suffix else None
+    )
+    if suffix and requested_country is None:
+        raise SkiplaggedNoHotels(
+            f"{suffix!r} is not a known country or region. "
+            "Use an ISO code (Paris, FR) or an English name (Paris, France or Paris, Texas). "
+            "Nothing was guessed."
+        )
+    heading_country = heading[1] if heading else None
+    if requested_country and heading_country and requested_country != heading_country:
+        raise SkiplaggedNoHotels(
+            f"Skiplagged resolved {city!r} to a different country; "
+            "the requested city was not searched. Nothing was guessed."
+        )
+    if requested_country and catalog_city and page.resolved_place:
+        matched = _slug_regions(page.resolved_place, catalog_city)
+        options: Optional[set[str]] = None
+        for _phrase, codes in matched:
+            options = set(codes) if options is None else options & set(codes)
+        if options is not None and requested_country not in options:
             raise SkiplaggedNoHotels(
                 f"Skiplagged resolved {city!r} to a different country; "
                 "the requested city was not searched. Nothing was guessed."
             )
+        slug_phrases = {phrase for phrase, _codes in matched}
+        named_region = {phrase for phrase, _codes in _matched_regions(suffix)} & _SUBDIVISION
+        if named_region and slug_phrases and not named_region & slug_phrases:
+            raise SkiplaggedNoHotels(
+                f"Skiplagged resolved {city!r} to a different region; "
+                "the requested city was not searched. Nothing was guessed."
+            )
+    if (
+        requested_country
+        and city_hits
+        and not any(airport.country == requested_country for airport in city_hits)
+    ):
+        raise SkiplaggedNoHotels(
+            f"Skiplagged resolved {city!r} to a different country; "
+            "the requested city was not searched. Nothing was guessed."
+        )
     wanted = _normalized_name(name)
     hits = [card for card in page.cards if wanted and _normalized_name(card.title) == wanted]
     if len(hits) == 1 and hits[0].provider_id:
@@ -511,6 +719,8 @@ def search_hotel_rooms(
 ) -> HotelRoomsReport:
     """Room rates for one Skiplagged hotel, by id or by exact name in a city.
 
+    ``city`` is ``City`` or ``City, qualifier``. A qualifier is an ISO country
+    (``UK`` is ``GB``) or an English country or region name (``France``, ``Texas``).
     Failures come back as a typed error in the report.
     """
     if hotel_id is None:
