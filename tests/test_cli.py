@@ -1143,14 +1143,14 @@ class ReportRenderingTests(unittest.TestCase):
     def test_trip_one_way_keeps_rt_sugar(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", "--trip", "one-way", RT_ROUTE])
+                code = main(["flights", "--trip", "one-way", RT_ROUTE, "--currency", "USD"])
         self.assertEqual(code, 0)
         self.assertEqual(len(search.call_args.args[0]), 2)
 
     def test_rt_sugar_builds_return_leg(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", RT_ROUTE])
+                code = main(["flights", RT_ROUTE, "--currency", "USD"])
         self.assertEqual(code, 0)
         queries = search.call_args.args[0]
         self.assertEqual(len(queries), 2)
