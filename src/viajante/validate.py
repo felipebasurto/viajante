@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timezone
 from typing import Mapping, Optional, Sequence
 
@@ -48,6 +49,8 @@ def _number(value: object, *, role: str, minimum: float = 0.0) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{role} must be a number")
     number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{role} must be a finite number")
     if number < minimum:
         raise ValueError(f"{role} must be at least {minimum:g}")
     return number
@@ -305,7 +308,12 @@ def _currency_and_totals(
             )
         currencies.append(normalize_currency(value))
         price = offer.get("price")
-        if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+        if (
+            isinstance(price, bool)
+            or not isinstance(price, (int, float))
+            or not math.isfinite(price)
+            or price <= 0
+        ):
             return (
                 None,
                 None,
@@ -314,7 +322,12 @@ def _currency_and_totals(
             )
         prices.append(float(price))
         buffer = offer.get("baggage_buffer", 0)
-        if isinstance(buffer, bool) or not isinstance(buffer, (int, float)) or buffer < 0:
+        if (
+            isinstance(buffer, bool)
+            or not isinstance(buffer, (int, float))
+            or not math.isfinite(buffer)
+            or buffer < 0
+        ):
             raise ValueError("offer baggage_buffer must be a non-negative number")
         ranked.append(float(price) + float(buffer))
     unique = set(currencies)
@@ -489,7 +502,11 @@ def _layover_check(
             for raw in rows:
                 row = _mapping(raw, role="offer.legs[].layovers[]")
                 hours = row.get("hours")
-                if isinstance(hours, bool) or not isinstance(hours, (int, float)):
+                if (
+                    isinstance(hours, bool)
+                    or not isinstance(hours, (int, float))
+                    or not math.isfinite(hours)
+                ):
                     return _status(constraint, "unknown", "layover hours are missing")
                 values.append(float(hours))
     for value in values:

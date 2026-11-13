@@ -191,6 +191,71 @@ class ValidateItineraryTests(unittest.TestCase):
         self.assertEqual(report.fare_total, 88.0)
         self.assertEqual(_status(report, "fare_total"), "fail")
 
+    def test_non_finite_amounts_do_not_pass(self) -> None:
+        nan_price = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-price",
+            price=float("nan"),
+            segments=[_segment("JFK", "LHR")],
+        )
+        priced = validate_itinerary([nan_price], {}, currency="USD")
+        self.assertEqual(_status(priced, "currency"), "unknown")
+        self.assertIsNone(priced.feasible)
+        self.assertIsNone(priced.fare_total)
+
+        infinite = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="inf-price",
+            price=float("inf"),
+            segments=[_segment("JFK", "LHR")],
+        )
+        infinite_report = validate_itinerary([infinite], {}, currency="USD")
+        self.assertEqual(_status(infinite_report, "currency"), "unknown")
+
+        layover = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-layover",
+            stops_count=1,
+            segments=[
+                _segment("JFK", "BOS"),
+                _segment("BOS", "LHR"),
+            ],
+        )
+        layover["offer"]["legs"][0]["layovers"] = [{"hours": float("nan")}]
+        report = validate_itinerary(
+            [layover], {"min_layover": 1, "max_layover": 4}, currency="USD"
+        )
+        self.assertEqual(_status(report, "min_layover"), "unknown")
+        self.assertEqual(_status(report, "max_layover"), "unknown")
+        self.assertIsNone(report.feasible)
+
+        owned = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-claim",
+            segments=[_segment("JFK", "LHR")],
+        )
+        for claimed in (float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                validate_itinerary([owned], {"claimed_fare_total": claimed}, currency="USD")
+        poisoned = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-buffer",
+            segments=[_segment("JFK", "LHR")],
+        )
+        poisoned["offer"]["baggage_buffer"] = float("nan")
+        with self.assertRaises(ValueError):
+            validate_itinerary([poisoned], {}, currency="USD")
+
     def test_missing_segments_yields_unknown_segment_checks(self) -> None:
         row = _row("JFK", "LHR", "2026-10-01", evidence_id="aggregate")
         report = validate_itinerary(
