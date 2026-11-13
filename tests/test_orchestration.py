@@ -22,6 +22,7 @@ from viajante.orchestration import (
     run_attempts,
     sweep_inter_query_delay_seconds,
 )
+from viajante.runtime import package_version
 
 
 class ClassifyFailureTests(unittest.TestCase):
@@ -31,9 +32,11 @@ class ClassifyFailureTests(unittest.TestCase):
                 error = classify_failure(RuntimeError(marker))
                 self.assertEqual(error.code, SearchErrorCode.BROWSER_UNAVAILABLE)
                 self.assertIn(
-                    "uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium",
+                    "uvx --from 'viajante[mcp,browser]=="
+                    f"{package_version()}' playwright install chromium",
                     error.message,
                 )
+                self.assertNotIn("<version>", error.message)
                 self.assertIn("viajante[browser]", error.message)
                 self.assertNotIn("Sweep does not need a browser", error.message)
 
