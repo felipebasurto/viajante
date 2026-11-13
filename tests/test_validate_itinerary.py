@@ -178,6 +178,63 @@ class ValidateItineraryTests(unittest.TestCase):
         self.assertEqual(_status(report, "depart_after"), "pass")
         self.assertEqual(_status(report, "arrive_before"), "pass")
 
+    def test_clock_bounds_use_the_journey_the_search_filters(self) -> None:
+        connecting = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="connect",
+            stops_count=1,
+            segments=[
+                _segment("JFK", "BOS", departure="15:00", arrival="16:30"),
+                _segment("BOS", "LHR", departure="06:00", arrival="18:00"),
+            ],
+        )
+        kept = validate_itinerary(
+            [connecting],
+            {"depart_after": "09:00", "arrive_before": "19:00"},
+            currency="USD",
+        )
+        self.assertEqual(_status(kept, "depart_after"), "pass")
+        self.assertEqual(_status(kept, "arrive_before"), "pass")
+        early = validate_itinerary([connecting], {"depart_after": "16:00"}, currency="USD")
+        self.assertEqual(_status(early, "depart_after"), "fail")
+
+        packaged = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="rt-clock",
+            segments=[_segment("JFK", "LHR", departure="15:00", arrival="18:00")],
+        )
+        packaged["query"]["trip"] = "rt"
+        packaged["query"]["return_date"] = "2026-10-08"
+        packaged["offer"]["evidence"]["query"] = dict(packaged["query"])
+        packaged["offer"]["legs"] = [
+            {
+                "segments": [_segment("JFK", "LHR", departure="15:00", arrival="18:00")],
+                "layovers": [],
+            },
+            {
+                "segments": [_segment("LHR", "JFK", departure="06:00", arrival="09:00")],
+                "layovers": [],
+            },
+        ]
+        round_trip = validate_itinerary([packaged], {"depart_after": "09:00"}, currency="USD")
+        self.assertEqual(_status(round_trip, "depart_after"), "pass")
+
+        later = _row(
+            "LHR",
+            "NRT",
+            "2026-10-02",
+            evidence_id="later",
+            segments=[_segment("LHR", "NRT", departure="03:00", arrival="18:00")],
+        )
+        both = validate_itinerary(
+            [connecting, later], {"depart_after": "09:00"}, currency="USD"
+        )
+        self.assertEqual(_status(both, "depart_after"), "fail")
+
     def test_fare_total_mismatch_fails(self) -> None:
         row = _row(
             "JFK",

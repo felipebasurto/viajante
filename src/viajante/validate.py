@@ -368,18 +368,30 @@ def _segment_metrics(
     return journey_count, len(all_segments), tuple(all_segments)
 
 
-def _segment_clock_check(
+def _lead_clock_check(
     constraint: str,
-    segments: Optional[Sequence[Mapping[str, object]]],
+    selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
     *,
     bound: int,
     field: str,
     before: bool,
 ) -> ConstraintCheck:
-    if segments is None:
+    # Same clocks the search keeps: the lead journey's departure and arrival.
+    if not selected or any(not _complete_journeys(query, offer) for query, offer in selected):
         return _status(constraint, "unknown", "individual segment clocks are missing")
-    for segment in segments:
-        value = segment.get(field)
+    for _query, offer in selected:
+        journeys = _journey_legs(offer) or ()
+        raw = journeys[0].get("segments") if journeys else None
+        if raw is None:
+            return _status(constraint, "unknown", "individual segment clocks are missing")
+        rows = tuple(
+            _mapping(item, role="offer.legs[].segments[]")
+            for item in _items(raw, role="offer.legs[].segments")
+        )
+        if not rows:
+            return _status(constraint, "unknown", "individual segment clocks are missing")
+        target = rows[0] if field == "departure" else rows[-1]
+        value = target.get(field)
         minutes = _clock_minutes(value if isinstance(value, str) else None)
         if minutes is None:
             return _status(constraint, "unknown", f"a segment {field} clock is missing")
@@ -762,9 +774,9 @@ def validate_itinerary(
 
     if "depart_after" in scenario:
         checks.append(
-            _segment_clock_check(
+            _lead_clock_check(
                 "depart_after",
-                segments,
+                selected,
                 bound=_clock(scenario["depart_after"], role="depart_after"),
                 field="departure",
                 before=False,
@@ -772,9 +784,9 @@ def validate_itinerary(
         )
     if "arrive_before" in scenario:
         checks.append(
-            _segment_clock_check(
+            _lead_clock_check(
                 "arrive_before",
-                segments,
+                selected,
                 bound=_clock(scenario["arrive_before"], role="arrive_before"),
                 field="arrival",
                 before=True,
