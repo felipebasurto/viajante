@@ -765,7 +765,12 @@ def build_server():
         """
 
     @tool("Look up airports", lookup_airports_tool, network=False, envelope=False)
-    def lookup_airports(): ...
+    def lookup_airports():
+        """Offline. query is a city name or an IATA code (JFK, LHR, NRT, GRU, SIN).
+        A three-letter code returns that airport, or every airport in a metro code.
+        limit caps the rows (default 20). The result is a list, not the search envelope.
+        It may run while a search is in progress.
+        """
 
     @tool("Search hidden-city fares", search_hidden_city_tool, network=True)
     def search_hidden_city():

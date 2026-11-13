@@ -172,6 +172,17 @@ class ToolMetadataTests(_StateDir):
                 self.assertIs(hints.idempotent_hint, not writes)
                 self.assertIsInstance(hints.open_world_hint, bool)
 
+    def test_lookup_airports_says_what_the_query_accepts(self) -> None:
+        text = self.tools["lookup_airports"].description or ""
+        for code in ("JFK", "LHR", "NRT", "GRU", "SIN"):
+            self.assertIn(code, text)
+        self.assertIn("list", text.casefold())
+
+    def test_every_tool_has_a_description(self) -> None:
+        for name, tool in self.tools.items():
+            with self.subTest(tool=name):
+                self.assertTrue((tool.description or "").strip())
+
     def test_the_wheel_smoke_job_reads_sdk2_names(self) -> None:
         # The dist job's inline client runs only in CI, against a built wheel, where SDK 1
         # spellings raise AttributeError. Pin the names in the workflow text.
