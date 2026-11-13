@@ -72,7 +72,7 @@ from viajante.models import (
     Trip,
     normalize_country,
 )
-from viajante.models_common import DEFAULT_TOP
+from viajante.models_common import DEFAULT_TOP, empty_reason_for_rows
 from viajante.orchestration import (
     inter_query_delay_seconds,
     retry_backoff_seconds,
@@ -298,6 +298,7 @@ def _run_search(
             scope_bound=scope_bound,
             price_insight=insight,
             price_insight_error=insight_error,
+            empty_reason=None if ranked else empty_reason_for_rows(len(cards)),
         )
 
     def _stamp(result: QueryResult) -> QueryResult:

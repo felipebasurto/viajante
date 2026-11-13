@@ -1082,6 +1082,24 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(result, QuerySuccess)
         self.assertEqual([offer.price for offer in result.offers], [400.0])
 
+    def test_empty_success_carries_the_envelope_empty_reason(self) -> None:
+        day = date(2027, 6, 1)
+        query = FlightQuery("JFK", "LHR", day)
+        key = ("JFK", "LHR", day.isoformat(), 1)
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=FakeSource({key: ()})):
+            empty = search_flights((query,), fetch="sweep")
+        self.assertEqual(empty.queries[0].empty_reason, "provider_empty")
+        with patch(
+            "viajante.flights.GoogleFlightsHttpSource", return_value=FakeSource({key: (card(),)})
+        ):
+            removed = search_flights((query,), fetch="sweep", via=["CDG"])
+            kept = search_flights((query,), fetch="sweep")
+        self.assertEqual(removed.queries[0].offers, ())
+        self.assertGreater(removed.queries[0].raw_count, 0)
+        self.assertEqual(removed.queries[0].empty_reason, "filtered_out")
+        self.assertTrue(kept.queries[0].offers)
+        self.assertIsNone(kept.queries[0].empty_reason)
+
     def test_search_refuses_origins_that_do_not_share_a_currency(self) -> None:
         day = date(2027, 6, 1)
         mixed = (
