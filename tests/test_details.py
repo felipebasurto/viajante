@@ -241,6 +241,16 @@ class HotelDetailsTests(unittest.TestCase):
         self.assertEqual(result["room_rates_status"], "inconclusive")
         self.assertIn("unambiguous city", result["reason"])
 
+    def test_saint_louis_country_uses_the_missouri_catalogue_spelling(self):
+        for location in ("Saint Louis, US", "Saint Louis, Missouri"):
+            with self.subTest(location=location):
+                result = hotel(location=location)["queries"][0]
+                self.assertEqual(_city_decision(result, result["offers"][0])[0], "St Louis, US")
+        bare = hotel(location="Saint Louis")["queries"][0]
+        location, reason = _city_decision(bare, bare["offers"][0])
+        self.assertIsNone(location)
+        self.assertIn("more than one place", reason)
+
     def test_accented_city_uses_the_catalogue_spelling(self):
         result = hotel(location="São Paulo")["queries"][0]
         self.assertEqual(_city_decision(result, result["offers"][0])[0], "Sao Paulo")
