@@ -398,6 +398,24 @@ class HubSplitTests(unittest.TestCase):
         self.assertEqual([row["hub"] for row in report.skipped_hubs], ["SFO", "ORD"])
         self.assertTrue(report.error and report.error.rate_limited)
 
+    def test_a_rate_limit_on_the_outbound_does_not_search_the_return(self) -> None:
+        limited = _rate_limited_failure(FlightQuery("JFK", "LAX", DAY))
+        fake = FakeSearch({**_hub_table(), ("JFK", "LAX", DAY): limited})
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            search=fake,
+            filters=SplitFilters(OfferFilters(depart_after=10 * 60)),
+        )
+        self.assertEqual(fake.calls, [[("JFK", "LAX", DAY)]])
+        self.assertEqual(report.extra_searches, 1)
+        self.assertTrue(report.error and report.error.rate_limited)
+        tail = report.legs[-1]
+        self.assertEqual(tail["destination"], "NRT")
+        self.assertTrue(tail["error"]["rate_limited"])
+        self.assertTrue(str(tail["error"]["message"]).startswith("Not sent."))
+
     def test_missing_packaged_is_searched_once_first(self) -> None:
         fake = FakeSearch({("JFK", "NRT", DAY): _packaged_via("LAX").queries[0].offers})
         fake.table.update(_hub_table())
