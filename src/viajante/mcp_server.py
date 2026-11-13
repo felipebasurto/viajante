@@ -286,9 +286,11 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     """
     if "deadline_seconds" in kwargs and kwargs["deadline_seconds"] is None:
         kwargs["deadline_seconds"] = _ENV_DEADLINE
+    # Tools that take deadline_seconds pass it through; the env must not cap that value.
+    inherited = None if "deadline_seconds" in kwargs else _ENV_DEADLINE
     loop = asyncio.get_running_loop()
     relay = _progress_relay(loop)
-    control = SearchControl(progress=relay)
+    control = SearchControl(progress=relay, deadline_seconds=inherited)
     finished = threading.Event()
     if not _SEARCH_BUSY.acquire(blocking=False):
         holder = _CURRENT[0] if _CURRENT else None
