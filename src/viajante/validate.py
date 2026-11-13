@@ -233,12 +233,25 @@ def _query_binding_check(
     return _status("query_binding", "pass", "every offer matches its evidence query")
 
 
+def _endpoint(query: Mapping[str, object], *, end: bool) -> object:
+    """Airport where this query starts, or where the traveller is when it ends.
+
+    A round trip ends at its origin: the return leg lands there. One-way and
+    multi-city end at the last leg's destination.
+    """
+    legs = _query_legs(query)
+    if not legs:
+        return None
+    leg = legs[-1] if end else legs[0]
+    return leg.get("destination" if end else "origin")
+
+
 def _route_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
     for (left, _), (right, _) in zip(selected, selected[1:], strict=False):
-        destination = left.get("destination")
-        origin = right.get("origin")
+        destination = _endpoint(left, end=True)
+        origin = _endpoint(right, end=False)
         if not isinstance(destination, str) or not isinstance(origin, str):
             return _status("route_continuity", "unknown", "query endpoints are missing")
         if destination != origin:
