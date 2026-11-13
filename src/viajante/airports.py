@@ -374,6 +374,33 @@ def _by_city_country() -> dict[tuple[str, str], tuple[Airport, ...]]:
     return cached
 
 
+def place_label_codes(label: str) -> Tuple[str, ...]:
+    """Passenger IATA codes an exact place label can name.
+
+    A known IATA code is that airport. An exact catalogue city is every
+    non-minor airport with that city (air bases and municipal fields drop out
+    when a passenger airport remains). Empty when the label is neither. This
+    is not a substring search and does not invent a code. Several codes mean
+    the label does not prove one airport.
+    """
+    text = " ".join(label.split())
+    if not text:
+        return ()
+    if is_known_iata(text):
+        return (text.strip().upper(),)
+    _, _, by_city = _lookup_indexes()
+    rows = by_city.get(text.casefold(), ())
+    if not rows:
+        return ()
+    passenger = tuple(
+        row
+        for row in rows
+        if not any(marker in row.name.casefold() for marker in _MINOR_NAME_MARKERS)
+    )
+    chosen = passenger or rows
+    return tuple(row.iata for row in chosen)
+
+
 def same_city_iata(code: str) -> Tuple[str, ...]:
     """Owned same-city passenger codes for optional `--nearby` expand.
 

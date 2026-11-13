@@ -1725,6 +1725,67 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNone(_normalize_offer(with_legs, 2, via=("DXB",)))
         self.assertIsNone(_normalize_offer(silent, 2, exclude_via=("IST",)))
 
+    def test_a_city_label_does_not_prove_a_different_airport(self) -> None:
+        gatwick = card(
+            stops="1 stop",
+            layover_city="London",
+            layover_hours=10.0,
+            price="80 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="08:00",
+                    arrival="18:00",
+                    duration="10 h",
+                    stops="1 stop",
+                    segments=(
+                        RawSegment(origin="JFK", destination="LGW", arrival="22:00"),
+                        RawSegment(origin="LGW", destination="CDG", departure="08:00"),
+                    ),
+                    layovers=(RawLayover(city="London", hours=10.0),),
+                ),
+            ),
+        )
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, via=("LGW",)))
+        self.assertIsNone(_normalize_offer(gatwick, 1, via=("LHR",)))
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, exclude_via=("LHR",)))
+        self.assertIsNone(_normalize_offer(gatwick, 1, exclude_via=("LGW",)))
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, no_overnight=("LHR",)))
+        self.assertIsNone(_normalize_offer(gatwick, 1, require_overnight=("LHR",)))
+        self.assertIsNotNone(_normalize_offer(gatwick, 1, require_overnight=("LGW",)))
+        london = card(
+            stops="1 stop",
+            layover_city="London",
+            layover_hours=10.0,
+            price="70 €",
+            legs=(
+                RawJourneyLeg(
+                    departure="08:00",
+                    arrival="18:00",
+                    duration="10 h",
+                    stops="1 stop",
+                    segments=(
+                        RawSegment(origin="JFK", destination="London", arrival="22:00"),
+                        RawSegment(origin="London", destination="CDG", departure="08:00"),
+                    ),
+                    layovers=(RawLayover(city="London", hours=10.0),),
+                ),
+            ),
+        )
+        self.assertIsNone(_normalize_offer(london, 1, via=("LHR",)))
+        self.assertIsNone(_normalize_offer(london, 1, via=("LGW",)))
+        self.assertIsNone(_normalize_offer(london, 1, require_overnight=("LHR",)))
+        self.assertIsNone(_normalize_offer(london, 1, no_overnight=("LHR",)))
+        self.assertIsNone(_normalize_offer(london, 1, exclude_via=("LHR",)))
+        lisbon = get_airport("LIS")
+        assert lisbon is not None
+        self.assertIsNotNone(
+            _normalize_offer(
+                card(stops="1 stop", layover_city=lisbon.city, layover_hours=2.0, price="74 €"),
+                1,
+                via=("LIS",),
+            )
+        )
+
     def test_package_layover_is_unset_and_via_still_reads_every_journey(self) -> None:
         # The card summary is the outbound's longest layover, so it is also one of that leg's
         # layovers (as the parsers build it). The package keeps only the leg-level layovers.
