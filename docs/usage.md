@@ -5,7 +5,7 @@
 This guide assumes Viajante is installed. See the
 [quick start](../README.md#quick-start) for installation and
 [browser support](../README.md#optional-browser-support) for Booking.com.
-Examples use November 2026; replace the dates with future travel dates.
+Examples use April 2027; replace them if they are not in the future.
 
 Release history is in the [changelog](../CHANGELOG.md).
 
@@ -23,13 +23,13 @@ Release history is in the [changelog](../CHANGELOG.md).
 Use airport codes and ISO dates: `ORIGIN-DEST:YYYY-MM-DD`.
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep
+viajante flights JFK-LHR:2027-04-12 --fetch sweep
 ```
 
 To search a round trip as one itinerary, add a return date and `--trip rt`:
 
 ```bash
-viajante flights JFK-LHR:2026-11-15:2026-11-22 --trip rt --fetch sweep
+viajante flights JFK-LHR:2027-04-12:2027-04-19 --trip rt --fetch sweep
 ```
 
 Without `--trip rt`, a route with outbound and return dates produces two
@@ -44,7 +44,7 @@ are ranked by fare plus any baggage buffer you specify, with up to eight
 offers shown. The buffer defaults to zero.
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep \
+viajante flights JFK-LHR:2027-04-12 --fetch sweep \
   --max-stops 0 --adults 2 --top 5 --sort fare
 ```
 
@@ -136,7 +136,7 @@ Name a metro code instead of an airport to search every airport in that city
 group:
 
 ```bash
-viajante flights NYC-LON:2026-11-15 --currency USD
+viajante flights NYC-LON:2027-04-12 --currency USD
 ```
 
 `NYC` searches `JFK`, `EWR` and `LGA`; `LON` searches `LHR`, `LGW`, `STN`,
@@ -318,9 +318,9 @@ searches per hub (three with `--split-overnight`); mixed one-ways use two search
 
 ```bash
 # One-way: origin to hub on one ticket, hub to destination on another
-viajante flights JFK-NRT:2026-11-10 --fetch sweep --split-tickets --split-via HKG,ICN
+viajante flights JFK-NRT:2027-04-07 --fetch sweep --split-tickets --split-via HKG,ICN
 # Round trip: cheapest outbound one-way plus cheapest return one-way vs the package
-viajante flights --trip rt JFK-NRT:2026-11-10:2026-11-24 --split-tickets
+viajante flights --trip rt JFK-NRT:2027-04-07:2027-04-21 --split-tickets
 ```
 
 | Option | Meaning |
@@ -381,17 +381,17 @@ Use `dates` to compare departure dates across an inclusive window of up to
 departure is priced as a round trip of that length.
 
 ```bash
-viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 7
+viajante dates BOS-LHR --from 2027-04-01 --to 2027-04-30 --nights 7
 ```
 
 Use `flex` when you have a target departure date and can move a few days either
 side of it:
 
 ```bash
-viajante flex BOS-LHR --around 2026-11-15 --flex 3 --nights 7
+viajante flex BOS-LHR --around 2027-04-12 --flex 3 --nights 7
 ```
 
-This checks November 12–18 with one public-page GET per day (up to 31), selects
+This checks April 9–15 with one public-page GET per day (up to 31), selects
 the cheapest returned date, and ranks that date's offers from the page it already
 fetched, unless a provider block stopped the search. Day failures
 remain attached to their rows; an unpriced or failed day is never treated as a
@@ -440,14 +440,14 @@ The defaults are two adults, one room, and free cancellation required.
 For Google Hotels, which uses HTTP:
 
 ```bash
-viajante hotels Tokyo 2026-11-12 2026-11-16 \
+viajante hotels Tokyo 2027-04-09 2027-04-13 \
   --currency JPY --source google --min-rating 4
 ```
 
 For Booking.com, which requires Chromium:
 
 ```bash
-viajante hotels Tokyo 2026-11-12 2026-11-16 \
+viajante hotels Tokyo 2027-04-09 2027-04-13 \
   --currency JPY --source booking --min-rating 8.5 --entire-home
 ```
 
@@ -499,8 +499,8 @@ loosely; `resolved_place` is the place it actually searched. Its rows are never 
 For one to three finalists, fetch room rates (at most five rooms per request, in provider order, USD):
 
 ```bash
-viajante hotel-rooms 2026-11-12 2026-11-16 --hotel-id ID
-viajante hotel-rooms 2026-11-12 2026-11-16 --name "Hotel Name" --city Lisbon
+viajante hotel-rooms 2027-04-09 2027-04-13 --hotel-id ID
+viajante hotel-rooms 2027-04-09 2027-04-13 --name "Hotel Name" --city Lisbon
 ```
 
 A name matches only after normalization; no match or several matches is `no_results`, never a guessed id.
@@ -512,7 +512,7 @@ the original price. Hotel ids belong to the process that issued them.
 Use `trip` to search flights and accommodation in sequence:
 
 ```bash
-viajante trip JFK-LHR:2026-11-15:2026-11-22 --trip rt \
+viajante trip JFK-LHR:2027-04-12:2027-04-19 --trip rt \
   --hotel London --adults 2 --currency GBP --fetch sweep --source google
 ```
 
@@ -535,7 +535,7 @@ a `{query, offer}` row) and runs one fresh Google Flights search; it never
 replays a cache.
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep --save /tmp/flights.json
+viajante flights JFK-LHR:2027-04-12 --fetch sweep --save /tmp/flights.json
 # put one offer (or {"query": ..., "offer": ...}) from that file into offer.json
 viajante recheck-offer --offer offer.json --save /tmp/recheck.json
 ```
@@ -671,7 +671,7 @@ after a limit viajante pauses Google searches on the machine for minutes.
 
 ## Hidden-city (opt-in, Skiplagged)
 
-`viajante hidden-city JFK-LHR:2026-11-15` (add `--return DATE` for a round trip) searches Skiplagged only and is
+`viajante hidden-city JFK-LHR:2027-04-12` (add `--return DATE` for a round trip) searches Skiplagged only and is
 never mixed with Google evidence. Its cards are USD: omit `--currency` or pass `USD`. Another keep that matches
 no owned card is `currency_mismatch`, with the owned quote stamped, not a silent empty result. A hidden-city fare
 is not a legal fare until you confirm it on the `booking_url`; viajante does not scrape Skiplagged.
@@ -700,7 +700,7 @@ or `no_search_recorded` when nothing was searched).
 Search commands print tables. Add `--save FILE` to write JSON as well:
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep --save /tmp/viajante-flights.json
+viajante flights JFK-LHR:2027-04-12 --fetch sweep --save /tmp/viajante-flights.json
 ```
 
 Reports include query status, quote currency, and returned offers or error
@@ -760,14 +760,14 @@ from datetime import date
 from viajante import FlightQuery, HotelQuery, search_flights, search_hotels
 
 flights = search_flights(
-    [FlightQuery(origin="JFK", destination="LHR", departure_date=date(2026, 11, 15))],
+    [FlightQuery(origin="JFK", destination="LHR", departure_date=date(2027, 4, 12))],
     currency="GBP",
     fetch="sweep",
     top=5,
 )
 
 hotels = search_hotels(
-    [HotelQuery(location="London", check_in=date(2026, 11, 15), check_out=date(2026, 11, 22))],
+    [HotelQuery(location="London", check_in=date(2027, 4, 12), check_out=date(2027, 4, 19))],
     currency="GBP",
     source="google",
     top=5,
@@ -785,8 +785,15 @@ for result in hotels.queries:
 into a route is the calling agent's job. For other search types, use
 `search_dates`, `search_flex`, `search_explore`, or `search_trip`.
 
-See the exported types in [`viajante.__init__`](../src/viajante/__init__.py)
-for the Python interface.
+`search_hotels` defaults to `source="booking"`, which needs the browser extra.
+The call above passes `source="google"` (HTTP, no Chromium), which is also the
+MCP default. Hotels have no origin airport, so `currency` is required.
+`get_hotel_details(report, query_index, offer_index)` reads a report already
+in hand. The MCP tool of the same name takes `selection_id` instead.
+Airline filters on `get_flights` and `search_flights` are `alliances` and
+`exclude_alliances`. MCP and the CLI call those `alliance` and `exclude_alliance`.
+
+See the exported names in [`viajante.__init__`](../src/viajante/__init__.py).
 
 ## MCP tool calls
 
@@ -804,22 +811,22 @@ bounds did not load its results (the browser page fetches them separately), so i
 
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request
-to compare seven-night trips across November maps to:
+to compare seven-night trips across April maps to:
 
 ```text
-search_dates(route="BOS-LHR", start="2026-11-01", end="2026-11-30", nights=7)
+search_dates(route="BOS-LHR", start="2027-04-01", end="2027-04-30", nights=7)
 ```
 
-For a departure that can move three days either side of November 15:
+For a departure that can move three days either side of April 12:
 
 ```text
-search_flex(route="JFK-LHR", around="2026-11-15", flex=3, nights=7)
+search_flex(route="JFK-LHR", around="2027-04-12", flex=3, nights=7)
 ```
 
 For flights and a hotel stay in one request:
 
 ```text
-search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="rt")
+search_trip(routes=["JFK-LHR:2027-04-12:2027-04-19"], location="London", trip="rt")
 ```
 
 To re-check a finalist from an earlier `search_flights` result, pass its offer:
@@ -830,8 +837,9 @@ recheck_offer(offer={...offer from search_flights...})
 
 These are tool-call examples, not Python library calls. The MCP server uses
 stdio by default (local Streamable HTTP is opt-in, see below) and runs one
-search at a time. See the signatures in
-[`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
+search at a time. Parameters and defaults are in
+[`mcp_handlers.py`](../src/viajante/mcp_handlers.py); `mcp_server.py` copies
+those signatures into the client schema.
 
 ### Progress, cancellation, and deadlines
 
@@ -953,11 +961,11 @@ selected rows locally:
 ```python
 from viajante import get_flights, validate_itinerary
 
-report = get_flights("JFK-LHR:2026-11-15", fetch="sweep")
+report = get_flights("JFK-LHR:2027-04-12", fetch="sweep")
 result = report.to_dict()["queries"][0]
 selected = [{"status": "ok", "query": result["query"], "offer": result["offers"][0]}]
 validation = validate_itinerary(selected, {
-    "arrival_deadline": "2026-11-16T12:00Z",
+    "arrival_deadline": "2027-04-13T12:00Z",
     "chronological": True,
 })
 ```
@@ -983,8 +991,9 @@ explore, and hidden-city rows do not. The id belongs to this process. A read
 does not search and does not push the search out of `verify_answer`. Unknown
 ids fail before any provider call.
 
-`get_hotel_details(selection_id)` returns the stored quote. `room_rates` must
-be a boolean. `room_rates` false is `ok` / `complete` and may run during a
+MCP `get_hotel_details(selection_id)` returns the stored quote. The library
+call is `get_hotel_details(report, query_index, offer_index)`, shown below.
+`room_rates` must be a boolean. `room_rates` false is `ok` / `complete` and may run during a
 search. `room_rates=true` asks Skiplagged for a separate USD room quote
 in `room_quotes`; `original_quote` keeps the price that was searched. The
 envelope on that quote follows the room quote: `ok`, `no_results` /

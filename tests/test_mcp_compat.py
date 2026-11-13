@@ -650,6 +650,8 @@ class GuideTests(_StateDir):
             "viajante-mcp Checkout:",
             "uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' \\ "
             "playwright install chromium (only for --fetch detail and Booking.com;",
+            # `uv sync` does not put viajante-mcp on PATH; the guide now says `uv run`.
+            "uv sync --extra mcp && viajante-mcp Browser:",
         }
         missing = [s for s in sentences if s not in covered and s not in changed_transport_rules]
         self.assertIn("bounded per-day public-page GETs", covered)
