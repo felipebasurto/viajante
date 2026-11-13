@@ -158,6 +158,32 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
         self.assertIsNone(offer.hidden_city)
         self.assertIsNone(offer.to_dict()["hidden_city"])
 
+    def test_a_leg_without_attributes_is_unknown_unless_another_is_hidden_city(self) -> None:
+        result = copy.deepcopy(_fixture("flights_jfk_mia_roundtrip"))
+        card = result["structuredContent"]["flights"][0]
+        card["attributes"] = ["standard"]
+        card["returnFlight"].pop("attributes")
+        offer = _offer_from_card(
+            card, departure_date=NOV_17, return_date=NOV_22, layover_by_trip={}
+        )
+        self.assertIsNotNone(offer)
+        self.assertIsNone(offer.hidden_city)
+        self.assertEqual(offer.warnings, ())
+
+        card.pop("attributes")
+        card["returnFlight"]["attributes"] = ["hidden-city", "nonstop"]
+        hidden = _offer_from_card(
+            card, departure_date=NOV_17, return_date=NOV_22, layover_by_trip={}
+        )
+        self.assertTrue(hidden.hidden_city)
+
+        card["attributes"] = []
+        card.pop("returnFlight")
+        empty = _offer_from_card(
+            card, departure_date=NOV_17, return_date=None, layover_by_trip={}
+        )
+        self.assertIsNone(empty.hidden_city)
+
     def test_hidden_city_is_unknown_when_no_leg_carries_attributes(self) -> None:
         result = copy.deepcopy(_fixture("flights_jfk_mia_oneway"))
         for card in result["structuredContent"]["flights"]:
