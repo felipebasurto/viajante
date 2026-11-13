@@ -226,10 +226,13 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
             out_value = _effective_cost(out_offer)
             back_value = _effective_cost(back_offer)
             unit = "ranked"
-        else:
+        elif sort in ("fare", "price"):
             out_value = out_offer.price
             back_value = back_offer.price
             unit = "fare"
+        else:
+            index += 2
+            continue
         currency = report.currency
         print(
             f"\nBest pair ({unit}): "

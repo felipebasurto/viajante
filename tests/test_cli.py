@@ -1147,6 +1147,25 @@ class ReportRenderingTests(unittest.TestCase):
             self.assertNotIn("Best pair", printed)
             self.assertIn("JFK", printed)
 
+    def test_best_pair_does_not_sum_fares_for_a_time_sort(self) -> None:
+        outbound = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=1)
+        inbound = FlightQuery("NRT", "LAX", date(2026, 10, 12), max_stops=1)
+        report = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="USD",
+            queries=(
+                QuerySuccess(
+                    query=outbound, raw_count=1, eligible_count=1, offers=(_offer(price=75.0),)
+                ),
+                QuerySuccess(
+                    query=inbound, raw_count=1, eligible_count=1, offers=(_offer(price=80.0),)
+                ),
+            ),
+        )
+        for sort in ("duration", "departure", "arrival"):
+            self.assertNotIn("Best pair", _rendered(report, sort=sort))
+        self.assertIn("Best pair (fare)", _rendered(report, sort="price"))
+
     def test_flights_help_preserves_examples_epilog(self) -> None:
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
