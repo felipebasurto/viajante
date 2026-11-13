@@ -1062,6 +1062,38 @@ class FlightsOrchestrationTests(unittest.TestCase):
         assert isinstance(result, QuerySuccess)
         self.assertEqual([offer.price for offer in result.offers], [400.0])
 
+    def test_search_refuses_origins_that_do_not_share_a_currency(self) -> None:
+        day = date(2027, 6, 1)
+        mixed = (
+            FlightQuery("JFK", "LHR", day),
+            FlightQuery("LHR", "CDG", day),
+        )
+        same = (
+            FlightQuery("JFK", "LHR", day),
+            FlightQuery("LAX", "NRT", day),
+        )
+        source = FakeSource(
+            {
+                ("JFK", "LHR", day.isoformat(), 1): (card(),),
+                ("LHR", "CDG", day.isoformat(), 1): (card(),),
+                ("LAX", "NRT", day.isoformat(), 1): (card(),),
+            }
+        )
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source) as ctor:
+            with self.assertRaises(ValueError) as caught:
+                search_flights(mixed, fetch="sweep")
+        message = str(caught.exception)
+        self.assertIn("JFK USD", message)
+        self.assertIn("LHR GBP", message)
+        self.assertIn("--currency", message)
+        ctor.assert_not_called()
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source) as ctor:
+            search_flights(same, fetch="sweep")
+        self.assertEqual(ctor.call_args.kwargs["currency"], "USD")
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source) as ctor:
+            search_flights(mixed, fetch="sweep", currency="USD")
+        self.assertEqual(ctor.call_args.kwargs["currency"], "USD")
+
     def test_search_stamps_google_flights_urls(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource(
@@ -1197,7 +1229,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         )
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
             with patch("viajante.flights.GoogleFlightsSource") as detail:
-                report = search_flights(queries, top=1)
+                report = search_flights(queries, top=1, currency="USD")
         detail.assert_not_called()
         self.assertEqual(report.fetch_backend, "sweep")
 
