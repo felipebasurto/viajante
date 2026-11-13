@@ -1036,6 +1036,32 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual([offer.price for offer in result.offers], [100.0])
         self.assertEqual((result.raw_count, result.eligible_count), (3, 1))
 
+    def test_package_duration_cap_is_per_journey(self) -> None:
+        trip = RoundTrip("JFK", "LHR", date(2027, 6, 1), date(2027, 6, 8), max_stops=0)
+        legs = (
+            RawJourneyLeg("08:00", "14:00", "6 h", "Nonstop"),
+            RawJourneyLeg("09:00", "15:00", "6 h", "Nonstop"),
+        )
+        long_return = (
+            RawJourneyLeg("08:00", "14:00", "6 h", "Nonstop"),
+            RawJourneyLeg("09:00", "21:00", "12 h", "Nonstop"),
+        )
+        source = FakeSource(
+            {
+                ("JFK", "LHR", "2027-06-01", 0): (
+                    card(price="400 €", duration="6 h", stops="Nonstop", legs=legs),
+                    card(price="500 €", duration="6 h", stops="Nonstop", legs=long_return),
+                )
+            }
+        )
+        with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
+            report = search_flights(
+                (trip,), fetch="sweep", currency="USD", max_duration_hours=8
+            )
+        result = report.queries[0]
+        assert isinstance(result, QuerySuccess)
+        self.assertEqual([offer.price for offer in result.offers], [400.0])
+
     def test_search_stamps_google_flights_urls(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource(
