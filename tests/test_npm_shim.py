@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -36,10 +39,12 @@ class NpmShimTests(unittest.TestCase):
         self.assertEqual(
             hermes_mcp["mcpServers"]["viajante"]["args"], ["-y", f"@viajante/mcp@{version}"]
         )
-        self.assertEqual(pkg["bin"]["mcp"], "bin/cli.js")
-        self.assertEqual(pkg["bin"]["viajante"], "bin/cli.js")
-        self.assertEqual(pkg["bin"]["viajante-mcp"], "bin/cli.js")
+        self.assertEqual(pkg["bin"]["mcp"], "bin/mcp.js")
+        self.assertEqual(pkg["bin"]["viajante"], "bin/viajante.js")
+        self.assertEqual(pkg["bin"]["viajante-mcp"], "bin/mcp.js")
         self.assertTrue((NPM / "bin" / "cli.js").is_file())
+        self.assertTrue((NPM / "bin" / "viajante.js").is_file())
+        self.assertTrue((NPM / "bin" / "mcp.js").is_file())
         npm_pkg = next(row for row in server["packages"] if row["registryType"] == "npm")
         pypi_pkg = next(row for row in server["packages"] if row["registryType"] == "pypi")
         self.assertEqual(npm_pkg["identifier"], "@viajante/mcp")
@@ -93,6 +98,50 @@ require(shim);
                     "stdio": "inherit",
                 },
             )
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_js_entries_stay_cli_or_mcp_when_argv_is_the_file(self) -> None:
+        # npm on Windows runs `node bin/<file>.js`, so argv[1] is never the bin name.
+        version = _pyproject_version()
+        with tempfile.TemporaryDirectory() as tmp:
+            uvx = Path(tmp) / "uvx"
+            uvx.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\"\n", encoding="utf-8")
+            uvx.chmod(uvx.stat().st_mode | stat.S_IEXEC)
+            env = os.environ.copy()
+            env["PATH"] = tmp + os.pathsep + env.get("PATH", "")
+            env.pop("VIAJANTE_BIN", None)
+            cases = (
+                ("viajante.js", f"viajante=={version}", "viajante"),
+                ("mcp.js", f"viajante[mcp,browser]=={version}", "viajante-mcp"),
+            )
+            for entry, spec, binary in cases:
+                result = subprocess.run(
+                    ["node", str(NPM / "bin" / entry), "--version"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), f"--from {spec} {binary} --version")
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_missing_uv_names_uv_and_python(self) -> None:
+        node = shutil.which("node")
+        assert node is not None
+        env = os.environ.copy()
+        env["PATH"] = str(Path(node).parent)
+        env.pop("VIAJANTE_BIN", None)
+        result = subprocess.run(
+            [node, str(NPM / "bin" / "viajante.js")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("uv on PATH", result.stderr)
+        self.assertIn("Python 3.10+", result.stderr)
 
 
 if __name__ == "__main__":
