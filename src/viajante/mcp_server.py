@@ -732,7 +732,9 @@ def build_server():
         """Room rates for one Skiplagged hotel, for 1-3 finalists. Name it by hotel_id (the
         provider_id of a skiplagged search_hotels offer) or by hotel_name plus city. A name
         must match exactly (case, accents and punctuation ignored); no match or several
-        matches is no_results, never a guess. Use the name form for a Google finalist: a
+        matches is no_results, never a guess. city is City or City, qualifier: an ISO
+        country (UK is GB) or an English country or region (Paris, FR; Paris, France;
+        Paris, Texas). Use the name form for a Google finalist: a
         Google hostel price can be a dorm bed, and these rates say what the room is. Rates are
         USD, not converted, in provider order. total_price is the whole stay for the party and
         rooms searched. occupancy_limit is per room type and is not proof that a party fits

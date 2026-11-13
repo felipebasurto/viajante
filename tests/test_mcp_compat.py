@@ -727,6 +727,13 @@ class GuideTests(_StateDir):
         )
         self.assertNotIn("Long round-trip date sweeps", self._flat(INSTRUCTIONS))
 
+    def test_hotel_rooms_describes_the_city_qualifier(self) -> None:
+        server = mcp_server.build_server()
+        tools = asyncio.run(server.list_tools())
+        rooms = next(tool for tool in tools if tool.name == "search_hotel_rooms")
+        self.assertIn("Paris, FR", rooms.description or "")
+        self.assertIn("UK is GB", rooms.description or "")
+
     def test_guide_names_every_registered_tool(self) -> None:
         # The guide is the only full tool reference; a tool it omits is undiscoverable.
         server = mcp_server.build_server()

@@ -2016,6 +2016,14 @@ class HotelCliTests(unittest.TestCase):
                     self.assertEqual(data["schema_version"], 2)
                     self.assertEqual(data["price_basis"], "total_stay")
 
+    def test_hotel_rooms_city_help_names_the_qualifier(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["hotel-rooms", "--help"])
+        self.assertEqual(code, 0)
+        self.assertIn("Paris, FR", out.getvalue())
+        self.assertIn("UK is GB", out.getvalue())
+
     def test_hotel_rooms_bad_date_names_the_field(self) -> None:
         err = io.StringIO()
         with redirect_stderr(err):

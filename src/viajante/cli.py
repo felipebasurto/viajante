@@ -1632,7 +1632,14 @@ def _build_parser() -> argparse.ArgumentParser:
     rooms.add_argument(
         "--name", default=None, help="Exact hotel name (normalized match); needs --city"
     )
-    rooms.add_argument("--city", default=None, help="City to look the name up in")
+    rooms.add_argument(
+        "--city",
+        default=None,
+        help=(
+            "City, or City, qualifier: an ISO country (UK is GB) or an English "
+            "country or region (Paris, FR; Paris, France; Paris, Texas)"
+        ),
+    )
     rooms.add_argument("--adults", type=int, default=2, help="Number of adults (default 2)")
     rooms.add_argument("--rooms", type=int, default=1, help="Rooms, 1 to 5 (default 1)")
     _add_save_flag(rooms)

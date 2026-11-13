@@ -886,6 +886,8 @@ def search_hotel_rooms_tool(
     adults: int = 2,
     rooms: int = 1,
 ) -> Mapping[str, object]:
+    """city is City or City, qualifier: an ISO country (UK is GB) or an English
+    country or region (Paris, FR; Paris, France; Paris, Texas)."""
     check_in_date = date.fromisoformat(check_in)
     check_out_date = date.fromisoformat(check_out)
     _reject_past((check_in_date,), label="check-in")
