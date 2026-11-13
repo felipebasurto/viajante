@@ -422,7 +422,13 @@ def search_explore(
 
     try:
         if not members:
-            return one_or_many([explore_origin(code, label) for code, label in origins])
+            reports: list[ExploreReport] = []
+            for code, label in origins:
+                report = explore_origin(code, label)
+                reports.append(report)
+                if _limited(report):
+                    break
+            return one_or_many(reports)
         reports: list[ExploreReport] = []
         for code, label in origins:
             report = explore_origin(code, label)

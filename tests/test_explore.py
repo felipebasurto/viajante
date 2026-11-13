@@ -1224,6 +1224,15 @@ class NearbyExploreTests(unittest.TestCase):
         self.assertEqual(reports[0].to_dict()["nearby_label"], "nearby London LHR")
         self.assertEqual(on_source.explore_origins, origins)
 
+    def test_nearby_stops_when_an_airport_is_rate_limited(self) -> None:
+        source = FakeExploreSource(GoogleFlightsBlocked("rate limited", status=429))
+        report = search_explore("LHR", date(2026, 9, 15), days=7, top=1, nearby=True, source=source)
+        self.assertEqual(source.explore_origins, ["LHR"])
+        self.assertEqual(report.origin, "LHR")
+        self.assertIsNotNone(report.error)
+        assert report.error is not None
+        self.assertTrue(report.error.rate_limited)
+
     def test_nearby_unknown_city_does_not_invent_codes(self) -> None:
         source = FakeExploreSource((CompactExplorePlace("OPO", "Porto", "Portugal"),))
         report = search_explore("MAD", date(2026, 9, 1), days=7, top=1, nearby=True, source=source)
