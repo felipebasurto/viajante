@@ -6,7 +6,13 @@ from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Mapping, Optional
 
-from viajante.airports import airport_geo, canonical_city_name, lookup_airports, metro_of
+from viajante.airports import (
+    airport_geo,
+    canonical_city_name,
+    city_name_forms,
+    lookup_airports,
+    metro_of,
+)
 from viajante.envelope import ENVELOPE_KEYS, stamp_local, stamp_search
 from viajante.hotels import _raw_distance_km
 from viajante.skiplagged_hotels import (
@@ -148,32 +154,17 @@ def _city_label(value: str) -> str:
     return city if len(parts) == 1 else f"{city}, {parts[1].strip().casefold()}"
 
 
-# The catalogue spells the Missouri city "St Louis" and a Senegal city "Saint Louis".
-_CITY_SPELLING = {"saint louis": "st louis"}
-
-
 def _catalogue_hits(city: str) -> list:
-    wanted = _normalized_name(canonical_city_name(city))
-    accepted = {wanted, _CITY_SPELLING.get(wanted, wanted)}
-    needles = []
-    for needle in (
-        city,
-        _normalized_name(city),
-        canonical_city_name(city),
-        _CITY_SPELLING.get(wanted),
-    ):
-        if needle and needle not in needles:
-            needles.append(needle)
+    accepted = set(city_name_forms(city))
     seen = set()
     hits = []
-    for needle in needles:
-        for airport in lookup_airports(needle, limit=100):
-            if airport.iata in seen:
-                continue
-            if _normalized_name(canonical_city_name(airport.city)) not in accepted:
-                continue
-            seen.add(airport.iata)
-            hits.append(airport)
+    for airport in lookup_airports(city, limit=100):
+        if airport.iata in seen:
+            continue
+        if canonical_city_name(airport.city) not in accepted:
+            continue
+        seen.add(airport.iata)
+        hits.append(airport)
     return hits
 
 

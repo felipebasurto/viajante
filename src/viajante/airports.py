@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import marshal
+import unicodedata
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, Tuple
 
@@ -76,8 +77,12 @@ _MAJOR_IATA = frozenset(
 )
 _QUERY_REWRITE = {
     "lisboa": "lisbon",
-    "ciudad de méxico": "mexico city",
     "ciudad de mexico": "mexico city",
+}
+# Spellings of one place that do not fold into each other. A lookup returns both.
+_CITY_ALSO = {
+    "saint louis": ("st louis",),
+    "st louis": ("saint louis",),
 }
 _QUERY_EXTRA_IATA = {
     "sapporo": ("CTS",),
@@ -236,8 +241,8 @@ def _lookup_indexes() -> tuple[
         by_city: dict[str, list[Airport]] = {}
         rows: list[tuple[Airport, str, str, str]] = []
         for airport in by_code.values():
-            city_folded = airport.city.casefold()
-            name_folded = airport.name.casefold()
+            city_folded = _fold(airport.city)
+            name_folded = _fold(airport.name)
             by_city.setdefault(city_folded, []).append(airport)
             rows.append((airport, city_folded, name_folded, airport.iata.casefold()))
         for airports in by_city.values():
@@ -389,7 +394,16 @@ def place_label_codes(label: str) -> Tuple[str, ...]:
     if is_known_iata(text):
         return (text.strip().upper(),)
     _, _, by_city = _lookup_indexes()
-    rows = by_city.get(text.casefold(), ())
+    rows = []
+    seen: set[str] = set()
+    spellings: set[str] = set()
+    for form in city_name_forms(text):
+        for row in by_city.get(form, ()):
+            if row.iata in seen:
+                continue
+            seen.add(row.iata)
+            rows.append(row)
+            spellings.add(row.city.casefold())
     if not rows:
         return ()
     passenger = [
@@ -398,9 +412,10 @@ def place_label_codes(label: str) -> Tuple[str, ...]:
         if not any(marker in row.name.casefold() for marker in _MINOR_NAME_MARKERS)
     ]
     pool = passenger or list(rows)
-    major_countries = {row.country for row in pool if row.iata in _MAJOR_IATA}
-    if major_countries:
-        pool = [row for row in pool if row.country in major_countries]
+    if len(spellings) == 1:
+        major_countries = {row.country for row in pool if row.iata in _MAJOR_IATA}
+        if major_countries:
+            pool = [row for row in pool if row.country in major_countries]
     return tuple(row.iata for row in pool)
 
 
@@ -430,18 +445,36 @@ def same_city_iata(code: str) -> Tuple[str, ...]:
     return (seed, *rest)[:NEARBY_MAX]
 
 
+def _fold(text: str) -> str:
+    stripped = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(char)
+    )
+    return " ".join(stripped.split()).casefold()
+
+
 def canonical_city_name(query: str) -> str:
     """Normalize only the city aliases owned by this catalogue."""
-    needle = " ".join(query.split()).casefold()
-    return _QUERY_REWRITE.get(needle, needle)
+    return _QUERY_REWRITE.get(_fold(query), _fold(query))
+
+
+def city_name_forms(name: str) -> tuple[str, ...]:
+    """Folded spellings of one city label. Several forms stay several airports."""
+    folded = canonical_city_name(name)
+    forms = [folded]
+    for extra in _CITY_ALSO.get(folded, ()):
+        if extra not in forms:
+            forms.append(extra)
+    return tuple(forms)
 
 
 def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
-    needle = " ".join(query.split()).casefold()
-    if not needle:
+    raw = " ".join(query.split())
+    if not raw:
         raise ValueError("airport query must not be blank")
+    needle = canonical_city_name(raw)
     extra_codes = _QUERY_EXTRA_IATA.get(needle, ())
-    needle = canonical_city_name(query)
     rows, by_code, by_city = _lookup_indexes()
     if len(needle) == 3 and needle.isalpha():
         exact = by_code.get(needle.upper())
@@ -450,10 +483,16 @@ def lookup_airports(query: str, *, limit: int = 20) -> Tuple[Airport, ...]:
         members = metro_members(needle)
         if members:
             return tuple(by_code[code] for code in members)[:limit]
-    city_hits = list(by_city.get(needle, ()))
+    taken: set[str] = set()
+    city_hits = []
+    for form in city_name_forms(needle):
+        for airport in by_city.get(form, ()):
+            if airport.iata not in taken:
+                taken.add(airport.iata)
+                city_hits.append(airport)
+    city_hits.sort(key=_lookup_rank)
     if len(city_hits) >= limit:
         return tuple(city_hits[:limit])
-    taken = {airport.iata for airport in city_hits}
     extra_hits = [by_code[code] for code in extra_codes if code in by_code and code not in taken]
     taken.update(airport.iata for airport in extra_hits)
     extra_hits.sort(key=_lookup_rank)
