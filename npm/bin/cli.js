@@ -5,7 +5,9 @@ const { spawn } = require("node:child_process");
 const { basename } = require("node:path");
 const { version } = require("../package.json");
 
-const name = basename(process.argv[1] || "");
+// Unix npm bins are symlinks, so argv[1] is the bin name. Windows cmd shims
+// pass this file instead; the viajante.js / mcp.js entries set VIAJANTE_BIN.
+const name = process.env.VIAJANTE_BIN || basename(process.argv[1] || "").replace(/\.js$/i, "");
 const mcp = name !== "viajante";
 const spec = mcp ? `viajante[mcp,browser]==${version}` : `viajante==${version}`;
 const bin = mcp ? "viajante-mcp" : "viajante";

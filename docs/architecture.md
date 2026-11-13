@@ -48,7 +48,7 @@ One library, three ways in:
 | --- | --- | --- |
 | MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 22 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
-| Library | `viajante.search_*`, `get_flights` | What both of the above call. |
+| Library | names in `viajante.__all__`, including `get_flights` | `search_hotels` defaults to Booking. `search_hotel_rooms` and `search_split_tickets` are not package-level imports. |
 
 | MCP tool | CLI | What it is |
 | --- | --- | --- |
@@ -85,7 +85,8 @@ in-process cache (`cached: true`) instead of asking Google again.
 `watch_price` and `recheck_offer` bypass this replay cache for fresh searches.
 
 Loopback HTTP passes `transport_security` to `run()` explicitly, so the allowed Host and Origin
-list is viajante's and does not depend on the SDK default.
+list is viajante's and does not depend on the SDK default. The server has no authentication
+and is not hosted; `server.json` has no `remotes`.
 
 MCP client compatibility lives at the adapter edge. `mcp_server.py` registers each
 tool with a title and read-only annotations (`openWorldHint` only for tools that go

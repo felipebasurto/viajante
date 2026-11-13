@@ -12,4 +12,6 @@ Without a plugin install, add the server directly:
 hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp
 ```
 
+Without Node: `hermes mcp add viajante --connect-timeout 300 --command uvx --args --from viajante[mcp] viajante-mcp`.
+
 Source, docs and issues: <https://github.com/felipebasurto/viajante>. MIT.

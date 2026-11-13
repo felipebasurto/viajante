@@ -3,6 +3,16 @@
 Local Google Flights, Google Hotels, and Booking.com search (Skiplagged is opt-in). No API keys.
 Fetch locale is English. User prompts may be any language. No implied home hub.
 
+## Which path
+
+- **MCP tools are listed.** You are connected. Read `status`, `completeness`, and `empty_reason` before the rows. Only `provider_empty` means none found. `get_guide` is the long rules. `get_runtime_info` is the running version.
+- **Nothing installed, you have a shell.** Primary: `npx -y @viajante/mcp` (needs uv and Python 3.10+). No Node: `uvx --from viajante[mcp] viajante-mcp`. Config below. If `viajante-mcp` says it needs the mcp extra, you are not in a checkout: use the uvx line, not `uv sync` (`uv sync` does not put the binary on PATH).
+- **CLI only** (`viajante` runs, no MCP tools). `viajante <cmd> --help`. `viajante --version` before a new flag. Hotels need `--currency`.
+- **Python.** `from viajante import get_flights, search_flights, search_hotels, validate_itinerary`. A route spec, not a sentence. `search_hotels` defaults to Booking (browser extra); pass `source="google"` and `currency`. `get_hotel_details(report, query_index, offer_index)` is the library form; MCP takes `selection_id`.
+- **No shell and no local process.** You cannot search. Loopback HTTP has no auth and is never hosted. `server.json` has no remotes. Do not invent a URL.
+
+Check `get_runtime_info` or `viajante --version` before a new parameter. An npm MCP and a separate uv tool can differ; unpinned `uvx` can reuse an old install.
+
 ## Install (agents)
 
 Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.10+.
@@ -153,4 +163,4 @@ report = get_flights("JFK-LHR:YYYY-MM-DD", fetch="sweep")
 ```
 
 Sweep `proxy` covers flights, dates, flex, and explore. Hotels have no proxy flag.
-Signatures: `src/viajante/mcp_server.py`.
+Signatures: `src/viajante/mcp_handlers.py` (`mcp_server.py` copies them into the client schema). On `get_flights` / `search_flights`, airline filters are `alliances` and `exclude_alliances`. MCP and the CLI call those `alliance` and `exclude_alliance`.
