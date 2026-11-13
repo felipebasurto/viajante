@@ -784,12 +784,7 @@ def _flex_report_for_seed(
                 (err for err in row_errors if err.code == SearchErrorCode.BLOCKED),
                 row_errors[0],
             )
-        typical = typical_from_daily_prices(
-            [
-                _day_minimum_fare(cards_by_day.get(row.departure_date), seed, row, stay, filters)
-                for row in days
-            ]
-        )
+        typical = typical_from_daily_prices([row.day_fare for row in days])
         winner = cheapest_priced_day(days, around)
         if winner is None:
             report_progress("no priced day in flex window; no fare")
@@ -1127,20 +1122,6 @@ def _row_from_day_error(
         status="error",
         error=error,
     )
-
-
-def _day_minimum_fare(
-    cards: Optional[Sequence[RawFlightCard]],
-    seed: FlightQuery | RoundTrip,
-    row: DatePriceRow,
-    nights: Optional[int],
-    filters: OfferFilters,
-) -> Optional[float]:
-    """The day's cheapest eligible fare, before any buffer: the basis of the flex typical."""
-    if not cards:
-        return None
-    offers = offers_from_cards(cards, _day_trip(seed, row.departure_date, nights), filters)
-    return min((offer.price for offer in offers), default=None)
 
 
 def _sweep_per_day(
