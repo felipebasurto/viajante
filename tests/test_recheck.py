@@ -429,6 +429,11 @@ class IdentityTests(unittest.TestCase):
         result = recheck_offer(_previous(spaced), search=_Stub(_report(_offer(500.0, (OUTBOUND,)))))
         self.assertEqual(result["outcome"], "same_price")
 
+    def test_airport_codes_match_regardless_of_case(self) -> None:
+        lower = _segment("jfk", "lhr", "19:30", "07:30", "BA178")
+        result = recheck_offer(_previous(lower), search=_Stub(_report(_offer(500.0, (OUTBOUND,)))))
+        self.assertEqual(result["outcome"], "same_price")
+
     def test_a_different_segment_date_is_not_identical(self) -> None:
         next_day = _segment("JFK", "LHR", "19:30", "07:30", "BA178", day=FAR + timedelta(days=1))
         result = recheck_offer(

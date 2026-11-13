@@ -6,6 +6,7 @@ from typing import Callable, Optional, Tuple, TypeVar
 
 from viajante.control import SearchDeadline, note_cut
 from viajante.models import SearchError, SearchErrorCode
+from viajante.runtime import package_version
 
 T = TypeVar("T")
 
@@ -39,7 +40,7 @@ NON_RETRIABLE_CODES = frozenset(
 ERROR_MESSAGE_MAX_CHARS = 500
 BROWSER_INSTALL_HINT = (
     "Chromium is not available to Playwright. "
-    "uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium. "
+    f"uvx --from 'viajante[mcp,browser]=={package_version()}' playwright install chromium. "
     "Detail is optional: pip install 'viajante[browser]' && playwright install chromium."
 )
 
@@ -126,7 +127,7 @@ def run_attempts(
         except Exception as exc:
             failure = classify(exc)
             on_failure(failure)
-            if give_up(exc, failure):
+            if isinstance(exc, SearchDeadline) or give_up(exc, failure):
                 break
             if index + 1 < MAX_ATTEMPTS:
                 delay = backoff(index)

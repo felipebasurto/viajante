@@ -241,6 +241,36 @@ class HotelDetailsTests(unittest.TestCase):
         self.assertEqual(result["room_rates_status"], "inconclusive")
         self.assertIn("unambiguous city", result["reason"])
 
+    def test_named_region_separates_same_country_homonyms(self):
+        oregon = hotel(location="Portland, Oregon")["queries"][0]
+        self.assertEqual(_city_decision(oregon, oregon["offers"][0])[0], "Portland, Oregon")
+        bare = hotel(location="Portland, US")["queries"][0]
+        self.assertIsNone(_city_decision(bare, bare["offers"][0])[0])
+
+    def test_saint_louis_country_uses_the_missouri_catalogue_spelling(self):
+        for location in ("Saint Louis, US", "Saint Louis, Missouri"):
+            with self.subTest(location=location):
+                result = hotel(location=location)["queries"][0]
+                self.assertEqual(_city_decision(result, result["offers"][0])[0], "St Louis, US")
+        bare = hotel(location="Saint Louis")["queries"][0]
+        location, reason = _city_decision(bare, bare["offers"][0])
+        self.assertIsNone(location)
+        self.assertIn("more than one place", reason)
+
+    def test_accented_city_uses_the_catalogue_spelling(self):
+        result = hotel(location="São Paulo")["queries"][0]
+        self.assertEqual(_city_decision(result, result["offers"][0])[0], "Sao Paulo")
+
+    def test_english_country_name_selects_that_catalogue_country(self):
+        for location, expected in (
+            ("Paris, France", "Paris, FR"),
+            ("Tbilisi, Georgia", "Tbilisi, GE"),
+            ("London, UK", "London, GB"),
+        ):
+            with self.subTest(location=location):
+                result = hotel(location=location)["queries"][0]
+                self.assertEqual(_city_decision(result, result["offers"][0])[0], expected)
+
     def test_city_country_qualifier_disambiguates_catalogue_city(self):
         result = hotel(location="London, GB")["queries"][0]
         location, anchor = _city_decision(result, result["offers"][0])

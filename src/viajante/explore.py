@@ -422,7 +422,13 @@ def search_explore(
 
     try:
         if not members:
-            return one_or_many([explore_origin(code, label) for code, label in origins])
+            reports: list[ExploreReport] = []
+            for code, label in origins:
+                report = explore_origin(code, label)
+                reports.append(report)
+                if _limited(report):
+                    break
+            return one_or_many(reports)
         reports: list[ExploreReport] = []
         for code, label in origins:
             report = explore_origin(code, label)
@@ -441,10 +447,12 @@ def search_explore(
 def _prefer_destination(
     current: ExploreDestination, candidate: ExploreDestination
 ) -> ExploreDestination:
-    """Cheapest owned fare. An unpriced row does not replace a fare."""
-    if current.price is None:
+    """Cheapest owned fare. An unpriced row keeps a fare and a stated empty reason."""
+    if current.price is not None and (candidate.price is None or candidate.price >= current.price):
+        return current
+    if candidate.price is not None and (current.price is None or candidate.price < current.price):
         return candidate
-    if candidate.price is None or candidate.price >= current.price:
+    if current.empty_reason and not candidate.empty_reason:
         return current
     return candidate
 

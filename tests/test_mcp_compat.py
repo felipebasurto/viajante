@@ -10,6 +10,7 @@ import calendar
 import contextlib
 import http.client
 import importlib.util
+import inspect
 import io
 import json
 import math
@@ -27,7 +28,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import _isolate  # noqa: F401
-from viajante import mcp_server
+from viajante import mcp_handlers, mcp_server
 from viajante.envelope import EnvelopeShapeError
 from viajante.flights import classify_failure
 from viajante.google_flights import GoogleFlightsBlocked
@@ -46,6 +47,7 @@ from viajante.ratelimit import (
 from viajante.runtime import package_version
 from viajante.skiplagged import SkiplaggedRateLimited
 from viajante.skiplagged import _classify as classify_skiplagged
+from viajante.watch import watch_price_tool
 
 try:  # a dependency of the mcp extra, absent without it
     import jsonschema
@@ -171,6 +173,17 @@ class ToolMetadataTests(_StateDir):
                 self.assertIs(hints.destructive_hint, False)
                 self.assertIs(hints.idempotent_hint, not writes)
                 self.assertIsInstance(hints.open_world_hint, bool)
+
+    def test_lookup_airports_says_what_the_query_accepts(self) -> None:
+        text = self.tools["lookup_airports"].description or ""
+        for code in ("JFK", "LHR", "NRT", "GRU", "SIN"):
+            self.assertIn(code, text)
+        self.assertIn("list", text.casefold())
+
+    def test_every_tool_has_a_description(self) -> None:
+        for name, tool in self.tools.items():
+            with self.subTest(tool=name):
+                self.assertTrue((tool.description or "").strip())
 
     def test_the_wheel_smoke_job_reads_sdk2_names(self) -> None:
         # The dist job's inline client runs only in CI, against a built wheel, where SDK 1
@@ -639,6 +652,8 @@ class GuideTests(_StateDir):
             "viajante-mcp Checkout:",
             "uvx --from 'git+https://github.com/felipebasurto/viajante.git[mcp,browser]' \\ "
             "playwright install chromium (only for --fetch detail and Booking.com;",
+            # `uv sync` does not put viajante-mcp on PATH; the guide now says `uv run`.
+            "uv sync --extra mcp && viajante-mcp Browser:",
         }
         missing = [s for s in sentences if s not in covered and s not in changed_transport_rules]
         self.assertIn("bounded per-day public-page GETs", covered)
@@ -660,6 +675,47 @@ class GuideTests(_StateDir):
                 self.assertIn(phrase, guide)
         self.assertIn("Also search_split_tickets", INSTRUCTIONS)
 
+    def test_guide_names_which_tools_accept_deadline_seconds(self) -> None:
+        handlers = (
+            ("search_flights", mcp_handlers.search_flights_tool),
+            ("search_dates", mcp_handlers.search_dates_tool),
+            ("search_flex", mcp_handlers.search_flex_tool),
+            ("search_explore", mcp_handlers.search_explore_tool),
+            ("search_hotels", mcp_handlers.search_hotels_tool),
+            ("search_trip", mcp_handlers.search_trip_tool),
+            ("search_split_tickets", mcp_handlers.search_split_tickets_tool),
+            ("search_hidden_city", mcp_handlers.search_hidden_city_tool),
+            ("search_hotel_rooms", mcp_handlers.search_hotel_rooms_tool),
+            ("recheck_offer", mcp_handlers.recheck_offer_tool),
+            ("get_hotel_details", mcp_handlers.get_hotel_details_tool),
+            ("watch_price", watch_price_tool),
+        )
+        takes = [
+            name for name, fn in handlers if "deadline_seconds" in inspect.signature(fn).parameters
+        ]
+        skips = [name for name, _fn in handlers if name not in takes]
+        guide = self._flat(GUIDE)
+        self.assertEqual(
+            takes,
+            [
+                "search_flights",
+                "search_dates",
+                "search_flex",
+                "search_explore",
+                "search_hotels",
+                "search_trip",
+            ],
+        )
+        self.assertIn(
+            "deadline_seconds is an argument of " + ", ".join(takes[:-1]) + " and " + takes[-1],
+            guide,
+        )
+        self.assertIn(
+            "Passing it to " + ", ".join(skips[:-1]) + " or " + skips[-1] + " is invalid_parameter",
+            guide,
+        )
+        self.assertIn("VIAJANTE_MCP_DEADLINE_SECONDS bounds those six", guide)
+
     def test_guide_tells_round_trip_date_sweeps_to_pass_a_deadline(self) -> None:
         guide = self._flat(GUIDE)
         self.assertIn("Long round-trip date sweeps", guide)
@@ -668,6 +724,13 @@ class GuideTests(_StateDir):
             guide,
         )
         self.assertNotIn("Long round-trip date sweeps", self._flat(INSTRUCTIONS))
+
+    def test_hotel_rooms_describes_the_city_qualifier(self) -> None:
+        server = mcp_server.build_server()
+        tools = asyncio.run(server.list_tools())
+        rooms = next(tool for tool in tools if tool.name == "search_hotel_rooms")
+        self.assertIn("Paris, FR", rooms.description or "")
+        self.assertIn("UK is GB", rooms.description or "")
 
     def test_guide_names_every_registered_tool(self) -> None:
         # The guide is the only full tool reference; a tool it omits is undiscoverable.
@@ -688,6 +751,15 @@ class GuideTests(_StateDir):
         text = buffer.getvalue()
         for phrase in ("--transport", "--host", "--port", "get_guide", "viajante://guide"):
             self.assertIn(phrase, text)
+        self.assertIn("uv sync --extra mcp && uv run viajante-mcp", text)
+
+    def test_missing_mcp_extra_names_the_checkout_and_uvx_forms(self) -> None:
+        with patch.object(mcp_server, "build_server", side_effect=ImportError("mcp")):
+            with self.assertRaises(SystemExit) as caught:
+                mcp_server.main([])
+        text = str(caught.exception)
+        self.assertIn("uv sync --extra mcp", text)
+        self.assertIn("uvx --from 'viajante[mcp]' viajante-mcp", text)
 
 
 @NEEDS_SDK

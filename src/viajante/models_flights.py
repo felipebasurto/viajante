@@ -377,6 +377,10 @@ class RawJourneyLeg:
         }
 
 
+def _located_layover(layover: RawLayover) -> bool:
+    return bool(layover.city and layover.city.strip())
+
+
 def _offer_completeness(
     legs: Sequence[RawJourneyLeg],
     *,
@@ -392,17 +396,17 @@ def _offer_completeness(
     def known(predicate: bool) -> EvidenceKnowledge:
         return "known" if predicate else "unknown"
 
-    layovers_known = journeys_complete and (
-        stops_count == 0
-        or (
-            stops_count is not None
-            and stops_count > 0
-            and sum(len(leg.layovers) for leg in legs) >= stops_count
-        )
-    )
     if len(legs) > 1:
         layovers_known = journeys_complete and all(
-            leg.segments and len(leg.layovers) >= len(leg.segments) - 1 for leg in legs
+            leg.segments
+            and sum(_located_layover(layover) for layover in leg.layovers) >= len(leg.segments) - 1
+            for leg in legs
+        )
+    else:
+        located = sum(_located_layover(layover) for leg in legs for layover in leg.layovers)
+        layovers_known = journeys_complete and (
+            stops_count == 0
+            or (stops_count is not None and stops_count > 0 and located >= stops_count)
         )
     return EvidenceCompleteness(
         segment_airports=known(

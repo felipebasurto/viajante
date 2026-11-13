@@ -150,6 +150,75 @@ class TemporalEvidenceTests(unittest.TestCase):
             self.assertEqual(check(selected, "chronological", True), "unknown")
             self.assertEqual(check(selected, "arrival_deadline", "2099-07-03T10:00"), "unknown")
 
+    def test_round_trip_connects_from_where_the_return_lands(self):
+        rt = row([segment("JFK", "LHR")], key="rt", trip="rt")
+        onward = row(
+            [
+                segment(
+                    "LHR",
+                    "CDG",
+                    departure_date="2099-07-06",
+                    arrival_date="2099-07-06",
+                    departure="09:00",
+                    arrival="11:00",
+                    departure_timezone="Europe/London",
+                    arrival_timezone="Europe/Paris",
+                )
+            ],
+            key="on",
+        )
+        home = row(
+            [
+                segment(
+                    "JFK",
+                    "NRT",
+                    departure_date="2099-07-06",
+                    arrival_date="2099-07-07",
+                    departure="10:00",
+                    arrival="14:00",
+                    departure_timezone="America/New_York",
+                    arrival_timezone="Asia/Tokyo",
+                )
+            ],
+            key="home",
+        )
+
+        def route(rows):
+            report = validate_itinerary(rows, {})
+            return next(
+                item.status for item in report.checks if item.constraint == "route_continuity"
+            )
+
+        self.assertEqual(route([rt, onward]), "fail")
+        self.assertEqual(route([rt, home]), "pass")
+
+    def test_unknown_segment_does_not_hide_a_later_overlap(self):
+        first = segment()
+        gap = segment("LHR", "CDG", departure_timezone=None, arrival_timezone=None)
+        overlap = segment(
+            "CDG",
+            "NRT",
+            departure_date="2099-07-02",
+            departure="08:00",
+            departure_timezone="Europe/Paris",
+            arrival_date="2099-07-02",
+            arrival="18:00",
+            arrival_timezone="Asia/Tokyo",
+        )
+        clear = segment(
+            "CDG",
+            "NRT",
+            departure_date="2099-07-02",
+            departure="12:00",
+            departure_timezone="Europe/Paris",
+            arrival_date="2099-07-03",
+            arrival="08:00",
+            arrival_timezone="Asia/Tokyo",
+        )
+        self.assertEqual(check([row([first, gap, overlap])], "chronological", True), "fail")
+        cleared = check([row([first, gap, clear], key="clear")], "chronological", True)
+        self.assertEqual(cleared, "unknown")
+
     def test_overlap_and_negative_flight_are_failures(self):
         first = row([segment()])
         second = row(

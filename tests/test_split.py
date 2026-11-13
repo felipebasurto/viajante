@@ -184,6 +184,26 @@ def _hub_table(second_dep: str = "15:00") -> dict:
 
 
 class HubSplitTests(unittest.TestCase):
+    def test_echo_only_filters_reach_every_leg_search(self) -> None:
+        seen: list[dict] = []
+
+        def search(trips, **kwargs):
+            seen.append(kwargs)
+            return FakeSearch(_hub_table())(trips, **kwargs)
+
+        search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            search=search,
+            less_emissions=True,
+            hide_separate_tickets=True,
+        )
+        self.assertTrue(seen)
+        for kwargs in seen:
+            self.assertIs(kwargs["less_emissions"], True)
+            self.assertIs(kwargs["hide_separate_tickets"], True)
+
     def test_hub_split_pairs_two_real_quotes_with_labels_and_links(self) -> None:
         fake = FakeSearch(_hub_table())
         report = search_split_tickets(
@@ -397,6 +417,24 @@ class HubSplitTests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
         self.assertEqual([row["hub"] for row in report.skipped_hubs], ["SFO", "ORD"])
         self.assertTrue(report.error and report.error.rate_limited)
+
+    def test_a_rate_limit_on_the_outbound_does_not_search_the_return(self) -> None:
+        limited = _rate_limited_failure(FlightQuery("JFK", "LAX", DAY))
+        fake = FakeSearch({**_hub_table(), ("JFK", "LAX", DAY): limited})
+        report = search_split_tickets(
+            FlightQuery("JFK", "NRT", DAY),
+            packaged=_packaged_via("LAX"),
+            via=["LAX"],
+            search=fake,
+            filters=SplitFilters(OfferFilters(depart_after=10 * 60)),
+        )
+        self.assertEqual(fake.calls, [[("JFK", "LAX", DAY)]])
+        self.assertEqual(report.extra_searches, 1)
+        self.assertTrue(report.error and report.error.rate_limited)
+        tail = report.legs[-1]
+        self.assertEqual(tail["destination"], "NRT")
+        self.assertTrue(tail["error"]["rate_limited"])
+        self.assertTrue(str(tail["error"]["message"]).startswith("Not sent."))
 
     def test_missing_packaged_is_searched_once_first(self) -> None:
         fake = FakeSearch({("JFK", "NRT", DAY): _packaged_via("LAX").queries[0].offers})

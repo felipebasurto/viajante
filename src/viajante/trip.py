@@ -30,7 +30,7 @@ from viajante.models import (
     TripTotal,
     format_money,
 )
-from viajante.quote import first_origin_iata, resolve_quote_currency
+from viajante.quote import resolve_trips_currency
 
 
 def trip_date_span(query: Trip) -> tuple[date, date]:
@@ -94,23 +94,28 @@ def _owned_flight_fare(
     flights: SearchReport,
     hotel_queries: Sequence[HotelQuery],
 ) -> Optional[float]:
-    by_route: dict[tuple[str, tuple[tuple[str, str, date], ...]], float] = {}
+    """Cheapest owned fare per dated journey. Nearby and metro alternatives share it."""
+    groups: dict[tuple[str, tuple[tuple[str, str, date], ...]], float] = {}
+    seen: set[tuple[str, tuple[tuple[str, str, date], ...]]] = set()
     for result in flights.queries:
         start, end = trip_date_span(result.query)
         if not any(
             dates_overlap(start, end, hotel.check_in, hotel.check_out) for hotel in hotel_queries
         ):
             continue
+        key = _fare_group_key(result.query)
+        seen.add(key)
         if not isinstance(result, QuerySuccess):
-            return None
+            continue
         fare = _cheapest_fare(result)
         if fare is None:
-            return None
-        key = _fare_group_key(result.query)
-        current = by_route.get(key)
+            continue
+        current = groups.get(key)
         if current is None or fare < current:
-            by_route[key] = fare
-    return sum(by_route.values()) if by_route else None
+            groups[key] = fare
+    if not groups or seen - groups.keys():
+        return None
+    return sum(groups.values())
 
 
 def _owned_hotel_stay(
@@ -198,7 +203,7 @@ def search_trip(
             "search_trip cannot combine child or infant occupancy with hotels; "
             "hotel occupancy is adults-only. Use search_flights, then search_hotels."
         )
-    currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
+    currency = resolve_trips_currency(currency, trips)
     flights = search_flights(
         overlay_trip_fields(
             trips,

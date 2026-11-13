@@ -36,6 +36,7 @@ from viajante.models import (
     SearchErrorCode,
     normalize_currency,
 )
+from viajante.orchestration import classify_failure
 from viajante.ratelimit import (
     SKIPLAGGED_RATE_LIMIT_FILE,
     note_rate_limited,
@@ -341,18 +342,31 @@ def _leg_airport(leg: Any) -> Optional[str]:
 def _attribute_tokens(value: Any) -> Optional[set[str]]:
     if not isinstance(value, list):
         return None
-    return {str(item).strip().casefold() for item in value}
+    tokens = {str(item).strip().casefold() for item in value if str(item).strip()}
+    return tokens or None
 
 
 def _hidden_city(card: Mapping[str, Any], return_leg: Any) -> Optional[bool]:
-    """True or False from the legs' ``attributes``; None when no leg carries them."""
+    """True or False from every leg's attributes.
+
+    None when a leg has no attributes, unless another leg is hidden-city.
+    """
     legs = [card, return_leg] if isinstance(return_leg, dict) else [card]
-    seen = [
-        tokens for leg in legs if (tokens := _attribute_tokens(leg.get("attributes"))) is not None
-    ]
-    if not seen:
+    missing = False
+    hidden = False
+    for leg in legs:
+        attributes = leg.get("attributes") if isinstance(leg, Mapping) else None
+        tokens = _attribute_tokens(attributes)
+        if tokens is None:
+            missing = True
+            continue
+        if "hidden-city" in tokens:
+            hidden = True
+    if hidden:
+        return True
+    if missing:
         return None
-    return any("hidden-city" in tokens for tokens in seen)
+    return False
 
 
 def _stops(card: Mapping[str, Any]) -> Optional[int]:
@@ -456,6 +470,8 @@ def parse_skiplagged_offers(
 
 
 def _classify(exc: BaseException) -> SearchError:
+    if isinstance(exc, SearchDeadline):
+        return classify_failure(exc)
     if isinstance(exc, SkiplaggedRateLimited):
         return SearchError(
             code=SearchErrorCode.BLOCKED,
@@ -553,8 +569,6 @@ def search_hidden_city(
             departure_date=departure_date,
             return_date=return_date,
         )
-    except SearchDeadline:
-        raise
     except Exception as exc:
         error = _classify(exc)
     else:

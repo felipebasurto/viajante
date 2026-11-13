@@ -80,8 +80,9 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    first_origin_iata,
+    resolve_baggage_buffer,
     resolve_quote_and_buffer,
+    resolve_trips_currency,
 )
 from viajante.recheck import recheck_offer
 from viajante.skiplagged import search_hidden_city
@@ -287,9 +288,8 @@ def search_flights_tool(
     )
     trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
-    currency, baggage_buffer = resolve_quote_and_buffer(
-        currency, first_origin_iata(trips[0]), baggage_buffer
-    )
+    currency = resolve_trips_currency(currency, trips)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     carriers = dict(
         airlines=parse_airline_codes(airlines),
         exclude_airlines=parse_airline_codes(exclude_airlines),
@@ -886,6 +886,8 @@ def search_hotel_rooms_tool(
     adults: int = 2,
     rooms: int = 1,
 ) -> Mapping[str, object]:
+    """city is City or City, qualifier: an ISO country (UK is GB) or an English
+    country or region (Paris, FR; Paris, France; Paris, Texas)."""
     check_in_date = date.fromisoformat(check_in)
     check_out_date = date.fromisoformat(check_out)
     _reject_past((check_in_date,), label="check-in")
@@ -964,9 +966,8 @@ def search_trip_tool(
     )
     trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
-    currency, baggage_buffer = resolve_quote_and_buffer(
-        currency, first_origin_iata(trips[0]), baggage_buffer
-    )
+    currency = resolve_trips_currency(currency, trips)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     window = stay_window_from_trips(trips)
     if check_in:
         check_in_date = date.fromisoformat(check_in)

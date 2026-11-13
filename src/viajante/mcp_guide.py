@@ -4,9 +4,8 @@ from __future__ import annotations
 
 # Sent on every connection, so it carries only the rules a model must not miss.
 INSTRUCTIONS = """\
-viajante returns raw provider evidence, not recommendations. Read the payload, weigh
-price, duration, stops, clocks and rating. Read viajante://guide (or get_guide)
-before a multi-step plan.
+viajante returns raw provider evidence. recommendation labels are roles, not a verdict.
+Read viajante://guide (or get_guide) before a multi-step plan.
 
 Read the envelope first: every tool except lookup_airports puts status, completeness,
 empty_reason, error_code and retry_after beside its payload. Only empty_reason provider_empty
@@ -40,25 +39,30 @@ GUIDE = r"""# viajante MCP guide
 ## Overview
 
 viajante-mcp is the stdio MCP server for local flight and hotel search.
-
-This guide is the long operational reference. The short server instructions carry only the
-load-bearing rules; everything else lives here, served as the `viajante://guide` resource and by
-the `get_guide` tool.
+You are connected to it. Call a tool, then read the envelope before the rows.
+This guide is the long reference, also the `viajante://guide` resource and the `get_guide` tool.
 
 ## Install
 
 ```
 Install:  npx -y @viajante/mcp
 No Node:  uvx --from 'viajante[mcp]' viajante-mcp
-Checkout: uv sync --extra mcp && viajante-mcp
+Checkout: uv sync --extra mcp && uv run viajante-mcp
 Browser:  uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium
           (only for --fetch detail, Booking.com and search_explore; extras must match the MCP env)
 ```
 
-Stdio is the default transport. `viajante-mcp --transport streamable-http` serves the same tools
-on a local Streamable HTTP endpoint (default `http://127.0.0.1:8000/mcp`). It has no
-authentication: keep it on loopback. Every search leaves from this machine's IP and the
-machine-wide provider cooldown applies to every client.
+`<version>` is the running package from `get_runtime_info` or `viajante --version`.
+`uv sync` does not put `viajante-mcp` on PATH. If the process exits saying it needs
+the mcp extra and you are not in this checkout, use the uvx line, not `uv sync`.
+An npm MCP and a separate uv tool can differ; unpinned `uvx` can reuse an old install.
+
+A hosted chat with no shell and no local process cannot search. Stdio is the default
+transport. `viajante-mcp --transport streamable-http` serves the same tools on a local
+endpoint (default `http://127.0.0.1:8000/mcp`). It has no authentication, binds
+loopback, and is never hosted. `server.json` has no remotes. Do not invent an endpoint.
+Every search leaves from this machine's IP and the machine-wide provider cooldown
+applies to every client.
 
 ## Tools and the one-search rule
 
@@ -86,8 +90,13 @@ Progress, cancel, deadline: a search tool sends notifications/progress only when
 client sends a progressToken; they are informational and the result is still the reply.
 Cancelling the request stops the search at its next checkpoint and frees the lock; a
 cancelled search is not cached, recorded as evidence, or counted toward a cooldown.
-An optional deadline_seconds (or VIAJANTE_MCP_DEADLINE_SECONDS when the argument is
-unset) stops starting new queries after that many seconds and returns what finished:
+deadline_seconds is an argument of search_flights, search_dates, search_flex,
+search_explore, search_hotels and search_trip. Passing it to search_split_tickets,
+search_hidden_city, search_hotel_rooms, recheck_offer, get_hotel_details or
+watch_price is invalid_parameter. VIAJANTE_MCP_DEADLINE_SECONDS bounds those six
+when set, and fills an omitted deadline_seconds on the tools that take the
+argument. A deadline stops starting new queries after that many seconds and
+returns what finished:
 coverage.complete is false, coverage.stopping_reason is deadline, status is ok while
 any row has evidence (otherwise timeout), completeness is partial, and each unfinished
 query carries error code deadline with empty_reason not_loaded. That is availability
@@ -167,8 +176,10 @@ and their order do not change, and nothing in the block tells you what to book. 
   requirements were relaxed.
 - `shortlist`: up to three offers with a role label, each with its score breakdown under the
   published `SCORE_WEIGHTS`, its `highlights` and `tradeoffs`. Role labels are `top_score`
-  (highest weighted score), `lowest_price` and `shortest`. An offer can hold more than one
-  label, and a label does not mean "buy this".
+  (highest weighted score), `lowest_price`, `shortest`, and `alternative`. When the
+  lowest-price or shortest offer shares its stop count and departure slot with another
+  pick, the separate entry is `lowest_price_distinct` or `shortest_distinct`. An offer can
+  hold more than one label. A label is a role, not "buy this".
 - `highlights` and `tradeoffs` come only from returned fields (price text, duration, stops,
   layover, clocks, carrier, bag counts). A missing field is reported as unknown, never filled.
 
@@ -420,7 +431,7 @@ must echo each one or the read fails. The page applied an airline
 exclusion in a live check, but not for every card, so viajante also drops excluded or
 carrier-unknown cards itself. Owned carrier codes match exactly (returned codeshares count); name
 aliases are a fallback only when codes are absent. It refuses named checked
-bags, carry_on 0, exclude_alliances,
+bags, carry_on 0, exclude_alliance,
 and multi-city (use fetch=detail) before network work. search_explore needs the
 browser extra and accepts only one adult in economy. Detail
 refuses every bag and carrier filter because it reads no page echo. Offer bag
