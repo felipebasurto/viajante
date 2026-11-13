@@ -8,7 +8,7 @@ from typing import Sequence
 from unittest.mock import patch
 
 import _isolate  # noqa: F401
-from viajante.airports import get_airport
+from viajante.airports import get_airport, place_label_codes
 from viajante.flight_filters import (
     NO_OFFER_FILTERS,
     _overnight_from_owned_clocks,
@@ -1913,12 +1913,23 @@ class OfferFilterTests(unittest.TestCase):
         self.assertIsNone(_normalize_offer(london, 1, no_overnight=("LHR",)))
         self.assertIsNone(_normalize_offer(london, 1, exclude_via=("LHR",)))
         lisbon = get_airport("LIS")
-        assert lisbon is not None
+        rome = get_airport("FCO")
+        assert lisbon is not None and rome is not None
+        self.assertEqual(place_label_codes(lisbon.city), ("LIS",))
+        self.assertEqual(place_label_codes(rome.city), ("FCO",))
+        self.assertGreater(len(place_label_codes("London")), 1)
         self.assertIsNotNone(
             _normalize_offer(
                 card(stops="1 stop", layover_city=lisbon.city, layover_hours=2.0, price="74 €"),
                 1,
                 via=("LIS",),
+            )
+        )
+        self.assertIsNotNone(
+            _normalize_offer(
+                card(stops="1 stop", layover_city=rome.city, layover_hours=2.0, price="90 €"),
+                1,
+                via=("FCO",),
             )
         )
 

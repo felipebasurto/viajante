@@ -377,11 +377,11 @@ def _by_city_country() -> dict[tuple[str, str], tuple[Airport, ...]]:
 def place_label_codes(label: str) -> Tuple[str, ...]:
     """Passenger IATA codes an exact place label can name.
 
-    A known IATA code is that airport. An exact catalogue city is every
-    non-minor airport with that city (air bases and municipal fields drop out
-    when a passenger airport remains). Empty when the label is neither. This
-    is not a substring search and does not invent a code. Several codes mean
-    the label does not prove one airport.
+    A known IATA code is that airport. An exact catalogue city is the
+    non-minor airports with that city. When one of those is a major airport,
+    fields in other countries do not compete with it. Empty when the label
+    is neither. Not a substring search. Several codes mean the label does
+    not prove one airport.
     """
     text = " ".join(label.split())
     if not text:
@@ -392,13 +392,16 @@ def place_label_codes(label: str) -> Tuple[str, ...]:
     rows = by_city.get(text.casefold(), ())
     if not rows:
         return ()
-    passenger = tuple(
+    passenger = [
         row
         for row in rows
         if not any(marker in row.name.casefold() for marker in _MINOR_NAME_MARKERS)
-    )
-    chosen = passenger or rows
-    return tuple(row.iata for row in chosen)
+    ]
+    pool = passenger or list(rows)
+    major_countries = {row.country for row in pool if row.iata in _MAJOR_IATA}
+    if major_countries:
+        pool = [row for row in pool if row.country in major_countries]
+    return tuple(row.iata for row in pool)
 
 
 def same_city_iata(code: str) -> Tuple[str, ...]:
