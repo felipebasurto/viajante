@@ -691,9 +691,7 @@ class GuideTests(_StateDir):
             ("watch_price", watch_price_tool),
         )
         takes = [
-            name
-            for name, fn in handlers
-            if "deadline_seconds" in inspect.signature(fn).parameters
+            name for name, fn in handlers if "deadline_seconds" in inspect.signature(fn).parameters
         ]
         skips = [name for name, _fn in handlers if name not in takes]
         guide = self._flat(GUIDE)

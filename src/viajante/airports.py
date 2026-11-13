@@ -447,9 +447,7 @@ def same_city_iata(code: str) -> Tuple[str, ...]:
 
 def _fold(text: str) -> str:
     stripped = "".join(
-        char
-        for char in unicodedata.normalize("NFKD", text)
-        if not unicodedata.combining(char)
+        char for char in unicodedata.normalize("NFKD", text) if not unicodedata.combining(char)
     )
     return " ".join(stripped.split()).casefold()
 
