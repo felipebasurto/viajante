@@ -9,13 +9,23 @@ from typing import Mapping, Optional
 from viajante.airports import airport_geo, canonical_city_name, lookup_airports, metro_of
 from viajante.envelope import ENVELOPE_KEYS, stamp_local, stamp_search
 from viajante.hotels import _raw_distance_km
-from viajante.skiplagged_hotels import _normalized_name, search_hotel_rooms
+from viajante.skiplagged_hotels import (
+    _SUBDIVISION,
+    _country_for_city,
+    _matched_regions,
+    _normalized_name,
+    search_hotel_rooms,
+)
 
 # ponytail: airports within 100 km (the metro table's radius) are one place.
 # Homonyms farther apart stay separate. Upgrade: subdivision codes.
 _PLACE_KM = 100.0
 # Same property, not merely the same city. Coordinate rounding stays inside this.
 _PROPERTY_KM = 2.0
+_UNAMBIGUOUS_CITY = (
+    "room rates require an unambiguous city; "
+    "use City, an ISO country (Paris, FR), or an English name (Paris, France)"
+)
 
 
 def _payload(report):
@@ -134,8 +144,41 @@ def _near_places(hits, groups, point: tuple[float, float]) -> list[list[int]]:
 
 def _city_label(value: str) -> str:
     parts = value.split(",", 1)
-    city = canonical_city_name(parts[0])
+    city = _normalized_name(canonical_city_name(parts[0]))
     return city if len(parts) == 1 else f"{city}, {parts[1].strip().casefold()}"
+
+
+# The catalogue spells the Missouri city "St Louis" and a Senegal city "Saint Louis".
+_CITY_SPELLING = {"saint louis": "st louis"}
+
+
+def _catalogue_hits(city: str) -> list:
+    wanted = _normalized_name(canonical_city_name(city))
+    accepted = {wanted, _CITY_SPELLING.get(wanted, wanted)}
+    needles = []
+    for needle in (
+        city,
+        _normalized_name(city),
+        canonical_city_name(city),
+        _CITY_SPELLING.get(wanted),
+    ):
+        if needle and needle not in needles:
+            needles.append(needle)
+    seen = set()
+    hits = []
+    for needle in needles:
+        for airport in lookup_airports(needle, limit=100):
+            if airport.iata in seen:
+                continue
+            if _normalized_name(canonical_city_name(airport.city)) not in accepted:
+                continue
+            seen.add(airport.iata)
+            hits.append(airport)
+    return hits
+
+
+def _named_subdivision(suffix: str) -> bool:
+    return any(phrase in _SUBDIVISION for phrase, _codes in _matched_regions(suffix))
 
 
 def _city_decision(result, offer):
@@ -143,17 +186,20 @@ def _city_decision(result, offer):
     location = result["query"]["location"].strip()
     parts = [part.strip() for part in location.split(",")]
     if len(parts) > 2 or not parts[0]:
-        return None, "room rates require an unambiguous city; use City or City, ISO country"
+        return None, _UNAMBIGUOUS_CITY
     city = parts[0]
-    country = parts[1].upper() if len(parts) == 2 else None
-    hits = [
-        airport
-        for airport in lookup_airports(city, limit=100)
-        if canonical_city_name(airport.city) == canonical_city_name(city)
-        and (country is None or airport.country == country)
-    ]
+    hits = _catalogue_hits(city)
+    country = (
+        _country_for_city(parts[1], {airport.country for airport in hits})
+        if len(parts) == 2
+        else None
+    )
+    if len(parts) == 2 and country is None:
+        return None, _UNAMBIGUOUS_CITY
+    if country is not None:
+        hits = [airport for airport in hits if airport.country == country]
     if not hits:
-        return None, "room rates require an unambiguous city; use City or City, ISO country"
+        return None, _UNAMBIGUOUS_CITY
     groups = _places(hits)
     point = _point(offer)
     if len(groups) == 1:
@@ -162,6 +208,8 @@ def _city_decision(result, offer):
             return None, "resolved place differs from the named city; room-rate city is unproven"
         return f"{hits[0].city}, {country}" if country else hits[0].city, point
     if point and len(_near_places(hits, groups, point)) == 1:
+        return location, point
+    if len(parts) == 2 and _named_subdivision(parts[1]):
         return location, point
     names = ", ".join(sorted({hits[group[0]].iata for group in groups}))
     return None, (
