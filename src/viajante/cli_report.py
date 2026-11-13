@@ -21,6 +21,7 @@ from viajante.models import (
     ExploreReport,
     FlexSearchReport,
     FlightOffer,
+    FlightQuery,
     HiddenCityReport,
     HotelOffer,
     HotelQuery,
@@ -210,6 +211,8 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
         if not (
             isinstance(outbound, QuerySuccess)
             and isinstance(inbound, QuerySuccess)
+            and isinstance(outbound.query, FlightQuery)
+            and isinstance(inbound.query, FlightQuery)
             and outbound.query.origin == inbound.query.destination
             and outbound.query.destination == inbound.query.origin
             and outbound.offers

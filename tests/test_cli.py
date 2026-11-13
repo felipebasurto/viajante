@@ -1121,6 +1121,32 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("LAX->NRT 75 USD fare", fare)
         self.assertIn("= 155 USD", fare)
 
+    def test_best_pair_only_sums_two_one_ways(self) -> None:
+        one = FlightQuery("JFK", "LHR", date(2027, 3, 15))
+        multi = MultiCity(
+            (
+                FlightLeg("LHR", "NRT", date(2027, 3, 20)),
+                FlightLeg("NRT", "SIN", date(2027, 3, 24)),
+            )
+        )
+        packaged = RoundTrip("LHR", "JFK", date(2027, 4, 1), date(2027, 4, 8))
+        back = FlightQuery("JFK", "LHR", date(2027, 4, 1))
+        for queries in (
+            (
+                QuerySuccess(query=one, raw_count=1, eligible_count=1, offers=(_offer(),)),
+                QuerySuccess(query=multi, raw_count=1, eligible_count=1, offers=(_offer(),)),
+            ),
+            (
+                QuerySuccess(query=packaged, raw_count=1, eligible_count=1, offers=(_offer(),)),
+                QuerySuccess(query=back, raw_count=1, eligible_count=1, offers=(_offer(),)),
+            ),
+        ):
+            printed = _rendered(
+                SearchReport(searched_at=SEARCHED_AT, currency="USD", queries=queries)
+            )
+            self.assertNotIn("Best pair", printed)
+            self.assertIn("JFK", printed)
+
     def test_flights_help_preserves_examples_epilog(self) -> None:
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
