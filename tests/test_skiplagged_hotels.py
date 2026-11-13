@@ -429,6 +429,27 @@ class SkiplaggedNameLookupTests(unittest.TestCase):
                     (25584, "Czech Inn"),
                 )
 
+    def test_slug_region_wins_when_the_catalogue_city_is_another_country(self) -> None:
+        page = self._city_page("saint-louis-missouri", "Saint Louis")
+        self.assertEqual(
+            resolve_hotel_id(
+                "Czech Inn",
+                "Saint Louis, Missouri",
+                *self.DAY,
+                adults=3,
+                rpc=_routing_rpc(page, {}, []),
+            ),
+            (25584, "Czech Inn"),
+        )
+        with self.assertRaisesRegex(SkiplaggedNoHotels, "different country"):
+            resolve_hotel_id(
+                "Czech Inn",
+                "Saint Louis, SN",
+                *self.DAY,
+                adults=3,
+                rpc=_routing_rpc(page, {}, []),
+            )
+
     def test_slug_region_cannot_contradict_the_requested_country(self) -> None:
         cases = (
             ("Paris, FR", "paris-texas", "Paris", "different country"),

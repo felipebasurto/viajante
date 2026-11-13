@@ -661,6 +661,14 @@ def resolve_hotel_id(
         options: Optional[set[str]] = None
         for _phrase, codes in matched:
             options = set(codes) if options is None else options & set(codes)
+        hit_countries = {airport.country for airport in city_hits}
+        if (
+            options
+            and hit_countries
+            and not options & hit_countries
+            and requested_country in options
+        ):
+            city_hits = ()
         if options is not None and requested_country not in options:
             raise SkiplaggedNoHotels(
                 f"Skiplagged resolved {city!r} to a different country; "
