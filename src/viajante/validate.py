@@ -183,7 +183,13 @@ def _query_dates(
     return tuple(dates)
 
 
+def _nothing_selected(constraint: str) -> ConstraintCheck:
+    return _status(constraint, "unknown", "no owned offers selected")
+
+
 def _evidence_check(legs: Sequence[Mapping[str, object]]) -> ConstraintCheck:
+    if not legs:
+        return _nothing_selected("evidence")
     if any(row.get("status") != "ok" for row in legs):
         bad = ", ".join(
             f"legs[{index}] status {row.get('status')!r}"
@@ -221,6 +227,8 @@ def _evidence_check(legs: Sequence[Mapping[str, object]]) -> ConstraintCheck:
 def _query_binding_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected("query_binding")
     for query, offer in selected:
         evidence_value = offer.get("evidence")
         if evidence_value is None:
@@ -252,6 +260,8 @@ def _endpoint(query: Mapping[str, object], *, end: bool) -> object:
 def _route_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected("route_continuity")
     for (left, _), (right, _) in zip(selected, selected[1:], strict=False):
         destination = _endpoint(left, end=True)
         origin = _endpoint(right, end=False)
@@ -403,7 +413,7 @@ def _lead_clock_check(
 def _segment_airport_check(
     segments: Optional[Sequence[Mapping[str, object]]],
 ) -> ConstraintCheck:
-    if segments is None:
+    if not segments:
         return _status("no_airport_changes", "unknown", "segment airports are missing")
     for left, right in zip(segments, segments[1:], strict=False):
         destination = left.get("destination")
@@ -455,6 +465,8 @@ def _operator_check(
 def _overnight_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected("no_overnight")
     for _query, offer in selected:
         journeys = _journey_legs(offer)
         if not journeys:
@@ -491,6 +503,8 @@ def _layover_check(
     bound: float,
     maximum: bool,
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected(constraint)
     values: list[float] = []
     for query, offer in selected:
         if not _complete_journeys(query, offer):
@@ -534,6 +548,8 @@ def _baggage_check(
     requested: int,
     field: str,
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected(constraint)
     for _query, offer in selected:
         value = offer.get(field)
         if value is None:
@@ -686,16 +702,20 @@ def validate_itinerary(
         selected, currency
     )
     checks.append(currency_check)
-    journeys_complete = all(_complete_journeys(query, offer) for query, offer in selected)
-    checks.append(
-        _status(
-            "journey_completeness",
-            "pass" if journeys_complete else "unknown",
-            "all queried journeys are present"
-            if journeys_complete
-            else "queried journeys are missing",
+    if not selected:
+        journeys_complete = False
+        checks.append(_nothing_selected("journey_completeness"))
+    else:
+        journeys_complete = all(_complete_journeys(query, offer) for query, offer in selected)
+        checks.append(
+            _status(
+                "journey_completeness",
+                "pass" if journeys_complete else "unknown",
+                "all queried journeys are present"
+                if journeys_complete
+                else "queried journeys are missing",
+            )
         )
-    )
     journey_count, segment_count, segments = _segment_metrics(selected)
     dates = _query_dates(selected)
     required_count = None
@@ -720,7 +740,7 @@ def validate_itinerary(
         end = _iso_date(scenario["travel_end"], role="travel_end")
         if end < start:
             raise ValueError("travel_end must not be before travel_start")
-        if dates is None:
+        if not dates:
             checks.append(_status("travel_window", "unknown", "query dates are missing"))
         elif any(day < start or day > end for day in dates):
             checks.append(
@@ -803,6 +823,8 @@ def validate_itinerary(
         maximum = _integer(scenario["max_stops"], role="max_stops")
         status = "pass"
         detail = "owned stop counts satisfy the bound"
+        if not selected:
+            status, detail = "unknown", "no owned offers selected"
         for _query, offer in selected:
             stops = offer.get("stops_count")
             if not isinstance(stops, int):
@@ -853,6 +875,8 @@ def validate_itinerary(
     ):
         status = "pass"
         detail = "every offer carries owned URL evidence"
+        if not selected:
+            status, detail = "unknown", "no owned offers selected"
         for _query, offer in selected:
             evidence_value = offer.get("evidence")
             if evidence_value is None:

@@ -439,6 +439,31 @@ class ValidateItineraryTests(unittest.TestCase):
         report = validate_itinerary([row], {"minimum_savings": 200}, currency="USD")
         self.assertEqual(_status(report, "minimum_savings"), "unknown")
 
+    def test_empty_selection_does_not_pass(self) -> None:
+        report = validate_itinerary(
+            [],
+            {
+                "depart_after": "09:00",
+                "arrive_before": "18:00",
+                "max_segments": 2,
+                "max_stops": 1,
+                "min_layover": 1,
+                "max_layover": 4,
+                "bags": 1,
+                "carry_on": 1,
+                "no_airport_changes": True,
+                "no_overnight": True,
+                "no_consecutive_same_operator": True,
+                "require_reproducible": True,
+                "travel_start": "2026-10-01",
+                "travel_end": "2026-10-15",
+            },
+            currency="USD",
+        )
+        self.assertIsNone(report.feasible)
+        passed = [check.constraint for check in report.checks if check.status == "pass"]
+        self.assertEqual(passed, [])
+
     def test_route_break_fails(self) -> None:
         first = _row(
             "JFK",
