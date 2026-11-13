@@ -36,6 +36,7 @@ from viajante.models import (
     SearchErrorCode,
     normalize_currency,
 )
+from viajante.orchestration import classify_failure
 from viajante.ratelimit import (
     SKIPLAGGED_RATE_LIMIT_FILE,
     note_rate_limited,
@@ -469,6 +470,8 @@ def parse_skiplagged_offers(
 
 
 def _classify(exc: BaseException) -> SearchError:
+    if isinstance(exc, SearchDeadline):
+        return classify_failure(exc)
     if isinstance(exc, SkiplaggedRateLimited):
         return SearchError(
             code=SearchErrorCode.BLOCKED,
@@ -566,8 +569,6 @@ def search_hidden_city(
             departure_date=departure_date,
             return_date=return_date,
         )
-    except SearchDeadline:
-        raise
     except Exception as exc:
         error = _classify(exc)
     else:

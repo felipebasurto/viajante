@@ -561,12 +561,14 @@ class HiddenCityCliTests(unittest.TestCase):
 
 
 class HiddenCityDeadlineTests(unittest.TestCase):
-    def test_deadline_propagates_instead_of_becoming_a_fetch_failure(self) -> None:
+    def test_deadline_is_recorded_instead_of_becoming_a_fetch_failure(self) -> None:
         def rpc(url, payload, headers):
             raise SearchDeadline()
 
-        with self.assertRaises(SearchDeadline):
-            search_hidden_city("JFK", "MIA", FUTURE, rpc=rpc)
+        report = search_hidden_city("JFK", "MIA", FUTURE, rpc=rpc)
+        self.assertIsNotNone(report.error)
+        self.assertEqual(report.error.code, SearchErrorCode.DEADLINE)
+        self.assertNotEqual(report.error.code, SearchErrorCode.FETCH_FAILED)
 
 
 class HiddenCitySelectionTests(unittest.TestCase):
