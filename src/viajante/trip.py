@@ -30,7 +30,7 @@ from viajante.models import (
     TripTotal,
     format_money,
 )
-from viajante.quote import first_origin_iata, resolve_quote_currency
+from viajante.quote import resolve_trips_currency
 
 
 def trip_date_span(query: Trip) -> tuple[date, date]:
@@ -203,7 +203,7 @@ def search_trip(
             "search_trip cannot combine child or infant occupancy with hotels; "
             "hotel occupancy is adults-only. Use search_flights, then search_hotels."
         )
-    currency = resolve_quote_currency(currency, first_origin_iata(trips[0]))
+    currency = resolve_trips_currency(currency, trips)
     flights = search_flights(
         overlay_trip_fields(
             trips,

@@ -94,9 +94,9 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    first_origin_iata,
     resolve_baggage_buffer,
     resolve_quote_currency,
+    resolve_trips_currency,
 )
 from viajante.recheck import run_recheck_cli
 from viajante.runtime import package_version
@@ -259,7 +259,7 @@ def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dic
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
     trips = as_trips(plan)
     trips = expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
-    _resolve_quote_from_args(args, first_origin_iata(trips[0]))
+    _resolve_quote_from_args(args, trips=trips)
     return trips, shop
 
 
@@ -804,11 +804,19 @@ def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -
     )
 
 
-def _resolve_quote_from_args(args: argparse.Namespace, origin: Optional[str]) -> None:
+def _resolve_quote_from_args(
+    args: argparse.Namespace,
+    origin: Optional[str] = None,
+    trips: Optional[Sequence[object]] = None,
+) -> None:
     if getattr(args, "baggage_buffer", None) is not None and args.baggage_buffer < 0:
         raise ValueError("--baggage-buffer must not be negative")
     args.country = normalize_country(getattr(args, "country", None))
-    args.currency = resolve_quote_currency(getattr(args, "currency", None), origin)
+    explicit = getattr(args, "currency", None)
+    if trips is not None:
+        args.currency = resolve_trips_currency(explicit, trips)
+    else:
+        args.currency = resolve_quote_currency(explicit, origin)
     args.baggage_buffer = resolve_baggage_buffer(
         getattr(args, "baggage_buffer", None), args.currency
     )

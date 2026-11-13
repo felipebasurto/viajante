@@ -20,6 +20,7 @@ from viajante.cli_report import (
     _print_flex_report,
     _print_report,
 )
+from viajante.mcp_handlers import search_flights_tool, search_trip_tool
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
@@ -54,6 +55,7 @@ from viajante.models import (
 from viajante.models_flights import Requirements
 from viajante.recommend import recommend_offers
 from viajante.storage import write_json_atomic
+from viajante.trip import search_trip
 
 FUTURE_DATE = date.today() + timedelta(days=30)
 PAST_DATE = date.today() - timedelta(days=1)
@@ -347,6 +349,52 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["currency"], "USD")
         self.assertEqual(search.call_args.kwargs["country"], "US")
+
+    def test_mixed_origin_routes_ask_for_currency_before_search(self) -> None:
+        day = FUTURE_DATE.isoformat()
+        mixed = [f"JFK-LHR:{day}", f"NRT-LHR:{day}"]
+        err = io.StringIO()
+        with patch("viajante.cli.search_flights") as search, redirect_stderr(err):
+            code = main(["flights", *mixed])
+        self.assertEqual(code, 1)
+        search.assert_not_called()
+        self.assertIn("currency", err.getvalue().casefold())
+        with (
+            patch("viajante.cli.search_flights", return_value=_report()) as named,
+            patch("viajante.cli._print_report"),
+        ):
+            code = main(["flights", *mixed, "--currency", "USD"])
+        self.assertEqual(code, 0)
+        self.assertEqual(named.call_args.kwargs["currency"], "USD")
+        with (
+            patch("viajante.cli.search_flights", return_value=_report()) as same,
+            patch("viajante.cli._print_report"),
+        ):
+            code = main(["flights", f"JFK-LHR:{day}", f"LAX-NRT:{day}"])
+        self.assertEqual(code, 0)
+        self.assertEqual(same.call_args.kwargs["currency"], "USD")
+        stay = HotelQuery("London", FUTURE_DATE, FUTURE_DATE + timedelta(days=2))
+        with patch("viajante.trip.search_flights") as library:
+            with self.assertRaises(ValueError) as caught:
+                search_trip(
+                    (
+                        FlightQuery("JFK", "LHR", FUTURE_DATE),
+                        FlightQuery("NRT", "LHR", FUTURE_DATE),
+                    ),
+                    stay,
+                )
+        library.assert_not_called()
+        self.assertIn("currency", str(caught.exception).casefold())
+        with patch("viajante.mcp_handlers.search_flights") as flights:
+            with self.assertRaises(ValueError) as caught:
+                search_flights_tool(mixed)
+        flights.assert_not_called()
+        self.assertIn("currency", str(caught.exception).casefold())
+        with patch("viajante.trip.search_flights") as trip_flights:
+            with self.assertRaises(ValueError) as caught:
+                search_trip_tool(mixed, "London")
+        trip_flights.assert_not_called()
+        self.assertIn("currency", str(caught.exception).casefold())
 
     def test_proxy_reaches_search(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
