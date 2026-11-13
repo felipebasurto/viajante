@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import _isolate  # noqa: F401
+from viajante.control import SearchControl, SearchDeadline, active
 from viajante.google_flights import GoogleFlightsMarkupError
 from viajante.google_flights_detail import (
     CONSENT_SELECTORS,
@@ -43,12 +44,13 @@ class _ConsentPage:
     def __init__(self, present: set[str]) -> None:
         self.present = present
         self.clicks: list[str] = []
+        self.waits: list[int] = []
 
     def locator(self, selector: str) -> _ConsentLocator:
         return _ConsentLocator(self, selector)
 
-    def wait_for_timeout(self, _ms: int) -> None:
-        return None
+    def wait_for_timeout(self, ms: int) -> None:
+        self.waits.append(ms)
 
 
 class ConsentIsRejectOnly(unittest.TestCase):
@@ -65,6 +67,24 @@ class ConsentIsRejectOnly(unittest.TestCase):
         GoogleFlightsSource._dismiss_consent(page)
         self.assertEqual(page.clicks, [])
 
+    def test_a_spent_deadline_is_not_swallowed_before_consent_settles(self) -> None:
+        clock = {"now": 0.0}
+        control = SearchControl(deadline_seconds=1, clock=lambda: clock["now"])
+        clock["now"] = 5.0
+        page = _ConsentPage({'text="Reject all"'})
+        with active(control), self.assertRaises(SearchDeadline):
+            GoogleFlightsSource._dismiss_consent(page)
+        self.assertEqual(page.clicks, [])
+        self.assertEqual(page.waits, [])
+
+    def test_consent_settle_is_cut_to_the_time_left(self) -> None:
+        clock = {"now": 0.0}
+        control = SearchControl(deadline_seconds=0.4, clock=lambda: clock["now"])
+        page = _ConsentPage(set())
+        with active(control):
+            GoogleFlightsSource._dismiss_consent(page)
+        self.assertEqual(page.waits, [400])
+
 
 class _ReadyLocator:
     def __init__(self, page: "_DriftPage") -> None:
@@ -76,6 +96,8 @@ class _ReadyLocator:
 
     def wait_for(self, *, timeout: int) -> None:
         self._page.waits.append(timeout)
+        if self._page.on_wait is not None:
+            self._page.on_wait()
         appears_after = self._page.results_appear_after
         if appears_after is None or len(self._page.waits) < appears_after:
             raise self._page.timeout_error()
@@ -84,9 +106,16 @@ class _ReadyLocator:
 class _DriftPage:
     url = "https://www.google.com/travel/flights"
 
-    def __init__(self, *, ready_state: str, results_appear_after: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ready_state: str,
+        results_appear_after: int | None = None,
+        on_wait=None,
+    ) -> None:
         self.ready_state = ready_state
         self.results_appear_after = results_appear_after
+        self.on_wait = on_wait
         self.waits: list[int] = []
         self.closed = False
 
@@ -106,6 +135,21 @@ class _DriftPage:
 
     def close(self) -> None:
         self.closed = True
+
+
+class DeadlineCutWaits(unittest.TestCase):
+    def test_board_reload_after_the_deadline_is_not_markup_drift(self) -> None:
+        clock = {"now": 0.0}
+
+        class Page:
+            def goto(self, _url, **_kwargs):
+                clock["now"] = 30.0
+                raise TimeoutError("navigation timed out")
+
+        source = GoogleFlightsSource(Path("unused"), session=MagicMock(), currency="USD")
+        control = SearchControl(deadline_seconds=5, clock=lambda: clock["now"])
+        with active(control), self.assertRaises(SearchDeadline):
+            source._multi_reset(Page(), "https://www.google.com/travel/flights")
 
 
 @unittest.skipIf(PlaywrightTimeout is None, "the browser extra is not installed")
@@ -141,3 +185,29 @@ class DriftIsNotSlowness(unittest.TestCase):
         page = _DriftPage(ready_state="loading", results_appear_after=2)
         self.assertEqual(self._fetch(page), "<main>fixture</main>")
         self.assertEqual(page.waits, [READY_PROBE_MS, PAGE_TIMEOUT_MS])
+
+    def test_deadline_shortened_probe_on_a_complete_page_is_not_markup_drift(self) -> None:
+        clock = {"now": 0.0}
+        control = SearchControl(deadline_seconds=5, clock=lambda: clock["now"])
+
+        def expire() -> None:
+            clock["now"] = 10.0
+
+        page = _DriftPage(ready_state="complete", on_wait=expire)
+        with active(control), self.assertRaises(SearchDeadline):
+            self._fetch(page)
+        self.assertEqual(page.waits, [5_000])
+
+    def test_deadline_during_the_loading_wait_is_not_a_transport_timeout(self) -> None:
+        clock = {"now": 0.0}
+        control = SearchControl(deadline_seconds=30, clock=lambda: clock["now"])
+        page = _DriftPage(ready_state="loading", results_appear_after=99)
+
+        def expire_on_the_second_wait() -> None:
+            if len(page.waits) >= 2:
+                clock["now"] = 100.0
+
+        page.on_wait = expire_on_the_second_wait
+        with active(control), self.assertRaises(SearchDeadline):
+            self._fetch(page)
+        self.assertEqual(page.waits, [READY_PROBE_MS, 30_000])

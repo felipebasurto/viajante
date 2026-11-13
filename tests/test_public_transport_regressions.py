@@ -334,6 +334,24 @@ class PublicTransportRegressions(unittest.TestCase):
                 self.assertIsNone(rate_limit_status())
                 self.assertTrue(page.closed)
 
+    def test_explore_navigation_timeout_past_the_deadline_is_not_retried(self) -> None:
+        clock = {"now": 0.0}
+        gotos = {"n": 0}
+
+        def navigate(_page):
+            gotos["n"] += 1
+            clock["now"] = 100.0
+            raise TimeoutError("navigation timed out")
+
+        page = _ExplorePage("", navigate=navigate)
+        control = SearchControl(deadline_seconds=5, clock=lambda: clock["now"])
+        with active(control):
+            result = search_explore("JFK", DAY, source=self._source(page))
+        self.assertEqual(gotos["n"], 1)
+        assert result.error is not None
+        self.assertEqual(result.error.code, SearchErrorCode.DEADLINE)
+        self.assertTrue(page.closed)
+
     def test_explore_poll_observes_deadline_and_never_claims_provider_empty(self):
         clock = SimpleNamespace(now=0.0)
 
