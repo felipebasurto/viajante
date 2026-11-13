@@ -908,6 +908,27 @@ class UnknownShapeTests(unittest.TestCase):
                 with self.assertRaises(EnvelopeShapeError):
                     stamp_search(dict(payload))
 
+    def test_each_explore_destination_is_counted_by_its_own_empty_reason(self) -> None:
+        def stamped(destinations):
+            return stamp_search({"destinations": destinations}, now=NOW)
+
+        self.assertEqual(
+            stamped([{"iata": "LHR", "empty_reason": "provider_empty"}])["empty_reason"],
+            "provider_empty",
+        )
+        self.assertEqual(
+            stamped([{"iata": "CDG", "empty_reason": "filtered_out"}])["empty_reason"],
+            "filtered_out",
+        )
+        self.assertEqual(stamped([{"iata": "SIN"}])["empty_reason"], "not_loaded")
+        month = stamped(
+            [{"iata": "NRT", "empty_reason": "not_loaded", "shopped_date": "2026-11-01"}]
+        )
+        self.assertEqual(month["empty_reason"], "not_loaded")
+        self.assertEqual(month["destinations"][0]["shopped_date"], "2026-11-01")
+        with self.assertRaises(EnvelopeShapeError):
+            stamped([{"iata": "GRU", "empty_reason": "bogus"}])
+
 
 class VerifyAnswerEnvelopeTests(unittest.TestCase):
     def setUp(self) -> None:

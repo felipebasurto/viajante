@@ -212,12 +212,13 @@ def _walk(node: object, tally: _Tally, provider: str = "google") -> None:
             if isinstance(row, dict):
                 _date_row(row, tally, provider)
     elif isinstance(node.get("destinations"), list):
-        priced = sum(
-            isinstance(row, Mapping) and row.get("price") is not None
-            for row in node["destinations"]
-        )
-        tally.usable += priced
-        tally.not_loaded += len(node["destinations"]) - priced
+        for row in node["destinations"]:
+            if isinstance(row, Mapping) and row.get("price") is not None:
+                tally.usable += 1
+            elif isinstance(row, Mapping) and row.get("empty_reason"):
+                _count_empty(tally, row.get("empty_reason"))
+            else:
+                tally.not_loaded += 1
         if not node["destinations"] and not node.get("error") and not node.get("pricing_errors"):
             _count_empty(tally, node.get("empty_reason") or "filtered_out")
         for row in node.get("pricing_errors") or ():
