@@ -1938,6 +1938,23 @@ class HotelCliTests(unittest.TestCase):
                     self.assertEqual(data["schema_version"], 2)
                     self.assertEqual(data["price_basis"], "total_stay")
 
+    def test_hotel_rooms_bad_date_names_the_field(self) -> None:
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = main(["hotel-rooms", "15 March", "2027-03-20", "--hotel-id", "1"])
+        self.assertEqual(code, 1)
+        self.assertIn("check-in", err.getvalue())
+        self.assertIn("YYYY-MM-DD", err.getvalue())
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = main(
+                ["hotel-rooms", "2027-03-15", "next-friday", "--name", "Inn", "--city", "Lisbon"]
+            )
+        self.assertEqual(code, 1)
+        text = err.getvalue()
+        self.assertIn("check-out", text)
+        self.assertIn("YYYY-MM-DD", text)
+
 
 class TripCliTests(unittest.TestCase):
     return_date = FUTURE_DATE + timedelta(days=4)
