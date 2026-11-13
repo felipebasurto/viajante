@@ -126,7 +126,7 @@ def run_attempts(
         except Exception as exc:
             failure = classify(exc)
             on_failure(failure)
-            if give_up(exc, failure):
+            if isinstance(exc, SearchDeadline) or give_up(exc, failure):
                 break
             if index + 1 < MAX_ATTEMPTS:
                 delay = backoff(index)

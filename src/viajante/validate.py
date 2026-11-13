@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timezone
 from typing import Mapping, Optional, Sequence
 
@@ -48,6 +49,8 @@ def _number(value: object, *, role: str, minimum: float = 0.0) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{role} must be a number")
     number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{role} must be a finite number")
     if number < minimum:
         raise ValueError(f"{role} must be at least {minimum:g}")
     return number
@@ -180,7 +183,13 @@ def _query_dates(
     return tuple(dates)
 
 
+def _nothing_selected(constraint: str) -> ConstraintCheck:
+    return _status(constraint, "unknown", "no owned offers selected")
+
+
 def _evidence_check(legs: Sequence[Mapping[str, object]]) -> ConstraintCheck:
+    if not legs:
+        return _nothing_selected("evidence")
     if any(row.get("status") != "ok" for row in legs):
         bad = ", ".join(
             f"legs[{index}] status {row.get('status')!r}"
@@ -218,6 +227,8 @@ def _evidence_check(legs: Sequence[Mapping[str, object]]) -> ConstraintCheck:
 def _query_binding_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected("query_binding")
     for query, offer in selected:
         evidence_value = offer.get("evidence")
         if evidence_value is None:
@@ -233,12 +244,27 @@ def _query_binding_check(
     return _status("query_binding", "pass", "every offer matches its evidence query")
 
 
+def _endpoint(query: Mapping[str, object], *, end: bool) -> object:
+    """Airport where this query starts, or where the traveller is when it ends.
+
+    A round trip ends at its origin: the return leg lands there. One-way and
+    multi-city end at the last leg's destination.
+    """
+    legs = _query_legs(query)
+    if not legs:
+        return None
+    leg = legs[-1] if end else legs[0]
+    return leg.get("destination" if end else "origin")
+
+
 def _route_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected("route_continuity")
     for (left, _), (right, _) in zip(selected, selected[1:], strict=False):
-        destination = left.get("destination")
-        origin = right.get("origin")
+        destination = _endpoint(left, end=True)
+        origin = _endpoint(right, end=False)
         if not isinstance(destination, str) or not isinstance(origin, str):
             return _status("route_continuity", "unknown", "query endpoints are missing")
         if destination != origin:
@@ -292,7 +318,12 @@ def _currency_and_totals(
             )
         currencies.append(normalize_currency(value))
         price = offer.get("price")
-        if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+        if (
+            isinstance(price, bool)
+            or not isinstance(price, (int, float))
+            or not math.isfinite(price)
+            or price <= 0
+        ):
             return (
                 None,
                 None,
@@ -301,7 +332,12 @@ def _currency_and_totals(
             )
         prices.append(float(price))
         buffer = offer.get("baggage_buffer", 0)
-        if isinstance(buffer, bool) or not isinstance(buffer, (int, float)) or buffer < 0:
+        if (
+            isinstance(buffer, bool)
+            or not isinstance(buffer, (int, float))
+            or not math.isfinite(buffer)
+            or buffer < 0
+        ):
             raise ValueError("offer baggage_buffer must be a non-negative number")
         ranked.append(float(price) + float(buffer))
     unique = set(currencies)
@@ -342,18 +378,30 @@ def _segment_metrics(
     return journey_count, len(all_segments), tuple(all_segments)
 
 
-def _segment_clock_check(
+def _lead_clock_check(
     constraint: str,
-    segments: Optional[Sequence[Mapping[str, object]]],
+    selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
     *,
     bound: int,
     field: str,
     before: bool,
 ) -> ConstraintCheck:
-    if segments is None:
+    # Same clocks the search keeps: the lead journey's departure and arrival.
+    if not selected or any(not _complete_journeys(query, offer) for query, offer in selected):
         return _status(constraint, "unknown", "individual segment clocks are missing")
-    for segment in segments:
-        value = segment.get(field)
+    for _query, offer in selected:
+        journeys = _journey_legs(offer) or ()
+        raw = journeys[0].get("segments") if journeys else None
+        if raw is None:
+            return _status(constraint, "unknown", "individual segment clocks are missing")
+        rows = tuple(
+            _mapping(item, role="offer.legs[].segments[]")
+            for item in _items(raw, role="offer.legs[].segments")
+        )
+        if not rows:
+            return _status(constraint, "unknown", "individual segment clocks are missing")
+        target = rows[0] if field == "departure" else rows[-1]
+        value = target.get(field)
         minutes = _clock_minutes(value if isinstance(value, str) else None)
         if minutes is None:
             return _status(constraint, "unknown", f"a segment {field} clock is missing")
@@ -365,7 +413,7 @@ def _segment_clock_check(
 def _segment_airport_check(
     segments: Optional[Sequence[Mapping[str, object]]],
 ) -> ConstraintCheck:
-    if segments is None:
+    if not segments:
         return _status("no_airport_changes", "unknown", "segment airports are missing")
     for left, right in zip(segments, segments[1:], strict=False):
         destination = left.get("destination")
@@ -417,6 +465,8 @@ def _operator_check(
 def _overnight_check(
     selected: Sequence[tuple[Mapping[str, object], Mapping[str, object]]],
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected("no_overnight")
     for _query, offer in selected:
         journeys = _journey_legs(offer)
         if not journeys:
@@ -453,6 +503,8 @@ def _layover_check(
     bound: float,
     maximum: bool,
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected(constraint)
     values: list[float] = []
     for query, offer in selected:
         if not _complete_journeys(query, offer):
@@ -476,7 +528,11 @@ def _layover_check(
             for raw in rows:
                 row = _mapping(raw, role="offer.legs[].layovers[]")
                 hours = row.get("hours")
-                if isinstance(hours, bool) or not isinstance(hours, (int, float)):
+                if (
+                    isinstance(hours, bool)
+                    or not isinstance(hours, (int, float))
+                    or not math.isfinite(hours)
+                ):
                     return _status(constraint, "unknown", "layover hours are missing")
                 values.append(float(hours))
     for value in values:
@@ -492,6 +548,8 @@ def _baggage_check(
     requested: int,
     field: str,
 ) -> ConstraintCheck:
+    if not selected:
+        return _nothing_selected(constraint)
     for _query, offer in selected:
         value = offer.get(field)
         if value is None:
@@ -531,7 +589,8 @@ def _chronological_check(segments, complete):
             return _status("chronological", "fail", "a segment arrives before it departs in UTC")
         if previous is not None and departure is not None and departure < previous:
             return _status("chronological", "fail", "selected segments overlap in UTC")
-        previous = arrival
+        if arrival is not None:
+            previous = arrival
     return _status(
         "chronological",
         "unknown" if unknown else "pass",
@@ -643,16 +702,20 @@ def validate_itinerary(
         selected, currency
     )
     checks.append(currency_check)
-    journeys_complete = all(_complete_journeys(query, offer) for query, offer in selected)
-    checks.append(
-        _status(
-            "journey_completeness",
-            "pass" if journeys_complete else "unknown",
-            "all queried journeys are present"
-            if journeys_complete
-            else "queried journeys are missing",
+    if not selected:
+        journeys_complete = False
+        checks.append(_nothing_selected("journey_completeness"))
+    else:
+        journeys_complete = all(_complete_journeys(query, offer) for query, offer in selected)
+        checks.append(
+            _status(
+                "journey_completeness",
+                "pass" if journeys_complete else "unknown",
+                "all queried journeys are present"
+                if journeys_complete
+                else "queried journeys are missing",
+            )
         )
-    )
     journey_count, segment_count, segments = _segment_metrics(selected)
     dates = _query_dates(selected)
     required_count = None
@@ -677,7 +740,7 @@ def validate_itinerary(
         end = _iso_date(scenario["travel_end"], role="travel_end")
         if end < start:
             raise ValueError("travel_end must not be before travel_start")
-        if dates is None:
+        if not dates:
             checks.append(_status("travel_window", "unknown", "query dates are missing"))
         elif any(day < start or day > end for day in dates):
             checks.append(
@@ -731,9 +794,9 @@ def validate_itinerary(
 
     if "depart_after" in scenario:
         checks.append(
-            _segment_clock_check(
+            _lead_clock_check(
                 "depart_after",
-                segments,
+                selected,
                 bound=_clock(scenario["depart_after"], role="depart_after"),
                 field="departure",
                 before=False,
@@ -741,9 +804,9 @@ def validate_itinerary(
         )
     if "arrive_before" in scenario:
         checks.append(
-            _segment_clock_check(
+            _lead_clock_check(
                 "arrive_before",
-                segments,
+                selected,
                 bound=_clock(scenario["arrive_before"], role="arrive_before"),
                 field="arrival",
                 before=True,
@@ -760,6 +823,8 @@ def validate_itinerary(
         maximum = _integer(scenario["max_stops"], role="max_stops")
         status = "pass"
         detail = "owned stop counts satisfy the bound"
+        if not selected:
+            status, detail = "unknown", "no owned offers selected"
         for _query, offer in selected:
             stops = offer.get("stops_count")
             if not isinstance(stops, int):
@@ -810,6 +875,8 @@ def validate_itinerary(
     ):
         status = "pass"
         detail = "every offer carries owned URL evidence"
+        if not selected:
+            status, detail = "unknown", "no owned offers selected"
         for _query, offer in selected:
             evidence_value = offer.get("evidence")
             if evidence_value is None:
