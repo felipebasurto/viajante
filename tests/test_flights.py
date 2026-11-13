@@ -1094,6 +1094,23 @@ class FlightsOrchestrationTests(unittest.TestCase):
             search_flights(mixed, fetch="sweep", currency="USD")
         self.assertEqual(ctor.call_args.kwargs["currency"], "USD")
 
+    def test_search_rejects_a_same_metro_airport_pair(self) -> None:
+        day = date(2027, 6, 1)
+        metro = FlightQuery("LHR", "LGW", day)
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            with self.assertRaises(ValueError) as caught:
+                search_flights((metro,), fetch="sweep")
+        self.assertIn("origin LHR", str(caught.exception))
+        self.assertIn("destination LGW", str(caught.exception))
+        self.assertIn("same metro LON", str(caught.exception))
+        ctor.assert_not_called()
+        round_trip = RoundTrip("JFK", "EWR", day, date(2027, 6, 8))
+        with patch("viajante.flights.GoogleFlightsHttpSource") as ctor:
+            with self.assertRaises(ValueError) as caught:
+                search_flights((round_trip,), fetch="sweep")
+        self.assertIn("same metro NYC", str(caught.exception))
+        ctor.assert_not_called()
+
     def test_search_stamps_google_flights_urls(self) -> None:
         query = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
         source = FakeSource(

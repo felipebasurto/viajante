@@ -38,6 +38,7 @@ from viajante.flight_routes import (
     _is_route_spec,
     _overlay_carrier_filters,
     _progress_label,
+    _reject_same_metro,
     as_trips,
     drop_excluded_airport_trips,
     expand_nearby_trips,
@@ -176,6 +177,11 @@ def prepare_flight_search(
     """Prepare the same provider request for execution and offline validation."""
     if not queries:
         raise ValueError("at least one query is required")
+    for trip in queries:
+        origin = getattr(trip, "origin", None)
+        destination = getattr(trip, "destination", None)
+        if isinstance(origin, str) and isinstance(destination, str):
+            _reject_same_metro(origin, destination)
     currency = resolve_trips_currency(currency, queries)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
