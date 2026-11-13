@@ -2148,6 +2148,27 @@ class MetroExploreTests(unittest.TestCase):
         self.assertEqual(by_iata["NAP"].price, 40.0)
         self.assertEqual(by_iata["NAP"].origin_airport, "BGY")
 
+    def test_an_unpriced_member_keeps_a_month_not_loaded_row(self) -> None:
+        class Source:
+            def fetch_explore(self, origin, departure_date, **kwargs):
+                return (CompactExplorePlace("FCO", "Rome", "Italy"),)
+
+            def fetch(self, query: FlightQuery):
+                if query.origin == "BGY":
+                    return (_card(price=""),)
+                raise NoFlightsFound()
+
+            def close(self) -> None:
+                return None
+
+        report = search_explore(
+            "MIL", date(2026, 12, 1), days=31, top=5, currency="EUR", source=Source()
+        )
+        fco = next(row for row in report.destinations if row.iata == "FCO")
+        self.assertIsNone(fco.price)
+        self.assertEqual(fco.empty_reason, "not_loaded")
+        self.assertEqual(fco.shopped_date, "2026-12-01")
+
     def test_a_metro_search_stops_when_a_member_is_rate_limited(self):
         class Source:
             def __init__(self) -> None:

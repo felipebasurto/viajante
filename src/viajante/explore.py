@@ -441,10 +441,12 @@ def search_explore(
 def _prefer_destination(
     current: ExploreDestination, candidate: ExploreDestination
 ) -> ExploreDestination:
-    """Cheapest owned fare. An unpriced row does not replace a fare."""
-    if current.price is None:
+    """Cheapest owned fare. An unpriced row keeps a fare and a stated empty reason."""
+    if current.price is not None and (candidate.price is None or candidate.price >= current.price):
+        return current
+    if candidate.price is not None and (current.price is None or candidate.price < current.price):
         return candidate
-    if candidate.price is None or candidate.price >= current.price:
+    if current.empty_reason and not candidate.empty_reason:
         return current
     return candidate
 
