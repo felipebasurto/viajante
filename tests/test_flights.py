@@ -637,6 +637,30 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(by_fare[0].airline, "Ryanair")
         self.assertEqual(by_fare[1].airline, "Legacy")
 
+    def test_rank_keeps_itineraries_that_share_clocks_but_not_the_route(self) -> None:
+        shared = dict(
+            airline="BA",
+            departure="08:00",
+            arrival="16:00",
+            price_text="500 USD",
+            price=500.0,
+            duration="8 h",
+            duration_hours=8.0,
+            stops="1 stop",
+            stops_count=1,
+            baggage_buffer=0,
+            needs_bag_verify=False,
+        )
+        via_london = FlightOffer(
+            **shared, layover_city="London", flight_numbers=("BA178", "BA456")
+        )
+        via_paris = FlightOffer(**shared, layover_city="Paris", flight_numbers=("BA180", "BA790"))
+        ranked = _rank_offers((via_london, via_paris), top=5, sort="fare")
+        self.assertEqual(
+            [offer.flight_numbers for offer in ranked],
+            [("BA178", "BA456"), ("BA180", "BA790")],
+        )
+
     def test_raw_normalized_pairing(self) -> None:
         raw = card(
             airline="Air",
