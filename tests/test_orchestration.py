@@ -4,7 +4,8 @@ import unittest
 from random import Random
 
 import _isolate  # noqa: F401
-from viajante.models import SearchErrorCode
+from viajante.control import SearchCancelled, SearchDeadline
+from viajante.models import SearchError, SearchErrorCode
 from viajante.orchestration import (
     BACKOFF_BASE_SECONDS,
     BACKOFF_JITTER_SECONDS,
@@ -18,6 +19,7 @@ from viajante.orchestration import (
     classify_failure,
     inter_query_delay_seconds,
     retry_backoff_seconds,
+    run_attempts,
     sweep_inter_query_delay_seconds,
 )
 
@@ -92,6 +94,44 @@ class PacingHelperTests(unittest.TestCase):
         self.assertEqual(SWEEP_DELAY_SECONDS, 0.0)
         self.assertEqual(SWEEP_JITTER_SECONDS, 0.0)
         self.assertEqual(sweep_inter_query_delay_seconds(Random(11)), 0.0)
+
+
+class RunAttemptsTests(unittest.TestCase):
+    def test_deadline_is_not_retried_and_cancellation_passes_through(self) -> None:
+        calls = 0
+
+        def attempt():
+            nonlocal calls
+            calls += 1
+            raise SearchDeadline("cut")
+
+        def classify(_exc):
+            return SearchError(code=SearchErrorCode.FETCH_FAILED, message="cut")
+
+        value, failure = run_attempts(
+            attempt,
+            classify=classify,
+            give_up=lambda _exc, _failure: False,
+            backoff=lambda _index: 0,
+            sleep=lambda _delay: None,
+        )
+        self.assertIsNone(value)
+        self.assertEqual(calls, 1)
+        self.assertIsNotNone(failure)
+        assert failure is not None
+        self.assertEqual(failure.code, SearchErrorCode.FETCH_FAILED)
+
+        def cancel():
+            raise SearchCancelled()
+
+        with self.assertRaises(SearchCancelled):
+            run_attempts(
+                cancel,
+                classify=classify,
+                give_up=lambda _exc, _failure: False,
+                backoff=lambda _index: 0,
+                sleep=lambda _delay: None,
+            )
 
 
 if __name__ == "__main__":

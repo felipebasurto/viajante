@@ -1372,8 +1372,8 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
 
 def _run_hotel_rooms(args: argparse.Namespace) -> int:
     try:
-        check_in = date.fromisoformat(args.check_in)
-        check_out = date.fromisoformat(args.check_out)
+        check_in = _parse_iso_date(args.check_in, "check-in")
+        check_out = _parse_iso_date(args.check_out, "check-out")
         if check_in < date.today():
             raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
         report = search_hotel_rooms(
