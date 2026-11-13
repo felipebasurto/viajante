@@ -153,6 +153,12 @@ def _query_row(row: dict, tally: _Tally, provider: str) -> None:
         reason = row.get("empty_reason") or empty_reason_for_rows(row.get("raw_count") or 0)
         _count_empty(tally, reason)
         row["empty_reason"] = reason
+    grid = row.get("nearby_dates")
+    prices = grid.get("prices") if isinstance(grid, Mapping) else None
+    if isinstance(prices, list):
+        for cell in prices:
+            if isinstance(cell, dict):
+                _date_row(cell, tally, provider)
 
 
 def _date_row(row: dict, tally: _Tally, provider: str) -> None:

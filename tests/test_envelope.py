@@ -823,6 +823,63 @@ class LocalToolTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "ok")
 
 
+class NearbyDatesEnvelopeTests(unittest.TestCase):
+    def test_a_priced_nearby_day_is_evidence_when_the_shopped_date_is_empty(self) -> None:
+        payload = stamp_search(
+            {
+                "searched_at": "2026-08-10T10:00:00Z",
+                "queries": [
+                    {
+                        "query": {"origin": "JFK", "destination": "LHR"},
+                        "error": {"code": "no_results", "message": "none"},
+                        "nearby_dates": {
+                            "days": 1,
+                            "prices": [
+                                {
+                                    "status": "empty",
+                                    "price": None,
+                                    "empty_reason": "provider_empty",
+                                    "offset_days": 0,
+                                },
+                                {"status": "ok", "price": 420.0, "offset_days": 1},
+                            ],
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(payload["status"], "ok")
+        self.assertIsNone(payload["empty_reason"])
+        self.assertEqual(payload["completeness"], "complete")
+        self.assertIsNone(payload["error_code"])
+
+    def test_a_failed_nearby_day_keeps_the_envelope_partial(self) -> None:
+        payload = stamp_search(
+            {
+                "searched_at": "2026-08-10T10:00:00Z",
+                "queries": [
+                    {
+                        "query": {"origin": "JFK", "destination": "NRT"},
+                        "offers": [{"price": 800}],
+                        "nearby_dates": {
+                            "prices": [
+                                {"status": "ok", "price": 800},
+                                {
+                                    "status": "error",
+                                    "error": {"code": "blocked", "message": "wall"},
+                                },
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["error_code"], "blocked")
+        self.assertIsNone(payload["empty_reason"])
+
+
 class UnknownShapeTests(unittest.TestCase):
     def test_an_unrecognised_payload_raises_instead_of_reading_as_no_results(self) -> None:
         for payload in (

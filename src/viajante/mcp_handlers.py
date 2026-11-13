@@ -6,13 +6,14 @@ import functools
 import threading
 import time
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, metro_members, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.control import (
     SearchControl,
+    SearchDeadline,
     active,
     check_cancelled,
     current_control,
@@ -73,6 +74,8 @@ from viajante.hotels import (
 )
 from viajante.mcp_errors import SEARCH_IN_PROGRESS_MESSAGE, SearchInProgress
 from viajante.models import FlightCabin, HotelQuery
+from viajante.models_hidden_city import HiddenCityReport
+from viajante.orchestration import classify_failure
 from viajante.points import (
     award_offer_from_mapping,
     compare_award,
@@ -1041,17 +1044,28 @@ def search_hidden_city_tool(
     departure_date = date.fromisoformat(departure)
     back = date.fromisoformat(return_date) if return_date else None
     _reject_past((departure_date,))
-    report = _with_search_lock(
-        lambda: search_hidden_city(
-            origin,
-            destination,
-            departure_date,
-            return_date=back,
-            adults=adults,
-            top=top,
-            currency=currency,
+    try:
+        report = _with_search_lock(
+            lambda: search_hidden_city(
+                origin,
+                destination,
+                departure_date,
+                return_date=back,
+                adults=adults,
+                top=top,
+                currency=currency,
+            )
         )
-    )
+    except SearchDeadline as exc:
+        report = HiddenCityReport(
+            searched_at=datetime.now(timezone.utc),
+            origin=origin,
+            destination=destination,
+            departure_date=departure_date,
+            return_date=back,
+            currency=currency,
+            error=classify_failure(exc),
+        )
     return _searched(reports_payload(report), report)
 
 
