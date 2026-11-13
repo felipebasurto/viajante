@@ -230,9 +230,7 @@ class ValidateItineraryTests(unittest.TestCase):
             evidence_id="later",
             segments=[_segment("LHR", "NRT", departure="03:00", arrival="18:00")],
         )
-        both = validate_itinerary(
-            [connecting, later], {"depart_after": "09:00"}, currency="USD"
-        )
+        both = validate_itinerary([connecting, later], {"depart_after": "09:00"}, currency="USD")
         self.assertEqual(_status(both, "depart_after"), "fail")
 
     def test_fare_total_mismatch_fails(self) -> None:
@@ -285,9 +283,7 @@ class ValidateItineraryTests(unittest.TestCase):
             ],
         )
         layover["offer"]["legs"][0]["layovers"] = [{"hours": float("nan")}]
-        report = validate_itinerary(
-            [layover], {"min_layover": 1, "max_layover": 4}, currency="USD"
-        )
+        report = validate_itinerary([layover], {"min_layover": 1, "max_layover": 4}, currency="USD")
         self.assertEqual(_status(report, "min_layover"), "unknown")
         self.assertEqual(_status(report, "max_layover"), "unknown")
         self.assertIsNone(report.feasible)
