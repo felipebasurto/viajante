@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.cli import main
-from viajante.control import SearchDeadline, current_control
+from viajante.control import SearchCancelled, SearchDeadline, current_control
 from viajante.dates import (
     EMPTY_DAY_MARK,
     MAX_DATE_WINDOW_DAYS,
@@ -206,6 +206,60 @@ class DateSearchTests(unittest.TestCase):
         self.assertEqual(report.days[1].status, "empty")
         self.assertEqual(report.days[2].price, 52.0)
         self.assertTrue(source.closed)
+
+    def test_a_later_round_trip_batch_failure_keeps_days_already_priced(self) -> None:
+        card = _card(price="€410")
+
+        class Transport:
+            def fetch_round_trip_window(self, trips, on_day):
+                on_day(0, (card,))
+                raise RuntimeError("batch broke")
+
+            def fetch(self, trip):
+                raise AssertionError("a round-trip window is one bounded batch")
+
+            def fetch_many(self, trips):
+                raise AssertionError("a round-trip window does not use one-way fetch_many")
+
+            def close(self) -> None:
+                return None
+
+        report = search_dates(
+            "BOS",
+            "LHR",
+            date(2026, 11, 1),
+            date(2026, 11, 2),
+            nights=5,
+            source=Transport(),
+            currency="USD",
+        )
+        self.assertEqual(report.days[0].price, 410.0)
+        self.assertEqual(report.days[0].status, "ok")
+        self.assertEqual(report.days[1].status, "error")
+        self.assertEqual(report.days[1].error.code, SearchErrorCode.FETCH_FAILED)
+
+    def test_a_cancelled_round_trip_window_is_not_stored_as_day_errors(self) -> None:
+        class Transport:
+            def fetch_round_trip_window(self, trips, on_day):
+                on_day(0, (_card(price="€410"),))
+                raise SearchCancelled()
+
+            def fetch(self, trip):
+                raise AssertionError("a round-trip window is one bounded batch")
+
+            def close(self) -> None:
+                return None
+
+        with self.assertRaises(SearchCancelled):
+            search_dates(
+                "BOS",
+                "LHR",
+                date(2026, 11, 1),
+                date(2026, 11, 2),
+                nights=5,
+                source=Transport(),
+                currency="USD",
+            )
 
     def test_rejected_calendar_marks_every_day(self) -> None:
         source = FakeDaySource(error=GoogleFlightsRejected("nope"))
@@ -821,6 +875,18 @@ class CalendarPresentationTests(unittest.TestCase):
         self.assertIn(EMPTY_DAY_MARK, body)
         self.assertNotIn("47", body)
         self.assertIn("1-3 Sep", body)
+
+    def test_week_calendar_keeps_cents_and_wide_fares(self) -> None:
+        lines = format_week_calendar(
+            (
+                DatePriceRow(departure_date=date(2026, 9, 1), price=40.5),
+                DatePriceRow(departure_date=date(2026, 9, 2), price=123456),
+            )
+        )
+        body = "\n".join(lines)
+        self.assertIn("40.5", body)
+        self.assertIn("123456", body)
+        self.assertNotIn("41", body)
 
     def test_sparkline_marks_empty_and_skips_when_nothing_is_priced(self) -> None:
         spark = format_sparkline(
