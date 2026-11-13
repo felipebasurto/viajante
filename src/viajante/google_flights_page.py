@@ -175,13 +175,22 @@ def _ds1_data_in(script: str) -> Optional[list]:
 
 
 def extract_ds1_data(html: str) -> list:
-    """Extract the balanced JSON data array for the page's ds:1 callback."""
+    """Extract the balanced JSON data array for the page's ds:1 callback.
+
+    Inside ``shared_page_tree`` the decode is kept with the tree, so the card
+    parse, the price insight and the alliance echo read one payload.
+    """
+    slot = getattr(_SHARED, "slot", None)
+    if slot is not None and slot[0] is html and len(slot) > 2:
+        return slot[2]
     root = page_tree(html)
     for node in root.css("script"):
         if "ds:1" not in (node.attributes.get("class") or "").split():
             continue
         data = _ds1_data_in(node.text(deep=True))
         if data is not None:
+            if slot is not None and slot[0] is html:
+                slot.append(data)
             return data
     raise CompactParseMiss("Google Flights page has no readable ds:1 payload")
 

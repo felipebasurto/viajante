@@ -93,6 +93,21 @@ class RoundTripPackageCarrierTests(unittest.TestCase):
         self.assertEqual(package.price, "260 €")
         self.assertEqual(package.checked_bags, 0)
 
+    def test_a_missing_flight_number_on_either_leg_stays_unknown(self) -> None:
+        numbered = replace(self._card("Iberia", ("IB",), "100 €"), flight_numbers=("IB321",))
+        unknown = self._card("Air Europa", ("UX",), "200 €")
+        self.assertIsNone(_package_card(numbered, unknown).flight_numbers)
+        self.assertIsNone(_package_card(unknown, numbered).flight_numbers)
+
+    def test_flight_numbers_from_both_legs_stay_in_journey_order(self) -> None:
+        outbound = replace(
+            self._card("Iberia", ("IB",), "100 €"), flight_numbers=("IB321", "IB400")
+        )
+        returned = replace(self._card("Air Europa", ("UX",), "200 €"), flight_numbers=("UX900",))
+        self.assertEqual(
+            _package_card(outbound, returned).flight_numbers, ("IB321", "IB400", "UX900")
+        )
+
 
 class _ExplorePage:
     url = "https://www.google.com/travel/explore"
@@ -333,6 +348,24 @@ class PublicTransportRegressions(unittest.TestCase):
                     search_explore("JFK", DAY, source=self._source(page), cancel=cancel)
                 self.assertIsNone(rate_limit_status())
                 self.assertTrue(page.closed)
+
+    def test_explore_navigation_timeout_past_the_deadline_is_not_retried(self) -> None:
+        clock = {"now": 0.0}
+        gotos = {"n": 0}
+
+        def navigate(_page):
+            gotos["n"] += 1
+            clock["now"] = 100.0
+            raise TimeoutError("navigation timed out")
+
+        page = _ExplorePage("", navigate=navigate)
+        control = SearchControl(deadline_seconds=5, clock=lambda: clock["now"])
+        with active(control):
+            result = search_explore("JFK", DAY, source=self._source(page))
+        self.assertEqual(gotos["n"], 1)
+        assert result.error is not None
+        self.assertEqual(result.error.code, SearchErrorCode.DEADLINE)
+        self.assertTrue(page.closed)
 
     def test_explore_poll_observes_deadline_and_never_claims_provider_empty(self):
         clock = SimpleNamespace(now=0.0)

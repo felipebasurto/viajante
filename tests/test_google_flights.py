@@ -755,6 +755,110 @@ class ShoppingRpcTests(unittest.TestCase):
         self.assertEqual(len(data["legs"]), 2)
         self.assertEqual(data["legs"][1]["arrival"], "19:20")
 
+    def test_round_trip_flight_numbers_cover_both_journeys(self) -> None:
+        day_out = [2026, 10, 9]
+        day_back = [2026, 10, 12]
+        outbound = _live_flight(
+            code="TP",
+            airline="Tap Air Portugal",
+            legs=[
+                _live_leg(
+                    origin="JFK",
+                    origin_name="John F. Kennedy International Airport",
+                    dest="OPO",
+                    dest_name="Francisco Sá Carneiro Airport",
+                    dep=[8, 0],
+                    arr=[9, 10],
+                    minutes=70,
+                    dep_date=day_out,
+                    arr_date=day_out,
+                    number="1013",
+                )
+            ],
+            origin="JFK",
+            dest="OPO",
+            dep_date=day_out,
+            dep=[8, 0],
+            arr_date=day_out,
+            arr=[9, 10],
+            minutes=70,
+        )
+        inbound = _live_flight(
+            code="IB",
+            airline="Iberia",
+            legs=[
+                _live_leg(
+                    origin="OPO",
+                    origin_name="Francisco Sá Carneiro Airport",
+                    dest="JFK",
+                    dest_name="John F. Kennedy International Airport",
+                    dep=[18, 0],
+                    arr=[19, 20],
+                    minutes=80,
+                    dep_date=day_back,
+                    arr_date=day_back,
+                    code="IB",
+                    number="6250",
+                    airline="Iberia",
+                )
+            ],
+            origin="OPO",
+            dest="JFK",
+            dep_date=day_back,
+            dep=[18, 0],
+            arr_date=day_back,
+            arr=[19, 20],
+            minutes=80,
+        )
+        card = parse_shopping_body(
+            _compact_body([[outbound, inbound], [[None, 199], "tok"]]), currency="EUR"
+        )[0]
+        self.assertEqual(card.flight_numbers, ("TP1013", "IB6250"))
+        self.assertEqual(card.airline_codes, ("TP", "IB"))
+
+    def test_a_leg_without_an_ident_does_not_publish_a_partial_number_list(self) -> None:
+        day = [2026, 10, 9]
+        known = _live_leg(
+            origin="JFK",
+            origin_name="John F. Kennedy International Airport",
+            dest="LIS",
+            dest_name="Humberto Delgado Airport",
+            dep=[13, 40],
+            arr=[14, 5],
+            minutes=85,
+            dep_date=day,
+            arr_date=day,
+            number="1013",
+        )
+        unknown = _live_leg(
+            origin="LIS",
+            origin_name="Humberto Delgado Airport",
+            dest="OPO",
+            dest_name="Francisco Sá Carneiro Airport",
+            dep=[16, 0],
+            arr=[17, 5],
+            minutes=65,
+            dep_date=day,
+            arr_date=day,
+            number="1922",
+        )
+        unknown[22] = None
+        flight = _live_flight(
+            code="TP",
+            airline="Tap Air Portugal",
+            legs=[known, unknown],
+            origin="JFK",
+            dest="OPO",
+            dep_date=day,
+            dep=[13, 40],
+            arr_date=day,
+            arr=[17, 5],
+            minutes=205,
+        )
+        card = parse_shopping_body(_compact_body(_priced(flight, 199)), currency="EUR")[0]
+        self.assertIsNone(card.legs[0].segments[1].flight_number)
+        self.assertIsNone(card.flight_numbers)
+
     def test_outbound_only_compact_does_not_invent_a_return_leg(self) -> None:
         # Packaged --trip rt still encodes return_date on the query. If the
         # shopping body only has the outbound flight, we must not fake a return.
