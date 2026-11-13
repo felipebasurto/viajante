@@ -179,9 +179,7 @@ class SkiplaggedFixtureParseTests(unittest.TestCase):
 
         card["attributes"] = []
         card.pop("returnFlight")
-        empty = _offer_from_card(
-            card, departure_date=NOV_17, return_date=None, layover_by_trip={}
-        )
+        empty = _offer_from_card(card, departure_date=NOV_17, return_date=None, layover_by_trip={})
         self.assertIsNone(empty.hidden_city)
 
     def test_hidden_city_is_unknown_when_no_leg_carries_attributes(self) -> None:
