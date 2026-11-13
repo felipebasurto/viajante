@@ -97,7 +97,7 @@ usage: viajante-mcp [--transport {{stdio,streamable-http}}] [--host HOST] [--por
   --port        streamable-http port (default {_DEFAULT_PORT}); the endpoint is /mcp
 
 Install:  npx -y @viajante/mcp   (no Node: uvx --from 'viajante[mcp]' viajante-mcp)
-Checkout: uv sync --extra mcp && viajante-mcp
+Checkout: uv sync --extra mcp && uv run viajante-mcp
 
 Tools: search_flights, get_hotel_details, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, search_split_tickets, lookup_airports,
@@ -927,7 +927,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit(f"viajante-mcp: {exc}") from exc
     except ImportError as exc:
         raise SystemExit(
-            "viajante-mcp requires the mcp extra. Install with: uv sync --extra mcp"
+            "viajante-mcp requires the mcp extra. "
+            "Install with: uv sync --extra mcp. "
+            "Or, with no checkout: uvx --from 'viajante[mcp]' viajante-mcp"
         ) from exc
     server.run(transport=parsed.transport, **_run_options(http=http, host=host, port=port))
 

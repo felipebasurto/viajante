@@ -701,6 +701,15 @@ class GuideTests(_StateDir):
         text = buffer.getvalue()
         for phrase in ("--transport", "--host", "--port", "get_guide", "viajante://guide"):
             self.assertIn(phrase, text)
+        self.assertIn("uv sync --extra mcp && uv run viajante-mcp", text)
+
+    def test_missing_mcp_extra_names_the_checkout_and_uvx_forms(self) -> None:
+        with patch.object(mcp_server, "build_server", side_effect=ImportError("mcp")):
+            with self.assertRaises(SystemExit) as caught:
+                mcp_server.main([])
+        text = str(caught.exception)
+        self.assertIn("uv sync --extra mcp", text)
+        self.assertIn("uvx --from 'viajante[mcp]' viajante-mcp", text)
 
 
 @NEEDS_SDK
