@@ -651,9 +651,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             baggage_buffer=0,
             needs_bag_verify=False,
         )
-        via_london = FlightOffer(
-            **shared, layover_city="London", flight_numbers=("BA178", "BA456")
-        )
+        via_london = FlightOffer(**shared, layover_city="London", flight_numbers=("BA178", "BA456"))
         via_paris = FlightOffer(**shared, layover_city="Paris", flight_numbers=("BA180", "BA790"))
         ranked = _rank_offers((via_london, via_paris), top=5, sort="fare")
         self.assertEqual(
@@ -1079,9 +1077,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
             }
         )
         with patch("viajante.flights.GoogleFlightsHttpSource", return_value=source):
-            report = search_flights(
-                (trip,), fetch="sweep", currency="USD", max_duration_hours=8
-            )
+            report = search_flights((trip,), fetch="sweep", currency="USD", max_duration_hours=8)
         result = report.queries[0]
         assert isinstance(result, QuerySuccess)
         self.assertEqual([offer.price for offer in result.offers], [400.0])

@@ -399,8 +399,7 @@ def _offer_completeness(
     if len(legs) > 1:
         layovers_known = journeys_complete and all(
             leg.segments
-            and sum(_located_layover(layover) for layover in leg.layovers)
-            >= len(leg.segments) - 1
+            and sum(_located_layover(layover) for layover in leg.layovers) >= len(leg.segments) - 1
             for leg in legs
         )
     else:
