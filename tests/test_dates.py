@@ -876,6 +876,18 @@ class CalendarPresentationTests(unittest.TestCase):
         self.assertNotIn("47", body)
         self.assertIn("1-3 Sep", body)
 
+    def test_week_calendar_keeps_cents_and_wide_fares(self) -> None:
+        lines = format_week_calendar(
+            (
+                DatePriceRow(departure_date=date(2026, 9, 1), price=40.5),
+                DatePriceRow(departure_date=date(2026, 9, 2), price=123456),
+            )
+        )
+        body = "\n".join(lines)
+        self.assertIn("40.5", body)
+        self.assertIn("123456", body)
+        self.assertNotIn("41", body)
+
     def test_sparkline_marks_empty_and_skips_when_nothing_is_priced(self) -> None:
         spark = format_sparkline(
             (

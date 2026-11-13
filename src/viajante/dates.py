@@ -93,15 +93,25 @@ def _week_span_label(start: date, end: date) -> str:
     return f"{_english_day_label(start)}-{_english_day_label(end)}"
 
 
+def _owned_price_text(price: float) -> str:
+    """The stored fare, including cents. Whole amounts stay whole."""
+    return f"{price:.3f}".rstrip("0").rstrip(".")
+
+
 def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
     """English week lines of owned daily prices. Empty or missing days are ·."""
     if not days:
         return ()
     by_day = {row.departure_date: row for row in days}
+    width = _CELL_WIDTH
+    for row in by_day.values():
+        price = row.price
+        if price is not None and price > 0:
+            width = max(width, len(_owned_price_text(price)))
     start = min(by_day)
     end = max(by_day)
     first_monday = date.fromordinal(start.toordinal() - start.weekday())
-    header = "  " + " ".join(f"{name:>{_CELL_WIDTH}}" for name in _WEEKDAYS)
+    header = "  " + " ".join(f"{name:>{width}}" for name in _WEEKDAYS)
     lines = [header]
     cursor = first_monday
     while cursor <= end:
@@ -110,15 +120,15 @@ def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
         for offset in range(7):
             day = date.fromordinal(cursor.toordinal() + offset)
             if day < start or day > end:
-                cells.append(" " * _CELL_WIDTH)
+                cells.append(" " * width)
                 continue
             in_window = True
             row = by_day.get(day)
             price = None if row is None else row.price
             if price is None or price <= 0:
-                cells.append(f"{EMPTY_DAY_MARK:>{_CELL_WIDTH}}")
+                cells.append(f"{EMPTY_DAY_MARK:>{width}}")
             else:
-                cells.append(f"{price:>{_CELL_WIDTH}.0f}")
+                cells.append(f"{_owned_price_text(price):>{width}}")
         if in_window:
             week_end = date.fromordinal(cursor.toordinal() + 6)
             label = _week_span_label(max(cursor, start), min(week_end, end))
