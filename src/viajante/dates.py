@@ -1214,7 +1214,7 @@ def _sweep_per_day(
         try:
             checkpoint()
             window([query for _day, query in day_queries], on_day)
-        except SearchDeadline as exc:
+        except Exception as exc:
             rows.extend(row_for(day, query, exc) for day, query in day_queries[len(rows) :])
         return tuple(rows)
 
