@@ -286,9 +286,11 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     """
     if "deadline_seconds" in kwargs and kwargs["deadline_seconds"] is None:
         kwargs["deadline_seconds"] = _ENV_DEADLINE
+    # Tools that take deadline_seconds pass it through; the env must not cap that value.
+    inherited = None if "deadline_seconds" in kwargs else _ENV_DEADLINE
     loop = asyncio.get_running_loop()
     relay = _progress_relay(loop)
-    control = SearchControl(progress=relay)
+    control = SearchControl(progress=relay, deadline_seconds=inherited)
     finished = threading.Event()
     if not _SEARCH_BUSY.acquire(blocking=False):
         holder = _CURRENT[0] if _CURRENT else None
@@ -765,7 +767,12 @@ def build_server():
         """
 
     @tool("Look up airports", lookup_airports_tool, network=False, envelope=False)
-    def lookup_airports(): ...
+    def lookup_airports():
+        """Offline. query is a city name or an IATA code (JFK, LHR, NRT, GRU, SIN).
+        A three-letter code returns that airport, or every airport in a metro code.
+        limit caps the rows (default 20). The result is a list, not the search envelope.
+        It may run while a search is in progress.
+        """
 
     @tool("Search hidden-city fares", search_hidden_city_tool, network=True)
     def search_hidden_city():
