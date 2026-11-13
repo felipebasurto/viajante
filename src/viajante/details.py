@@ -9,7 +9,13 @@ from typing import Mapping, Optional
 from viajante.airports import airport_geo, canonical_city_name, lookup_airports, metro_of
 from viajante.envelope import ENVELOPE_KEYS, stamp_local, stamp_search
 from viajante.hotels import _raw_distance_km
-from viajante.skiplagged_hotels import _country_for_city, _normalized_name, search_hotel_rooms
+from viajante.skiplagged_hotels import (
+    _SUBDIVISION,
+    _country_for_city,
+    _matched_regions,
+    _normalized_name,
+    search_hotel_rooms,
+)
 
 # ponytail: airports within 100 km (the metro table's radius) are one place.
 # Homonyms farther apart stay separate. Upgrade: subdivision codes.
@@ -171,6 +177,10 @@ def _catalogue_hits(city: str) -> list:
     return hits
 
 
+def _named_subdivision(suffix: str) -> bool:
+    return any(phrase in _SUBDIVISION for phrase, _codes in _matched_regions(suffix))
+
+
 def _city_decision(result, offer):
     """One catalogue place, or the offer's own coordinates. Otherwise inconclusive."""
     location = result["query"]["location"].strip()
@@ -198,6 +208,8 @@ def _city_decision(result, offer):
             return None, "resolved place differs from the named city; room-rate city is unproven"
         return f"{hits[0].city}, {country}" if country else hits[0].city, point
     if point and len(_near_places(hits, groups, point)) == 1:
+        return location, point
+    if len(parts) == 2 and _named_subdivision(parts[1]):
         return location, point
     names = ", ".join(sorted({hits[group[0]].iata for group in groups}))
     return None, (

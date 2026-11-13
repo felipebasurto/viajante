@@ -241,6 +241,12 @@ class HotelDetailsTests(unittest.TestCase):
         self.assertEqual(result["room_rates_status"], "inconclusive")
         self.assertIn("unambiguous city", result["reason"])
 
+    def test_named_region_separates_same_country_homonyms(self):
+        oregon = hotel(location="Portland, Oregon")["queries"][0]
+        self.assertEqual(_city_decision(oregon, oregon["offers"][0])[0], "Portland, Oregon")
+        bare = hotel(location="Portland, US")["queries"][0]
+        self.assertIsNone(_city_decision(bare, bare["offers"][0])[0])
+
     def test_saint_louis_country_uses_the_missouri_catalogue_spelling(self):
         for location in ("Saint Louis, US", "Saint Louis, Missouri"):
             with self.subTest(location=location):
