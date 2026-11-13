@@ -544,7 +544,8 @@ def _chronological_check(segments, complete):
             return _status("chronological", "fail", "a segment arrives before it departs in UTC")
         if previous is not None and departure is not None and departure < previous:
             return _status("chronological", "fail", "selected segments overlap in UTC")
-        previous = arrival
+        if arrival is not None:
+            previous = arrival
     return _status(
         "chronological",
         "unknown" if unknown else "pass",

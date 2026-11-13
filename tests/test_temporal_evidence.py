@@ -192,6 +192,33 @@ class TemporalEvidenceTests(unittest.TestCase):
         self.assertEqual(route([rt, onward]), "fail")
         self.assertEqual(route([rt, home]), "pass")
 
+    def test_unknown_segment_does_not_hide_a_later_overlap(self):
+        first = segment()
+        gap = segment("LHR", "CDG", departure_timezone=None, arrival_timezone=None)
+        overlap = segment(
+            "CDG",
+            "NRT",
+            departure_date="2099-07-02",
+            departure="08:00",
+            departure_timezone="Europe/Paris",
+            arrival_date="2099-07-02",
+            arrival="18:00",
+            arrival_timezone="Asia/Tokyo",
+        )
+        clear = segment(
+            "CDG",
+            "NRT",
+            departure_date="2099-07-02",
+            departure="12:00",
+            departure_timezone="Europe/Paris",
+            arrival_date="2099-07-03",
+            arrival="08:00",
+            arrival_timezone="Asia/Tokyo",
+        )
+        self.assertEqual(check([row([first, gap, overlap])], "chronological", True), "fail")
+        cleared = check([row([first, gap, clear], key="clear")], "chronological", True)
+        self.assertEqual(cleared, "unknown")
+
     def test_overlap_and_negative_flight_are_failures(self):
         first = row([segment()])
         second = row(
