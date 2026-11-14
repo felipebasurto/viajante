@@ -398,8 +398,7 @@ def _run_flights(args: argparse.Namespace) -> int:
         queries, shop = _parse_and_validate(args)
         split_query = _split_query_from_args(args, queries, shop)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     for note in nearby_notes(queries, exclude_airports=shop["exclude_airports"]):
         print(note, file=sys.stderr)
@@ -409,7 +408,7 @@ def _run_flights(args: argparse.Namespace) -> int:
             queries,
             top=args.top,
             baggage_buffer=args.baggage_buffer,
-            progress=lambda line: print(line, file=sys.stderr),
+            progress=_progress,
             sort=args.sort,
             fetch=args.fetch,
             currency=args.currency,
@@ -421,8 +420,7 @@ def _run_flights(args: argparse.Namespace) -> int:
             **_flight_only_filters_from_args(args),
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     _print_report(report, sort=args.sort)
 
     split = None
@@ -443,13 +441,12 @@ def _run_flights(args: argparse.Namespace) -> int:
                 currency=args.currency,
                 country=args.country,
                 proxy=getattr(args, "proxy", None) or None,
-                progress=lambda line: print(line, file=sys.stderr),
+                progress=_progress,
                 less_emissions=bool(getattr(args, "less_emissions", False)),
                 hide_separate_tickets=bool(getattr(args, "hide_separate_tickets", False)),
             )
         except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+            return _reject(exc)
         _print_split_report(split)
 
     _save(args, report, extra={"split_tickets": split.to_dict()} if split else None)
@@ -464,13 +461,12 @@ def _run_hotels(args: argparse.Namespace) -> int:
     try:
         queries = _validate_hotel_args(args)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     report = search_hotels(
         queries,
         top=args.top,
-        progress=lambda line: print(line, file=sys.stderr),
+        progress=_progress,
         source=getattr(args, "source", "booking"),
         currency=args.currency,
         near=args.near,
@@ -521,8 +517,7 @@ def _run_trip(args: argparse.Namespace) -> int:
         trips, shop = _parse_and_validate(args)
         hotel_query = _trip_hotel_query(args, trips)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     if getattr(args, "nearby", False):
         for note in nearby_notes(
@@ -536,7 +531,7 @@ def _run_trip(args: argparse.Namespace) -> int:
         hotel_query,
         top=args.top,
         baggage_buffer=args.baggage_buffer,
-        progress=lambda line: print(line, file=sys.stderr),
+        progress=_progress,
         sort=args.sort,
         fetch=args.fetch,
         currency=args.currency,
@@ -572,6 +567,59 @@ def _save(
         destination = Path(args.save)
         write_json_atomic({**reports_payload(result), **(extra or {})}, destination)
         print(f"\nSaved {destination}")
+
+
+def _reject(exc: BaseException) -> int:
+    print(f"error: {exc}", file=sys.stderr)
+    return 1
+
+
+def _progress(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
+def _emit_reports(args: argparse.Namespace, result: object, show, code_of) -> int:
+    """Print each report, save the tuple, and return one exit code."""
+    reports = _as_report_tuple(result)
+    for report in reports:
+        show(report)
+    _save(args, reports)
+    return _combine_exit_codes(code_of(report) for report in reports)
+
+
+def _legend_seed(args, origin, destination, start, nights, shop, occupancy):
+    """Seed for the dates and flex nearby legend. The search builds its own."""
+    return calendar_trip(
+        origin,
+        destination,
+        start,
+        max_stops=args.max_stops,
+        cabin=args.cabin,
+        nights=nights,
+        bags=shop["bags"],
+        carry_on=shop["carry_on"],
+        price_cap=shop["price_cap"],
+        airlines=shop["airlines"],
+        exclude_airlines=shop["exclude_airlines"],
+        alliances=shop["alliances"],
+        exclude_alliances=shop["exclude_alliances"],
+        **occupancy,
+    )
+
+
+def _print_route_nearby(nearby: bool, seed, shop) -> None:
+    if not nearby:
+        return
+    for note in nearby_notes(
+        expand_nearby_trips((seed,), nearby=True),
+        exclude_airports=shop["exclude_airports"],
+    ):
+        print(note, file=sys.stderr)
+
+
+def _explore_exit(report) -> int:
+    failures = report.coverage.failed
+    return 0 if not failures else 2 if failures == report.coverage.attempted else 3
 
 
 def _occupancy_from_args(args: argparse.Namespace) -> dict[str, int]:
@@ -1111,33 +1159,12 @@ def _run_dates(args: argparse.Namespace) -> int:
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args, origin)
-        seed = calendar_trip(
-            origin,
-            destination,
-            start,
-            max_stops=args.max_stops,
-            cabin=args.cabin,
-            nights=nights,
-            bags=shop["bags"],
-            carry_on=shop["carry_on"],
-            price_cap=shop["price_cap"],
-            airlines=shop["airlines"],
-            exclude_airlines=shop["exclude_airlines"],
-            alliances=shop["alliances"],
-            exclude_alliances=shop["exclude_alliances"],
-            **occupancy,
-        )
+        seed = _legend_seed(args, origin, destination, start, nights, shop, occupancy)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     nearby = bool(getattr(args, "nearby", False))
-    if nearby:
-        for note in nearby_notes(
-            expand_nearby_trips((seed,), nearby=True),
-            exclude_airports=shop["exclude_airports"],
-        ):
-            print(note, file=sys.stderr)
+    _print_route_nearby(nearby, seed, shop)
 
     result = search_dates(
         origin,
@@ -1151,16 +1178,12 @@ def _run_dates(args: argparse.Namespace) -> int:
         nearby=nearby,
         baggage_buffer=args.baggage_buffer,
         sort=args.sort,
-        progress=lambda line: print(line, file=sys.stderr),
+        progress=_progress,
         **shop,
         **occupancy,
         **market,
     )
-    reports = _as_report_tuple(result)
-    for report in reports:
-        _print_dates_report(report)
-    _save(args, reports)
-    return _combine_exit_codes(_dates_exit_code(report) for report in reports)
+    return _emit_reports(args, result, _print_dates_report, _dates_exit_code)
 
 
 def _run_flex(args: argparse.Namespace) -> int:
@@ -1176,33 +1199,12 @@ def _run_flex(args: argparse.Namespace) -> int:
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args, origin)
-        seed = calendar_trip(
-            origin,
-            destination,
-            start,
-            max_stops=args.max_stops,
-            cabin=args.cabin,
-            nights=nights,
-            bags=shop["bags"],
-            carry_on=shop["carry_on"],
-            price_cap=shop["price_cap"],
-            airlines=shop["airlines"],
-            exclude_airlines=shop["exclude_airlines"],
-            alliances=shop["alliances"],
-            exclude_alliances=shop["exclude_alliances"],
-            **occupancy,
-        )
+        seed = _legend_seed(args, origin, destination, start, nights, shop, occupancy)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     nearby = bool(getattr(args, "nearby", False))
-    if nearby:
-        for note in nearby_notes(
-            expand_nearby_trips((seed,), nearby=True),
-            exclude_airports=shop["exclude_airports"],
-        ):
-            print(note, file=sys.stderr)
+    _print_route_nearby(nearby, seed, shop)
 
     result = search_flex(
         origin,
@@ -1217,16 +1219,12 @@ def _run_flex(args: argparse.Namespace) -> int:
         baggage_buffer=args.baggage_buffer,
         sort=args.sort,
         nearby=nearby,
-        progress=lambda line: print(line, file=sys.stderr),
+        progress=_progress,
         **shop,
         **occupancy,
         **market,
     )
-    reports = _as_report_tuple(result)
-    for report in reports:
-        _print_flex_report(report)
-    _save(args, reports)
-    return _combine_exit_codes(_flex_exit_code(report) for report in reports)
+    return _emit_reports(args, result, _print_flex_report, _flex_exit_code)
 
 
 def _run_explore(args: argparse.Namespace) -> int:
@@ -1252,8 +1250,7 @@ def _run_explore(args: argparse.Namespace) -> int:
         validate_explore_window(start, days)
         exclude_regions = parse_exclude_regions(getattr(args, "exclude_regions", None))
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     nearby = bool(getattr(args, "nearby", False))
     if nearby:
@@ -1271,19 +1268,12 @@ def _run_explore(args: argparse.Namespace) -> int:
         sort=args.sort,
         baggage_buffer=args.baggage_buffer,
         exclude_regions=exclude_regions,
-        progress=lambda line: print(line, file=sys.stderr),
+        progress=_progress,
         **shop,
         **occupancy,
         **market,
     )
-    reports = _as_report_tuple(result)
-    codes = []
-    for report in reports:
-        _print_explore_report(report)
-        failures = report.coverage.failed
-        codes.append(0 if not failures else 2 if failures == report.coverage.attempted else 3)
-    _save(args, reports)
-    return _combine_exit_codes(codes)
+    return _emit_reports(args, result, _print_explore_report, _explore_exit)
 
 
 def _run_airports(args: argparse.Namespace) -> int:
@@ -1349,8 +1339,7 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
         if back is not None and back < departure:
             raise ValueError("return date must not be before departure")
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     report = search_hidden_city(
         origin,
         dest,
@@ -1383,8 +1372,7 @@ def _run_hotel_rooms(args: argparse.Namespace) -> int:
             rooms=args.rooms,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     _print_hotel_rooms_report(report)
     _save(args, report)
     return 2 if report.error is not None else 0
@@ -1405,11 +1393,9 @@ def _run_awards(args: argparse.Namespace) -> int:
             balances=balances,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     except OSError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     print(
         f"\n=== {report.award.origin} -> {report.award.destination}  "
         f"{report.award.departure_date.isoformat()} ({report.award.program}) ==="
@@ -1441,8 +1427,7 @@ def _run_points(args: argparse.Namespace) -> int:
         balances = load_balances(Path(args.balances)) if args.balances else ()
         paths = transfer_paths(args.program, args.points, balances)
     except (ValueError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     if not paths:
         print(f"No local transfer partner is recorded for {args.program}.")
     for path in paths:
