@@ -1716,7 +1716,7 @@ class LiveShapedCompactTests(unittest.TestCase):
         with self.assertRaises(ShoppingRejected) as ctx:
             parse_shopping_body(_error_response_body(), currency="EUR")
         message = str(ctx.exception).lower()
-        self.assertIn("did not identify the cause", message)
+        self.assertIn("try one airport", message)
         self.assertNotIn("unknown airport", message)
         self.assertNotIn("invalid query", message)
 

@@ -80,7 +80,7 @@ class CompactExplorePlace:
 def _wrb_json(text: str, *, kind: str) -> Any:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this query; the provider did not identify the cause."
+            "Google Flights rejected this query. Check the route and dates, or try one airport."
         )
     payload = first_wrb_data(text)
     if payload is None:

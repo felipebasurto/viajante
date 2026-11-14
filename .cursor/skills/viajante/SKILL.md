@@ -168,9 +168,11 @@ Every MCP result (except `lookup_airports`) opens with `status`, `completeness`,
 | `not_loaded` | The search did not complete. Availability is unknown. |
 
 `completeness` `partial` or `blocked` means do not summarise as a full answer.
+Read `completeness_note` for what happened and what to do next. A calendar with
+failed days is not a clean `ok`.
 In `search_dates` / `search_flex`, a day with no price is `not_loaded`:
 never say "no flights that day". An explore destination with `price: null` is `not_loaded` too. An `ok` or `partial`
-result may carry the worst failure's `error_code`; read `empty_reason` for emptiness.
+result may carry the worst failure's `error_code`; read `empty_reason` and `empty_note` for emptiness.
 `verify_answer` `status: failed` means the draft
 has claims no search owns (see `error_code`), not that a search failed.
 `retry_after` is a known cooldown; wait for it instead of retrying.
@@ -184,9 +186,9 @@ has claims no search owns (see `error_code`), not that a search failed.
 | `no_results` | Stop. Do not retry. Read `empty_reason` before wording it: only `provider_empty` is "none found". |
 | `rate_limited: true` | Stop provider searches. Wait until `retry_after` (UTC; `retry_after_seconds`) when the error has it, else 30–60 minutes; do not retry or change method. Direct Google 429, data-less status 13, or three status-13 error frames or missing `wrb.fr` payloads inside 2 minutes share `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
-| `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |
+| `rejected` | Stop. Check the route and dates, or try one airport. Do not infer an invalid airport, unavailable route, or inventory cutoff. |
 | `blocked` (including a short unknown HTML shell) | Stop that date window. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
-| `search_dates` returns `blocked` | Stop that date search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. |
+| `search_dates` returns `blocked`, or any day failed because Google paused | Stop that date search. Do not set `fetch`, transfer consent/cookies, or scrape a separate browser tab. Read `completeness_note`. |
 | `search_hidden_city` `blocked` / fetch failed | Stop. Do not treat a Google Flights tab as Skiplagged evidence. Wait 30–60 minutes. |
 | Flex `markup_drift` with empty `days` | A day page could not be parsed, not an empty market. Do not invent a cheapest week. Do not retry the same flex parse. A **named-date** `search_flights` is allowed. |
 | `markup_drift` (other) | Stop. Do not retry the same parse. |
@@ -201,8 +203,11 @@ has claims no search owns (see `error_code`), not that a search failed.
 State dir: `VIAJANTE_STATE_DIR` or XDG. Exit 0/1/2/3 = all ok / bad input / all failed / partial.
 
 The status 13 cooldown is a guess and can pause Google for 2 minutes when the
-status has another cause. Three public-page status-13 frames, or missing catalog
-payloads, inside 2 minutes use that same pause; one frame does not. Tell the user
+status has another cause. The user-facing sentence does not lead with that code:
+it says Google paused the request, to wait 15-30 minutes, and not to add airports.
+Hits are saved beside the cooldown file, so separate CLI runs add up. Three
+public-page pauses, or missing catalog payloads, inside 2 minutes use that same
+pause; one frame does not. When the cooldown is recorded, tell the user
 Google Flights is likely blocking this shared IP because viajante is running in a
 cloud-hosted agent or sandbox, how long to wait, and that it works much better on
 their own computer: the ChatGPT or Claude desktop app with the viajante MCP

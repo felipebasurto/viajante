@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import traceback
 from datetime import date
 from pathlib import Path
 from typing import Optional, Sequence, Tuple, get_args
@@ -526,12 +528,11 @@ def _run_trip(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    if getattr(args, "nearby", False):
-        for note in nearby_notes(
-            trips,
-            exclude_airports=shop.get("exclude_airports"),
-        ):
-            print(note, file=sys.stderr)
+    for note in nearby_notes(
+        trips,
+        exclude_airports=shop.get("exclude_airports"),
+    ):
+        print(note, file=sys.stderr)
 
     report = search_trip(
         trips,
@@ -893,9 +894,13 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--carry-on",
-        action="store_true",
+        nargs="?",
+        const=1,
+        type=int,
+        default=None,
+        metavar="N",
         dest="carry_on",
-        help="Request one carry-on (omit to leave unset)",
+        help="Cabin bags for the whole party. Bare --carry-on means 1. Checked --bags is refused",
     )
     parser.add_argument(
         "--price-cap",
@@ -1052,9 +1057,11 @@ _TRIP_SHOP_FIELDS = frozenset({"bags", "carry_on", "price_cap"})
 
 
 def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
-    carry_on = 1 if args.carry_on else None
+    carry_on = args.carry_on
     if args.bags is not None and args.bags < 0:
         raise ValueError("--bags must not be negative")
+    if carry_on is not None and carry_on < 0:
+        raise ValueError("--carry-on must not be negative")
     if args.price_cap is not None and args.price_cap <= 0:
         raise ValueError("--price-cap must be a positive amount in the quote currency")
     via = parse_via_airports(args.via)
@@ -2082,46 +2089,65 @@ def _cli_parser() -> argparse.ArgumentParser:
     return _PARSER
 
 
+def _debug_requested(argv: Sequence[str]) -> bool:
+    flag = os.environ.get("VIAJANTE_DEBUG", "").strip().lower()
+    return flag in {"1", "true", "yes"} or "--debug" in argv
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    debug = _debug_requested(raw)
+    raw = [item for item in raw if item != "--debug"]
     parser = _cli_parser()
     try:
-        args = parser.parse_args(list(argv) if argv is not None else None)
+        args = parser.parse_args(raw)
     except SystemExit as exc:
         code = exc.code
         return 0 if code == 0 else 1
 
-    if args.cmd == "flights":
-        return _run_flights(args)
-    if args.cmd == "hotels":
-        return _run_hotels(args)
-    if args.cmd == "trip":
-        return _run_trip(args)
-    if args.cmd == "dates":
-        return _run_dates(args)
-    if args.cmd == "flex":
-        return _run_flex(args)
-    if args.cmd == "explore":
-        return _run_explore(args)
-    if args.cmd == "airports":
-        return _run_airports(args)
-    if args.cmd == "hotel-rooms":
-        return _run_hotel_rooms(args)
-    if args.cmd == "hidden-city":
-        return _run_hidden_city(args)
-    if args.cmd == "awards":
-        return _run_awards(args)
-    if args.cmd == "points":
-        return _run_points(args)
-    if args.cmd == "recheck-offer":
-        return run_recheck_cli(args)
-    if args.cmd == "bench":
-        return run_bench()
-    if args.cmd == "feedback":
-        return run_feedback(args.message, open_browser=not args.no_browser)
-    if args.cmd == "history":
-        return run_history(args)
-    if args.cmd == "watch":
-        return run_watch(args)
+    try:
+        if args.cmd == "flights":
+            return _run_flights(args)
+        if args.cmd == "hotels":
+            return _run_hotels(args)
+        if args.cmd == "trip":
+            return _run_trip(args)
+        if args.cmd == "dates":
+            return _run_dates(args)
+        if args.cmd == "flex":
+            return _run_flex(args)
+        if args.cmd == "explore":
+            return _run_explore(args)
+        if args.cmd == "airports":
+            return _run_airports(args)
+        if args.cmd == "hotel-rooms":
+            return _run_hotel_rooms(args)
+        if args.cmd == "hidden-city":
+            return _run_hidden_city(args)
+        if args.cmd == "awards":
+            return _run_awards(args)
+        if args.cmd == "points":
+            return _run_points(args)
+        if args.cmd == "recheck-offer":
+            return run_recheck_cli(args)
+        if args.cmd == "bench":
+            return run_bench()
+        if args.cmd == "feedback":
+            return run_feedback(args.message, open_browser=not args.no_browser)
+        if args.cmd == "history":
+            return run_history(args)
+        if args.cmd == "watch":
+            return run_watch(args)
+    except Exception:
+        if debug:
+            traceback.print_exc(file=sys.stderr)
+        else:
+            print(
+                "viajante hit an unexpected error. Retry this one command. "
+                "Run it again with --debug to see details.",
+                file=sys.stderr,
+            )
+        return 1
 
     parser.print_help()
     return 1

@@ -59,6 +59,16 @@ def _is_timeout(exc: BaseException) -> bool:
     )
 
 
+TIMEOUT_MESSAGE = "The request timed out. Wait a minute and retry this one search."
+CONNECT_MESSAGE = "Could not reach the provider. Wait a minute and retry this one search."
+_CONNECT_TOKENS = ("connecterror", "connectionerror", "connectionreset", "connecttimeout")
+
+
+def _is_connect(exc: BaseException) -> bool:
+    blob = f"{type(exc).__name__} {exc}".casefold()
+    return any(token in blob for token in _CONNECT_TOKENS)
+
+
 def classify_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SearchDeadline):
         note_cut()
@@ -70,10 +80,18 @@ def classify_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BROWSER_UNAVAILABLE,
             message=BROWSER_INSTALL_HINT,
         )
+    if _is_timeout(exc):
+        return SearchError(
+            code=SearchErrorCode.FETCH_FAILED,
+            message=TIMEOUT_MESSAGE,
+            timeout=True,
+        )
+    if _is_connect(exc):
+        return SearchError(code=SearchErrorCode.FETCH_FAILED, message=CONNECT_MESSAGE)
     return SearchError(
         code=SearchErrorCode.FETCH_FAILED,
         message=_clip_error_message(text),
-        timeout=_is_timeout(exc),
+        timeout=False,
     )
 
 

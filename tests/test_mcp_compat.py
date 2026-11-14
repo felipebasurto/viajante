@@ -584,7 +584,8 @@ class SearchEnvelopeTests(_StateDir):
         text = _text(result)
         self.assertIn("viajante could not read the shape", text)
         self.assertNotIn("invalid_parameter", text)
-        self.assertFalse(text.removeprefix("Error executing tool search_flights: ").startswith("{"))
+        body = json.loads(text.removeprefix("Error executing tool search_flights: "))
+        self.assertEqual(body["error"]["code"], "internal")
 
     def test_shape_errors_are_internal(self) -> None:
         exc = EnvelopeShapeError("viajante could not read the shape")

@@ -70,6 +70,7 @@ ENVELOPE_KEYS = {
     "completeness",
     "empty_reason",
     "empty_note",
+    "completeness_note",
     "error_code",
     "retry_after",
     "retry_after_seconds",
@@ -192,9 +193,15 @@ class EnvelopeShapeTests(unittest.TestCase):
         self.assertIn(payload["completeness"], COMPLETENESS)
         if payload["empty_reason"] is not None:
             self.assertIn(payload["empty_reason"], EMPTY_REASONS)
-            self.assertEqual(payload["empty_note"], EMPTY_NOTES[payload["empty_reason"]])
+            note = payload["empty_note"]
+            self.assertIsInstance(note, str)
+            self.assertTrue(note.startswith(EMPTY_NOTES[payload["empty_reason"]].split(". ")[0]))
         else:
             self.assertIsNone(payload["empty_note"])
+        if payload["completeness"] == "complete":
+            self.assertIsNone(payload["completeness_note"])
+        else:
+            self.assertTrue(payload["completeness_note"])
         if payload["observed_at_basis"] is not None:
             self.assertIn(payload["observed_at_basis"], OBSERVED_BASES)
         for key, value in expected.items():
@@ -1188,12 +1195,13 @@ class ErrorTaxonomyTests(unittest.TestCase):
 
 class ContractTextTests(unittest.TestCase):
     def test_only_provider_empty_may_say_nothing_was_found(self) -> None:
-        self.assertIn("returned no results", EMPTY_NOTES["provider_empty"])
+        self.assertIn("No fares came back", EMPTY_NOTES["provider_empty"])
+        self.assertIn("Try other dates or airports", EMPTY_NOTES["provider_empty"])
         for reason in ("filtered_out", "not_loaded"):
             note = EMPTY_NOTES[reason].casefold()
             for phrase in ("no results", "no flights", "no hotels", "none found", "nothing found"):
                 self.assertNotIn(phrase, note)
-        self.assertIn("filters removed", EMPTY_NOTES["filtered_out"])
+        self.assertIn("filters removed", EMPTY_NOTES["filtered_out"].casefold())
         self.assertIn("did not complete", EMPTY_NOTES["not_loaded"])
         self.assertEqual(set(EMPTY_NOTES), set(EMPTY_REASONS))
 

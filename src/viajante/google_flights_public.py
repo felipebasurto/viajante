@@ -67,6 +67,7 @@ from viajante.models import (
 from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
+    PAUSE_MESSAGE,
     note_rate_limited,
     note_repeated_throttle,
     rate_limit_advice,
@@ -180,7 +181,13 @@ _EXPLORE_OCCUPANCY = [1, 0, 0, 0]
 NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
 
 
-REJECTED_MESSAGE = "Google Flights rejected this query; the provider did not identify the cause."
+REJECTED_MESSAGE = (
+    "Google Flights rejected this query. Check the route and dates, or try one airport."
+)
+UNREADABLE_PAGE = (
+    "Google Flights returned a page that could not be read. "
+    "Wait and retry this one search once. If it persists, run viajante on your own computer."
+)
 
 
 def classify_failure(exc: BaseException) -> SearchError:
@@ -216,9 +223,11 @@ def classify_failure(exc: BaseException) -> SearchError:
             diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsMarkupError):
+        detail = str(exc).strip()
+        message = detail if detail and "Error:" not in detail and "Exception:" not in detail else ""
         return SearchError(
             code=SearchErrorCode.MARKUP_DRIFT,
-            message=str(exc) or "Google Flights markup could not be parsed.",
+            message=message or UNREADABLE_PAGE,
         )
     return classify_provider_failure(exc)
 
@@ -490,8 +499,12 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                     exc.status == RPC_THROTTLE_STATUS and response.rate_limited
                 )
                 unknown = (
-                    f"Google Flights answered with error status {exc.status} "
-                    "and no results. The cause is unknown; availability is not disproved."
+                    PAUSE_MESSAGE
+                    if exc.status == RPC_THROTTLE_STATUS
+                    else (
+                        "Google Flights could not return this search. "
+                        "Availability is unknown. Wait a minute and retry this one search."
+                    )
                 )
                 if cooled:
                     until = recorded_expiry(state) if state is not None else response.retry_until
