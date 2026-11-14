@@ -42,7 +42,16 @@ from viajante.explore import (
     search_explore,
     validate_explore_window,
 )
-from viajante.flight_filters import parse_offer_filters, parse_shop_filters, parse_via_airports
+from viajante.flight_filters import (
+    _SHOP_CALENDAR,
+    _SHOP_CLOCKS,
+    _SHOP_PLACES,
+    _SHOP_TRIP,
+    parse_named_shop,
+    parse_offer_filters,
+    parse_shop_filters,
+    parse_via_airports,
+)
 from viajante.flight_offers import FlightSort
 from viajante.flight_routes import (
     _overlay_carrier_filters,
@@ -517,6 +526,7 @@ def search_dates_tool(
     validate_date_window(start_date, end_date)
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    shop = locals()
     report = _with_search_lock(
         lambda: search_dates(
             origin,
@@ -541,24 +551,7 @@ def search_dates_tool(
             sort=sort,
             proxy=proxy,
             deadline_seconds=deadline_seconds,
-            **parse_shop_filters(
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_duration=max_duration,
-                min_layover=min_layover,
-                max_layover=max_layover,
-            ),
+            **parse_named_shop(shop, _SHOP_CALENDAR),
         )
     )
     return _searched(reports_payload(report), report)
@@ -611,6 +604,7 @@ def search_flex_tool(
     flex_window(around_date, flex)
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    shop = locals()
     report = _with_search_lock(
         lambda: search_flex(
             origin,
@@ -636,24 +630,7 @@ def search_flex_tool(
             country=country,
             proxy=proxy,
             deadline_seconds=deadline_seconds,
-            **parse_shop_filters(
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_duration=max_duration,
-                min_layover=min_layover,
-                max_layover=max_layover,
-            ),
+            **parse_named_shop(shop, _SHOP_CALENDAR),
         )
     )
     return _searched(reports_payload(report), report)
@@ -714,30 +691,12 @@ def search_explore_tool(
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, members[0] if members else origin, baggage_buffer
     )
+    shop = locals()
+
     def run():
-        shop = parse_shop_filters(
-            airlines=airlines,
-            exclude_airlines=exclude_airlines,
-            alliance=alliance,
-            exclude_alliance=exclude_alliance,
-            via=via,
-            exclude_via=exclude_via,
-            no_overnight=no_overnight,
-            require_overnight=require_overnight,
-            exclude_airports=exclude_airports,
-            include_airports=include_airports,
-        )
+        filters = parse_named_shop(shop, _SHOP_PLACES)
         regions = parse_exclude_regions(exclude_regions)
-        shop.update(
-            parse_shop_filters(
-                depart_window=depart_window,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-                max_duration=max_duration,
-                min_layover=min_layover,
-                max_layover=max_layover,
-            )
-        )
+        filters.update(parse_named_shop(shop, _SHOP_CLOCKS))
         return search_explore(
             origin,
             start_date,
@@ -760,7 +719,7 @@ def search_explore_tool(
             baggage_buffer=baggage_buffer,
             proxy=proxy,
             deadline_seconds=deadline_seconds,
-            **shop,
+            **filters,
         )
 
     report = _with_search_lock(run)
@@ -1003,6 +962,7 @@ def search_trip_tool(
         entire_home=entire_home,
         free_cancellation=free_cancellation,
     )
+    shop = locals()
     report = _with_search_lock(
         lambda: search_trip(
             trips,
@@ -1011,20 +971,7 @@ def search_trip_tool(
             baggage_buffer=baggage_buffer,
             sort=sort,
             fetch=fetch,
-            **parse_shop_filters(
-                airlines=airlines,
-                exclude_airlines=exclude_airlines,
-                alliance=alliance,
-                exclude_alliance=exclude_alliance,
-                via=via,
-                exclude_via=exclude_via,
-                no_overnight=no_overnight,
-                require_overnight=require_overnight,
-                exclude_airports=exclude_airports,
-                include_airports=include_airports,
-                arrive_before=arrive_before,
-                depart_after=depart_after,
-            ),
+            **parse_named_shop(shop, _SHOP_TRIP),
             bags=bags,
             carry_on=carry_on,
             price_cap=price_cap,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 from viajante.airports import is_known_iata, place_label_codes
 from viajante.carriers import parse_airline_codes, parse_alliances
@@ -327,6 +327,75 @@ def parse_shop_filters(**raw: object) -> dict[str, object]:
         if name in raw:
             parsed[output] = convert(raw[name])
     return parsed
+
+
+def _shop_names(*names: str) -> tuple[str, ...]:
+    """Input names in ``_SHOP_FIELDS`` order. A later name before an earlier one fails."""
+    order = [name for name, _, _ in _SHOP_FIELDS]
+    previous = -1
+    for name in names:
+        index = order.index(name)
+        if index <= previous:
+            raise RuntimeError(name)
+        previous = index
+    return names
+
+
+# Groups a caller parses in one call. Order inside a group is the error order.
+_SHOP_PLACES = _shop_names(
+    "airlines",
+    "exclude_airlines",
+    "alliance",
+    "exclude_alliance",
+    "via",
+    "exclude_via",
+    "no_overnight",
+    "require_overnight",
+    "exclude_airports",
+    "include_airports",
+)
+_SHOP_CLOCKS = _shop_names(
+    "depart_window",
+    "arrive_before",
+    "depart_after",
+    "max_duration",
+    "min_layover",
+    "max_layover",
+)
+_SHOP_CALENDAR = _shop_names(*(_SHOP_PLACES + _SHOP_CLOCKS))
+_SHOP_TRIP = _shop_names(
+    "airlines",
+    "exclude_airlines",
+    "alliance",
+    "exclude_alliance",
+    "via",
+    "exclude_via",
+    "no_overnight",
+    "require_overnight",
+    "exclude_airports",
+    "include_airports",
+    "arrive_before",
+    "depart_after",
+)
+_SHOP_CLI_REST = _shop_names(
+    "airlines",
+    "exclude_airlines",
+    "alliance",
+    "exclude_alliance",
+    "exclude_airports",
+    "include_airports",
+    "depart_window",
+    "arrive_before",
+    "depart_after",
+    "max_duration",
+    "min_layover",
+    "max_layover",
+)
+
+
+def parse_named_shop(values: Mapping[str, object], names: Sequence[str]) -> dict[str, object]:
+    """Parse the named raw fields. Missing names are not parsed."""
+    return parse_shop_filters(**{name: values[name] for name in names})
 
 
 @dataclass(frozen=True)

@@ -47,7 +47,9 @@ from viajante.explore import (
 )
 from viajante.feedback import run_feedback
 from viajante.flight_filters import (
+    _SHOP_CLI_REST,
     OfferFilters,
+    parse_named_shop,
     parse_shop_filters,
     validate_layover_hours,
     validate_via_pair,
@@ -1158,20 +1160,7 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "price_cap": args.price_cap,
         **via,
         **overnight,
-        **parse_shop_filters(
-            airlines=args.airlines,
-            exclude_airlines=args.exclude_airlines,
-            alliance=getattr(args, "alliance", None),
-            exclude_alliance=getattr(args, "exclude_alliance", None),
-            exclude_airports=getattr(args, "exclude_airports", None),
-            include_airports=getattr(args, "include_airports", None),
-            depart_window=getattr(args, "depart_window", None),
-            arrive_before=getattr(args, "arrive_before", None),
-            depart_after=getattr(args, "depart_after", None),
-            max_duration=max_duration,
-            min_layover=min_layover,
-            max_layover=max_layover,
-        ),
+        **parse_named_shop(vars(args), _SHOP_CLI_REST),
     }
 
 
