@@ -48,8 +48,13 @@ not prove a party fits across several rooms. Google hostel totals may price
 dormitory beds; check room names and confirm on the provider.
 
 On `rate_limited: true`, stop and wait (`retry_after` / `retry_after_seconds` on the error say how long when a cooldown was recorded; otherwise 30–60 minutes); do not retry or switch
-method. Direct Google HTTP 429 and data-less status 13 share a cooldown;
-Skiplagged HTTP 429 has its own cooldown and no retry. Status 13 can cause a
+method. Direct Google HTTP 429, a data-less status 13, or three public-page status-13
+error frames or Explore bodies with no `wrb.fr` payload inside 2 minutes share a cooldown.
+One status-13 frame does not. Skiplagged HTTP 429 has its own cooldown and no retry.
+The status-13 message says Google Flights is likely blocking this shared IP because
+viajante is running in a cloud-hosted agent or sandbox, how long to wait, and that it
+works much better on your own computer: the ChatGPT or Claude desktop app with the
+viajante MCP (`npx -y @viajante/mcp`), or `pip install viajante`. Status 13 can cause a
 2-minute pause even when its cause is not throttling.
 
 Check `get_runtime_info` before searching (available in 1.4.0+), and `viajante --version` for the CLI. Hotel reports carry `viajante_version`. An npm MCP pins its own Python package; it does not upgrade a separate installed uv tool. Unpinned `uvx --from viajante` can reuse that tool. Upgrade it explicitly with `uv tool upgrade viajante`, or use `uvx --refresh --from 'viajante==VERSION' viajante --version` with the published version. Do not assume latest was installed.
