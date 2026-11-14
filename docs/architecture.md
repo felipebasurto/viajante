@@ -255,7 +255,11 @@ Only failures that can succeed on a second try are retried:
   The call then stops unsent calendar cells, expanded-airport queries and later
   date-window batches, and a partial calendar carries `retry_after`. One error
   frame stays a blocked cell and does not pause the machine. Later searches
-  fail immediately while the cooldown runs. Error diagnostics report only the
+  fail immediately while the cooldown runs. That message says Google Flights is
+  likely blocking this shared IP because viajante is running in a cloud-hosted
+  agent or sandbox, names how long to wait, and says it works much better on your
+  own computer: the ChatGPT or Claude desktop app with the viajante MCP
+  (`npx -y @viajante/mcp`), or `pip install viajante`. Error diagnostics report only the
   endpoint host and path, HTTP/RPC status, whether the
   request was sent, attempts, and cooldown basis; they omit query parameters.
   An already active cooldown reports no request sent, zero attempts, and null

@@ -118,6 +118,10 @@ class ErrorFrameBurstTests(_StateDir):
         self.assertTrue(responses[0].throttle_observed)
         self.assertTrue(responses[2].rate_limited)
         self.assertEqual(responses[2].cooldown_basis, "heuristic_rpc_13")
+        self.assertIn("likely blocking this shared IP", responses[2].rate_limit or "")
+        self.assertIn("npx -y @viajante/mcp", responses[2].rate_limit or "")
+        self.assertIn("pip install viajante", responses[2].rate_limit or "")
+        self.assertRegex(responses[2].rate_limit or "", r"~\d+ min")
         self.assertIsNotNone(responses[2].retry_until)
         for response in responses[3:]:
             self.assertFalse(response.request_sent)
@@ -211,6 +215,8 @@ class ErrorFrameBurstTests(_StateDir):
                 follow.fetch(FlightQuery("LTN", "VNO", DAY, adults=2))
         network.assert_not_called()
         error = classify_failure(caught.exception)
+        self.assertIn("likely blocking this shared IP", error.message)
+        self.assertRegex(error.message, r"~\d+ min")
         self.assertTrue(error.rate_limited)
         self.assertFalse(error.diagnostics["request_sent"])
         self.assertEqual(error.diagnostics["attempts"], 0)
@@ -231,7 +237,8 @@ class MissingPayloadBurstTests(_StateDir):
         self.assertEqual(caught.exception.status, 429)
         self.assertIsNotNone(caught.exception.retry_until)
         self.assertEqual(rate_limit_status()["basis"], "heuristic_rpc_13")
-        self.assertIn("no wrb.fr payload", str(caught.exception))
+        self.assertIn("likely blocking this shared IP", str(caught.exception))
+        self.assertRegex(str(caught.exception), r"~\d+ min")
 
     def test_a_proxied_missing_payload_does_not_pause_direct_searches(self) -> None:
         shell = "<!doctype html><html><body>empty catalog</body></html>"

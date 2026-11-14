@@ -31,6 +31,14 @@ THROTTLE_REPEAT_THRESHOLD = 3
 THROTTLE_REPEAT_WINDOW_SECONDS = RATE_LIMIT_COOLDOWN_SECONDS
 NOT_SENT = "Not sent. "
 PAUSE_PHRASE = "searches until"
+# Shown when the status-13 cooldown is recorded. One error frame is not this pause.
+# "Likely": a status 13 does not prove the IP is a hosted sandbox.
+_HOSTED_THROTTLE_HINT = (
+    "Google Flights is likely blocking this shared IP because viajante is running "
+    "in a cloud-hosted agent or sandbox. It works much better on your own computer, "
+    "in the ChatGPT or Claude desktop app with the viajante MCP (npx -y @viajante/mcp), "
+    "or with pip install viajante."
+)
 _COOLDOWN_BASES = {
     "provider_retry_after",
     "heuristic_http_429",
@@ -216,9 +224,19 @@ def rate_limit_advice(
     minutes = max(1, math.ceil((state["until"] - time.time()) / 60))
     prefix = "" if sent else NOT_SENT
     if state.get("cause") == "rpc_13":
-        observation = f"{provider} returned RPC status 13; its cause is unknown"
-    else:
-        observation = f"{provider} is rate-limiting this machine"
+        pause = (
+            "Viajante could not save the cooldown. "
+            if state.get("persisted") is False
+            else (
+                f"Viajante pauses {provider} {PAUSE_PHRASE} {clock(state['until'])} UTC "
+                f"(~{minutes} min). "
+            )
+        )
+        return (
+            f"{prefix}{_HOSTED_THROTTLE_HINT} {pause}"
+            "Tell the user to wait; do not retry or switch fetch mode."
+        )
+    observation = f"{provider} is rate-limiting this machine"
     if state.get("persisted") is False:
         return (
             f"{prefix}{observation} ({reason}). Viajante could not save the cooldown. "

@@ -365,7 +365,11 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - HTTP 429 and status 13 stop pending sweep work. Nothing replays and nothing falls
   back to detail. Empty results, drift, and HTTP 5xx may be retried once. A burst
   that records the cooldown stops the same way, and a partial calendar carries
-  `retry_after`.
+  `retry_after`. The message says Google Flights is likely blocking this shared IP
+  because viajante is running in a cloud-hosted agent or sandbox, names how long
+  to wait, and says it works much better on your own computer: the ChatGPT or
+  Claude desktop app with the viajante MCP (`npx -y @viajante/mcp`), or
+  `pip install viajante`.
 - A Skiplagged 429 writes `skiplagged-rate-limit.json` and does not retry. Live
   Skiplagged calls are paced 1 second apart.
 - Detail: 4.5 s plus up to 1.5 s of jitter between queries; 3 attempts with 8 s

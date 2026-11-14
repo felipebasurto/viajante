@@ -923,7 +923,11 @@ search at a time. See the signatures in
   block. Three public-page status-13 error frames, or Explore responses with no
   `wrb.fr` payload, inside 2 minutes record that same cooldown without a
   `Retry-After` header. A partial calendar from the burst still carries
-  `retry_after`. Later searches fail immediately while it runs.
+  `retry_after`. Later searches fail immediately while it runs. The message says
+  Google Flights is likely blocking this shared IP because viajante is running in
+  a cloud-hosted agent or sandbox, names how long to wait, and says it works much
+  better on your own computer: the ChatGPT or Claude desktop app with the viajante
+  MCP (`npx -y @viajante/mcp`), or `pip install viajante`.
 - **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
   [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
   not meant to be hosted. A non-loopback `--host` prints a warning: every client

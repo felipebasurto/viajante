@@ -17,8 +17,12 @@ history up to commit 6ee0fb7.
   with no `Retry-After` header. The call stops unsent calendar cells, expanded-airport
   queries and later date-window work, and the result carries `retry_after`, including
   a partial calendar. Later searches fail fast on that cooldown instead of calling
-  Google again. One error frame stays a blocked cell with an unknown cause. A data-less
-  RPC status 13 still records the cooldown on the first response.
+  Google again. The message says Google Flights is likely blocking this shared IP
+  because viajante is running in a cloud-hosted agent or sandbox, names how long to
+  wait, and says it works much better on your own computer: the ChatGPT or Claude
+  desktop app with the viajante MCP (`npx -y @viajante/mcp`), or `pip install viajante`.
+  One error frame stays a blocked cell with an unknown cause. A data-less
+  RPC status 13 still records the cooldown on the first response and uses the same message.
 
 ## [1.5.6] - 2026-11-08
 

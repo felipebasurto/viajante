@@ -202,7 +202,11 @@ State dir: `VIAJANTE_STATE_DIR` or XDG. Exit 0/1/2/3 = all ok / bad input / all 
 
 The status 13 cooldown is a guess and can pause Google for 2 minutes when the
 status has another cause. Three public-page status-13 frames, or missing catalog
-payloads, inside 2 minutes use that same pause; one frame does not. Google base/tax/fee breakdown (`record[6][2][44]`,
-unconfirmed) and caller-named exchange rates remain unimplemented.
+payloads, inside 2 minutes use that same pause; one frame does not. Tell the user
+Google Flights is likely blocking this shared IP because viajante is running in a
+cloud-hosted agent or sandbox, how long to wait, and that it works much better on
+their own computer: the ChatGPT or Claude desktop app with the viajante MCP
+(`npx -y @viajante/mcp`), or `pip install viajante`. Google base/tax/fee breakdown
+(`record[6][2][44]`, unconfirmed) and caller-named exchange rates remain unimplemented.
 
 Checkout tests: `uv run python -m unittest discover -s tests -v`. `viajante bench` is contributor-only (needs `tests/bench/`).

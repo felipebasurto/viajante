@@ -203,6 +203,10 @@ status-13 error frames, or Explore catalog bodies with no wrb.fr payload, inside
 record that same cooldown without a Retry-After header, and a partial calendar carries
 retry_after. A 429, a data-less status 13, or that burst stops unsent work and is not
 replayed or switched to detail. Later searches fail immediately while the cooldown runs.
+The status-13 cooldown message says Google Flights is likely blocking this shared IP
+because viajante is running in a cloud-hosted agent or sandbox, names how long to wait,
+and says it works much better on your own computer: the ChatGPT or Claude desktop app
+with the viajante MCP (npx -y @viajante/mcp), or pip install viajante.
 A round-trip date or flex window reads its pages in bounded batches at that same
 sweep concurrency, in groups of at most that many days: the group's outbound
 boards, then those days' selected return pages (still at most eight), then the
