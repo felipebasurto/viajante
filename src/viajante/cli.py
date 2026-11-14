@@ -644,6 +644,32 @@ def _occupancy_from_args(args: argparse.Namespace) -> dict[str, int]:
     }
 
 
+_FETCH_CHOICES = ("auto", "sweep", "detail")
+
+
+def _add_route_specs(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "routes",
+        nargs="+",
+        help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
+    )
+
+
+def _add_offers_per_query(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP,
+        help=f"Offers per query (default {DEFAULT_TOP})",
+    )
+
+
+def _add_fetch_flag(
+    parser: argparse.ArgumentParser, *, default: Optional[str], help_text: str
+) -> None:
+    parser.add_argument("--fetch", default=default, choices=_FETCH_CHOICES, help=help_text)
+
+
 def _add_max_stops_flag(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-stops",
@@ -1463,11 +1489,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=FLIGHTS_EXAMPLES,
     )
-    flights.add_argument(
-        "routes",
-        nargs="+",
-        help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
-    )
+    _add_route_specs(flights)
     _add_max_stops_flag(flights)
     _add_trip_flag(
         flights,
@@ -1492,12 +1514,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Multi-city is omitted. Same public date calendar as dates and flex."
         ),
     )
-    flights.add_argument(
-        "--top",
-        type=int,
-        default=DEFAULT_TOP,
-        help=f"Offers per query (default {DEFAULT_TOP})",
-    )
+    _add_offers_per_query(flights)
     _add_baggage_buffer_flag(flights)
     flights.add_argument(
         "--sort",
@@ -1508,11 +1525,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "departure, or arrival"
         ),
     )
-    flights.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        flights,
         default="auto",
-        choices=["auto", "sweep", "detail"],
-        help=(
+        help_text=(
             "sweep reads the public results page over a Chrome-TLS HTTP/2 session; "
             "detail is the Playwright scrape (required for --trip multi; "
             "refuses bag and carrier filters). "
@@ -1629,11 +1645,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=TRIP_EXAMPLES,
     )
-    trip.add_argument(
-        "routes",
-        nargs="+",
-        help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
-    )
+    _add_route_specs(trip)
     trip.add_argument(
         "--hotel",
         required=True,
@@ -1668,12 +1680,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_cabin_flag(trip)
     _add_currency_country_flags(trip)
-    trip.add_argument(
-        "--top",
-        type=int,
-        default=DEFAULT_TOP,
-        help=f"Offers per query (default {DEFAULT_TOP})",
-    )
+    _add_offers_per_query(trip)
     _add_baggage_buffer_flag(trip, extra="Trip total uses the owned cabin fare, not this buffer.")
     trip.add_argument(
         "--sort",
@@ -1681,11 +1688,10 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=list(FLIGHT_SORTS),
         help="Flight offer order (default ranked). Trip total still uses owned fare.",
     )
-    trip.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        trip,
         default="auto",
-        choices=["auto", "sweep", "detail"],
-        help=(
+        help_text=(
             "sweep is a fast HTTP shortlist; detail is the Playwright scrape. "
             "auto uses public-page sweep; detail is an explicit browser mode (default auto)"
         ),
@@ -1744,11 +1750,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "Sort is order, not a cut"
         ),
     )
-    dates.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        dates,
         default="sweep",
-        choices=["auto", "sweep", "detail"],
-        help="Days are shopped on the public results page (sweep). detail is accepted and ignored.",
+        help_text=(
+            "Days are shopped on the public results page (sweep). detail is accepted and ignored."
+        ),
     )
     _add_save_flag(dates)
 
@@ -1801,11 +1808,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_owned_shop_filters(flex)
     _add_nearby_flag(flex)
-    flex.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        flex,
         default="sweep",
-        choices=["auto", "sweep", "detail"],
-        help=(
+        help_text=(
             "Shops each day on the public results page and ranks the chosen day from "
             "those cards (calendar_then_sweep). detail is accepted and ignored."
         ),
@@ -2008,11 +2014,10 @@ def _build_parser() -> argparse.ArgumentParser:
     recheck.add_argument(
         "--country", default=None, metavar="CC", help="ISO country for Google gl (omit when unset)"
     )
-    recheck.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        recheck,
         default=None,
-        choices=["auto", "sweep", "detail"],
-        help="Fetch mode; defaults to the offer's own backend",
+        help_text="Fetch mode; defaults to the offer's own backend",
     )
     recheck.add_argument(
         "--allow-loose-match",
