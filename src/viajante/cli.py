@@ -10,7 +10,6 @@ from typing import Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata, metro_members, parse_exclude_regions
 from viajante.bench import run_bench
-from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.cli_report import (
     _as_report_tuple,
     _combine_exit_codes,
@@ -48,11 +47,10 @@ from viajante.explore import (
 )
 from viajante.feedback import run_feedback
 from viajante.flight_filters import (
+    _SHOP_CLI_REST,
     OfferFilters,
-    parse_depart_window,
-    parse_named_clock,
-    parse_overnight_airports,
-    parse_via_airports,
+    parse_named_shop,
+    parse_shop_filters,
     validate_layover_hours,
     validate_via_pair,
 )
@@ -402,8 +400,7 @@ def _run_flights(args: argparse.Namespace) -> int:
         queries, shop = _parse_and_validate(args)
         split_query = _split_query_from_args(args, queries, shop)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     for note in nearby_notes(queries, exclude_airports=shop["exclude_airports"]):
         print(note, file=sys.stderr)
@@ -413,7 +410,7 @@ def _run_flights(args: argparse.Namespace) -> int:
             queries,
             top=args.top,
             baggage_buffer=args.baggage_buffer,
-            progress=lambda line: print(line, file=sys.stderr),
+            progress=_progress,
             sort=args.sort,
             fetch=args.fetch,
             currency=args.currency,
@@ -425,8 +422,7 @@ def _run_flights(args: argparse.Namespace) -> int:
             **_flight_only_filters_from_args(args),
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     _print_report(report, sort=args.sort)
 
     split = None
@@ -447,13 +443,12 @@ def _run_flights(args: argparse.Namespace) -> int:
                 currency=args.currency,
                 country=args.country,
                 proxy=getattr(args, "proxy", None) or None,
-                progress=lambda line: print(line, file=sys.stderr),
+                progress=_progress,
                 less_emissions=bool(getattr(args, "less_emissions", False)),
                 hide_separate_tickets=bool(getattr(args, "hide_separate_tickets", False)),
             )
         except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+            return _reject(exc)
         _print_split_report(split)
 
     _save(args, report, extra={"split_tickets": split.to_dict()} if split else None)
@@ -468,18 +463,20 @@ def _run_hotels(args: argparse.Namespace) -> int:
     try:
         queries = _validate_hotel_args(args)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
-    report = search_hotels(
-        queries,
-        top=args.top,
-        progress=lambda line: print(line, file=sys.stderr),
-        source=getattr(args, "source", "booking"),
-        currency=args.currency,
-        near=args.near,
-        max_distance_km=args.max_distance_km,
-    )
+    try:
+        report = search_hotels(
+            queries,
+            top=args.top,
+            progress=_progress,
+            source=getattr(args, "source", "booking"),
+            currency=args.currency,
+            near=args.near,
+            max_distance_km=args.max_distance_km,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     _print_hotel_report(report)
 
     _save(args, report)
@@ -525,8 +522,7 @@ def _run_trip(args: argparse.Namespace) -> int:
         trips, shop = _parse_and_validate(args)
         hotel_query = _trip_hotel_query(args, trips)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     if getattr(args, "nearby", False):
         for note in nearby_notes(
@@ -535,19 +531,22 @@ def _run_trip(args: argparse.Namespace) -> int:
         ):
             print(note, file=sys.stderr)
 
-    report = search_trip(
-        trips,
-        hotel_query,
-        top=args.top,
-        baggage_buffer=args.baggage_buffer,
-        progress=lambda line: print(line, file=sys.stderr),
-        sort=args.sort,
-        fetch=args.fetch,
-        currency=args.currency,
-        country=args.country,
-        hotel_source=getattr(args, "source", "booking"),
-        **shop,
-    )
+    try:
+        report = search_trip(
+            trips,
+            hotel_query,
+            top=args.top,
+            baggage_buffer=args.baggage_buffer,
+            progress=_progress,
+            sort=args.sort,
+            fetch=args.fetch,
+            currency=args.currency,
+            country=args.country,
+            hotel_source=getattr(args, "source", "booking"),
+            **shop,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     _print_report(report.flights, sort=args.sort)
     _print_hotel_report(report.hotels)
     _print_trip_total(report)
@@ -578,6 +577,59 @@ def _save(
         print(f"\nSaved {destination}")
 
 
+def _reject(exc: BaseException) -> int:
+    print(f"error: {exc}", file=sys.stderr)
+    return 1
+
+
+def _progress(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
+def _emit_reports(args: argparse.Namespace, result: object, show, code_of) -> int:
+    """Print each report, save the tuple, and return one exit code."""
+    reports = _as_report_tuple(result)
+    for report in reports:
+        show(report)
+    _save(args, reports)
+    return _combine_exit_codes(code_of(report) for report in reports)
+
+
+def _legend_seed(args, origin, destination, start, nights, shop, occupancy):
+    """Seed for the dates and flex nearby legend. The search builds its own."""
+    return calendar_trip(
+        origin,
+        destination,
+        start,
+        max_stops=args.max_stops,
+        cabin=args.cabin,
+        nights=nights,
+        bags=shop["bags"],
+        carry_on=shop["carry_on"],
+        price_cap=shop["price_cap"],
+        airlines=shop["airlines"],
+        exclude_airlines=shop["exclude_airlines"],
+        alliances=shop["alliances"],
+        exclude_alliances=shop["exclude_alliances"],
+        **occupancy,
+    )
+
+
+def _print_route_nearby(nearby: bool, seed, shop) -> None:
+    if not nearby:
+        return
+    for note in nearby_notes(
+        expand_nearby_trips((seed,), nearby=True),
+        exclude_airports=shop["exclude_airports"],
+    ):
+        print(note, file=sys.stderr)
+
+
+def _explore_exit(report) -> int:
+    failures = report.coverage.failed
+    return 0 if not failures else 2 if failures == report.coverage.attempted else 3
+
+
 def _occupancy_from_args(args: argparse.Namespace) -> dict[str, int]:
     children = int(getattr(args, "children", 0) or 0)
     infants_in_seat = int(getattr(args, "infants_in_seat", 0) or 0)
@@ -598,6 +650,32 @@ def _occupancy_from_args(args: argparse.Namespace) -> dict[str, int]:
         "infants_in_seat": infants_in_seat,
         "infants_on_lap": infants_on_lap,
     }
+
+
+_FETCH_CHOICES = ("auto", "sweep", "detail")
+
+
+def _add_route_specs(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "routes",
+        nargs="+",
+        help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
+    )
+
+
+def _add_offers_per_query(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP,
+        help=f"Offers per query (default {DEFAULT_TOP})",
+    )
+
+
+def _add_fetch_flag(
+    parser: argparse.ArgumentParser, *, default: Optional[str], help_text: str
+) -> None:
+    parser.add_argument("--fetch", default=default, choices=_FETCH_CHOICES, help=help_text)
 
 
 def _add_max_stops_flag(parser: argparse.ArgumentParser) -> None:
@@ -883,10 +961,10 @@ def _add_flight_only_filters(parser: argparse.ArgumentParser) -> None:
 
 def _flight_only_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
     return {
-        "depart_before": parse_named_clock(
-            getattr(args, "depart_before", None), role="depart-before"
+        **parse_shop_filters(
+            depart_before=getattr(args, "depart_before", None),
+            arrive_after=getattr(args, "arrive_after", None),
         ),
-        "arrive_after": parse_named_clock(getattr(args, "arrive_after", None), role="arrive-after"),
         "less_emissions": bool(getattr(args, "less_emissions", False)),
         "hide_separate_tickets": bool(getattr(args, "hide_separate_tickets", False)),
         "exclude_basic_economy": bool(getattr(args, "exclude_basic_economy", False)),
@@ -1067,14 +1145,11 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         raise ValueError("--bags must not be negative")
     if args.price_cap is not None and args.price_cap <= 0:
         raise ValueError("--price-cap must be a positive amount in the quote currency")
-    via = parse_via_airports(args.via)
-    exclude_via = parse_via_airports(args.exclude_via, role="exclude-via")
-    validate_via_pair(via, exclude_via, cli=True)
-    no_overnight = parse_overnight_airports(
-        getattr(args, "no_overnight", None), role="no-overnight"
-    )
-    require_overnight = parse_overnight_airports(
-        getattr(args, "require_overnight", None), role="require-overnight"
+    via = parse_shop_filters(via=args.via, exclude_via=args.exclude_via)
+    validate_via_pair(via["via"], via["exclude_via"], cli=True)  # type: ignore[arg-type]
+    overnight = parse_shop_filters(
+        no_overnight=getattr(args, "no_overnight", None),
+        require_overnight=getattr(args, "require_overnight", None),
     )
     max_layover = getattr(args, "max_layover", None)
     min_layover = getattr(args, "min_layover", None)
@@ -1089,28 +1164,9 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "bags": args.bags,
         "carry_on": carry_on,
         "price_cap": args.price_cap,
-        "airlines": parse_airline_codes(args.airlines),
-        "exclude_airlines": parse_airline_codes(args.exclude_airlines),
-        "alliances": parse_alliances(getattr(args, "alliance", None)),
-        "exclude_alliances": parse_alliances(getattr(args, "exclude_alliance", None)),
-        "via": via,
-        "exclude_via": exclude_via,
-        "no_overnight": no_overnight,
-        "require_overnight": require_overnight,
-        "exclude_airports": parse_via_airports(
-            getattr(args, "exclude_airports", None), role="exclude-airports"
-        ),
-        "include_airports": parse_via_airports(
-            getattr(args, "include_airports", None), role="include-airports"
-        ),
-        "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
-        "arrive_before": parse_named_clock(
-            getattr(args, "arrive_before", None), role="arrive-before"
-        ),
-        "depart_after": parse_named_clock(getattr(args, "depart_after", None), role="depart-after"),
-        "max_layover_hours": max_layover,
-        "min_layover_hours": min_layover,
-        "max_duration_hours": max_duration,
+        **via,
+        **overnight,
+        **parse_named_shop(vars(args), _SHOP_CLI_REST),
     }
 
 
@@ -1124,56 +1180,33 @@ def _run_dates(args: argparse.Namespace) -> int:
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args, origin)
-        seed = calendar_trip(
+        seed = _legend_seed(args, origin, destination, start, nights, shop, occupancy)
+    except ValueError as exc:
+        return _reject(exc)
+
+    nearby = bool(getattr(args, "nearby", False))
+    try:
+        _print_route_nearby(nearby, seed, shop)
+        result = search_dates(
             origin,
             destination,
             start,
-            max_stops=args.max_stops,
+            end,
             cabin=args.cabin,
+            max_stops=args.max_stops,
+            trip=trip,
             nights=nights,
-            bags=shop["bags"],
-            carry_on=shop["carry_on"],
-            price_cap=shop["price_cap"],
-            airlines=shop["airlines"],
-            exclude_airlines=shop["exclude_airlines"],
-            alliances=shop["alliances"],
-            exclude_alliances=shop["exclude_alliances"],
+            nearby=nearby,
+            baggage_buffer=args.baggage_buffer,
+            sort=args.sort,
+            progress=_progress,
+            **shop,
             **occupancy,
+            **market,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    nearby = bool(getattr(args, "nearby", False))
-    if nearby:
-        for note in nearby_notes(
-            expand_nearby_trips((seed,), nearby=True),
-            exclude_airports=shop["exclude_airports"],
-        ):
-            print(note, file=sys.stderr)
-
-    result = search_dates(
-        origin,
-        destination,
-        start,
-        end,
-        cabin=args.cabin,
-        max_stops=args.max_stops,
-        trip=trip,
-        nights=nights,
-        nearby=nearby,
-        baggage_buffer=args.baggage_buffer,
-        sort=args.sort,
-        progress=lambda line: print(line, file=sys.stderr),
-        **shop,
-        **occupancy,
-        **market,
-    )
-    reports = _as_report_tuple(result)
-    for report in reports:
-        _print_dates_report(report)
-    _save(args, reports)
-    return _combine_exit_codes(_dates_exit_code(report) for report in reports)
+        return _reject(exc)
+    return _emit_reports(args, result, _print_dates_report, _dates_exit_code)
 
 
 def _run_flex(args: argparse.Namespace) -> int:
@@ -1189,57 +1222,34 @@ def _run_flex(args: argparse.Namespace) -> int:
         trip, nights = resolve_date_trip(args.trip, args.nights)
         shop = _owned_shop_filters_from_args(args)
         market = _market_from_args(args, origin)
-        seed = calendar_trip(
-            origin,
-            destination,
-            start,
-            max_stops=args.max_stops,
-            cabin=args.cabin,
-            nights=nights,
-            bags=shop["bags"],
-            carry_on=shop["carry_on"],
-            price_cap=shop["price_cap"],
-            airlines=shop["airlines"],
-            exclude_airlines=shop["exclude_airlines"],
-            alliances=shop["alliances"],
-            exclude_alliances=shop["exclude_alliances"],
-            **occupancy,
-        )
+        seed = _legend_seed(args, origin, destination, start, nights, shop, occupancy)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     nearby = bool(getattr(args, "nearby", False))
-    if nearby:
-        for note in nearby_notes(
-            expand_nearby_trips((seed,), nearby=True),
-            exclude_airports=shop["exclude_airports"],
-        ):
-            print(note, file=sys.stderr)
-
-    result = search_flex(
-        origin,
-        destination,
-        around,
-        args.flex_days,
-        cabin=args.cabin,
-        max_stops=args.max_stops,
-        trip=trip,
-        nights=nights,
-        top=args.top,
-        baggage_buffer=args.baggage_buffer,
-        sort=args.sort,
-        nearby=nearby,
-        progress=lambda line: print(line, file=sys.stderr),
-        **shop,
-        **occupancy,
-        **market,
-    )
-    reports = _as_report_tuple(result)
-    for report in reports:
-        _print_flex_report(report)
-    _save(args, reports)
-    return _combine_exit_codes(_flex_exit_code(report) for report in reports)
+    try:
+        _print_route_nearby(nearby, seed, shop)
+        result = search_flex(
+            origin,
+            destination,
+            around,
+            args.flex_days,
+            cabin=args.cabin,
+            max_stops=args.max_stops,
+            trip=trip,
+            nights=nights,
+            top=args.top,
+            baggage_buffer=args.baggage_buffer,
+            sort=args.sort,
+            nearby=nearby,
+            progress=_progress,
+            **shop,
+            **occupancy,
+            **market,
+        )
+    except ValueError as exc:
+        return _reject(exc)
+    return _emit_reports(args, result, _print_flex_report, _flex_exit_code)
 
 
 def _run_explore(args: argparse.Namespace) -> int:
@@ -1265,38 +1275,33 @@ def _run_explore(args: argparse.Namespace) -> int:
         validate_explore_window(start, days)
         exclude_regions = parse_exclude_regions(getattr(args, "exclude_regions", None))
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
 
     nearby = bool(getattr(args, "nearby", False))
     if nearby:
         for note in nearby_origin_notes(origin, exclude_airports=shop.get("exclude_airports")):
             print(note, file=sys.stderr)
 
-    result = search_explore(
-        origin,
-        start,
-        days=days,
-        top=args.top,
-        cabin=args.cabin,
-        max_stops=args.max_stops,
-        nearby=nearby,
-        sort=args.sort,
-        baggage_buffer=args.baggage_buffer,
-        exclude_regions=exclude_regions,
-        progress=lambda line: print(line, file=sys.stderr),
-        **shop,
-        **occupancy,
-        **market,
-    )
-    reports = _as_report_tuple(result)
-    codes = []
-    for report in reports:
-        _print_explore_report(report)
-        failures = report.coverage.failed
-        codes.append(0 if not failures else 2 if failures == report.coverage.attempted else 3)
-    _save(args, reports)
-    return _combine_exit_codes(codes)
+    try:
+        result = search_explore(
+            origin,
+            start,
+            days=days,
+            top=args.top,
+            cabin=args.cabin,
+            max_stops=args.max_stops,
+            nearby=nearby,
+            sort=args.sort,
+            baggage_buffer=args.baggage_buffer,
+            exclude_regions=exclude_regions,
+            progress=_progress,
+            **shop,
+            **occupancy,
+            **market,
+        )
+    except ValueError as exc:
+        return _reject(exc)
+    return _emit_reports(args, result, _print_explore_report, _explore_exit)
 
 
 def _run_airports(args: argparse.Namespace) -> int:
@@ -1362,17 +1367,19 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
         if back is not None and back < departure:
             raise ValueError("return date must not be before departure")
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    report = search_hidden_city(
-        origin,
-        dest,
-        departure,
-        return_date=back,
-        adults=args.adults,
-        top=args.top,
-        currency=args.currency,
-    )
+        return _reject(exc)
+    try:
+        report = search_hidden_city(
+            origin,
+            dest,
+            departure,
+            return_date=back,
+            adults=args.adults,
+            top=args.top,
+            currency=args.currency,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     _print_hidden_city_report(report)
     _save(args, report)
     if report.error is not None and not report.offers:
@@ -1396,8 +1403,7 @@ def _run_hotel_rooms(args: argparse.Namespace) -> int:
             rooms=args.rooms,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     _print_hotel_rooms_report(report)
     _save(args, report)
     return 2 if report.error is not None else 0
@@ -1418,11 +1424,9 @@ def _run_awards(args: argparse.Namespace) -> int:
             balances=balances,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     except OSError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     print(
         f"\n=== {report.award.origin} -> {report.award.destination}  "
         f"{report.award.departure_date.isoformat()} ({report.award.program}) ==="
@@ -1454,8 +1458,7 @@ def _run_points(args: argparse.Namespace) -> int:
         balances = load_balances(Path(args.balances)) if args.balances else ()
         paths = transfer_paths(args.program, args.points, balances)
     except (ValueError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return _reject(exc)
     if not paths:
         print(f"No local transfer partner is recorded for {args.program}.")
     for path in paths:
@@ -1491,11 +1494,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=FLIGHTS_EXAMPLES,
     )
-    flights.add_argument(
-        "routes",
-        nargs="+",
-        help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
-    )
+    _add_route_specs(flights)
     _add_max_stops_flag(flights)
     _add_trip_flag(
         flights,
@@ -1520,12 +1519,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Multi-city is omitted. Same public date calendar as dates and flex."
         ),
     )
-    flights.add_argument(
-        "--top",
-        type=int,
-        default=DEFAULT_TOP,
-        help=f"Offers per query (default {DEFAULT_TOP})",
-    )
+    _add_offers_per_query(flights)
     _add_baggage_buffer_flag(flights)
     flights.add_argument(
         "--sort",
@@ -1536,11 +1530,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "departure, or arrival"
         ),
     )
-    flights.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        flights,
         default="auto",
-        choices=["auto", "sweep", "detail"],
-        help=(
+        help_text=(
             "sweep reads the public results page over a Chrome-TLS HTTP/2 session; "
             "detail is the Playwright scrape (required for --trip multi; "
             "refuses bag and carrier filters). "
@@ -1657,11 +1650,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=TRIP_EXAMPLES,
     )
-    trip.add_argument(
-        "routes",
-        nargs="+",
-        help="ORIGIN-DESTINATION:DATE[,DATE...] or ORIGIN-DESTINATION:OUT:BACK (IATA codes)",
-    )
+    _add_route_specs(trip)
     trip.add_argument(
         "--hotel",
         required=True,
@@ -1696,12 +1685,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_cabin_flag(trip)
     _add_currency_country_flags(trip)
-    trip.add_argument(
-        "--top",
-        type=int,
-        default=DEFAULT_TOP,
-        help=f"Offers per query (default {DEFAULT_TOP})",
-    )
+    _add_offers_per_query(trip)
     _add_baggage_buffer_flag(trip, extra="Trip total uses the owned cabin fare, not this buffer.")
     trip.add_argument(
         "--sort",
@@ -1709,11 +1693,10 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=list(FLIGHT_SORTS),
         help="Flight offer order (default ranked). Trip total still uses owned fare.",
     )
-    trip.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        trip,
         default="auto",
-        choices=["auto", "sweep", "detail"],
-        help=(
+        help_text=(
             "sweep is a fast HTTP shortlist; detail is the Playwright scrape. "
             "auto uses public-page sweep; detail is an explicit browser mode (default auto)"
         ),
@@ -1772,11 +1755,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "Sort is order, not a cut"
         ),
     )
-    dates.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        dates,
         default="sweep",
-        choices=["auto", "sweep", "detail"],
-        help="Days are shopped on the public results page (sweep). detail is accepted and ignored.",
+        help_text=(
+            "Days are shopped on the public results page (sweep). detail is accepted and ignored."
+        ),
     )
     _add_save_flag(dates)
 
@@ -1829,11 +1813,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_owned_shop_filters(flex)
     _add_nearby_flag(flex)
-    flex.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        flex,
         default="sweep",
-        choices=["auto", "sweep", "detail"],
-        help=(
+        help_text=(
             "Shops each day on the public results page and ranks the chosen day from "
             "those cards (calendar_then_sweep). detail is accepted and ignored."
         ),
@@ -2036,11 +2019,10 @@ def _build_parser() -> argparse.ArgumentParser:
     recheck.add_argument(
         "--country", default=None, metavar="CC", help="ISO country for Google gl (omit when unset)"
     )
-    recheck.add_argument(
-        "--fetch",
+    _add_fetch_flag(
+        recheck,
         default=None,
-        choices=["auto", "sweep", "detail"],
-        help="Fetch mode; defaults to the offer's own backend",
+        help_text="Fetch mode; defaults to the offer's own backend",
     )
     recheck.add_argument(
         "--allow-loose-match",

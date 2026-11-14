@@ -10,7 +10,6 @@ from datetime import date
 from typing import Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, metro_members, parse_exclude_regions
-from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.control import (
     SearchControl,
     active,
@@ -44,10 +43,13 @@ from viajante.explore import (
     validate_explore_window,
 )
 from viajante.flight_filters import (
-    parse_depart_window,
-    parse_named_clock,
+    _SHOP_CALENDAR,
+    _SHOP_CLOCKS,
+    _SHOP_PLACES,
+    _SHOP_TRIP,
+    parse_named_shop,
     parse_offer_filters,
-    parse_overnight_airports,
+    parse_shop_filters,
     parse_via_airports,
 )
 from viajante.flight_offers import FlightSort
@@ -124,20 +126,24 @@ def _shop_filters(
     include_airports: Optional[str] = None,
 ) -> dict[str, object]:
     """Parse the raw shop filter strings the flight-shaped tools share, under one set of names."""
-    return dict(
-        depart_window=parse_depart_window(depart_window),
-        arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-        depart_after=parse_named_clock(depart_after, role="depart-after"),
-        max_duration_hours=max_duration,
-        min_layover_hours=min_layover,
-        max_layover_hours=max_layover,
-        via=parse_via_airports(via),
-        exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-        no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-        require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-        include_airports=parse_via_airports(include_airports, role="include-airports"),
-    )
+    return {
+        **parse_shop_filters(
+            depart_window=depart_window,
+            arrive_before=arrive_before,
+            depart_after=depart_after,
+            max_duration=max_duration,
+            min_layover=min_layover,
+            max_layover=max_layover,
+        ),
+        **parse_shop_filters(
+            via=via,
+            exclude_via=exclude_via,
+            no_overnight=no_overnight,
+            require_overnight=require_overnight,
+            exclude_airports=exclude_airports,
+            include_airports=include_airports,
+        ),
+    }
 
 
 def _reject_past(dates: Sequence[date], *, label: str = "departure") -> None:
@@ -290,11 +296,11 @@ def search_flights_tool(
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
     currency = resolve_trips_currency(currency, trips)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
-    carriers = dict(
-        airlines=parse_airline_codes(airlines),
-        exclude_airlines=parse_airline_codes(exclude_airlines),
-        alliances=parse_alliances(alliance),
-        exclude_alliances=parse_alliances(exclude_alliance),
+    carriers = parse_shop_filters(
+        airlines=airlines,
+        exclude_airlines=exclude_airlines,
+        alliance=alliance,
+        exclude_alliance=exclude_alliance,
     )
     search = _shop_filters(
         depart_window=depart_window,
@@ -310,8 +316,7 @@ def search_flights_tool(
         exclude_airports=exclude_airports,
         include_airports=include_airports,
     )
-    search["depart_before"] = parse_named_clock(depart_before, role="depart-before")
-    search["arrive_after"] = parse_named_clock(arrive_after, role="arrive-after")
+    search.update(parse_shop_filters(depart_before=depart_before, arrive_after=arrive_after))
     filters, excluded, included = validate_flight_search_args(
         top=top,
         sort=sort,
@@ -418,10 +423,12 @@ def search_split_tickets_tool(
         raise ValueError("split tickets take one one-way route or one round-trip (trip='rt')")
     (split_query,) = _overlay_carrier_filters(
         (trips[0],),
-        airlines=parse_airline_codes(airlines),
-        exclude_airlines=parse_airline_codes(exclude_airlines),
-        alliances=parse_alliances(alliance),
-        exclude_alliances=parse_alliances(exclude_alliance),
+        **parse_shop_filters(
+            airlines=airlines,
+            exclude_airlines=exclude_airlines,
+            alliance=alliance,
+            exclude_alliance=exclude_alliance,
+        ),
     )
     via_codes = parse_via_airports(via, role="via")
     validate_split_request(
@@ -519,6 +526,7 @@ def search_dates_tool(
     validate_date_window(start_date, end_date)
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    shop = locals()
     report = _with_search_lock(
         lambda: search_dates(
             origin,
@@ -533,32 +541,17 @@ def search_dates_tool(
             cabin=cabin,
             trip=kind,
             nights=stay,
-            airlines=parse_airline_codes(airlines),
-            exclude_airlines=parse_airline_codes(exclude_airlines),
-            alliances=parse_alliances(alliance),
-            exclude_alliances=parse_alliances(exclude_alliance),
-            via=parse_via_airports(via),
-            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-            no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-            require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-            exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-            include_airports=parse_via_airports(include_airports, role="include-airports"),
             bags=bags,
             carry_on=carry_on,
             price_cap=price_cap,
             nearby=nearby,
-            depart_window=parse_depart_window(depart_window),
-            arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-            depart_after=parse_named_clock(depart_after, role="depart-after"),
-            max_duration_hours=max_duration,
-            min_layover_hours=min_layover,
-            max_layover_hours=max_layover,
             currency=currency,
             country=country,
             baggage_buffer=baggage_buffer,
             sort=sort,
             proxy=proxy,
             deadline_seconds=deadline_seconds,
+            **parse_named_shop(shop, _SHOP_CALENDAR),
         )
     )
     return _searched(reports_payload(report), report)
@@ -611,6 +604,7 @@ def search_flex_tool(
     flex_window(around_date, flex)
     kind, stay = resolve_date_trip(trip, nights)
     currency, baggage_buffer = resolve_quote_and_buffer(currency, origin, baggage_buffer)
+    shop = locals()
     report = _with_search_lock(
         lambda: search_flex(
             origin,
@@ -628,30 +622,15 @@ def search_flex_tool(
             top=top,
             baggage_buffer=baggage_buffer,
             sort=sort,
-            airlines=parse_airline_codes(airlines),
-            exclude_airlines=parse_airline_codes(exclude_airlines),
-            alliances=parse_alliances(alliance),
-            exclude_alliances=parse_alliances(exclude_alliance),
-            via=parse_via_airports(via),
-            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-            no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-            require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-            exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-            include_airports=parse_via_airports(include_airports, role="include-airports"),
             bags=bags,
             carry_on=carry_on,
             price_cap=price_cap,
             nearby=nearby,
-            depart_window=parse_depart_window(depart_window),
-            arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-            depart_after=parse_named_clock(depart_after, role="depart-after"),
-            max_duration_hours=max_duration,
-            min_layover_hours=min_layover,
-            max_layover_hours=max_layover,
             currency=currency,
             country=country,
             proxy=proxy,
             deadline_seconds=deadline_seconds,
+            **parse_named_shop(shop, _SHOP_CALENDAR),
         )
     )
     return _searched(reports_payload(report), report)
@@ -712,8 +691,13 @@ def search_explore_tool(
     currency, baggage_buffer = resolve_quote_and_buffer(
         currency, members[0] if members else origin, baggage_buffer
     )
-    report = _with_search_lock(
-        lambda: search_explore(
+    shop = locals()
+
+    def run():
+        filters = parse_named_shop(shop, _SHOP_PLACES)
+        regions = parse_exclude_regions(exclude_regions)
+        filters.update(parse_named_shop(shop, _SHOP_CLOCKS))
+        return search_explore(
             origin,
             start_date,
             days=days,
@@ -724,35 +708,21 @@ def search_explore_tool(
             infants_on_lap=infants_on_lap,
             cabin=cabin,
             max_stops=max_stops,
-            airlines=parse_airline_codes(airlines),
-            exclude_airlines=parse_airline_codes(exclude_airlines),
-            alliances=parse_alliances(alliance),
-            exclude_alliances=parse_alliances(exclude_alliance),
-            via=parse_via_airports(via),
-            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-            no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-            require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-            exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-            include_airports=parse_via_airports(include_airports, role="include-airports"),
-            exclude_regions=parse_exclude_regions(exclude_regions),
+            exclude_regions=regions,
             bags=bags,
             carry_on=carry_on,
             price_cap=price_cap,
             nearby=nearby,
-            depart_window=parse_depart_window(depart_window),
-            arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-            depart_after=parse_named_clock(depart_after, role="depart-after"),
-            max_duration_hours=max_duration,
-            min_layover_hours=min_layover,
-            max_layover_hours=max_layover,
             currency=currency,
             country=country,
             sort=sort,
             baggage_buffer=baggage_buffer,
             proxy=proxy,
             deadline_seconds=deadline_seconds,
+            **filters,
         )
-    )
+
+    report = _with_search_lock(run)
     return _searched(reports_payload(report), report)
 
 
@@ -992,6 +962,7 @@ def search_trip_tool(
         entire_home=entire_home,
         free_cancellation=free_cancellation,
     )
+    shop = locals()
     report = _with_search_lock(
         lambda: search_trip(
             trips,
@@ -1000,18 +971,7 @@ def search_trip_tool(
             baggage_buffer=baggage_buffer,
             sort=sort,
             fetch=fetch,
-            airlines=parse_airline_codes(airlines),
-            exclude_airlines=parse_airline_codes(exclude_airlines),
-            alliances=parse_alliances(alliance),
-            exclude_alliances=parse_alliances(exclude_alliance),
-            via=parse_via_airports(via),
-            exclude_via=parse_via_airports(exclude_via, role="exclude-via"),
-            no_overnight=parse_overnight_airports(no_overnight, role="no-overnight"),
-            require_overnight=parse_overnight_airports(require_overnight, role="require-overnight"),
-            exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
-            include_airports=parse_via_airports(include_airports, role="include-airports"),
-            arrive_before=parse_named_clock(arrive_before, role="arrive-before"),
-            depart_after=parse_named_clock(depart_after, role="depart-after"),
+            **parse_named_shop(shop, _SHOP_TRIP),
             bags=bags,
             carry_on=carry_on,
             price_cap=price_cap,
