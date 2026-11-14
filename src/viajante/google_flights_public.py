@@ -68,6 +68,7 @@ from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
     note_rate_limited,
+    note_repeated_throttle,
     rate_limit_advice,
     rate_limit_status,
     recorded_expiry,
@@ -109,6 +110,8 @@ def _response_halts(response: SweepHttpResponse) -> bool:
         return False
     if response.stopped and not response.request_sent:
         return True
+    if response.rate_limited:
+        return True
     if response.status in {403, 429}:
         return True
     if raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS:
@@ -119,7 +122,13 @@ def _response_halts(response: SweepHttpResponse) -> bool:
 def _sent_batch_block(responses: Sequence[SweepHttpResponse]) -> SweepHttpResponse | None:
     sent = [r for r in responses if r.request_sent and _response_halts(r)]
     return next(
-        (r for r in sent if r.status == 429 or raw_rpc_error_status(r.text) == RPC_THROTTLE_STATUS),
+        (
+            r
+            for r in sent
+            if r.status == 429
+            or r.rate_limited
+            or raw_rpc_error_status(r.text) == RPC_THROTTLE_STATUS
+        ),
         sent[0] if sent else None,
     )
 
@@ -129,7 +138,11 @@ def _batch_block_provenance(responses: Sequence[SweepHttpResponse]) -> list[Swee
     block = _sent_batch_block(responses)
     if block is None:
         return list(responses)
-    limited = block.status == 429 or raw_rpc_error_status(block.text) == RPC_THROTTLE_STATUS
+    limited = (
+        block.status == 429
+        or block.rate_limited
+        or raw_rpc_error_status(block.text) == RPC_THROTTLE_STATUS
+    )
     return [
         replace(
             r,
@@ -463,13 +476,38 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             except ShoppingErrorFrame as exc:
                 # An owned error frame is the provider's answer, not unreadable markup:
                 # like an RPC error status it neither proves nor disproves availability.
+                # A burst of status 13 records the shared cooldown; one frame does not.
                 diagnostics = response_diagnostics(response, url)
                 diagnostics["rpc_status"] = exc.status
-                raise GoogleFlightsBlocked(
-                    f"Google Flights answered with error status {exc.status} and no results. "
-                    "The cause is unknown; availability is not disproved.",
-                    diagnostics=diagnostics,
-                ) from exc
+                state = None
+                if (
+                    exc.status == RPC_THROTTLE_STATUS
+                    and not response.throttle_observed
+                    and self._proxy is None
+                ):
+                    state = note_repeated_throttle(endpoint=url)
+                cooled = state is not None or (
+                    exc.status == RPC_THROTTLE_STATUS and response.rate_limited
+                )
+                unknown = (
+                    f"Google Flights answered with error status {exc.status} "
+                    "and no results. The cause is unknown; availability is not disproved."
+                )
+                if cooled:
+                    until = recorded_expiry(state) if state is not None else response.retry_until
+                    basis = (state or {}).get("basis", response.cooldown_basis)
+                    advice = (
+                        rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}")
+                        if state is not None
+                        else response.rate_limit
+                    )
+                    raise GoogleFlightsBlocked(
+                        advice or unknown,
+                        status=429,
+                        retry_until=until,
+                        diagnostics={**diagnostics, "cooldown_basis": basis},
+                    ) from exc
+                raise GoogleFlightsBlocked(unknown, diagnostics=diagnostics) from exc
             except UnpricedShoppingResults as exc:
                 provider = getattr(trip, "provider", None)
                 if provider is None or provider.max_price is None:
@@ -1135,6 +1173,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             stopped = (
                 response.status in {403, 429}
                 or response.stopped
+                or response.rate_limited
                 or raw_rpc_error_status(response.text) == 13
                 or looks_blocked(response.text, response.url)
             )
@@ -1202,7 +1241,23 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         try:
             catalog = parse_explore_catalog(body, origins=accepted)
         except CompactParseMiss as exc:
-            raise _catalog_parse_error(body, exc) from exc
+            failure = _catalog_parse_error(body, exc)
+            if (
+                isinstance(failure, GoogleFlightsMarkupError)
+                and self._proxy is None
+                and "no wrb.fr" in str(exc)
+                and "payload" in str(exc)
+            ):
+                state = note_repeated_throttle(endpoint=EXPLORE_URL)
+                if state is not None:
+                    blocked = GoogleFlightsBlocked(
+                        rate_limit_advice(state, reason="no wrb.fr payload"),
+                        status=429,
+                        retry_until=recorded_expiry(state),
+                    )
+                    self._stopped_error = blocked
+                    raise blocked from exc
+            raise failure from exc
         if catalog.origin_echo is not None and catalog.origin_echo not in accepted:
             raise GoogleFlightsMarkupError(
                 f"Google Explore catalog echoed origin {catalog.origin_echo}, "

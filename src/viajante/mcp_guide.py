@@ -197,8 +197,16 @@ two one-way prices. Automatic typical-price calendar fanout is disabled. Dates a
 flex request each named day (at most 31); flex then fetches the selected day freshly.
 VIAJANTE_SWEEP_MODE=conservative caps HTTP/2 dispatch at two requests instead of
 the standard eight. get_runtime_info reports the active mode and concurrency.
-RPC status 13 has an unknown cause; it alone does not establish throttling or an IP
-block. A 429 or status 13 stops unsent work and is not replayed or switched to detail.
+RPC status 13 has an unknown cause; one response does not establish throttling or an IP
+block. A data-less RPC status 13 records the shared cooldown immediately. Three public-page
+status-13 error frames, or Explore catalog bodies with no wrb.fr payload, inside 2 minutes
+record that same cooldown without a Retry-After header, and a partial calendar carries
+retry_after. A 429, a data-less status 13, or that burst stops unsent work and is not
+replayed or switched to detail. Later searches fail immediately while the cooldown runs.
+The status-13 cooldown message says Google Flights is likely blocking this shared IP
+because viajante is running in a cloud-hosted agent or sandbox, names how long to wait,
+and says it works much better on your own computer: the ChatGPT or Claude desktop app
+with the viajante MCP (npx -y @viajante/mcp), or pip install viajante.
 A round-trip date or flex window reads its pages in bounded batches at that same
 sweep concurrency, in groups of at most that many days: the group's outbound
 boards, then those days' selected return pages (still at most eight), then the

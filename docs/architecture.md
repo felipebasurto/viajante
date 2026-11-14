@@ -248,8 +248,19 @@ Only failures that can succeed on a second try are retried:
 - A raw data-less RPC status 13 is preserved in additive diagnostics even when
   the body also resembles a shopping `ErrorResponse`. For a direct session it
   records the existing guessed cooldown; it is not replayed and pending work
-  stops. Status 13 alone does not prove an IP block or explain the cause. Error
-  diagnostics report only the endpoint host and path, HTTP/RPC status, whether the
+  stops. Status 13 alone does not prove an IP block or explain the cause. A
+  public-page error frame with status 13, and an Explore catalog body with no
+  `wrb.fr` payload, are counted in the process. Three of them inside 2 minutes
+  record that same guessed cooldown (`heuristic_rpc_13`) with no `Retry-After`.
+  The call then stops unsent calendar cells, expanded-airport queries and later
+  date-window batches, and a partial calendar carries `retry_after`. One error
+  frame stays a blocked cell and does not pause the machine. Later searches
+  fail immediately while the cooldown runs. That message says Google Flights is
+  likely blocking this shared IP because viajante is running in a cloud-hosted
+  agent or sandbox, names how long to wait, and says it works much better on your
+  own computer: the ChatGPT or Claude desktop app with the viajante MCP
+  (`npx -y @viajante/mcp`), or `pip install viajante`. Error diagnostics report only the
+  endpoint host and path, HTTP/RPC status, whether the
   request was sent, attempts, and cooldown basis; they omit query parameters.
   An already active cooldown reports no request sent, zero attempts, and null
   HTTP/RPC status. The browser path detects `google.com/sorry` right away
@@ -303,7 +314,9 @@ cannot carry top-level fields without breaking its shape).
   page on the start date only. A connection failure loading that page
   (`net::ERR_*`) is a transport error: one retry, then `fetch_failed`, not a
   block. A catalog body with no `wrb.fr` payload is markup drift, or a block
-  when the body is a consent, sorry, or other block page. A metro origin fans
+  when the body is a consent, sorry, or other block page. Three of those
+  missing payloads, or status-13 error frames, inside 2 minutes record the
+  shared cooldown and stop the airports that have not run. A metro origin fans
   out to its member airports, sequentially, and stops on a rate limit. A
   status 13 on the catalog stops it and records the shared cooldown. An empty
   shop inside a `month` window is `not_loaded` for that date, not
@@ -407,9 +420,12 @@ improvement loops.
   that drift shows up as `markup_drift` and not as a wrong fare.
 - **Throttling is a guess.** Google publishes no quota. The cooldown lengths
   are marked with `ponytail:` comments and should learn from real recoveries.
-  A data-less RPC status 13 now writes the same cooldown (direct sessions only);
-  Skiplagged keeps its own `skiplagged-rate-limit.json` and a one-second pace.
-  A status 13 unrelated to throttling can cause a 2-minute pause.
+  A data-less RPC status 13 now writes the same cooldown (direct sessions only).
+  Three public-page status-13 error frames, or Explore bodies with no `wrb.fr`
+  payload, inside 2 minutes write it too. Skiplagged keeps its own
+  `skiplagged-rate-limit.json` and a one-second pace.
+  A status 13 unrelated to throttling can cause a 2-minute pause. One error
+  frame does not.
 - **Room capacity and type need confirmation.** Skiplagged's `occupancy_limit`
   is the provider's number per room type, not proof that a party fits across
   several rooms. Google hostel totals may price dormitory beds; Google gives

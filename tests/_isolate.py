@@ -10,8 +10,23 @@ import atexit
 import os
 import shutil
 import tempfile
+import unittest
+
+from viajante.ratelimit import reset_throttle_signals
 
 _MARK = "viajante-tests-"
+
+# The status-13 burst counter is process memory, not the state dir. Clear it
+# before every test so one module's error frames do not cool down the next.
+_run = unittest.TestCase.run
+
+
+def _run_isolated(self, result=None):
+    reset_throttle_signals()
+    return _run(self, result)
+
+
+unittest.TestCase.run = _run_isolated
 
 os.environ.pop("VIAJANTE_PRICE_HISTORY", None)
 os.environ.pop("VIAJANTE_SWEEP_MODE", None)

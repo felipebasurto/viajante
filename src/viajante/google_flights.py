@@ -21,6 +21,7 @@ from viajante.control import (
     current_control,
     wait_for_future,
 )
+from viajante.google_flights_page import ds1_error_frame_status
 from viajante.google_flights_rpc import (  # noqa: F401 - RawFlightCard is re-exported for callers
     RawFlightCard,
     raw_rpc_error_status,
@@ -35,6 +36,7 @@ from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tes
     RATE_LIMIT_COOLDOWN_SECONDS,
     RATE_LIMIT_MAX_COOLDOWN_SECONDS,
     note_rate_limited,
+    note_repeated_throttle,
     rate_limit_advice,
     rate_limit_status,
     recorded_expiry,
@@ -237,6 +239,9 @@ class SweepHttpResponse:
     cooldown_basis: Optional[str] = None
     retry_until: Optional[float] = None
     rate_limited: bool = False
+    # Set once this body has been counted toward the status-13 burst, so a later
+    # parse of the same response does not count it again.
+    throttle_observed: bool = False
 
 
 # Not an HTTP status: marks a multiplexed job whose request raised before any response.
@@ -525,6 +530,19 @@ class ChromeSweepClient:
                 cooldown_basis=state.get("basis", "unknown"),
                 retry_until=recorded_expiry(state),
             )
+        elif out.status == 200 and ds1_error_frame_status(out.text) == RPC_THROTTLE_STATUS:
+            state = note_repeated_throttle(endpoint=str(response.url))
+            if state is None:
+                out = replace(out, throttle_observed=True)
+            else:
+                out = replace(
+                    out,
+                    throttle_observed=True,
+                    rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}"),
+                    cooldown_basis=state.get("basis", "unknown"),
+                    retry_until=recorded_expiry(state),
+                    rate_limited=True,
+                )
         return out
 
     async def _aget(
@@ -670,6 +688,7 @@ class ChromeSweepClient:
                 out[index] = response
                 if (
                     response.status == 429
+                    or response.rate_limited
                     or raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS
                 ):
                     stop.set()
@@ -771,6 +790,7 @@ def dispatch_posts(
 def is_rate_limited_response(response: SweepHttpResponse) -> bool:
     return (
         response.status == 429
+        or response.rate_limited
         or raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS
         or (response.stopped and response.status == 0)
     )

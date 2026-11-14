@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Mapping, Optional
@@ -23,8 +24,21 @@ SKIPLAGGED_RATE_LIMIT_FILE = "skiplagged-rate-limit.json"
 # Retry-After the provider names (at most 30 min). Upgrade: learn it from recoveries.
 RATE_LIMIT_COOLDOWN_SECONDS = 120.0
 RATE_LIMIT_MAX_COOLDOWN_SECONDS = 1800.0
+# ponytail: one status-13 error frame is one failed search, not an IP block. Three of
+# those, or a catalog with no wrb.fr payload, inside this same 2-minute guess is a
+# burst that clears only after a pause. Upgrade: learn the count from recoveries.
+THROTTLE_REPEAT_THRESHOLD = 3
+THROTTLE_REPEAT_WINDOW_SECONDS = RATE_LIMIT_COOLDOWN_SECONDS
 NOT_SENT = "Not sent. "
 PAUSE_PHRASE = "searches until"
+# Shown when the status-13 cooldown is recorded. One error frame is not this pause.
+# "Likely": a status 13 does not prove the IP is a hosted sandbox.
+_HOSTED_THROTTLE_HINT = (
+    "Google Flights is likely blocking this shared IP because viajante is running "
+    "in a cloud-hosted agent or sandbox. It works much better on your own computer, "
+    "in the ChatGPT or Claude desktop app with the viajante MCP (npx -y @viajante/mcp), "
+    "or with pip install viajante."
+)
 _COOLDOWN_BASES = {
     "provider_retry_after",
     "heuristic_http_429",
@@ -139,6 +153,46 @@ def note_rate_limited(
         return {**state, "persisted": False}
 
 
+_throttle_hits: list[float] = []
+_throttle_lock = threading.Lock()
+
+
+def reset_throttle_signals() -> None:
+    """Drop the in-process burst counter so one search does not leak into the next."""
+    with _throttle_lock:
+        _throttle_hits.clear()
+
+
+def note_repeated_throttle(
+    now: Optional[float] = None,
+    *,
+    endpoint: Optional[str] = None,
+    file: str = GOOGLE_RATE_LIMIT_FILE,
+) -> Optional[dict]:
+    """Count one status-13 or missing-payload signal. At the threshold, record the cooldown.
+
+    A data-less RPC status 13 still records on its own, in the caller. This is the
+    burst of signals that today are not a cooldown: a public-page error frame and a
+    catalog with no ``wrb.fr`` payload. Later signals in the same window return the
+    recorded cooldown and do not extend it.
+    """
+    current = time.time() if now is None else now
+    with _throttle_lock:
+        cutoff = current - THROTTLE_REPEAT_WINDOW_SECONDS
+        _throttle_hits[:] = [hit for hit in _throttle_hits if hit > cutoff]
+        _throttle_hits.append(current)
+        tripped = len(_throttle_hits) >= THROTTLE_REPEAT_THRESHOLD
+    if not tripped:
+        return None
+    return note_rate_limited(
+        now=current,
+        basis="heuristic_rpc_13",
+        cause="rpc_13",
+        endpoint=endpoint,
+        file=file,
+    )
+
+
 def recorded_expiry(state: Mapping[str, object]) -> Optional[float]:
     """Only a persisted cooldown can pause a later process."""
     return float(state["until"]) if state.get("persisted", True) else None
@@ -170,9 +224,19 @@ def rate_limit_advice(
     minutes = max(1, math.ceil((state["until"] - time.time()) / 60))
     prefix = "" if sent else NOT_SENT
     if state.get("cause") == "rpc_13":
-        observation = f"{provider} returned RPC status 13; its cause is unknown"
-    else:
-        observation = f"{provider} is rate-limiting this machine"
+        pause = (
+            "Viajante could not save the cooldown. "
+            if state.get("persisted") is False
+            else (
+                f"Viajante pauses {provider} {PAUSE_PHRASE} {clock(state['until'])} UTC "
+                f"(~{minutes} min). "
+            )
+        )
+        return (
+            f"{prefix}{_HOSTED_THROTTLE_HINT} {pause}"
+            "Tell the user to wait; do not retry or switch fetch mode."
+        )
+    observation = f"{provider} is rate-limiting this machine"
     if state.get("persisted") is False:
         return (
             f"{prefix}{observation} ({reason}). Viajante could not save the cooldown. "
