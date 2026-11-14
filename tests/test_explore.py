@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -869,6 +869,19 @@ class ExploreCliTests(unittest.TestCase):
             code = main(["explore", "XXX", "--from", "2026-09-01"])
         self.assertEqual(code, 1)
         search.assert_not_called()
+
+    def test_metro_nearby_is_an_error_line(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+            code = main(["explore", "NYC", "--from", "2027-06-01", "--nearby"])
+        self.assertEqual(code, 1)
+        text = stderr.getvalue()
+        self.assertTrue(text.startswith("error: "))
+        self.assertIn(
+            "nearby cannot be combined with a metro code; the metro already names its airports",
+            text,
+        )
+        self.assertNotIn("Traceback", text)
 
     def test_prints_dest_table(self) -> None:
         source = FakeExploreSource(

@@ -465,15 +465,18 @@ def _run_hotels(args: argparse.Namespace) -> int:
     except ValueError as exc:
         return _reject(exc)
 
-    report = search_hotels(
-        queries,
-        top=args.top,
-        progress=_progress,
-        source=getattr(args, "source", "booking"),
-        currency=args.currency,
-        near=args.near,
-        max_distance_km=args.max_distance_km,
-    )
+    try:
+        report = search_hotels(
+            queries,
+            top=args.top,
+            progress=_progress,
+            source=getattr(args, "source", "booking"),
+            currency=args.currency,
+            near=args.near,
+            max_distance_km=args.max_distance_km,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     _print_hotel_report(report)
 
     _save(args, report)
@@ -528,19 +531,22 @@ def _run_trip(args: argparse.Namespace) -> int:
         ):
             print(note, file=sys.stderr)
 
-    report = search_trip(
-        trips,
-        hotel_query,
-        top=args.top,
-        baggage_buffer=args.baggage_buffer,
-        progress=_progress,
-        sort=args.sort,
-        fetch=args.fetch,
-        currency=args.currency,
-        country=args.country,
-        hotel_source=getattr(args, "source", "booking"),
-        **shop,
-    )
+    try:
+        report = search_trip(
+            trips,
+            hotel_query,
+            top=args.top,
+            baggage_buffer=args.baggage_buffer,
+            progress=_progress,
+            sort=args.sort,
+            fetch=args.fetch,
+            currency=args.currency,
+            country=args.country,
+            hotel_source=getattr(args, "source", "booking"),
+            **shop,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     _print_report(report.flights, sort=args.sort)
     _print_hotel_report(report.hotels)
     _print_trip_total(report)
@@ -1179,25 +1185,27 @@ def _run_dates(args: argparse.Namespace) -> int:
         return _reject(exc)
 
     nearby = bool(getattr(args, "nearby", False))
-    _print_route_nearby(nearby, seed, shop)
-
-    result = search_dates(
-        origin,
-        destination,
-        start,
-        end,
-        cabin=args.cabin,
-        max_stops=args.max_stops,
-        trip=trip,
-        nights=nights,
-        nearby=nearby,
-        baggage_buffer=args.baggage_buffer,
-        sort=args.sort,
-        progress=_progress,
-        **shop,
-        **occupancy,
-        **market,
-    )
+    try:
+        _print_route_nearby(nearby, seed, shop)
+        result = search_dates(
+            origin,
+            destination,
+            start,
+            end,
+            cabin=args.cabin,
+            max_stops=args.max_stops,
+            trip=trip,
+            nights=nights,
+            nearby=nearby,
+            baggage_buffer=args.baggage_buffer,
+            sort=args.sort,
+            progress=_progress,
+            **shop,
+            **occupancy,
+            **market,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     return _emit_reports(args, result, _print_dates_report, _dates_exit_code)
 
 
@@ -1219,26 +1227,28 @@ def _run_flex(args: argparse.Namespace) -> int:
         return _reject(exc)
 
     nearby = bool(getattr(args, "nearby", False))
-    _print_route_nearby(nearby, seed, shop)
-
-    result = search_flex(
-        origin,
-        destination,
-        around,
-        args.flex_days,
-        cabin=args.cabin,
-        max_stops=args.max_stops,
-        trip=trip,
-        nights=nights,
-        top=args.top,
-        baggage_buffer=args.baggage_buffer,
-        sort=args.sort,
-        nearby=nearby,
-        progress=_progress,
-        **shop,
-        **occupancy,
-        **market,
-    )
+    try:
+        _print_route_nearby(nearby, seed, shop)
+        result = search_flex(
+            origin,
+            destination,
+            around,
+            args.flex_days,
+            cabin=args.cabin,
+            max_stops=args.max_stops,
+            trip=trip,
+            nights=nights,
+            top=args.top,
+            baggage_buffer=args.baggage_buffer,
+            sort=args.sort,
+            nearby=nearby,
+            progress=_progress,
+            **shop,
+            **occupancy,
+            **market,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     return _emit_reports(args, result, _print_flex_report, _flex_exit_code)
 
 
@@ -1272,22 +1282,25 @@ def _run_explore(args: argparse.Namespace) -> int:
         for note in nearby_origin_notes(origin, exclude_airports=shop.get("exclude_airports")):
             print(note, file=sys.stderr)
 
-    result = search_explore(
-        origin,
-        start,
-        days=days,
-        top=args.top,
-        cabin=args.cabin,
-        max_stops=args.max_stops,
-        nearby=nearby,
-        sort=args.sort,
-        baggage_buffer=args.baggage_buffer,
-        exclude_regions=exclude_regions,
-        progress=_progress,
-        **shop,
-        **occupancy,
-        **market,
-    )
+    try:
+        result = search_explore(
+            origin,
+            start,
+            days=days,
+            top=args.top,
+            cabin=args.cabin,
+            max_stops=args.max_stops,
+            nearby=nearby,
+            sort=args.sort,
+            baggage_buffer=args.baggage_buffer,
+            exclude_regions=exclude_regions,
+            progress=_progress,
+            **shop,
+            **occupancy,
+            **market,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     return _emit_reports(args, result, _print_explore_report, _explore_exit)
 
 
@@ -1355,15 +1368,18 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
             raise ValueError("return date must not be before departure")
     except ValueError as exc:
         return _reject(exc)
-    report = search_hidden_city(
-        origin,
-        dest,
-        departure,
-        return_date=back,
-        adults=args.adults,
-        top=args.top,
-        currency=args.currency,
-    )
+    try:
+        report = search_hidden_city(
+            origin,
+            dest,
+            departure,
+            return_date=back,
+            adults=args.adults,
+            top=args.top,
+            currency=args.currency,
+        )
+    except ValueError as exc:
+        return _reject(exc)
     _print_hidden_city_report(report)
     _save(args, report)
     if report.error is not None and not report.offers:
