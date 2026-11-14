@@ -248,9 +248,11 @@ Only failures that can succeed on a second try are retried:
 - A raw data-less RPC status 13 is preserved in additive diagnostics even when
   the body also resembles a shopping `ErrorResponse`. For a direct session it
   records the existing guessed cooldown; it is not replayed and pending work
-  stops. Status 13 alone does not prove an IP block or explain the cause. A
-  public-page error frame with status 13, and an Explore catalog body with no
-  `wrb.fr` payload, are counted in the process. Three of them inside 2 minutes
+  stops. That code stays in diagnostics. The first message says Google paused
+  the request, that availability is unknown, to wait 15-30 minutes, and not to
+  add airports. A public-page error frame of that kind, and an Explore catalog
+  body with no `wrb.fr` payload, are counted in a file beside the cooldown so
+  separate CLI runs add up. Three of them inside 2 minutes
   record that same guessed cooldown (`heuristic_rpc_13`) with no `Retry-After`.
   The call then stops unsent calendar cells, expanded-airport queries and later
   date-window batches, and a partial calendar carries `retry_after`. One error
@@ -270,7 +272,8 @@ Only failures that can succeed on a second try are retried:
 
 Every MCP tool except `lookup_airports` returns the same top-level fields,
 stamped in `envelope.py` from the report the handler already built (no second
-code path): `status`, `completeness`, `empty_reason`, `empty_note`, `error_code`,
+code path): `status`, `completeness`, `empty_reason`, `empty_note`,
+`completeness_note`, `error_code`,
 `retry_after` / `retry_after_seconds`, `observed_at`, `observed_at_basis`.
 
 The envelope tallies the report's own units (query rows, date rows, explore
@@ -284,9 +287,13 @@ that may be called "no flights/hotels found". `filtered_out` (the provider retur
 rows, viajante's filters removed them all) must say filters removed results.
 `not_loaded` (no usable response) must say the search did not complete.
 `completeness` is `partial` when only some units answered, some came back
-unproven, or the search is scope-bound, `blocked` when none did. A calendar day
+unproven, or the search is scope-bound, `blocked` when none did. Whenever it is
+`partial` or `blocked`, `completeness_note` says what happened and what to do
+next. A calendar with failed days is not status `ok`; the note names how many
+days did not load. A calendar day
 that is missing or unpriced is `not_loaded`: the calendar cannot prove there are
-no flights, so only a shop that answered empty is `provider_empty`. `error_code`
+no flights, so only a shop that answered empty is `provider_empty`. `empty_note`
+includes the next step for that empty reason. `error_code`
 only accompanies the `empty_reason` it supports; an `ok` / `partial` result may
 carry the worst failure's code with `empty_reason` null. An explore destination
 without a price is `not_loaded`, never a usable row. `observed_at` is null when a

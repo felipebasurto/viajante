@@ -146,6 +146,40 @@ def _expand_metro_spec(spec: str) -> Tuple[tuple[str, Optional[str]], ...]:
     )
 
 
+def metro_fanout_warning(
+    trips: Sequence[Trip],
+    exclude_airports: Optional[Sequence[str]] = None,
+) -> Optional[str]:
+    """Name a metro expand and how many Google requests it sends."""
+    blocked = _named_iata(exclude_airports)
+    counted = 0
+    named: set[str] = set()
+    for trip in trips:
+        if isinstance(trip, MultiCity):
+            continue
+        metros = metro_codes_in_label(getattr(trip, "nearby_label", None))
+        if not metros:
+            continue
+        named.update(metros)
+        if blocked.isdisjoint((trip.origin, trip.destination)):
+            counted += 1
+    parts = []
+    for metro in sorted(named):
+        codes = [code for code in metro_members(metro) if code not in blocked]
+        if codes:
+            parts.append((metro, codes))
+    if not parts:
+        return None
+    shown = ". ".join(
+        f"{metro} is a city code covering {', '.join(codes)}" for metro, codes in parts
+    )
+    suggestion = " or ".join(parts[0][1][:2])
+    return (
+        f"{shown}. This sends {counted} Google requests, which often get paused. "
+        f"Name one or two airports, such as {suggestion}."
+    )
+
+
 def nearby_notes(
     trips: Sequence[Trip],
     exclude_airports: Optional[Sequence[str]] = None,
@@ -153,19 +187,15 @@ def nearby_notes(
     """Stderr legend for `--nearby` and metro expands. Named open-jaw is not expanded."""
     blocked = _named_iata(exclude_airports)
     notes: list[str] = []
+    warning = metro_fanout_warning(trips, exclude_airports)
+    if warning:
+        notes.append(warning)
     seen: set[tuple[str, str]] = set()
-    seen_metros: set[str] = set()
     for trip in trips:
         label = getattr(trip, "nearby_label", None)
         if isinstance(trip, MultiCity) or not label:
             continue
-        metros = metro_codes_in_label(label)
-        for metro in sorted(metros - seen_metros):
-            seen_metros.add(metro)
-            codes = sorted(code for code in metro_members(metro) if code not in blocked)
-            if codes:
-                notes.append(f"metro {metro}: {', '.join(codes)}")
-        if metros:
+        if metro_codes_in_label(label):
             continue
         for code in (trip.origin, trip.destination):
             if code in blocked:

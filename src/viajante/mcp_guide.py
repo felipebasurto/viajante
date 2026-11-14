@@ -9,17 +9,17 @@ price, duration, stops, clocks and rating. Read viajante://guide (or get_guide)
 before a multi-step plan.
 
 Read the envelope first: every tool except lookup_airports puts status, completeness,
-empty_reason, error_code and retry_after beside its payload. Only empty_reason provider_empty
-means "none found"; filtered_out means viajante's own filters removed the rows; not_loaded
-means the search did not complete and availability is unknown. completeness partial: read
-the per-query rows.
+empty_reason, empty_note, completeness_note, error_code and retry_after beside its payload.
+Only empty_reason provider_empty means "none found"; filtered_out means viajante's own filters
+removed the rows; not_loaded means the search did not complete. Read completeness_note
+when partial or blocked.
 
 Evidence: before replying, pass the draft to verify_answer; it flags amounts, currencies,
 codes, dates and links no search in this process returned. Never invent a fare, bag fee,
 currency, IATA code or exchange rate. Viajante does not convert; you do the FX.
 Currency: pass currency, or name an origin airport so it is proven. Hotels require currency.
 If country, destination or currency is not proven, ask. Unnamed baggage_buffer is 0.
-bags / carry_on: carry_on is verified on the page, checked bags are refused; see get_guide.
+bags / carry_on: carry_on is cabin bags for the party; checked bags is refused. See get_guide.
 Empty is not absent: no_results, blocked, markup_drift or an empty shortlist is not proof
 that nothing exists. Say what was searched; do not claim availability either way.
 Rate limits: if an error has rate_limited true, tell the user to wait; include retry_after
@@ -109,12 +109,15 @@ and empty_reason not_loaded; finished days keep the prices that arrived.
 Read the envelope first. Every tool except lookup_airports (a bare list) puts
 these top-level fields beside its payload: status (ok, no_results, rate_limited,
 blocked, timeout, failed), completeness (complete, partial, blocked), empty_reason
-(provider_empty, filtered_out, not_loaded; null when rows came back), empty_note,
+(provider_empty, filtered_out, not_loaded; null when rows came back), empty_note
+(that sentence, including what to do next), completeness_note when completeness is partial
+or blocked,
 error_code, retry_after / retry_after_seconds (a known cooldown), and observed_at
 with observed_at_basis (fetch: when viajante asked; provider is reserved). Only
 provider_empty may be told to a traveller as "no flights/hotels found". filtered_out
 means viajante's own filters removed the provider's rows; not_loaded means the
-search did not complete and availability is unknown. partial means some queries
+search did not complete and availability is unknown. A calendar with failed days is
+not a clean ok. partial means some queries
 failed, part of the window is missing, or a loaded public page kept some itinerary
 cards and skipped others: read the per-query rows. error_code cards_unparsed means
 the page offered more itinerary cards than were parsed. The parsed rows stay; that
@@ -197,16 +200,19 @@ two one-way prices. Automatic typical-price calendar fanout is disabled. Dates a
 flex request each named day (at most 31); flex then fetches the selected day freshly.
 VIAJANTE_SWEEP_MODE=conservative caps HTTP/2 dispatch at two requests instead of
 the standard eight. get_runtime_info reports the active mode and concurrency.
-RPC status 13 has an unknown cause; one response does not establish throttling or an IP
-block. A data-less RPC status 13 records the shared cooldown immediately. Three public-page
-status-13 error frames, or Explore catalog bodies with no wrb.fr payload, inside 2 minutes
-record that same cooldown without a Retry-After header, and a partial calendar carries
-retry_after. A 429, a data-less status 13, or that burst stops unsent work and is not
-replayed or switched to detail. Later searches fail immediately while the cooldown runs.
-The status-13 cooldown message says Google Flights is likely blocking this shared IP
-because viajante is running in a cloud-hosted agent or sandbox, names how long to wait,
-and says it works much better on your own computer: the ChatGPT or Claude desktop app
-with the viajante MCP (npx -y @viajante/mcp), or pip install viajante.
+A Google pause (the provider's error code 13, kept in diagnostics, not in the lead
+sentence) does not by itself prove an IP block. The first response says Google paused
+the request, that availability is unknown, to wait 15-30 minutes, not to add airports,
+and that it works better on your own computer: the ChatGPT or Claude desktop app with
+npx -y @viajante/mcp, or pip install viajante. Those hits are saved beside the cooldown
+file, so separate CLI runs add up. A data-less response of that kind records the shared
+cooldown immediately. Three public-page pauses, or Explore catalog bodies with no wrb.fr
+payload, inside 2 minutes record that same cooldown without a Retry-After header, and a
+partial calendar carries retry_after plus completeness_note. A 429, a data-less pause, or
+that burst stops unsent work and is not replayed or switched to detail. Later searches
+fail immediately while the cooldown runs. The cooldown message says Google Flights is
+likely blocking this shared IP because viajante is running in a cloud-hosted agent or
+sandbox, names how long to wait, and says it works much better on your own computer.
 A round-trip date or flex window reads its pages in bounded batches at that same
 sweep concurrency, in groups of at most that many days: the group's outbound
 boards, then those days' selected return pages (still at most eight), then the
@@ -228,13 +234,18 @@ unpriced cell carries empty_reason or an error; it is not "no flights".
 search_explore is dest triage from an origin.
 search_dates uses bounded per-day public-page GETs and has no fetch parameter. A long
 round-trip window should pass deadline_seconds so finished days return early and the
-rest are deadline, not empty. If it returns
-blocked, stop that request: a separate browser's consent or prices are not MCP
-evidence. fetch=detail applies only to search_flights and needs the browser
+rest are deadline, not empty. If it returns blocked, stop that request: a separate
+browser's consent or prices are not MCP evidence. If any day failed because Google
+paused the request, stop too: do not follow with search_flex or search_flights. A city
+code (LON and the rest of the metro table) is refused on dates and flex: the error
+names the airports and says to pick one, or use search_flights. fetch=detail applies
+only to search_flights and needs the browser
 extra plus Chromium in the MCP environment. max_stops is 0, 1, or 2; the
 product cannot require 3+ stops.
 A metro code (LON, NYC, PAR, TYO, MIL, and the rest of the owned table) named on a
-search_flights or search_trip route expands to its member airports. One call
+search_flights or search_trip route expands to its member airports. The payload
+warnings and the CLI name those airports and how many Google requests that is, and
+suggest naming one or two instead, because a wide fan-out often gets paused. One call
 sends at most 18 provider queries (LON has six members, NYC three). A plan
 that would send more is rejected before anything is fetched. A route
 whose origin and destination resolve to the same metro, including an
@@ -423,12 +434,15 @@ error. Unknown cannot prove include. Do not invent IATA, gl, or ISO 4217
 from vibe. Optional country is Google gl (origin market); omit when unset;
 do not pass a destination ISO. Unnamed baggage_buffer is 0. The
 public-page transport sends a positive carry_on (a party total, not per
-passenger) and airline, exclude-airline and alliance filters, and every page
+passenger; CLI `--carry-on` means 1 and `--carry-on N` means N) and airline,
+exclude-airline and alliance filters, and every page
 must echo each one or the read fails. The page applied an airline
 exclusion in a live check, but not for every card, so viajante also drops excluded or
 carrier-unknown cards itself. Owned carrier codes match exactly (returned codeshares count); name
 aliases are a fallback only when codes are absent. It refuses named checked
-bags, carry_on 0, exclude_alliances,
+bags: pass carry_on for cabin bags (a total for the whole party), not bags, then
+confirm the rules on the airline or Google Flights page. It also refuses carry_on 0,
+exclude_alliances,
 and multi-city (use fetch=detail) before network work. search_explore needs the
 browser extra and accepts only one adult in economy. Detail
 refuses every bag and carrier filter because it reads no page echo. Offer bag

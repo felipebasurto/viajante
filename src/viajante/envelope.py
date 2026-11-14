@@ -37,6 +37,7 @@ ENVELOPE_KEYS = (
     "completeness",
     "empty_reason",
     "empty_note",
+    "completeness_note",
     "error_code",
     "retry_after",
     "retry_after_seconds",
@@ -48,16 +49,20 @@ EMPTY_REASONS = ("provider_empty", "filtered_out", "not_loaded")
 OBSERVED_BASES = ("provider", "fetch")
 
 EMPTY_NOTES = {
-    "provider_empty": "The provider answered and returned no results for this request.",
+    "provider_empty": ("No fares came back for this exact query. Try other dates or airports."),
     "filtered_out": (
-        "The provider returned rows but viajante's own filters removed every one. "
+        "Filters removed every row the provider returned. Retry with fewer filters. "
         "Availability is not disproved."
     ),
     "not_loaded": (
-        "The search did not complete: no usable provider response was obtained. "
-        "Availability is unknown."
+        "The search did not complete, so availability is unknown. Don't search again until then."
     ),
 }
+_RPC_NEXT = (
+    "This often happens on a shared cloud IP. It works better on your own computer, "
+    "in the ChatGPT or Claude desktop app with npx -y @viajante/mcp, "
+    "or with pip install viajante."
+)
 
 _FAILURE_PRIORITY = ("rate_limited", "blocked", "timeout", "failed")
 _SHAPE_MESSAGE = (
@@ -80,6 +85,10 @@ class _Tally:
     # per-error (retry_after epoch seconds, retry_after_seconds as the error stated it)
     retry_ends: list[tuple[float, Optional[int]]] = field(default_factory=list)
     shapes: int = 0  # recognised payload shapes; zero means stamp_search was misused
+    rpc_pause: bool = False
+    calendar_rows: int = 0
+    calendar_failed: int = 0
+    calendar_paused: int = 0
 
 
 def _count_empty(tally: _Tally, reason: object) -> None:
@@ -122,6 +131,7 @@ def _error(
         return empty_as
     tally.failures.append((_failure_status(error), code, provider))
     tally.unsent += str(error.get("message", "")).startswith(NOT_SENT)
+    _note_pause(error, tally)
     if error.get("rate_limited") and isinstance(error.get("retry_after"), str):
         try:
             end = datetime.strptime(error["retry_after"], "%Y-%m-%dT%H:%M:%SZ")
@@ -155,7 +165,20 @@ def _query_row(row: dict, tally: _Tally, provider: str) -> None:
         row["empty_reason"] = reason
 
 
+def _note_pause(error: Mapping[str, object], tally: _Tally) -> None:
+    message = str(error.get("message", "")).casefold()
+    if "paused this request" in message:
+        tally.rpc_pause = True
+    diagnostics = error.get("diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return
+    basis = diagnostics.get("cooldown_basis")
+    if basis == "heuristic_rpc_13" or diagnostics.get("rpc_status") == 13:
+        tally.rpc_pause = True
+
+
 def _date_row(row: dict, tally: _Tally, provider: str) -> None:
+    tally.calendar_rows += 1
     if row.get("scope_bound") is True:
         tally.scope_partial = True
     for error in row.get("page_errors", ()):
@@ -165,6 +188,9 @@ def _date_row(row: dict, tally: _Tally, provider: str) -> None:
     error = row.get("error")
     if isinstance(error, Mapping):
         _error(error, tally, provider)
+        tally.calendar_failed += 1
+        if _failure_status(error) in ("blocked", "rate_limited"):
+            tally.calendar_paused += 1
     elif status == "ok" and row.get("price") is not None:
         tally.usable += 1
     else:
@@ -270,6 +296,104 @@ def _retry_after(tally: _Tally, now: Optional[float]) -> tuple[Optional[str], Op
     return _iso_z(end), seconds if seconds is not None else max(1, math.ceil(end - current))
 
 
+def empty_note_text(
+    reason: Optional[str],
+    *,
+    retry_seconds: Optional[int] = None,
+    rpc_pause: bool = False,
+) -> Optional[str]:
+    """The empty_reason sentence, plus a wait or hosted hint when the failure named one."""
+    base = EMPTY_NOTES.get(reason) if reason else None
+    if base is None or reason != "not_loaded" or not (retry_seconds or rpc_pause):
+        return base
+    extras: list[str] = []
+    if retry_seconds:
+        extras.append(f"Wait ~{max(1, math.ceil(retry_seconds / 60))} minutes.")
+    elif rpc_pause:
+        extras.append("Wait 15-30 minutes.")
+    if rpc_pause:
+        extras.append(_RPC_NEXT)
+    head, marker, tail = base.partition(" Don't search again")
+    return f"{head} {' '.join(extras)}{marker}{tail}"
+
+
+def dates_gap_note(
+    *,
+    failed: int,
+    total: int,
+    paused: bool,
+    priced: bool,
+    wait_seconds: Optional[int],
+) -> str:
+    """Plain sentence for a calendar that did not load every day."""
+    why = (
+        "because Google Flights paused the request"
+        if paused
+        else "because those requests did not finish"
+    )
+    shown = (
+        "Prices shown are only the dates that loaded; missing dates are unknown, not unsold."
+        if priced
+        else "No prices loaded. Missing dates are unknown, not unsold."
+    )
+    if paused and wait_seconds:
+        minutes = max(1, math.ceil(wait_seconds / 60))
+        wait = f"Wait ~{minutes} minutes (15-30 if unknown)."
+    elif paused:
+        wait = "Wait 15-30 minutes."
+    else:
+        wait = "Wait a minute and retry this one search."
+    hold = " Don't search more airports or start a new trip until then." if paused else ""
+    return f"{failed} of {total} dates did not load {why}. {shown} {wait}{hold}"
+
+
+def _completeness_note(
+    completeness: str,
+    tally: Optional[_Tally],
+    retry_seconds: Optional[int],
+) -> Optional[str]:
+    if completeness == "complete":
+        return None
+    if tally is not None and tally.calendar_failed and tally.calendar_rows:
+        return dates_gap_note(
+            failed=tally.calendar_failed,
+            total=tally.calendar_rows,
+            paused=bool(tally.calendar_paused or tally.rpc_pause),
+            priced=bool(tally.usable),
+            wait_seconds=retry_seconds,
+        )
+    rpc = bool(tally and tally.rpc_pause)
+    wait = ""
+    if retry_seconds:
+        wait = f" Wait ~{max(1, math.ceil(retry_seconds / 60))} minutes."
+    elif rpc:
+        wait = " Wait 15-30 minutes."
+    hosted = f" {_RPC_NEXT}" if rpc else ""
+    if completeness == "blocked":
+        return (
+            "This search did not finish, so availability is unknown."
+            f"{wait}{hosted} Don't start another search until then."
+        )
+    return (
+        "This result is incomplete. What is shown is only what loaded; "
+        f"the rest is unknown, not unavailable.{wait}{hosted}"
+    )
+
+
+def _notes(
+    *,
+    completeness: str,
+    empty_reason: Optional[str],
+    tally: Optional[_Tally],
+    retry_seconds: Optional[int],
+) -> tuple[Optional[str], Optional[str]]:
+    rpc = bool(tally and tally.rpc_pause)
+    return (
+        empty_note_text(empty_reason, retry_seconds=retry_seconds, rpc_pause=rpc),
+        _completeness_note(completeness, tally, retry_seconds),
+    )
+
+
 def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     """Stamp the envelope on a provider-backed MCP payload. Existing keys are untouched."""
     tally = _Tally()
@@ -281,8 +405,12 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     failures = tally.failures
     answered = tally.usable + tally.provider_empty + tally.filtered_out
     worst = min((f[0] for f in failures), key=_FAILURE_PRIORITY.index, default=None)
-    if tally.usable:
+    # A calendar with failed cells is not a clean ok: the prices are only the days that loaded.
+    calendar_mixed = bool(tally.calendar_rows and tally.calendar_failed and tally.usable)
+    if tally.usable and not calendar_mixed:
         status, empty_reason = "ok", None
+    elif calendar_mixed:
+        status, empty_reason = worst or "failed", None
     elif failures:
         status, empty_reason = worst, "not_loaded"
     else:
@@ -304,11 +432,18 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     units = answered + tally.not_loaded + len(failures)
     observed = tally.observed if not units or units > tally.unsent else []
     retry_after, retry_after_seconds = _retry_after(tally, now)
+    empty_note, completeness_note = _notes(
+        completeness=completeness,
+        empty_reason=empty_reason,
+        tally=tally,
+        retry_seconds=retry_after_seconds,
+    )
     payload.update(
         status=status,
         completeness=completeness,
         empty_reason=empty_reason,
-        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
+        empty_note=empty_note,
+        completeness_note=completeness_note,
         error_code=error_code,
         retry_after=retry_after,
         retry_after_seconds=retry_after_seconds,
@@ -395,11 +530,18 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
     retry_after, retry_after_seconds = _retry_after(tally, now)
     units = answered + len(failures)
     observed = payload.get("searched_at") if (not units or units > tally.unsent) else None
+    empty_note, completeness_note = _notes(
+        completeness=completeness,
+        empty_reason=empty_reason,
+        tally=tally,
+        retry_seconds=retry_after_seconds,
+    )
     payload.update(
         status=status,
         completeness=completeness,
         empty_reason=empty_reason,
-        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
+        empty_note=empty_note,
+        completeness_note=completeness_note,
         error_code=error_code,
         retry_after=retry_after,
         retry_after_seconds=retry_after_seconds,
@@ -423,11 +565,16 @@ def stamp_local(
     ``status`` stays ``ok`` unless the tool's own verdict failed (``verify_answer``)
     or a local filter removed the only candidate (``get_hotel_details``).
     """
+    done = completeness or ("partial" if partial else "complete")
+    empty_note, completeness_note = _notes(
+        completeness=done, empty_reason=empty_reason, tally=None, retry_seconds=None
+    )
     payload.update(
         status=status,
-        completeness=completeness or ("partial" if partial else "complete"),
+        completeness=done,
         empty_reason=empty_reason,
-        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
+        empty_note=empty_note,
+        completeness_note=completeness_note,
         error_code=error_code,
         retry_after=None,
         retry_after_seconds=None,
@@ -453,6 +600,7 @@ def stamp_recheck(payload: dict, *, now: Optional[float] = None) -> dict:
     status, completeness, empty_reason, error_code = "ok", "complete", None, None
     retry: tuple[Optional[str], Optional[int]] = (None, None)
     observed = payload.get("checked_at")
+    tally: Optional[_Tally] = None
     if outcome == "check_failed":
         error = payload["error"]
         status = _failure_status(error)
@@ -469,11 +617,18 @@ def stamp_recheck(payload: dict, *, now: Optional[float] = None) -> dict:
             empty_reason = "provider_empty" if reason == "provider_empty" else "filtered_out"
         elif payload.get("offers_truncated"):
             completeness = "partial"
+    empty_note, completeness_note = _notes(
+        completeness=completeness,
+        empty_reason=empty_reason,
+        tally=tally,
+        retry_seconds=retry[1],
+    )
     payload.update(
         status=status,
         completeness=completeness,
         empty_reason=empty_reason,
-        empty_note=EMPTY_NOTES.get(empty_reason) if empty_reason else None,
+        empty_note=empty_note,
+        completeness_note=completeness_note,
         error_code=error_code,
         retry_after=retry[0],
         retry_after_seconds=retry[1],

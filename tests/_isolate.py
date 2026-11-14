@@ -16,8 +16,8 @@ from viajante.ratelimit import reset_throttle_signals
 
 _MARK = "viajante-tests-"
 
-# The status-13 burst counter is process memory, not the state dir. Clear it
-# before every test so one module's error frames do not cool down the next.
+# The status-13 burst counter lives beside the cooldown file, with a memory
+# fallback. Clear both before every test so one module's frames do not cool the next.
 _run = unittest.TestCase.run
 
 

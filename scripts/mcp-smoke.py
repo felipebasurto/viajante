@@ -19,6 +19,7 @@ ENVELOPE = {
     "completeness",
     "empty_reason",
     "empty_note",
+    "completeness_note",
     "error_code",
     "retry_after",
     "retry_after_seconds",

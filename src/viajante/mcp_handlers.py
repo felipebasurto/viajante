@@ -55,6 +55,7 @@ from viajante.flight_routes import (
     _overlay_carrier_filters,
     as_trips,
     expand_nearby_trips,
+    metro_fanout_warning,
     parse_flight_plan,
 )
 from viajante.flights import (
@@ -333,6 +334,7 @@ def search_flights_tool(
         hide_separate_tickets=hide_separate_tickets,
         **carriers,
     )
+    warning = metro_fanout_warning(trips, exclude_airports=excluded)
 
     def execute():
         report = search_flights(
@@ -353,7 +355,10 @@ def search_flights_tool(
             **carriers,
             **search,
         )
-        return _searched(reports_payload(report), report)
+        payload = reports_payload(report)
+        if warning:
+            payload["warnings"] = [warning]
+        return _searched(payload, report)
 
     return execute
 
@@ -1020,7 +1025,14 @@ def search_trip_tool(
             deadline_seconds=deadline_seconds,
         )
     )
-    return _searched(reports_payload(report), report)
+    payload = reports_payload(report)
+    warning = metro_fanout_warning(
+        trips,
+        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
+    )
+    if warning:
+        payload["warnings"] = [warning]
+    return _searched(payload, report)
 
 
 @_cached

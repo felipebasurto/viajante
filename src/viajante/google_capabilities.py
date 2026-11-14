@@ -14,6 +14,13 @@ class GoogleFlightsUnsupported(GoogleFlightsRejected):
     """A requested capability cannot be represented by this transport."""
 
 
+CHECKED_BAGS_REFUSAL = (
+    "viajante can't filter Google Flights for checked bags, so this search wasn't sent. "
+    "For cabin bags pass carry_on=2 (total for the whole party), not bags=2. "
+    "Then confirm bag rules on the airline or Google Flights page."
+)
+
+
 def validate_capabilities(trip: Trip, *, allow_multi_city: bool = False) -> None:
     unsupported = [
         key
@@ -31,10 +38,14 @@ def validate_capabilities(trip: Trip, *, allow_multi_city: bool = False) -> None
         unsupported.append("carry_on")
     if isinstance(trip, MultiCity) and not allow_multi_city:
         unsupported.append("multi_city")
+    if unsupported == ["bags"]:
+        raise GoogleFlightsUnsupported(CHECKED_BAGS_REFUSAL)
     if unsupported:
         reasons = []
-        if "bags" in unsupported or "carry_on" in unsupported:
-            reasons.append("baggage-inclusive fares remain unknown")
+        if "bags" in unsupported:
+            reasons.append(CHECKED_BAGS_REFUSAL)
+        elif "carry_on" in unsupported:
+            reasons.append("a carry-on count of 0 cannot be verified on this page")
         if "exclude_alliances" in unsupported:
             reasons.append(
                 "alliance exclusion is not verifiable: the public page "

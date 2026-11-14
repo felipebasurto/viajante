@@ -8,10 +8,12 @@ from typing import Optional, Sequence, Tuple
 
 from viajante.airports import lookup_airports
 from viajante.dates import (
+    calendar_gap_line,
     format_sparkline,
     format_summary_line,
     format_week_calendar,
 )
+from viajante.envelope import EMPTY_NOTES
 from viajante.flight_offers import FlightSort, _effective_cost
 from viajante.google_flights import google_flights_url
 from viajante.models import (
@@ -349,7 +351,8 @@ def _print_nearby_dates(grid: NearbyDates, currency: str) -> None:
             print(f"    {when}  {offset}  ERROR: {cell.error.message}")
             continue
         if cell.price is None:
-            reason = f"  {cell.empty_reason}" if cell.empty_reason else ""
+            note = EMPTY_NOTES.get(cell.empty_reason or "")
+            reason = f"  {note}" if note else ""
             print(f"    {when}  {offset}  —{reason}")
             continue
         delta = "0" if cell.delta == 0 else f"{cell.delta:+.0f}"
@@ -751,6 +754,9 @@ def _print_dates_report(report: DateCalendarReport) -> None:
     spark = format_sparkline(report.days)
     if spark:
         print(f"  {spark}")
+    gap = calendar_gap_line(report.days)
+    if gap:
+        print(f"  {gap}")
     if report.summary is not None:
         print(format_summary_line(report.summary, report.currency))
     print()
@@ -761,7 +767,9 @@ def _print_dates_report(report: DateCalendarReport) -> None:
             print(f"  {row.departure_date.isoformat()}   ERROR: {row.error.message}")
             continue
         if row.price is None:
-            print(f"  {row.departure_date.isoformat()}      —")
+            note = EMPTY_NOTES.get(row.empty_reason or "")
+            suffix = f"  {note}" if note else ""
+            print(f"  {row.departure_date.isoformat()}      —{suffix}")
             continue
         any_price = True
         extra = ""
@@ -808,7 +816,7 @@ def _print_explore_report(report: ExploreReport) -> None:
         if row.origin_airport:
             extra += f"  from {row.origin_airport}"
         if row.empty_reason:
-            extra += f"  {row.empty_reason}"
+            extra += f"  {EMPTY_NOTES.get(row.empty_reason, row.empty_reason)}"
             if row.shopped_date:
                 extra += f" {row.shopped_date}"
         print(

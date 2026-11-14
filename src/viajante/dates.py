@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
 
+from viajante.airports import metro_members
 from viajante.control import SearchDeadline, checkpoint, controlled
+from viajante.envelope import dates_gap_note
 from viajante.flight_evidence import _stamp_offer_evidence
 from viajante.flight_filters import OfferFilters, owned_clock, parse_code_list, parse_offer_filters
 from viajante.flight_offers import (
@@ -62,6 +65,7 @@ MAX_FLEX_DAYS = 15
 _T = TypeVar("_T")
 
 EMPTY_DAY_MARK = "·"
+FAILED_DAY_MARK = "!"
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = (
     "Jan",
@@ -94,7 +98,7 @@ def _week_span_label(start: date, end: date) -> str:
 
 
 def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
-    """English week lines of owned daily prices. Empty or missing days are ·."""
+    """English week lines of owned daily prices. Empty days are ·. Failed days are !."""
     if not days:
         return ()
     by_day = {row.departure_date: row for row in days}
@@ -115,7 +119,9 @@ def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
             in_window = True
             row = by_day.get(day)
             price = None if row is None else row.price
-            if price is None or price <= 0:
+            if row is not None and row.status == "error":
+                cells.append(f"{FAILED_DAY_MARK:>{_CELL_WIDTH}}")
+            elif price is None or price <= 0:
                 cells.append(f"{EMPTY_DAY_MARK:>{_CELL_WIDTH}}")
             else:
                 cells.append(f"{price:>{_CELL_WIDTH}.0f}")
@@ -139,6 +145,9 @@ def format_sparkline(days: Sequence[DatePriceRow]) -> str:
     chars: list[str] = []
     for row in sorted(days, key=lambda item: item.departure_date):
         price = row.price
+        if row.status == "error":
+            chars.append(FAILED_DAY_MARK)
+            continue
         if price is None or price <= 0:
             chars.append(EMPTY_DAY_MARK)
             continue
@@ -179,6 +188,32 @@ def _rank_date_rows(
         return (row.price is None, fare, row.departure_date)
 
     return tuple(sorted(days, key=sort_key))
+
+
+def calendar_gap_line(days: Sequence[DatePriceRow]) -> Optional[str]:
+    """The sentence for a calendar that failed to load some days, else None."""
+    failed = [row for row in days if row.status == "error"]
+    if not failed:
+        return None
+    paused = any(
+        row.error is not None and (row.error.rate_limited or row.error.code.value == "blocked")
+        for row in failed
+    )
+    now = time.time()
+    wait: Optional[int] = None
+    for row in failed:
+        until = None if row.error is None else row.error.retry_until
+        if until is not None and until > now:
+            seconds = max(1, math.ceil(until - now))
+            wait = seconds if wait is None else max(wait, seconds)
+    priced = any(row.price is not None and row.price > 0 for row in days)
+    return dates_gap_note(
+        failed=len(failed),
+        total=len(days),
+        paused=paused,
+        priced=priced,
+        wait_seconds=wait,
+    )
 
 
 def format_summary_line(summary: DateCalendarSummary, currency: str) -> str:
@@ -335,6 +370,19 @@ def _stamp_offer_urls(
     return result.offers
 
 
+def refuse_calendar_metro(origin: str, destination: str) -> None:
+    """A calendar shops one airport pair. A city code names the members and stops."""
+    hits = []
+    for code in (origin, destination):
+        members = metro_members(code)
+        if members:
+            hits.append(f"{code.strip().upper()} is a city code covering {', '.join(members)}")
+    if hits:
+        raise ValueError(
+            f"{'. '.join(hits)}. Name one airport for a calendar, or use search_flights."
+        )
+
+
 def calendar_trip(
     origin: str,
     destination: str,
@@ -355,6 +403,7 @@ def calendar_trip(
     alliances: Optional[Sequence[str]] = None,
     exclude_alliances: Optional[Sequence[str]] = None,
 ) -> FlightQuery | RoundTrip:
+    refuse_calendar_metro(origin, destination)
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     alliance_names = tuple(alliances) if alliances is not None else None

@@ -140,9 +140,12 @@ Do not invent IATA, gl, or ISO 4217. Viajante does not convert.
 
 ## Bags
 
-Unnamed baggage_buffer is 0. carry_on rides the shopping request and is verified on
-the page; checked bags are refused before any request.
-Do not invent a bag fee.
+Unnamed baggage_buffer is 0. carry_on is cabin bags for the whole party (CLI
+`--carry-on` means 1, `--carry-on N` sets N) and is verified on the page; checked
+bags are refused before any request. Pass carry_on, not bags, then confirm bag
+rules on the airline or Google Flights page.
+Do not invent a bag fee. Read empty_note and completeness_note before telling a
+traveller a search failed or came back empty.
 
 ## Python
 

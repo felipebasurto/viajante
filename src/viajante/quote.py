@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from viajante.airports import get_airport
+from viajante.airports import get_airport, metro_members
 from viajante.models import normalize_currency
 
 CURRENCY_REQUIRED = (
@@ -283,13 +283,21 @@ def cash_currency_for_country(country: Optional[str]) -> Optional[str]:
 
 
 def cash_currency_for_origin(iata: Optional[str]) -> Optional[str]:
-    """Cash currency for a named origin IATA, from that airport's owned country."""
+    """Cash currency for a named origin, from that airport or metro's owned country."""
     if not iata or not str(iata).strip():
         return None
-    airport = get_airport(str(iata).strip())
-    if airport is None:
-        return None
-    return cash_currency_for_country(airport.country)
+    code = str(iata).strip()
+    airport = get_airport(code)
+    if airport is not None:
+        return cash_currency_for_country(airport.country)
+    countries = {
+        found.country
+        for member in metro_members(code)
+        if (found := get_airport(member)) is not None
+    }
+    if len(countries) == 1:
+        return cash_currency_for_country(countries.pop())
+    return None
 
 
 def first_origin_iata(trip: object) -> Optional[str]:

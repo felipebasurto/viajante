@@ -126,10 +126,15 @@ class MetroPlanTests(unittest.TestCase):
 
     def test_exclude_drops_members_and_the_legend_follows(self) -> None:
         trips = parse_flight_plan([f"NYC-MAD:{DAY}"], max_stops=1)
-        self.assertEqual(nearby_notes(trips), ("metro NYC: EWR, JFK, LGA",))
+        note = nearby_notes(trips)[0]
+        self.assertIn("NYC is a city code covering JFK, EWR, LGA", note)
+        self.assertIn("3 Google requests", note)
         kept = drop_excluded_airport_trips(trips, ("EWR",))
         self.assertEqual(_pairs(kept), [("JFK", "MAD"), ("LGA", "MAD")])
-        self.assertEqual(nearby_notes(kept, exclude_airports=("EWR",)), ("metro NYC: JFK, LGA",))
+        excluded = nearby_notes(kept, exclude_airports=("EWR",))[0]
+        self.assertIn("JFK, LGA", excluded)
+        self.assertIn("2 Google requests", excluded)
+        self.assertNotIn("EWR", excluded)
 
 
 class _FaresByOrigin:
@@ -224,7 +229,8 @@ class MetroSurfaceTests(unittest.TestCase):
             [q.destination for q in search.call_args.args[0]],
             ["LHR", "LGW", "STN", "LTN", "LCY", "SEN"],
         )
-        self.assertIn("metro LON: LCY, LGW, LHR, LTN, STN\n", err.getvalue())
+        self.assertIn("LON is a city code covering LHR, LGW, STN, LTN, LCY", err.getvalue())
+        self.assertIn("5 Google requests", err.getvalue())
 
     def test_mcp_search_flights_expands_a_named_metro(self) -> None:
         mcp_handlers._CACHE.clear()

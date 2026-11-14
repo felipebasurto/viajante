@@ -216,7 +216,7 @@ class SurfaceWiringTest(unittest.TestCase):
 
     def test_cli_flags_reach_search_flights(self) -> None:
         with patch("viajante.cli.search_flights", side_effect=self._Stop()) as search:
-            with self.assertRaises(self._Stop):
+            self.assertEqual(
                 main(
                     [
                         "flights",
@@ -230,7 +230,9 @@ class SurfaceWiringTest(unittest.TestCase):
                         "--less-emissions",
                         "--hide-separate-tickets",
                     ]
-                )
+                ),
+                1,
+            )
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["depart_before"], 18 * 60 + 30)
         self.assertEqual(kwargs["arrive_after"], 8 * 60)
