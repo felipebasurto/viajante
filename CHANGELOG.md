@@ -9,6 +9,17 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Fixed
+
+- A burst of public-page status-13 error frames, or Explore catalog bodies with no
+  `wrb.fr` payload, records the shared Google cooldown after 3 such signals inside
+  2 minutes. The cooldown is the same 2-minute guess as a bare 429 (`heuristic_rpc_13`),
+  with no `Retry-After` header. The call stops unsent calendar cells, expanded-airport
+  queries and later date-window work, and the result carries `retry_after`, including
+  a partial calendar. Later searches fail fast on that cooldown instead of calling
+  Google again. One error frame stays a blocked cell with an unknown cause. A data-less
+  RPC status 13 still records the cooldown on the first response.
+
 ## [1.5.6] - 2026-11-08
 
 ### Fixed

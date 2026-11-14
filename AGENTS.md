@@ -165,7 +165,9 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   or a provider block. Its `ds:1` data is extracted as balanced JSON and never
   executed. Do not fabricate an RPC envelope. Flights, dates, and flex send no
   unsigned shopping or calendar RPC. A status 13 on the explore catalog is recorded
-  as a cooldown like any other.
+  as a cooldown like any other. Three public-page status-13 error frames, or
+  Explore bodies with no `wrb.fr` payload, inside 2 minutes record it too; one
+  error frame does not.
 - Refused before any network call: checked bags, `carry_on` 0, alliance exclusion
   on the public path, and multi-city on sweep (use explicit `--fetch detail`).
   Detail refuses every bag and carrier filter. `exclude_basic_economy` is refused on
@@ -347,7 +349,8 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 
 ## Providers, cooldowns, and pacing
 
-- A direct Google 429, or a data-less RPC status 13, writes
+- A direct Google 429, a data-less RPC status 13, or three public-page status-13
+  error frames or Explore bodies with no `wrb.fr` payload inside 2 minutes, writes
   `google-rate-limit.json` in the state directory. The cooldown is a guess: 2 minutes,
   or a named `Retry-After` up to 30 minutes. While it runs,
   every Google flight or hotel search in any process fails `blocked` with
@@ -356,10 +359,13 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   endpoint host and path, the HTTP or RPC status, `request_sent`, `attempts`, and
   the cooldown basis. Never include query parameters.
 - A public page whose `ds:1` is the provider's error frame (`[status, null, [[...ErrorResponse...]]]`)
-  is `blocked` with the frame status in diagnostics, never `markup_drift`. Once a block
-  is seen in a batch, the batch replay is suppressed.
+  is `blocked` with the frame status in diagnostics, never `markup_drift`. One status-13
+  frame does not record a cooldown. Three inside 2 minutes do, and the call stops
+  unsent work. Once a block is seen in a batch, the batch replay is suppressed.
 - HTTP 429 and status 13 stop pending sweep work. Nothing replays and nothing falls
-  back to detail. Empty results, drift, and HTTP 5xx may be retried once.
+  back to detail. Empty results, drift, and HTTP 5xx may be retried once. A burst
+  that records the cooldown stops the same way, and a partial calendar carries
+  `retry_after`.
 - A Skiplagged 429 writes `skiplagged-rate-limit.json` and does not retry. Live
   Skiplagged calls are paced 1 second apart.
 - Detail: 4.5 s plus up to 1.5 s of jitter between queries; 3 attempts with 8 s

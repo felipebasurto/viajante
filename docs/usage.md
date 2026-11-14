@@ -428,7 +428,8 @@ that date is `not_loaded` with `shopped_date`. It is not `no_results` and not
 `provider_empty`.
 `--exclude-regions` is explore-only and excludes
 destinations by owned IANA time-zone prefix. Unnamed sort is by price. A raw RPC status 13
-on the catalog stops the search and records the shared Google cooldown. A raw status 13 on the catalog request can stop the read, so an empty or blocked
+on the catalog stops the search and records the shared Google cooldown. Three catalog
+bodies with no `wrb.fr` payload inside 2 minutes do the same. A raw status 13 on the catalog request can stop the read, so an empty or blocked
 explore proves nothing about destinations; name routes and use `flights`,
 `dates`, or `flex` instead.
 
@@ -919,7 +920,10 @@ search at a time. See the signatures in
   `attempts: 0`, and null HTTP/RPC status. HTTP 429 or raw RPC status 13 stops
   pending sweep work without a replay or browser fallback. Status 13 is a
   provider response; by itself it does not identify the cause or prove an IP
-  block.
+  block. Three public-page status-13 error frames, or Explore responses with no
+  `wrb.fr` payload, inside 2 minutes record that same cooldown without a
+  `Retry-After` header. A partial calendar from the burst still carries
+  `retry_after`. Later searches fail immediately while it runs.
 - **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
   [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
   not meant to be hosted. A non-loopback `--host` prints a warning: every client

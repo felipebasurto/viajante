@@ -14,6 +14,7 @@ from selectolax.lexbor import LexborHTMLParser
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     RawFlightCard,
+    error_frame_status,
     parse_price_insight,
     parse_shopping_data,
     price_insight_code,
@@ -189,6 +190,17 @@ def extract_ds1_data(html: str) -> list:
 def parse_shopping_page(html: str, *, currency: str) -> tuple[RawFlightCard, ...]:
     """Parse public HTML shopping results through the owned compact-data decoder."""
     return parse_shopping_data(extract_ds1_data(html), currency=currency)
+
+
+def ds1_error_frame_status(html: str) -> Optional[int]:
+    """Status of a ``ds:1`` provider error frame in this page, else None."""
+    if "ErrorResponse" not in html:
+        return None
+    try:
+        data = extract_ds1_data(html)
+    except CompactParseMiss:
+        return None
+    return error_frame_status(data)
 
 
 def _current_level_label(html: str) -> Optional[str]:

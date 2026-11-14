@@ -182,7 +182,7 @@ has claims no search owns (see `error_code`), not that a search failed.
 | Browser access denied | Report the client access limitation, not a provider failure or broken URL. Use permitted read-only alternatives; do not bypass denial or re-request already authorized access. |
 | Missing local screenshot | Say the image could not be read; do not claim visual inspection. Continue from available text/evidence. |
 | `no_results` | Stop. Do not retry. Read `empty_reason` before wording it: only `provider_empty` is "none found". |
-| `rate_limited: true` | Stop provider searches. Wait until `retry_after` (UTC; `retry_after_seconds`) when the error has it, else 30–60 minutes; do not retry or change method. Direct Google 429 or data-less status 13 shares `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
+| `rate_limited: true` | Stop provider searches. Wait until `retry_after` (UTC; `retry_after_seconds`) when the error has it, else 30–60 minutes; do not retry or change method. Direct Google 429, data-less status 13, or three status-13 error frames or missing `wrb.fr` payloads inside 2 minutes share `google-rate-limit.json`; Skiplagged 429 uses `skiplagged-rate-limit.json` with no retry and a one-second live call pace. |
 | `currency_mismatch` | Skiplagged keep missed (cards are USD). Omit `currency` or pass the owned code in the error and retry once. Do not convert. Do not treat as `no_results`. |
 | `rejected` | Stop. The provider did not identify the cause. Check named IATA, but do not infer an invalid airport, unavailable route, or inventory cutoff. |
 | `blocked` (including a short unknown HTML shell) | Stop that date window. No flex, no `search_flights`, no browser recovery. Wait 30–60 minutes before a new batch. |
@@ -201,7 +201,8 @@ has claims no search owns (see `error_code`), not that a search failed.
 State dir: `VIAJANTE_STATE_DIR` or XDG. Exit 0/1/2/3 = all ok / bad input / all failed / partial.
 
 The status 13 cooldown is a guess and can pause Google for 2 minutes when the
-status has another cause. Google base/tax/fee breakdown (`record[6][2][44]`,
+status has another cause. Three public-page status-13 frames, or missing catalog
+payloads, inside 2 minutes use that same pause; one frame does not. Google base/tax/fee breakdown (`record[6][2][44]`,
 unconfirmed) and caller-named exchange rates remain unimplemented.
 
 Checkout tests: `uv run python -m unittest discover -s tests -v`. `viajante bench` is contributor-only (needs `tests/bench/`).
