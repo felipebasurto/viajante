@@ -125,9 +125,15 @@ Local HTTP (opt-in, no auth): `viajante-mcp --transport streamable-http` serves
 A non-loopback `--host` warns: every client searches from this machine's IP and
 shares its provider cooldown.
 
-Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
-cooldown (error `rate_limited: true`; its message names the UTC time to wait
-until, and `retry_after` / `retry_after_seconds` repeat it when a cooldown was recorded). Tell the user to wait; do not retry. Identical successful
+Rate limits: a Google HTTP 429, a data-less RPC status 13, or three public-page
+status-13 error frames or Explore bodies with no `wrb.fr` payload inside 2 minutes,
+pauses Google searches on this machine (error `rate_limited: true`; the message
+names the UTC time to wait, and `retry_after` / `retry_after_seconds` repeat it
+when a cooldown was recorded). One status-13 frame does not. That message says
+Google Flights is likely blocking this shared IP because viajante is running in a
+cloud-hosted agent or sandbox, and that it works much better on your own computer:
+the ChatGPT or Claude desktop app with `npx -y @viajante/mcp`, or `pip install viajante`.
+Tell the user to wait; do not retry. Identical successful
 searches within 5 minutes return `cached: true` without a new request. The replay
 cache holds at most 20 entries.
 

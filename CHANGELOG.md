@@ -9,6 +9,8 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.7] - 2026-11-14
+
 ### Fixed
 
 - A burst of public-page status-13 error frames, or Explore catalog bodies with no
@@ -583,7 +585,9 @@ history up to commit 6ee0fb7.
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.5...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.7...develop
+[1.5.7]: https://github.com/felipebasurto/viajante/compare/v1.5.6...v1.5.7
+[1.5.6]: https://github.com/felipebasurto/viajante/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/felipebasurto/viajante/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/felipebasurto/viajante/compare/v1.5.3...v1.5.4
 [1.5.3]: https://github.com/felipebasurto/viajante/compare/v1.5.2...v1.5.3
