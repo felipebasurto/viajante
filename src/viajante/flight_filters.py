@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 from viajante.airports import is_known_iata, place_label_codes
+from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import FlightOffer, RawJourneyLeg, RawLayover
 from viajante.parsers import clock_minutes as _clock_minutes
@@ -271,6 +272,61 @@ def parse_offer_filters(
         no_overnight=parsed_no,
         require_overnight=parsed_require,
     )
+
+
+# Keys omitted from a call stay out of the result. Order is the error order.
+_SHOP_FIELDS = (
+    ("airlines", "airlines", parse_airline_codes),
+    ("exclude_airlines", "exclude_airlines", parse_airline_codes),
+    ("alliance", "alliances", parse_alliances),
+    ("exclude_alliance", "exclude_alliances", parse_alliances),
+    ("via", "via", lambda text: parse_via_airports(text)),
+    ("exclude_via", "exclude_via", lambda text: parse_via_airports(text, role="exclude-via")),
+    (
+        "no_overnight",
+        "no_overnight",
+        lambda text: parse_overnight_airports(text, role="no-overnight"),
+    ),
+    (
+        "require_overnight",
+        "require_overnight",
+        lambda text: parse_overnight_airports(text, role="require-overnight"),
+    ),
+    (
+        "exclude_airports",
+        "exclude_airports",
+        lambda text: parse_via_airports(text, role="exclude-airports"),
+    ),
+    (
+        "include_airports",
+        "include_airports",
+        lambda text: parse_via_airports(text, role="include-airports"),
+    ),
+    ("depart_window", "depart_window", parse_depart_window),
+    ("arrive_before", "arrive_before", lambda text: parse_named_clock(text, role="arrive-before")),
+    ("depart_after", "depart_after", lambda text: parse_named_clock(text, role="depart-after")),
+    ("depart_before", "depart_before", lambda text: parse_named_clock(text, role="depart-before")),
+    ("arrive_after", "arrive_after", lambda text: parse_named_clock(text, role="arrive-after")),
+    ("max_duration", "max_duration_hours", lambda value: value),
+    ("min_layover", "min_layover_hours", lambda value: value),
+    ("max_layover", "max_layover_hours", lambda value: value),
+)
+
+
+def parse_shop_filters(**raw: object) -> dict[str, object]:
+    """Turn caller shop-filter strings into the kwargs the search functions take.
+
+    Only keys present in the call are parsed. The first invalid field in
+    ``_SHOP_FIELDS`` order is the one that raises.
+    """
+    unknown = set(raw) - {name for name, _, _ in _SHOP_FIELDS}
+    if unknown:
+        raise TypeError(f"unknown shop filter {sorted(unknown)}")
+    parsed: dict[str, object] = {}
+    for name, output, convert in _SHOP_FIELDS:
+        if name in raw:
+            parsed[output] = convert(raw[name])
+    return parsed
 
 
 @dataclass(frozen=True)

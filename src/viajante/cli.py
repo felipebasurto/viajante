@@ -10,7 +10,6 @@ from typing import Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata, metro_members, parse_exclude_regions
 from viajante.bench import run_bench
-from viajante.carriers import parse_airline_codes, parse_alliances
 from viajante.cli_report import (
     _as_report_tuple,
     _combine_exit_codes,
@@ -49,10 +48,7 @@ from viajante.explore import (
 from viajante.feedback import run_feedback
 from viajante.flight_filters import (
     OfferFilters,
-    parse_depart_window,
-    parse_named_clock,
-    parse_overnight_airports,
-    parse_via_airports,
+    parse_shop_filters,
     validate_layover_hours,
     validate_via_pair,
 )
@@ -883,10 +879,10 @@ def _add_flight_only_filters(parser: argparse.ArgumentParser) -> None:
 
 def _flight_only_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
     return {
-        "depart_before": parse_named_clock(
-            getattr(args, "depart_before", None), role="depart-before"
+        **parse_shop_filters(
+            depart_before=getattr(args, "depart_before", None),
+            arrive_after=getattr(args, "arrive_after", None),
         ),
-        "arrive_after": parse_named_clock(getattr(args, "arrive_after", None), role="arrive-after"),
         "less_emissions": bool(getattr(args, "less_emissions", False)),
         "hide_separate_tickets": bool(getattr(args, "hide_separate_tickets", False)),
         "exclude_basic_economy": bool(getattr(args, "exclude_basic_economy", False)),
@@ -1067,14 +1063,11 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         raise ValueError("--bags must not be negative")
     if args.price_cap is not None and args.price_cap <= 0:
         raise ValueError("--price-cap must be a positive amount in the quote currency")
-    via = parse_via_airports(args.via)
-    exclude_via = parse_via_airports(args.exclude_via, role="exclude-via")
-    validate_via_pair(via, exclude_via, cli=True)
-    no_overnight = parse_overnight_airports(
-        getattr(args, "no_overnight", None), role="no-overnight"
-    )
-    require_overnight = parse_overnight_airports(
-        getattr(args, "require_overnight", None), role="require-overnight"
+    via = parse_shop_filters(via=args.via, exclude_via=args.exclude_via)
+    validate_via_pair(via["via"], via["exclude_via"], cli=True)  # type: ignore[arg-type]
+    overnight = parse_shop_filters(
+        no_overnight=getattr(args, "no_overnight", None),
+        require_overnight=getattr(args, "require_overnight", None),
     )
     max_layover = getattr(args, "max_layover", None)
     min_layover = getattr(args, "min_layover", None)
@@ -1089,28 +1082,22 @@ def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]
         "bags": args.bags,
         "carry_on": carry_on,
         "price_cap": args.price_cap,
-        "airlines": parse_airline_codes(args.airlines),
-        "exclude_airlines": parse_airline_codes(args.exclude_airlines),
-        "alliances": parse_alliances(getattr(args, "alliance", None)),
-        "exclude_alliances": parse_alliances(getattr(args, "exclude_alliance", None)),
-        "via": via,
-        "exclude_via": exclude_via,
-        "no_overnight": no_overnight,
-        "require_overnight": require_overnight,
-        "exclude_airports": parse_via_airports(
-            getattr(args, "exclude_airports", None), role="exclude-airports"
+        **via,
+        **overnight,
+        **parse_shop_filters(
+            airlines=args.airlines,
+            exclude_airlines=args.exclude_airlines,
+            alliance=getattr(args, "alliance", None),
+            exclude_alliance=getattr(args, "exclude_alliance", None),
+            exclude_airports=getattr(args, "exclude_airports", None),
+            include_airports=getattr(args, "include_airports", None),
+            depart_window=getattr(args, "depart_window", None),
+            arrive_before=getattr(args, "arrive_before", None),
+            depart_after=getattr(args, "depart_after", None),
+            max_duration=max_duration,
+            min_layover=min_layover,
+            max_layover=max_layover,
         ),
-        "include_airports": parse_via_airports(
-            getattr(args, "include_airports", None), role="include-airports"
-        ),
-        "depart_window": parse_depart_window(getattr(args, "depart_window", None)),
-        "arrive_before": parse_named_clock(
-            getattr(args, "arrive_before", None), role="arrive-before"
-        ),
-        "depart_after": parse_named_clock(getattr(args, "depart_after", None), role="depart-after"),
-        "max_layover_hours": max_layover,
-        "min_layover_hours": min_layover,
-        "max_duration_hours": max_duration,
     }
 
 
