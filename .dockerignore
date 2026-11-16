@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.worktrees
+.cursor
+.claude
+.mypy_cache
+.ruff_cache
+__pycache__
+build
+dist
+landing
+mcpb
+npm
+tests
+scripts
+integrations

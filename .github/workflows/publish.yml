@@ -68,6 +68,37 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv publish
 
+  desktop-extension:
+    # The extension installs the PyPI release it is pinned to, so it is built after PyPI has it.
+    needs: pypi
+    if: ${{ !cancelled() && needs.pypi.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Pack the extension
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          curl --fail --silent --show-error "https://pypi.org/pypi/viajante/$version/json" >/dev/null
+          npx --yes @anthropic-ai/mcpb@2.1.2 pack mcpb viajante.mcpb
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: viajante-mcpb
+          path: viajante.mcpb
+      - name: Attach it to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" viajante.mcpb --clobber
+          else
+            echo "::notice::No GitHub release for $GITHUB_REF_NAME yet. Attach the viajante-mcpb artifact to it: gh release upload $GITHUB_REF_NAME viajante.mcpb"
+          fi
+
   npm:
     needs: pypi
     if: ${{ !cancelled() && (needs.pypi.result == 'success' || github.event_name == 'workflow_dispatch') }}

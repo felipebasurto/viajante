@@ -94,6 +94,22 @@ history up to commit 6ee0fb7.
 - The landing page asks Web or Desktop app before copying the Claude or ChatGPT
   install message.
 
+### MCP clients
+
+- Claude Desktop extension: `mcpb/` is a uv bundle that installs the pinned PyPI release,
+  built after PyPI by the publish workflow and attached to the GitHub release as
+  `viajante.mcpb`. CI validates and packs it with the official MCPB CLI.
+- Claude Code plugin and marketplace (`/plugin marketplace add felipebasurto/viajante`):
+  the MCP server and the skill in one install. Validated with `claude plugin validate`.
+- `docs/clients.md`: install snippets for Codex, Gemini CLI, VS Code, Zed, Goose and
+  OpenCode, each checked against the client's own docs, and the landing picker gets a
+  "terminal or editor" choice with the same commands.
+- `Dockerfile` for container-based clients and the Docker MCP Catalog. CI builds it and
+  runs the stdio smoke against the image.
+- `docs/composition.md`: recipes for pairing with calendar, spreadsheet and currency servers.
+  Nothing new is built into viajante for them.
+- `scripts/check-release.py` also pins the extension and the plugin to the tag.
+
 ### Errors
 
 - A public Google page that fails as `markup_drift`, `rejected` or `no_results` now

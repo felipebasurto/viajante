@@ -20,6 +20,10 @@ FILES = (
     "server.json",
     "integrations/hermes/plugin.json",
     "integrations/hermes/mcp.json",
+    "integrations/claude-code/.claude-plugin/plugin.json",
+    "integrations/claude-code/.mcp.json",
+    "mcpb/manifest.json",
+    "mcpb/pyproject.toml",
 )
 
 
@@ -44,6 +48,13 @@ class ReleasePinTests(unittest.TestCase):
         for name in ("pyproject.toml", "uv.lock", "npm/package.json", "server.json"):
             self.assertIn(name, stale)
         self.assertIn("integrations/hermes/mcp.json", stale)
+        for name in (
+            "integrations/claude-code/.claude-plugin/plugin.json",
+            "integrations/claude-code/.mcp.json",
+            "mcpb/manifest.json",
+            "mcpb/pyproject.toml viajante[mcp,browser]",
+        ):
+            self.assertIn(name, stale)
 
     def test_one_forgotten_pin_is_the_only_one_named(self) -> None:
         (version,) = set(check_release.pins(ROOT).values())

@@ -1,0 +1,10 @@
+{
+  "name": "viajante",
+  "version": "1.5.7",
+  "description": "Flight and hotel search from your own machine: Google Flights, Google Hotels and Booking evidence over a local MCP server. No API keys.",
+  "author": { "name": "Felipe Basurto", "url": "https://felipebasurto.com" },
+  "homepage": "https://viajante.felipebasurto.com",
+  "repository": "https://github.com/felipebasurto/viajante",
+  "license": "MIT",
+  "keywords": ["travel", "flights", "hotels", "mcp"]
+}

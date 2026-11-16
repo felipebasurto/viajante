@@ -44,7 +44,15 @@ class InstallLineAgreementTest(unittest.TestCase):
         names = re.findall(r'data-name="([^"]+)"', text)
         self.assertEqual(
             names,
-            ["Claude", "ChatGPT", "Grok Bot", "Muse", "Hermes Agent", "Instinct"],
+            [
+                "Claude",
+                "ChatGPT",
+                "Grok Bot",
+                "Muse",
+                "Hermes Agent",
+                "Terminal or editor",
+                "Instinct",
+            ],
         )
         self.assertEqual(text.count('data-surface="web"'), 2)
         self.assertEqual(text.count('data-surface="desktop"'), 2)
@@ -60,8 +68,34 @@ class InstallLineAgreementTest(unittest.TestCase):
         self.assertEqual(text.count("You are Claude on claude.ai"), 1)
         self.assertEqual(text.count("You are Claude Desktop"), 1)
         self.assertIn("claude_desktop_config.json", text)
-        self.assertIn("not published as a desktop extension", text)
+        self.assertIn("releases/latest/download/viajante.mcpb", text)
+        self.assertNotIn("not published as a desktop extension", text)
         self.assertIn("Install in Hermes Agent", text)
+
+    def test_landing_offers_each_terminal_and_editor_once_with_its_own_message(self) -> None:
+        text = (ROOT / "landing/index.html").read_text(encoding="utf-8")
+        tools = {
+            "codex": ("Codex", "codex mcp add viajante -- npx -y @viajante/mcp"),
+            "gemini": ("Gemini CLI", "gemini mcp add -s user viajante npx -y @viajante/mcp"),
+            "vscode": ("VS Code", '"mcpServers":{"viajante":{"type":"stdio"'),
+            "zed": ("Zed", '"context_servers":{"viajante"'),
+            "goose": ("Goose", 'goose session --with-extension "npx -y @viajante/mcp"'),
+            "opencode": ("OpenCode", '"mcp":{"servers":{"viajante":{"type":"local"'),
+        }
+        for surface, (label, command) in tools.items():
+            with self.subTest(tool=label):
+                self.assertEqual(text.count(f'data-surface="{surface}" data-restore="{label}"'), 1)
+                self.assertEqual(text.count(f"      {surface}: '"), 1)
+                self.assertIn(command, text)
+
+    def test_landing_installs_agree_with_the_client_docs(self) -> None:
+        docs = (ROOT / "docs/clients.md").read_text(encoding="utf-8")
+        for command in (
+            "codex mcp add viajante -- npx -y @viajante/mcp",
+            "gemini mcp add -s user viajante npx -y @viajante/mcp",
+            'goose session --with-extension "npx -y @viajante/mcp"',
+        ):
+            self.assertIn(command, docs)
 
 
 if __name__ == "__main__":

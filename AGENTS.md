@@ -61,6 +61,11 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - MCP input-error JSON body: `src/viajante/mcp_errors.py`
 - MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
 - Low-cost carrier list (partial): `src/viajante/flight_offers.py` (`LOW_COST_NAMES`)
+- Claude Desktop extension (`.mcpb`, a uv bundle that installs the PyPI release): `mcpb/`; built after PyPI by the publish workflow
+- Claude Code plugin and marketplace: `.claude-plugin/marketplace.json`, `integrations/claude-code/` (its skill is a byte copy of the Hermes one)
+- Container image for stdio clients and the Docker MCP Catalog: `Dockerfile`
+- Per-client install snippets and landing picker messages: `docs/clients.md`, `landing/index.html`
+- Recipes for pairing with other MCP servers (documented, never built in): `docs/composition.md`
 - Airline aliases and alliance tfs carrier codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
@@ -402,6 +407,10 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Primary agent install is `npx -y @viajante/mcp` (needs `uv` and Python 3.10+). The
   no-Node form is `uvx --from viajante[mcp] viajante-mcp`. Keep `README.md`, `llms.txt`,
   `mcp_guide.py`, the skill, and the landing page's copy-message on that same order.
+  `docs/clients.md` and the picker's per-client messages must name commands their client
+  accepts: check a snippet against the client's own docs or CLI before adding it. Viajante
+  stays one MCP server; do not add client-specific code paths, a hosted endpoint, or an
+  integration that is not a local stdio MCP entry.
 - Check `viajante --version` or MCP `get_runtime_info` before using a new feature.
   Hotel JSON carries `viajante_version`. An npm MCP and a separately installed uv
   tool can run different versions; an unpinned `uvx` may reuse an old install.
@@ -426,7 +435,8 @@ uv run viajante bench
   `# type: ignore[code]` with the reason; do not widen to bare `ignore` or `Any` to
   silence a real mismatch.
 - `scripts/check-release.py` runs in the publish `verify` job: a tag whose version
-  disagrees with any pinned manifest stops the release before anything is uploaded.
+  disagrees with any pinned manifest (including `mcpb/` and `integrations/claude-code/`)
+  stops the release before anything is uploaded.
 - Pin owned seams: request bytes, recorded provider bodies, filters, ranking, JSON
   keys. A renamed or dropped JSON key is a breaking change.
 - `viajante bench` is the keep-or-revert gate. Do not optimize `score_ms`. Live

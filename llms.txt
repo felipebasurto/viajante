@@ -40,6 +40,10 @@ No Node: `"command": "uvx", "args": ["--from", "viajante[mcp]", "viajante-mcp"]`
 (no browser extra). Installing `viajante[browser]` elsewhere does not update the
 uvx environment.
 
+Other clients (Claude Desktop extension, Claude Code plugin, Codex, Gemini CLI, VS Code,
+Zed, Goose, OpenCode, a container): `docs/clients.md`. Pairing with a calendar, a
+spreadsheet or a currency server: `docs/composition.md`.
+
 ## Tools
 
 Twenty-two tools.

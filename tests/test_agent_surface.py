@@ -26,6 +26,8 @@ DOCS = (
     "llms.txt",
     "docs/usage.md",
     "docs/architecture.md",
+    "docs/clients.md",
+    "docs/composition.md",
     ".cursor/skills/viajante/SKILL.md",
     ".cursor/skills/viajante/mcp.md",
     "integrations/hermes/skills/viajante/SKILL.md",

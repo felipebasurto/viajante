@@ -29,10 +29,42 @@ def _pyproject_version(root: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def _json(root: Path, name: str) -> dict[str, object]:
+    return json.loads((root / name).read_text(encoding="utf-8"))
+
+
+def _npx_pin(mcp: dict[str, object]) -> str | None:
+    """The version in a `@viajante/mcp@X` argument of an MCP config, if it names one."""
+    servers = mcp.get("mcpServers", {})
+    spec = next(
+        (
+            arg
+            for entry in servers.values()
+            for arg in entry.get("args", ())
+            if str(arg).startswith("@viajante/mcp@")
+        ),
+        None,
+    )
+    return None if spec is None else str(spec).split("@")[-1]
+
+
+def _bundle_pins(root: Path) -> dict[str, object]:
+    """The Claude Desktop extension: its manifest, its own project, and the release it installs."""
+    text = (root / "mcpb/pyproject.toml").read_text(encoding="utf-8")
+    project = text.split("[project]", 1)[-1].split("\n[", 1)[0]
+    own = re.search(r'^version = "([^"]+)"', project, re.M)
+    dependency = re.search(r'"viajante\[mcp,browser\]==([^"]+)"', project)
+    return {
+        "mcpb/manifest.json": _json(root, "mcpb/manifest.json").get("version"),
+        "mcpb/pyproject.toml": own.group(1) if own else None,
+        "mcpb/pyproject.toml viajante[mcp,browser]": dependency.group(1) if dependency else None,
+    }
+
+
 def pins(root: Path = ROOT) -> dict[str, object]:
     """Every place the release version is written down, by file."""
-    server = json.loads((root / "server.json").read_text(encoding="utf-8"))
-    hermes_mcp = json.loads((root / "integrations/hermes/mcp.json").read_text(encoding="utf-8"))
+    server = _json(root, "server.json")
+    hermes_mcp = _json(root, "integrations/hermes/mcp.json")
     found: dict[str, object] = {
         "pyproject.toml": _pyproject_version(root),
         "uv.lock": _lock_version(root),
@@ -46,16 +78,14 @@ def pins(root: Path = ROOT) -> dict[str, object]:
     }
     for index, package in enumerate(server.get("packages", ())):
         found[f"server.json packages[{index}]"] = package.get("version")
-    spec = next(
-        (
-            arg
-            for entry in hermes_mcp.get("mcpServers", {}).values()
-            for arg in entry.get("args", ())
-            if str(arg).startswith("@viajante/mcp@")
-        ),
-        None,
+    found["integrations/hermes/mcp.json"] = _npx_pin(hermes_mcp)
+    found["integrations/claude-code/.claude-plugin/plugin.json"] = _json(
+        root, "integrations/claude-code/.claude-plugin/plugin.json"
+    ).get("version")
+    found["integrations/claude-code/.mcp.json"] = _npx_pin(
+        _json(root, "integrations/claude-code/.mcp.json")
     )
-    found["integrations/hermes/mcp.json"] = None if spec is None else str(spec).split("@")[-1]
+    found.update(_bundle_pins(root))
     return found
 
 
