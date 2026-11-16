@@ -75,8 +75,10 @@ class InstallLineAgreementTest(unittest.TestCase):
     def test_landing_offers_each_terminal_and_editor_once_with_its_own_message(self) -> None:
         text = (ROOT / "landing/index.html").read_text(encoding="utf-8")
         tools = {
+            "claudecode": ("Claude Code", "/plugin install viajante@viajante"),
             "codex": ("Codex", "codex mcp add viajante -- npx -y @viajante/mcp"),
             "gemini": ("Gemini CLI", "gemini mcp add -s user viajante npx -y @viajante/mcp"),
+            "cursor": ("Cursor", "~/.cursor/mcp.json for every project"),
             "vscode": ("VS Code", '"mcpServers":{"viajante":{"type":"stdio"'),
             "zed": ("Zed", '"context_servers":{"viajante"'),
             "goose": ("Goose", 'goose session --with-extension "npx -y @viajante/mcp"'),
@@ -93,6 +95,8 @@ class InstallLineAgreementTest(unittest.TestCase):
         for command in (
             "codex mcp add viajante -- npx -y @viajante/mcp",
             "gemini mcp add -s user viajante npx -y @viajante/mcp",
+            "/plugin install viajante@viajante",
+            "~/.cursor/mcp.json",
             'goose session --with-extension "npx -y @viajante/mcp"',
         ):
             self.assertIn(command, docs)

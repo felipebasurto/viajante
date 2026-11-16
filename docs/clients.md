@@ -76,6 +76,14 @@ The same entry in `~/.gemini/settings.json`:
 
 `-s user` writes the user settings. Without it the entry goes to the project's `.gemini/settings.json`.
 
+## Cursor
+
+`.cursor/mcp.json` in the project, or `~/.cursor/mcp.json` for every project:
+
+```json
+{ "mcpServers": { "viajante": { "command": "npx", "args": ["-y", "@viajante/mcp"] } } }
+```
+
 ## VS Code
 
 Workspace-root `.mcp.json`, or `~/.copilot/mcp-config.json` for every workspace. Both use a
