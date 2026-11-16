@@ -183,7 +183,7 @@ def watch_price_tool(
         payload = _TOOLS[spec["kind"]].__wrapped__(**spec["params"])
     read_error: Optional[str] = None
     try:
-        stored = read_observations(strict=True)
+        stored = read_observations()
     except UnreadableStateError as exc:
         stored, read_error = [], short_reason(exc)
     insights = _flight_insights(payload) if spec["kind"] == "flight" else {}

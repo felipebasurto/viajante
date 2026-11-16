@@ -44,7 +44,6 @@ history up to commit 6ee0fb7.
   desktop app with the viajante MCP (`npx -y @viajante/mcp`), or `pip install viajante`.
   One error frame stays a blocked cell with an unknown cause. A data-less
   RPC status 13 still records the cooldown on the first response and uses the same message.
-
 - `search_trip` keeps `trip_total` when one airport of a nearby or metro group is
   unpriced but a sibling is priced. `recheck_offer` uppercases IATA codes, so
   `jfk` is no longer reported as a missing offer.
@@ -77,6 +76,18 @@ history up to commit 6ee0fb7.
 - A round-trip package no longer shows one leg's flight numbers as the whole
   package. Shopping card flight numbers cover every journey segment.
 - The Windows npm `viajante` bin runs the CLI, not the MCP server.
+- A deadline that lands inside a batched one-way fetch is final: every query is
+  `deadline` and nothing is resent. It used to fall into the per-query loop.
+- `search_split_tickets` takes `deadline_seconds`, like the other long searches.
+- The price-history reader treats only a missing log as empty. An unreadable log
+  is an error everywhere, not just in append and `--clear`. `history --limit`
+  below 1 is an input error instead of printing the whole series, and a failed
+  `--clear` no longer prints a filesystem path.
+- When every matched Skiplagged hotel is priced in a currency other than USD, the
+  result is `currency_mismatch`, not `markup_drift`.
+- A cancel that lands after a result reached the evidence ledger removes it again.
+- An HTTP-date `Retry-After` sets the cooldown instead of being ignored. A price
+  insight that fails to decode is `markup_drift`, not "no insight".
 
 ### Changed
 

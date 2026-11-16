@@ -7,6 +7,8 @@ import threading
 import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 from urllib.parse import urlencode, urljoin, urlsplit
@@ -253,13 +255,23 @@ SWEEP_TRANSPORT_STATUS = 599
 RPC_THROTTLE_STATUS = 13
 
 
-def _retry_after_seconds(response: Any) -> Optional[float]:
+def _retry_after_seconds(response: Any, *, now: Optional[datetime] = None) -> Optional[float]:
+    """Seconds from a Retry-After header: delta-seconds or an HTTP date. Never negative."""
     headers = getattr(response, "headers", None) or {}
-    try:
-        value = float(headers.get("retry-after") or headers.get("Retry-After"))
-    except (TypeError, ValueError):
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if raw is None:
         return None
-    return value if math.isfinite(value) else None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        try:
+            when = parsedate_to_datetime(str(raw))
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        value = (when - (now or datetime.now(timezone.utc))).total_seconds()
+    return value if math.isfinite(value) and value > 0 else None
 
 
 def _settle_batch(

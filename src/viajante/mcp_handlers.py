@@ -177,7 +177,7 @@ def _with_search_lock(fn):
 def _owned(payload: dict, report=None) -> dict:
     check_cancelled()
     selections = selection_records(payload, report)
-    record(payload, selections=selections)
+    record(payload, selections=selections, cancelled=check_cancelled)
     _SELECTION_CONTEXT.records = selections
     return payload
 
@@ -200,7 +200,7 @@ def _cached(fn):
         if hit is not None and now - hit[0] < CACHE_SECONDS:
             check_cancelled()
             result = {**deepcopy(hit[1]), "cached": True}
-            record(result, selections=hit[2])
+            record(result, selections=hit[2], cancelled=check_cancelled)
             return result
         _SELECTION_CONTEXT.records = {}
         control = current_control() or SearchControl()
@@ -403,6 +403,7 @@ def search_split_tickets_tool(
     exclude_airports: Optional[str] = None,
     include_airports: Optional[str] = None,
     baggage_buffer: Optional[int] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         [route],
@@ -472,6 +473,7 @@ def search_split_tickets_tool(
             currency=currency,
             country=country,
             proxy=proxy,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(stamp_split(dict(report.to_dict())))
@@ -1124,7 +1126,11 @@ def split_stay_costs_tool(
     inputs = [stay.total for stay in report.stays]
     if report.fee_per_person_night is not None:
         inputs.append(report.fee_per_person_night)
-    return record(payload) if owns_amounts(inputs, report.currency) else payload
+    return (
+        record(payload, cancelled=check_cancelled)
+        if owns_amounts(inputs, report.currency)
+        else payload
+    )
 
 
 def validate_itinerary_tool(
@@ -1177,7 +1183,7 @@ def recheck_offer_tool(
             closest["differences"] = _without_previous(closest["differences"])
             owned["closest_candidate"] = closest
     if result["check_completed"]:
-        record(owned)
+        record(owned, cancelled=check_cancelled)
     return result
 
 
@@ -1207,5 +1213,5 @@ def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Ma
     detail["original_quote"]["offer"]["selection_id"] = selection_id
     quotes = detail.get("room_quotes")
     if room_rates and quotes and quotes.get("rates") and not failure_codes(quotes):
-        record(quotes)
+        record(quotes, cancelled=check_cancelled)
     return detail

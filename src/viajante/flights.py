@@ -354,6 +354,19 @@ def _run_search(
         try:
             checkpoint()
             batch_rows = fetch_batch(list(trips))
+        except SearchDeadline as exc:
+            # The deadline is final: no resend, every query is `deadline`, not `no_results`.
+            failure = classify_failure(exc)
+            for trip in trips:
+                results.append(_stamp(QueryFailure(query=trip, error=failure)))
+            return _report_with_evidence(
+                results,
+                searched_at=now(),
+                locale=locale,
+                currency=currency,
+                fetch_backend=fetch_backend,
+                fetch_ms=None,
+            )
         except Exception:
             batch_rows = None
         if batch_rows is not None:

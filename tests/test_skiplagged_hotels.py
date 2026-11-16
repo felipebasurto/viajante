@@ -18,6 +18,7 @@ from viajante.models import (
 )
 from viajante.skiplagged_hotels import (
     SkiplaggedAmbiguousName,
+    SkiplaggedCurrencyMismatch,
     SkiplaggedHotelsSource,
     SkiplaggedNoHotels,
     SkiplaggedParseMiss,
@@ -27,6 +28,7 @@ from viajante.skiplagged_hotels import (
     parse_search_page,
     resolve_hotel_id,
     search_hotel_rooms,
+    skiplagged_failure,
 )
 
 QUERY = HotelQuery("Prague", date(2026, 12, 1), date(2026, 12, 4), adults=3)
@@ -198,8 +200,11 @@ class SkiplaggedCapturedSearchTests(unittest.TestCase):
         self.assertEqual(len(page.cards), 7)
         for card in cards:
             card["price"]["currency"] = "EUR"
-        with self.assertRaises(SkiplaggedParseMiss):
+        with self.assertRaises(SkiplaggedCurrencyMismatch) as caught:
             parse_search_page(result)
+        self.assertEqual(
+            skiplagged_failure(caught.exception).code, SearchErrorCode.CURRENCY_MISMATCH
+        )
 
 
 class SkiplaggedAppliedFilterTests(unittest.TestCase):

@@ -16,12 +16,14 @@ searches run sequentially in the calling process.
 from __future__ import annotations
 
 import math
+import threading
 from collections import Counter
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
 
 from viajante.airports import airport_geo
+from viajante.control import controlled
 from viajante.flight_filters import parse_code_list
 from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.models import (
@@ -430,6 +432,7 @@ def validate_split_request(
     return kind, named
 
 
+@controlled
 def search_split_tickets(
     query: FlightQuery | RoundTrip,
     *,
@@ -450,6 +453,8 @@ def search_split_tickets(
     baggage_buffer: int = 0,
     less_emissions: bool = False,
     hide_separate_tickets: bool = False,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> SplitReport:
     """Search split tickets for one one-way (via hubs) or one round-trip (mixed one-ways).
 

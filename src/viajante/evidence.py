@@ -11,7 +11,7 @@ import re
 import threading
 from collections import deque
 from copy import deepcopy
-from typing import Iterable, Mapping, Optional
+from typing import Callable, Iterable, Mapping, Optional
 from uuid import uuid4
 
 from viajante.airports import is_known_iata
@@ -102,13 +102,42 @@ def selection_records(payload: Mapping[str, object], report=None) -> dict[str, o
     return records
 
 
-def record(payload: Mapping[str, object], *, selections=None) -> Mapping[str, object]:
+def _rebuild_selections() -> None:
+    _selections.clear()
+    for group in _selection_groups:
+        _selections.update(group)
+
+
+def record(
+    payload: Mapping[str, object],
+    *,
+    selections=None,
+    cancelled: Optional[Callable[[], None]] = None,
+) -> Mapping[str, object]:
+    """Add one payload to the ledger.
+
+    ``cancelled`` runs after the append and raises when the search was cancelled in the
+    meantime. The entry is then taken back out: a cancelled search is never evidence.
+    """
+    entry = deepcopy(payload)
+    group = selections or {}
     with _lock:
-        _ledger.append(deepcopy(payload))
-        _selection_groups.append(selections or {})
-        _selections.clear()
-        for group in _selection_groups:
-            _selections.update(group)
+        _ledger.append(entry)
+        _selection_groups.append(group)
+        _rebuild_selections()
+    if cancelled is not None:
+        try:
+            cancelled()
+        except BaseException:
+            with _lock:
+                kept = [row for row in _ledger if row is not entry]
+                _ledger.clear()
+                _ledger.extend(kept)
+                groups = [item for item in _selection_groups if item is not group]
+                _selection_groups.clear()
+                _selection_groups.extend(groups)
+                _rebuild_selections()
+            raise
     return payload
 
 

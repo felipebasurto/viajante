@@ -15,6 +15,7 @@ from viajante.history import (
     MAX_ENTRIES,
     clear_history,
     price_history,
+    short_reason,
 )
 from viajante.storage import write_json_atomic
 from viajante.watch import list_watches, remove_watch, watch_price_tool
@@ -125,7 +126,7 @@ def run_history(args: argparse.Namespace) -> int:
         try:
             valid, unreadable = clear_history()
         except OSError as exc:
-            print(f"error: could not clear the price history: {exc}", file=sys.stderr)
+            print(f"error: could not clear the price history: {short_reason(exc)}", file=sys.stderr)
             return 1
         noun = "observation" if valid == 1 else "observations"
         extra = ""

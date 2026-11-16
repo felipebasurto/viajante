@@ -77,6 +77,10 @@ class SkiplaggedParseMiss(ValueError):
     """The tool answered but its table no longer matches the structured rows."""
 
 
+class SkiplaggedCurrencyMismatch(ValueError):
+    """Every matched hotel was priced in a currency other than USD."""
+
+
 def build_applied_filters(
     query: HotelQuery,
     *,
@@ -166,6 +170,7 @@ def parse_search_page(result: Any) -> HotelPage:
     if not table:
         raise SkiplaggedParseMiss("hotel table did not match the structured results")
     parsed: list[RawHotelCard] = []
+    not_usd = 0
     for card in cards:
         if not isinstance(card, dict):
             continue
@@ -175,7 +180,8 @@ def parse_search_page(result: Any) -> HotelPage:
         if row is None or not isinstance(name, str) or not name.strip():
             continue
         if not _priced_in_usd(card):
-            continue  # The table's "$" total is only owned when the card says USD.
+            not_usd += 1  # The table's "$" total is only owned when the card says USD.
+            continue
         amenities = card.get("amenities")
         stars = card.get("rating")
         parsed.append(
@@ -191,6 +197,11 @@ def parse_search_page(result: Any) -> HotelPage:
                 class_label=stars.get("text") if isinstance(stars, dict) else None,
                 provider_id=hotel_id or None,
             )
+        )
+    if not parsed and not_usd:
+        raise SkiplaggedCurrencyMismatch(
+            f"Skiplagged priced all {not_usd} matched hotels in a currency other than USD; "
+            "viajante does not convert."
         )
     if not parsed:
         raise SkiplaggedParseMiss("no structured hotel matched a priced table row")
@@ -352,6 +363,8 @@ def skiplagged_failure(exc: BaseException) -> SearchError:
         return SearchError(code=SearchErrorCode.NO_RESULTS, message=str(exc))
     if isinstance(exc, SkiplaggedRejected):
         return SearchError(code=SearchErrorCode.REJECTED, message=str(exc))
+    if isinstance(exc, SkiplaggedCurrencyMismatch):
+        return SearchError(code=SearchErrorCode.CURRENCY_MISMATCH, message=str(exc))
     if isinstance(exc, SkiplaggedParseMiss):
         return SearchError(
             code=SearchErrorCode.MARKUP_DRIFT, message="Skiplagged hotel parse missed."

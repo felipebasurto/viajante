@@ -119,6 +119,9 @@ def _hotel_report(total: float, *, currency: str = "GBP", at: datetime = T0) -> 
     )
 
 
+SECRET_PATH = "/secret/path/price-history.jsonl"
+
+
 class _State(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -426,7 +429,7 @@ class UnreadableFileTests(_State):
         self.assertIn("not an empty history", payload["note"])
         self.assertIsNone(payload["stored_entries"])
         with self.assertRaises(UnreadableStateError):
-            history.read_observations(strict=True)
+            history.read_observations()
 
     def test_clear_refuses_and_keeps_the_file(self) -> None:
         with self.assertRaises(UnreadableStateError):
@@ -1189,12 +1192,16 @@ class CliTests(_State):
     def test_clear_failure_is_a_clean_error(self) -> None:
         err = io.StringIO()
         with (
-            patch("viajante.history_cli.clear_history", side_effect=PermissionError("denied")),
+            patch(
+                "viajante.history_cli.clear_history",
+                side_effect=PermissionError(13, "denied", SECRET_PATH),
+            ),
             contextlib.redirect_stderr(err),
         ):
             code, _ = self.run_cli("history", "--clear")
         self.assertEqual(code, 1)
-        self.assertIn("error: could not clear the price history: denied", err.getvalue())
+        self.assertIn("error: could not clear the price history:", err.getvalue())
+        self.assertNotIn(SECRET_PATH, err.getvalue())
 
     def test_history_rejects_bad_route(self) -> None:
         code, _ = self.run_cli("history", "--route", "NYC")

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import _isolate  # noqa: F401
 from viajante.airports import get_airport, place_label_codes
+from viajante.control import SearchDeadline
 from viajante.flight_filters import (
     NO_OFFER_FILTERS,
     _overnight_from_owned_clocks,
@@ -483,6 +484,33 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertIsInstance(report.queries[1], QuerySuccess)
         self.assertEqual(report.queries[0].offers[0].airline, "Iberia")
         self.assertEqual(report.queries[1].offers[0].airline, "British Airways")
+
+    def test_a_deadline_inside_the_batch_is_final_and_resends_nothing(self) -> None:
+        q1 = FlightQuery("JFK", "LHR", date(2026, 9, 1), max_stops=1)
+        q2 = FlightQuery("JFK", "CDG", date(2026, 9, 2), max_stops=1)
+
+        class DeadlineSource(FakeSource):
+            def fetch(self, query):  # type: ignore[no-untyped-def]
+                raise AssertionError("a spent deadline must not fall back to per-query sends")
+
+            def fetch_many(self, queries):
+                raise SearchDeadline()
+
+        source = DeadlineSource({})
+        report = _run_search(
+            (q1, q2),
+            top=8,
+            source=source,
+            sleep=lambda _seconds: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10, 9, 0, 0),
+            currency="EUR",
+        )
+        self.assertEqual(source.fetch_calls, 0)
+        self.assertEqual(
+            [type(row).__name__ for row in report.queries], ["QueryFailure", "QueryFailure"]
+        )
+        self.assertEqual([row.error.code.value for row in report.queries], ["deadline"] * 2)
 
     def test_max_stops_zero_keeps_only_nonstop(self) -> None:
         nonstop = card(stops="Nonstop", price="100 €")

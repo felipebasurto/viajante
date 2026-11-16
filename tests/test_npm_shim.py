@@ -130,15 +130,18 @@ require(shim);
         node = shutil.which("node")
         assert node is not None
         env = os.environ.copy()
-        env["PATH"] = str(Path(node).parent)
         env.pop("VIAJANTE_BIN", None)
-        result = subprocess.run(
-            [node, str(NPM / "bin" / "viajante.js")],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        with tempfile.TemporaryDirectory() as bin_dir:
+            # Only node on PATH: its own folder may also hold uv (a local install).
+            (Path(bin_dir) / "node").symlink_to(node)
+            env["PATH"] = bin_dir
+            result = subprocess.run(
+                [node, str(NPM / "bin" / "viajante.js")],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
         self.assertEqual(result.returncode, 1)
         self.assertIn("uv on PATH", result.stderr)
         self.assertIn("Python 3.10+", result.stderr)

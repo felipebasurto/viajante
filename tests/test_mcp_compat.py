@@ -705,6 +705,7 @@ class GuideTests(_StateDir):
                 "search_explore",
                 "search_hotels",
                 "search_trip",
+                "search_split_tickets",
             ],
         )
         self.assertIn(
@@ -715,7 +716,7 @@ class GuideTests(_StateDir):
             "Passing it to " + ", ".join(skips[:-1]) + " or " + skips[-1] + " is invalid_parameter",
             guide,
         )
-        self.assertIn("VIAJANTE_MCP_DEADLINE_SECONDS bounds those six", guide)
+        self.assertIn("VIAJANTE_MCP_DEADLINE_SECONDS bounds those five", guide)
 
     def test_guide_tells_round_trip_date_sweeps_to_pass_a_deadline(self) -> None:
         guide = self._flat(GUIDE)

@@ -233,12 +233,13 @@ def price_insight_from_page(
     """Insight when ``data[5]`` and the rendered heading name the same level.
 
     No insight on the page is ``(None, None)``. A heading and slot that do not
-    confirm each other is ``(None, "markup_drift")``. This never raises.
+    confirm each other, or a parse that threw, is ``(None, "markup_drift")``: a decode
+    failure is not "the page has no insight". This never raises.
     """
     try:
         return _confirmed_price_insight(html, data, currency=currency)
     except Exception:
-        return None, None
+        return None, "markup_drift"
 
 
 def _confirmed_price_insight(

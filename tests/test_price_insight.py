@@ -157,7 +157,7 @@ class PriceInsightDecodeTests(unittest.TestCase):
         )
         self.assertEqual(
             price_insight_from_page(None, _data(_slot(2)), currency="EUR"),  # type: ignore[arg-type]
-            (None, None),
+            (None, "markup_drift"),
         )
 
     def test_bad_amounts_drop_the_figure_and_a_bad_history_drops_the_series(self) -> None:
