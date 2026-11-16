@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import unittest
 
-import _isolate  # noqa: F401
 from viajante.models import (
     NEAR_TYPICAL_RATIO,
     FlightOffer,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import contextlib
 import io
@@ -16,7 +17,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_google_hotels import _hotel_record, _ScriptedHotelClient, _search_payload, _wrap_wrb
 from viajante import evidence, mcp_handlers, mcp_server
 from viajante.control import (
@@ -478,6 +478,47 @@ class DeadlineTests(McpControlCase):
             asyncio.run(main())
         self.assertEqual(seen, [12.5, 7])
         self.assertFalse(mcp_server._SEARCH_BUSY.locked())
+
+    def test_env_deadline_bounds_a_tool_that_omits_the_parameter(self) -> None:
+        real = mcp_server.SearchControl
+
+        def already_spent(*args, **kwargs):
+            control = real(*args, **kwargs)
+            if control.deadline_at is not None:
+                control.deadline_at = control.clock() - 1
+            return control
+
+        def bare():
+            checkpoint()
+            return {}
+
+        def named(*, deadline_seconds=None):
+            checkpoint()
+            return deadline_seconds
+
+        async def main() -> None:
+            with self.assertRaises(SearchDeadline):
+                await mcp_server.run_mcp_tool(bare)
+            self.assertEqual(await mcp_server.run_mcp_tool(named, deadline_seconds=30), 30)
+
+        with (
+            patch.object(mcp_server, "_ENV_DEADLINE", 30.0),
+            patch.object(mcp_server, "SearchControl", already_spent),
+        ):
+            asyncio.run(main())
+        self.assertFalse(mcp_server._SEARCH_BUSY.locked())
+
+    def test_hidden_city_deadline_returns_the_envelope(self) -> None:
+        now = [0.0]
+        control = SearchControl(deadline_seconds=1, clock=lambda: now[0])
+        now[0] = 10.0
+        with active(control):
+            payload = mcp_handlers.search_hidden_city_tool("JFK-LHR", FUTURE.isoformat())
+        self.assertEqual(payload["status"], "timeout")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["empty_reason"], "not_loaded")
+        self.assertEqual(payload["error_code"], "deadline")
+        self.assertEqual(mcp_handlers._CACHE, {})
 
     def test_env_deadline_is_validated_when_the_server_starts(self) -> None:
         with patch.dict(os.environ, {mcp_server.DEADLINE_ENV: "12.5"}):
@@ -971,6 +1012,17 @@ class BoundedBrowserWaitTests(unittest.TestCase):
             now[0] = 5.0
             with self.assertRaises(SearchDeadline):
                 bounded_ms(60_000)
+        self.assertTrue(control.cut)
+
+    def test_under_one_millisecond_left_raises_instead_of_waiting(self) -> None:
+        now = [0.0]
+        control = SearchControl(deadline_seconds=1, clock=lambda: now[0])
+        with active(control):
+            now[0] = 1 - 0.0004
+            with self.assertRaises(SearchDeadline):
+                bounded_ms(60_000)
+            now[0] = 1 - 0.0015
+            self.assertEqual(bounded_ms(60_000), 1)
         self.assertTrue(control.cut)
 
 

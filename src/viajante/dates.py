@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Optional, Protocol, Sequence, Tuple, TypeVar, cast
 
+from viajante.airports import metro_members
 from viajante.control import SearchDeadline, checkpoint, controlled
+from viajante.envelope import dates_gap_note
 from viajante.flight_evidence import _stamp_offer_evidence
 from viajante.flight_filters import OfferFilters, owned_clock, parse_code_list, parse_offer_filters
 from viajante.flight_offers import (
@@ -62,6 +65,7 @@ MAX_FLEX_DAYS = 15
 _T = TypeVar("_T")
 
 EMPTY_DAY_MARK = "·"
+FAILED_DAY_MARK = "!"
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = (
     "Jan",
@@ -93,15 +97,25 @@ def _week_span_label(start: date, end: date) -> str:
     return f"{_english_day_label(start)}-{_english_day_label(end)}"
 
 
+def _owned_price_text(price: float) -> str:
+    """The stored fare, including cents. Whole amounts stay whole."""
+    return f"{price:.3f}".rstrip("0").rstrip(".")
+
+
 def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
-    """English week lines of owned daily prices. Empty or missing days are ·."""
+    """English week lines of owned daily prices. Empty days are ·. Failed days are !."""
     if not days:
         return ()
     by_day = {row.departure_date: row for row in days}
+    width = _CELL_WIDTH
+    for row in by_day.values():
+        price = row.price
+        if price is not None and price > 0:
+            width = max(width, len(_owned_price_text(price)))
     start = min(by_day)
     end = max(by_day)
     first_monday = date.fromordinal(start.toordinal() - start.weekday())
-    header = "  " + " ".join(f"{name:>{_CELL_WIDTH}}" for name in _WEEKDAYS)
+    header = "  " + " ".join(f"{name:>{width}}" for name in _WEEKDAYS)
     lines = [header]
     cursor = first_monday
     while cursor <= end:
@@ -110,15 +124,17 @@ def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
         for offset in range(7):
             day = date.fromordinal(cursor.toordinal() + offset)
             if day < start or day > end:
-                cells.append(" " * _CELL_WIDTH)
+                cells.append(" " * width)
                 continue
             in_window = True
-            row = by_day.get(day)
-            price = None if row is None else row.price
-            if price is None or price <= 0:
-                cells.append(f"{EMPTY_DAY_MARK:>{_CELL_WIDTH}}")
+            cell = by_day.get(day)
+            price = None if cell is None else cell.price
+            if cell is not None and cell.status == "error":
+                cells.append(f"{FAILED_DAY_MARK:>{width}}")
+            elif price is None or price <= 0:
+                cells.append(f"{EMPTY_DAY_MARK:>{width}}")
             else:
-                cells.append(f"{price:>{_CELL_WIDTH}.0f}")
+                cells.append(f"{_owned_price_text(price):>{width}}")
         if in_window:
             week_end = date.fromordinal(cursor.toordinal() + 6)
             label = _week_span_label(max(cursor, start), min(week_end, end))
@@ -139,6 +155,9 @@ def format_sparkline(days: Sequence[DatePriceRow]) -> str:
     chars: list[str] = []
     for row in sorted(days, key=lambda item: item.departure_date):
         price = row.price
+        if row.status == "error":
+            chars.append(FAILED_DAY_MARK)
+            continue
         if price is None or price <= 0:
             chars.append(EMPTY_DAY_MARK)
             continue
@@ -181,6 +200,32 @@ def _rank_date_rows(
     return tuple(sorted(days, key=sort_key))
 
 
+def calendar_gap_line(days: Sequence[DatePriceRow]) -> Optional[str]:
+    """The sentence for a calendar that failed to load some days, else None."""
+    failed = [row for row in days if row.status == "error"]
+    if not failed:
+        return None
+    paused = any(
+        row.error is not None and (row.error.rate_limited or row.error.code.value == "blocked")
+        for row in failed
+    )
+    now = time.time()
+    wait: Optional[int] = None
+    for row in failed:
+        until = None if row.error is None else row.error.retry_until
+        if until is not None and until > now:
+            seconds = max(1, math.ceil(until - now))
+            wait = seconds if wait is None else max(wait, seconds)
+    priced = any(row.price is not None and row.price > 0 for row in days)
+    return dates_gap_note(
+        failed=len(failed),
+        total=len(days),
+        paused=paused,
+        priced=priced,
+        wait_seconds=wait,
+    )
+
+
 def format_summary_line(summary: DateCalendarSummary, currency: str) -> str:
     return (
         f"  min {format_money(summary.min_price, currency)}  "
@@ -218,7 +263,9 @@ def shift_day(day: date, nights: int) -> date:
 
 def validate_date_window(start: date, end: date, *, today: Optional[date] = None) -> None:
     if end < start:
-        raise ValueError("end date must be on or after the start date")
+        raise ValueError(
+            f"end date {end.isoformat()} must be on or after the start date {start.isoformat()}"
+        )
     span = date_window_days(start, end)
     if span > MAX_DATE_WINDOW_DAYS:
         raise ValueError(f"date window is at most {MAX_DATE_WINDOW_DAYS} days (got {span})")
@@ -237,7 +284,7 @@ def resolve_date_trip(
         raise ValueError("date search does not support multi-city")
     if nights is not None:
         if nights < 1:
-            raise ValueError("nights must be at least 1")
+            raise ValueError(f"nights must be at least 1, got {nights}")
         if kind == "one-way":
             kind = "rt"
     if kind == "rt" and nights is None:
@@ -332,7 +379,21 @@ def _stamp_offer_urls(
         fetch_backend="sweep",
         currency=currency,
     )
-    return result.offers
+    # The stamp keeps the QuerySuccess it was given.
+    return cast(QuerySuccess, result).offers
+
+
+def refuse_calendar_metro(origin: str, destination: str) -> None:
+    """A calendar shops one airport pair. A city code names the members and stops."""
+    hits = []
+    for code in (origin, destination):
+        members = metro_members(code)
+        if members:
+            hits.append(f"{code.strip().upper()} is a city code covering {', '.join(members)}")
+    if hits:
+        raise ValueError(
+            f"{'. '.join(hits)}. Name one airport for a calendar, or use search_flights."
+        )
 
 
 def calendar_trip(
@@ -355,11 +416,12 @@ def calendar_trip(
     alliances: Optional[Sequence[str]] = None,
     exclude_alliances: Optional[Sequence[str]] = None,
 ) -> FlightQuery | RoundTrip:
+    refuse_calendar_metro(origin, destination)
     airline_codes = tuple(airlines) if airlines is not None else None
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     alliance_names = tuple(alliances) if alliances is not None else None
     exclude_alliance_names = tuple(exclude_alliances) if exclude_alliances is not None else None
-    occupancy = {
+    occupancy: dict[str, Any] = {
         "adults": adults,
         "children": children,
         "infants_in_seat": infants_in_seat,
@@ -404,11 +466,12 @@ def _seed_trips(
     nearby: bool,
     include_airports: Optional[Sequence[str]],
     exclude_airports: Optional[Sequence[str]],
-) -> tuple[Trip, ...]:
+) -> tuple[FlightQuery | RoundTrip, ...]:
     exclude = parse_code_list(exclude_airports, role="exclude-airports")
     include = parse_code_list(include_airports, role="include-airports")
     trips = keep_included_dest_trips(expand_nearby_trips((seed,), nearby=nearby), include)
-    return drop_excluded_airport_trips(trips, exclude)
+    # A one-way or round-trip seed expands only into trips of its own kind.
+    return cast("tuple[FlightQuery | RoundTrip, ...]", drop_excluded_airport_trips(trips, exclude))
 
 
 def _empty_dates_report(
@@ -663,9 +726,9 @@ def search_dates(
 def validate_nearby_days(days: int) -> int:
     """0 disables the grid. The cap matches flex so the window stays within 31 days."""
     if isinstance(days, bool) or not isinstance(days, int):
-        raise ValueError("nearby_days must be an integer")
+        raise ValueError(f"nearby_days must be an integer, got {days!r}")
     if days < 0:
-        raise ValueError("nearby_days must be 0 or greater (0 disables the date grid)")
+        raise ValueError(f"nearby_days must be 0 or greater (0 disables the date grid), got {days}")
     if days > MAX_FLEX_DAYS:
         raise ValueError(
             f"nearby_days is at most {MAX_FLEX_DAYS} (window cap {MAX_DATE_WINDOW_DAYS})"
@@ -681,7 +744,7 @@ def flex_window(
 ) -> tuple[date, date]:
     """Inclusive [around-flex, around+flex], clamped to today. Cap is 31 days."""
     if flex_days < 1:
-        raise ValueError("flex must be at least 1 day")
+        raise ValueError(f"flex must be at least 1 day, got {flex_days}")
     if flex_days > MAX_FLEX_DAYS:
         raise ValueError(
             f"flex is at most {MAX_FLEX_DAYS} days (window cap {MAX_DATE_WINDOW_DAYS})"
@@ -774,12 +837,7 @@ def _flex_report_for_seed(
                 (err for err in row_errors if err.code == SearchErrorCode.BLOCKED),
                 row_errors[0],
             )
-        typical = typical_from_daily_prices(
-            [
-                _day_minimum_fare(cards_by_day.get(row.departure_date), seed, row, stay, filters)
-                for row in days
-            ]
-        )
+        typical = typical_from_daily_prices([row.day_fare for row in days])
         winner = cheapest_priced_day(days, around)
         if winner is None:
             report_progress("no priced day in flex window; no fare")
@@ -1119,20 +1177,6 @@ def _row_from_day_error(
     )
 
 
-def _day_minimum_fare(
-    cards: Optional[Sequence[RawFlightCard]],
-    seed: FlightQuery | RoundTrip,
-    row: DatePriceRow,
-    nights: Optional[int],
-    filters: OfferFilters,
-) -> Optional[float]:
-    """The day's cheapest eligible fare, before any buffer: the basis of the flex typical."""
-    if not cards:
-        return None
-    offers = offers_from_cards(cards, _day_trip(seed, row.departure_date, nights), filters)
-    return min((offer.price for offer in offers), default=None)
-
-
 def _sweep_per_day(
     source: DaySource,
     seed: FlightQuery | RoundTrip,
@@ -1153,7 +1197,7 @@ def _sweep_per_day(
         cursor = shift_day(cursor, 1)
     span = len(day_queries)
 
-    def row_for(day: date, day_query: FlightQuery | RoundTrip, result: object) -> DatePriceRow:
+    def row_for(day: date, day_query: FlightQuery | RoundTrip, result: Any) -> DatePriceRow:
         returning = _return_for(day, nights)
         if isinstance(result, BaseException):
             return _row_from_day_error(day, result, returning)
@@ -1163,7 +1207,7 @@ def _sweep_per_day(
             day, day_query, result, returning, filters, baggage_buffer, by_fare=by_fare
         )
         if getattr(source, "transport", None) == "public_page":
-            page_error, scope_bound = source.metadata_for(day_query)
+            page_error, scope_bound = source.metadata_for(day_query)  # type: ignore[attr-defined]  # public_page sources carry it
             page_errors = (classify_failure(page_error),) if page_error is not None else ()
             card_error = getattr(source, "card_parse_error", None)
             if callable(card_error):
@@ -1191,7 +1235,12 @@ def _sweep_per_day(
     if one_way_batch:
         try:
             checkpoint()
-            results = fetch_many([day_query for _day, day_query in day_queries])
+            results = fetch_many(
+                [
+                    day_query  # type: ignore[misc]  # one_way_batch proves it callable
+                    for _day, day_query in day_queries
+                ]
+            )
         except SearchDeadline as exc:
             return tuple(row_for(day, day_query, exc) for day, day_query in day_queries)
         for index, ((day, day_query), result) in enumerate(
@@ -1214,7 +1263,7 @@ def _sweep_per_day(
         try:
             checkpoint()
             window([query for _day, query in day_queries], on_day)
-        except SearchDeadline as exc:
+        except Exception as exc:
             rows.extend(row_for(day, query, exc) for day, query in day_queries[len(rows) :])
         return tuple(rows)
 

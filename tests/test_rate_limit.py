@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import json
 import os
@@ -11,7 +12,6 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante import mcp_handlers, skiplagged
 from viajante.control import SearchCancelled, SearchControl, active
 from viajante.flights import classify_failure
@@ -372,7 +372,10 @@ class StatusThirteenTests(_StateDir):
         self.assertTrue(out.request_sent)
         self.assertEqual(out.attempts, 1)
         self.assertFalse(out.stopped)
-        self.assertIn("RPC status 13", out.rate_limit or "")
+        self.assertIn("likely blocking this shared IP", out.rate_limit or "")
+        self.assertIn("npx -y @viajante/mcp", out.rate_limit or "")
+        self.assertIn("pip install viajante", out.rate_limit or "")
+        self.assertRegex(out.rate_limit or "", r"~\d+ min")
         self.assertEqual(out.cooldown_basis, "heuristic_rpc_13")
         state = rate_limit_status()
         self.assertIsNotNone(state)
@@ -421,7 +424,9 @@ class StatusThirteenTests(_StateDir):
         with self.assertRaises(GoogleFlightsBlocked) as ctx:
             _raise_if_blocked(200, STATUS_13_BODY, CALENDAR_URL, CALENDAR_URL)
         self.assertIsNone(ctx.exception.status)
-        self.assertIn("RPC error status 13", str(ctx.exception))
+        self.assertIn("paused this request", str(ctx.exception))
+        self.assertIn("15-30", str(ctx.exception))
+        self.assertNotIn("status 13", str(ctx.exception).casefold())
 
     def test_hotels_treat_a_recorded_status_13_as_a_rate_limit(self) -> None:
         advice = _exchange(STATUS_13_BODY, proxied=False).rate_limit

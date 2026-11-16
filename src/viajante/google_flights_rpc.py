@@ -80,7 +80,7 @@ class CompactExplorePlace:
 def _wrb_json(text: str, *, kind: str) -> Any:
     if _is_shopping_rejected(text):
         raise ShoppingRejected(
-            "Google Flights rejected this query; the provider did not identify the cause."
+            "Google Flights rejected this query. Check the route and dates, or try one airport."
         )
     payload = first_wrb_data(text)
     if payload is None:
@@ -317,7 +317,8 @@ def _wrb_chunk_objects(text: str):
 
 
 def first_wrb_data(
-    text: str, extract: Callable[[object], Optional[_T]] = _wrb_data_string
+    text: str,
+    extract: Callable[[object], Optional[_T]] = _wrb_data_string,  # type: ignore[assignment]
 ) -> Optional[_T]:
     """First wrb.fr envelope ``extract`` accepts, across length-prefixed or bare JSON chunks."""
     for obj in _wrb_chunk_objects(text):
@@ -537,6 +538,7 @@ def _itinerary_to_card(item: list[Any], *, currency: str) -> Optional[RawFlightC
     layover_city, layover_hours = _layover_from_flight(flight)
     journey_legs = tuple(_flight_to_journey_leg(row) for row in journeys)
     checked_bags, carry_on = _bags_from_fare(item[1] if len(item) > 1 else None)
+    codes = _across_journeys(journeys, _airline_codes)
     return RawFlightCard(
         airline=", ".join(airlines) or None,
         departure=_flight_departure(flight),
@@ -546,8 +548,8 @@ def _itinerary_to_card(item: list[Any], *, currency: str) -> Optional[RawFlightC
         price=price,
         layover_city=layover_city,
         layover_hours=layover_hours,
-        flight_numbers=_flight_numbers(flight),
-        airline_codes=_airline_codes(flight),
+        flight_numbers=_across_journeys(journeys, _flight_numbers),
+        airline_codes=None if codes is None else tuple(dict.fromkeys(codes)),
         booking_token=_booking_token(item[1] if len(item) > 1 else None),
         legs=journey_legs,
         checked_bags=checked_bags,
@@ -1091,15 +1093,30 @@ def parse_explore_catalog(text: str, *, origins: frozenset[str]) -> ExploreCatal
     )
 
 
+def _across_journeys(
+    journeys: list[Any], one: Callable[[list[Any]], Optional[tuple[str, ...]]]
+) -> Optional[tuple[str, ...]]:
+    """Values from every journey, in order. Unknown on any journey stays unknown."""
+    parts: list[str] = []
+    for journey in journeys:
+        part = one(journey)
+        if not part:
+            return None
+        parts.extend(part)
+    return tuple(parts)
+
+
 def _flight_numbers(flight: list[Any]) -> Optional[tuple[str, ...]]:
     legs = flight[2] if len(flight) > 2 else None
     if not isinstance(legs, list):
         return None
     numbers: list[str] = []
     for leg in legs:
+        if not isinstance(leg, list):
+            continue
         ident = _leg_ident(leg)
         if ident is None:
-            continue
+            return None
         code, number = ident
         numbers.append(f"{code}{number}")
     return tuple(numbers) or None

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import traceback
 from datetime import date
 from pathlib import Path
-from typing import Optional, Sequence, Tuple, get_args
+from typing import Any, Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata, metro_members, parse_exclude_regions
 from viajante.bench import run_bench
@@ -94,9 +96,9 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    first_origin_iata,
     resolve_baggage_buffer,
     resolve_quote_currency,
+    resolve_trips_currency,
 )
 from viajante.recheck import run_recheck_cli
 from viajante.runtime import package_version
@@ -238,7 +240,7 @@ Examples:
 """
 
 
-def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dict[str, object]]:
+def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dict[str, Any]]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
     occupancy = _occupancy_from_args(args)
@@ -259,7 +261,7 @@ def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dic
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
     trips = as_trips(plan)
     trips = expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
-    _resolve_quote_from_args(args, first_origin_iata(trips[0]))
+    _resolve_quote_from_args(args, trips=trips)
     return trips, shop
 
 
@@ -312,7 +314,7 @@ def _parse_near(raw: Optional[str]) -> Optional[Tuple[float, float]]:
     except ValueError:
         lat = lng = None
     if lat is None or lng is None:
-        raise ValueError("--near must be LAT,LNG, e.g. 50.0875,14.4213")
+        raise ValueError(f"--near {raw!r} must be LAT,LNG, e.g. 50.0875,14.4213")
     return (lat, lng)
 
 
@@ -339,7 +341,7 @@ def _split_min_connection(args: argparse.Namespace) -> float:
 
 
 def _split_query_from_args(
-    args: argparse.Namespace, queries: Tuple[Trip, ...], shop: dict[str, object]
+    args: argparse.Namespace, queries: Tuple[Trip, ...], shop: dict[str, Any]
 ) -> Optional[FlightQuery | RoundTrip]:
     """The one query a split search applies to, validated before any search runs."""
     named = (
@@ -360,10 +362,10 @@ def _split_query_from_args(
         )
     (query,) = _overlay_carrier_filters(
         (queries[0],),
-        airlines=shop["airlines"],  # type: ignore[arg-type]
-        exclude_airlines=shop["exclude_airlines"],  # type: ignore[arg-type]
-        alliances=shop["alliances"],  # type: ignore[arg-type]
-        exclude_alliances=shop["exclude_alliances"],  # type: ignore[arg-type]
+        airlines=shop["airlines"],
+        exclude_airlines=shop["exclude_airlines"],
+        alliances=shop["alliances"],
+        exclude_alliances=shop["exclude_alliances"],
     )
     validate_split_request(
         query,
@@ -376,24 +378,24 @@ def _split_query_from_args(
     return query
 
 
-def _split_filters_from_shop(shop: dict[str, object]) -> SplitFilters:
+def _split_filters_from_shop(shop: dict[str, Any]) -> SplitFilters:
     """The same named filters the one-way search applies, carried into split itineraries."""
     offer = OfferFilters(
-        max_layover_hours=shop["max_layover_hours"],  # type: ignore[arg-type]
-        min_layover_hours=shop["min_layover_hours"],  # type: ignore[arg-type]
-        max_duration_hours=shop["max_duration_hours"],  # type: ignore[arg-type]
-        depart_window=shop["depart_window"],  # type: ignore[arg-type]
-        arrive_before=shop["arrive_before"],  # type: ignore[arg-type]
-        depart_after=shop["depart_after"],  # type: ignore[arg-type]
-        via=shop["via"],  # type: ignore[arg-type]
-        exclude_via=shop["exclude_via"],  # type: ignore[arg-type]
-        no_overnight=shop["no_overnight"],  # type: ignore[arg-type]
-        require_overnight=shop["require_overnight"],  # type: ignore[arg-type]
+        max_layover_hours=shop["max_layover_hours"],
+        min_layover_hours=shop["min_layover_hours"],
+        max_duration_hours=shop["max_duration_hours"],
+        depart_window=shop["depart_window"],
+        arrive_before=shop["arrive_before"],
+        depart_after=shop["depart_after"],
+        via=shop["via"],
+        exclude_via=shop["exclude_via"],
+        no_overnight=shop["no_overnight"],
+        require_overnight=shop["require_overnight"],
     )
     return SplitFilters(
         offer=offer,
-        exclude_airports=shop["exclude_airports"] or (),  # type: ignore[arg-type]
-        include_airports=shop["include_airports"] or (),  # type: ignore[arg-type]
+        exclude_airports=shop["exclude_airports"] or (),
+        include_airports=shop["include_airports"] or (),
     )
 
 
@@ -448,6 +450,8 @@ def _run_flights(args: argparse.Namespace) -> int:
                 country=args.country,
                 proxy=getattr(args, "proxy", None) or None,
                 progress=lambda line: print(line, file=sys.stderr),
+                less_emissions=bool(getattr(args, "less_emissions", False)),
+                hide_separate_tickets=bool(getattr(args, "hide_separate_tickets", False)),
             )
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -526,12 +530,11 @@ def _run_trip(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    if getattr(args, "nearby", False):
-        for note in nearby_notes(
-            trips,
-            exclude_airports=shop.get("exclude_airports"),
-        ):
-            print(note, file=sys.stderr)
+    for note in nearby_notes(
+        trips,
+        exclude_airports=shop.get("exclude_airports"),
+    ):
+        print(note, file=sys.stderr)
 
     report = search_trip(
         trips,
@@ -804,17 +807,25 @@ def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -
     )
 
 
-def _resolve_quote_from_args(args: argparse.Namespace, origin: Optional[str]) -> None:
+def _resolve_quote_from_args(
+    args: argparse.Namespace,
+    origin: Optional[str] = None,
+    trips: Optional[Sequence[object]] = None,
+) -> None:
     if getattr(args, "baggage_buffer", None) is not None and args.baggage_buffer < 0:
         raise ValueError("--baggage-buffer must not be negative")
     args.country = normalize_country(getattr(args, "country", None))
-    args.currency = resolve_quote_currency(getattr(args, "currency", None), origin)
+    explicit = getattr(args, "currency", None)
+    if trips is not None:
+        args.currency = resolve_trips_currency(explicit, trips)
+    else:
+        args.currency = resolve_quote_currency(explicit, origin)
     args.baggage_buffer = resolve_baggage_buffer(
         getattr(args, "baggage_buffer", None), args.currency
     )
 
 
-def _market_from_args(args: argparse.Namespace, origin: Optional[str] = None) -> dict[str, object]:
+def _market_from_args(args: argparse.Namespace, origin: Optional[str] = None) -> dict[str, Any]:
     _resolve_quote_from_args(args, origin)
     return {
         "currency": args.currency,
@@ -871,7 +882,7 @@ def _add_flight_only_filters(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _flight_only_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
+def _flight_only_filters_from_args(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "depart_before": parse_named_clock(
             getattr(args, "depart_before", None), role="depart-before"
@@ -893,9 +904,13 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--carry-on",
-        action="store_true",
+        nargs="?",
+        const=1,
+        type=int,
+        default=None,
+        metavar="N",
         dest="carry_on",
-        help="Request one carry-on (omit to leave unset)",
+        help="Cabin bags for the whole party. Bare --carry-on means 1. Checked --bags is refused",
     )
     parser.add_argument(
         "--price-cap",
@@ -1051,10 +1066,12 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
 _TRIP_SHOP_FIELDS = frozenset({"bags", "carry_on", "price_cap"})
 
 
-def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
-    carry_on = 1 if args.carry_on else None
+def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    carry_on = args.carry_on
     if args.bags is not None and args.bags < 0:
         raise ValueError("--bags must not be negative")
+    if carry_on is not None and carry_on < 0:
+        raise ValueError("--carry-on must not be negative")
     if args.price_cap is not None and args.price_cap <= 0:
         raise ValueError("--price-cap must be a positive amount in the quote currency")
     via = parse_via_airports(args.via)
@@ -1171,7 +1188,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         origin, destination = parse_route_pair(args.route)
         around = _parse_iso_date(args.around, "--around")
         if args.flex_days < 1:
-            raise ValueError("--flex must be at least 1")
+            raise ValueError(f"--flex must be at least 1, got {args.flex_days}")
         occupancy = _occupancy_from_args(args)
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
@@ -1317,12 +1334,12 @@ def _hidden_city_route(
         )
     else:
         trips = as_trips(plan)
-        if len(trips) != 1:
+        query = trips[0] if len(trips) == 1 else None
+        if not isinstance(query, FlightQuery):
             raise ValueError(
                 "hidden-city takes one airport pair (no metro codes) and one DATE or "
                 "ORIGIN-DESTINATION:OUT:BACK"
             )
-        query = trips[0]
         origin, destination, departure, back = (
             query.origin,
             query.destination,
@@ -1350,7 +1367,10 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
         if departure < today:
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
         if back is not None and back < departure:
-            raise ValueError("return date must not be before departure")
+            raise ValueError(
+                f"return date {back.isoformat()} must not be before "
+                f"departure {departure.isoformat()}"
+            )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1372,8 +1392,8 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
 
 def _run_hotel_rooms(args: argparse.Namespace) -> int:
     try:
-        check_in = date.fromisoformat(args.check_in)
-        check_out = date.fromisoformat(args.check_out)
+        check_in = _parse_iso_date(args.check_in, "check-in")
+        check_out = _parse_iso_date(args.check_out, "check-out")
         if check_in < date.today():
             raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
         report = search_hotel_rooms(
@@ -1622,7 +1642,14 @@ def _build_parser() -> argparse.ArgumentParser:
     rooms.add_argument(
         "--name", default=None, help="Exact hotel name (normalized match); needs --city"
     )
-    rooms.add_argument("--city", default=None, help="City to look the name up in")
+    rooms.add_argument(
+        "--city",
+        default=None,
+        help=(
+            "City, or City, qualifier: an ISO country (UK is GB) or an English "
+            "country or region (Paris, FR; Paris, France; Paris, Texas)"
+        ),
+    )
     rooms.add_argument("--adults", type=int, default=2, help="Number of adults (default 2)")
     rooms.add_argument("--rooms", type=int, default=1, help="Rooms, 1 to 5 (default 1)")
     _add_save_flag(rooms)
@@ -1817,8 +1844,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default="sweep",
         choices=["auto", "sweep", "detail"],
         help=(
-            "Shops each day on the public results page, then one fresh shop on the chosen day. "
-            "detail is accepted and ignored."
+            "Shops each day on the public results page and ranks the chosen day from "
+            "those cards (calendar_then_sweep). detail is accepted and ignored."
         ),
     )
     _add_save_flag(flex)
@@ -2082,46 +2109,65 @@ def _cli_parser() -> argparse.ArgumentParser:
     return _PARSER
 
 
+def _debug_requested(argv: Sequence[str]) -> bool:
+    flag = os.environ.get("VIAJANTE_DEBUG", "").strip().lower()
+    return flag in {"1", "true", "yes"} or "--debug" in argv
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    debug = _debug_requested(raw)
+    raw = [item for item in raw if item != "--debug"]
     parser = _cli_parser()
     try:
-        args = parser.parse_args(list(argv) if argv is not None else None)
+        args = parser.parse_args(raw)
     except SystemExit as exc:
         code = exc.code
         return 0 if code == 0 else 1
 
-    if args.cmd == "flights":
-        return _run_flights(args)
-    if args.cmd == "hotels":
-        return _run_hotels(args)
-    if args.cmd == "trip":
-        return _run_trip(args)
-    if args.cmd == "dates":
-        return _run_dates(args)
-    if args.cmd == "flex":
-        return _run_flex(args)
-    if args.cmd == "explore":
-        return _run_explore(args)
-    if args.cmd == "airports":
-        return _run_airports(args)
-    if args.cmd == "hotel-rooms":
-        return _run_hotel_rooms(args)
-    if args.cmd == "hidden-city":
-        return _run_hidden_city(args)
-    if args.cmd == "awards":
-        return _run_awards(args)
-    if args.cmd == "points":
-        return _run_points(args)
-    if args.cmd == "recheck-offer":
-        return run_recheck_cli(args)
-    if args.cmd == "bench":
-        return run_bench()
-    if args.cmd == "feedback":
-        return run_feedback(args.message, open_browser=not args.no_browser)
-    if args.cmd == "history":
-        return run_history(args)
-    if args.cmd == "watch":
-        return run_watch(args)
+    try:
+        if args.cmd == "flights":
+            return _run_flights(args)
+        if args.cmd == "hotels":
+            return _run_hotels(args)
+        if args.cmd == "trip":
+            return _run_trip(args)
+        if args.cmd == "dates":
+            return _run_dates(args)
+        if args.cmd == "flex":
+            return _run_flex(args)
+        if args.cmd == "explore":
+            return _run_explore(args)
+        if args.cmd == "airports":
+            return _run_airports(args)
+        if args.cmd == "hotel-rooms":
+            return _run_hotel_rooms(args)
+        if args.cmd == "hidden-city":
+            return _run_hidden_city(args)
+        if args.cmd == "awards":
+            return _run_awards(args)
+        if args.cmd == "points":
+            return _run_points(args)
+        if args.cmd == "recheck-offer":
+            return run_recheck_cli(args)
+        if args.cmd == "bench":
+            return run_bench()
+        if args.cmd == "feedback":
+            return run_feedback(args.message, open_browser=not args.no_browser)
+        if args.cmd == "history":
+            return run_history(args)
+        if args.cmd == "watch":
+            return run_watch(args)
+    except Exception:
+        if debug:
+            traceback.print_exc(file=sys.stderr)
+        else:
+            print(
+                "viajante hit an unexpected error. Retry this one command. "
+                "Run it again with --debug to see details.",
+                file=sys.stderr,
+            )
+        return 1
 
     parser.print_help()
     return 1

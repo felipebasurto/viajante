@@ -76,8 +76,8 @@ def _clocks_pass(departure: str | None, arrival: str | None, offer: OfferFilters
     )
 
 
-def _names_hub(codes: Tuple[str, ...] | None, hub: str) -> bool:
-    return codes is not None and (OVERNIGHT_ANY in codes or hub in codes)
+def _names_hub(codes: Tuple[str, ...] | None, hub: Optional[str]) -> bool:
+    return codes is not None and (OVERNIGHT_ANY in codes or (hub is not None and hub in codes))
 
 
 def _hub_connection_passes(itinerary: SplitItinerary, offer: OfferFilters) -> bool:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import re
 import threading
 import time
@@ -9,7 +10,6 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_google_flights_public import _card, _context
 from viajante.control import SearchCancelled, SearchControl, SearchDeadline, active, current_control
 from viajante.dates import calendar_trip, search_dates

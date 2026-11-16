@@ -3,6 +3,16 @@
 Local Google Flights, Google Hotels, and Booking.com search (Skiplagged is opt-in). No API keys.
 Fetch locale is English. User prompts may be any language. No implied home hub.
 
+## Which path
+
+- **MCP tools are listed.** You are connected. Read `status`, `completeness`, and `empty_reason` before the rows. Only `provider_empty` means none found. `get_guide` is the long rules. `get_runtime_info` is the running version.
+- **Nothing installed, you have a shell.** Primary: `npx -y @viajante/mcp` (needs uv and Python 3.10+). No Node: `uvx --from viajante[mcp] viajante-mcp`. Config below. If `viajante-mcp` says it needs the mcp extra, you are not in a checkout: use the uvx line, not `uv sync` (`uv sync` does not put the binary on PATH).
+- **CLI only** (`viajante` runs, no MCP tools). `viajante <cmd> --help`. `viajante --version` before a new flag. Hotels need `--currency`.
+- **Python.** `from viajante import get_flights, search_flights, search_hotels, validate_itinerary`. A route spec, not a sentence. `search_hotels` defaults to Booking (browser extra); pass `source="google"` and `currency`. `get_hotel_details(report, query_index, offer_index)` is the library form; MCP takes `selection_id`.
+- **No shell and no local process.** You cannot search. Loopback HTTP has no auth and is never hosted. `server.json` has no remotes. Do not invent a URL.
+
+Check `get_runtime_info` or `viajante --version` before a new parameter. An npm MCP and a separate uv tool can differ; unpinned `uvx` can reuse an old install.
+
 ## Install (agents)
 
 Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.10+.
@@ -29,6 +39,10 @@ uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium
 No Node: `"command": "uvx", "args": ["--from", "viajante[mcp]", "viajante-mcp"]`
 (no browser extra). Installing `viajante[browser]` elsewhere does not update the
 uvx environment.
+
+Other clients (Claude Desktop extension, Claude Code plugin, Codex, Gemini CLI, VS Code,
+Zed, Goose, OpenCode, a container): `docs/clients.md`. Pairing with a calendar, a
+spreadsheet or a currency server: `docs/composition.md`.
 
 ## Tools
 
@@ -116,7 +130,7 @@ open-world for the search tools, `recheck_offer`, `watch_price`, and `get_hotel_
 JSON text `{"error": {"code": "invalid_parameter", "field": ..., "message": ...}}`
 after the SDK's exact `Error executing tool <name>: ` prefix (`field` null when not provable). Needs `mcp>=2.3.0`.
 
-A cancelled call frees the lock. `deadline_seconds` (flights, dates, flex, explore, hotels, trip) returns a
+A cancelled call frees the lock. `deadline_seconds` (flights, dates, flex, explore, hotels, trip, split tickets) returns a
 partial result: `coverage.complete=false`, `coverage.stopping_reason="deadline"`,
 unfinished queries `error.code="deadline"`. Not proof of no availability.
 
@@ -125,9 +139,15 @@ Local HTTP (opt-in, no auth): `viajante-mcp --transport streamable-http` serves
 A non-loopback `--host` warns: every client searches from this machine's IP and
 shares its provider cooldown.
 
-Rate limits: a Google HTTP 429 pauses Google searches on this machine for a
-cooldown (error `rate_limited: true`; its message names the UTC time to wait
-until, and `retry_after` / `retry_after_seconds` repeat it when a cooldown was recorded). Tell the user to wait; do not retry. Identical successful
+Rate limits: a Google HTTP 429, a data-less RPC status 13, or three public-page
+status-13 error frames or Explore bodies with no `wrb.fr` payload inside 2 minutes,
+pauses Google searches on this machine (error `rate_limited: true`; the message
+names the UTC time to wait, and `retry_after` / `retry_after_seconds` repeat it
+when a cooldown was recorded). One status-13 frame does not. That message says
+Google Flights is likely blocking this shared IP because viajante is running in a
+cloud-hosted agent or sandbox, and that it works much better on your own computer:
+the ChatGPT or Claude desktop app with `npx -y @viajante/mcp`, or `pip install viajante`.
+Tell the user to wait; do not retry. Identical successful
 searches within 5 minutes return `cached: true` without a new request. The replay
 cache holds at most 20 entries.
 
@@ -140,9 +160,12 @@ Do not invent IATA, gl, or ISO 4217. Viajante does not convert.
 
 ## Bags
 
-Unnamed baggage_buffer is 0. carry_on rides the shopping request and is verified on
-the page; checked bags are refused before any request.
-Do not invent a bag fee.
+Unnamed baggage_buffer is 0. carry_on is cabin bags for the whole party (CLI
+`--carry-on` means 1, `--carry-on N` sets N) and is verified on the page; checked
+bags are refused before any request. Pass carry_on, not bags, then confirm bag
+rules on the airline or Google Flights page.
+Do not invent a bag fee. Read empty_note and completeness_note before telling a
+traveller a search failed or came back empty.
 
 ## Python
 
@@ -153,4 +176,4 @@ report = get_flights("JFK-LHR:YYYY-MM-DD", fetch="sweep")
 ```
 
 Sweep `proxy` covers flights, dates, flex, and explore. Hotels have no proxy flag.
-Signatures: `src/viajante/mcp_server.py`.
+Signatures: `src/viajante/mcp_handlers.py` (`mcp_server.py` copies them into the client schema). On `get_flights` / `search_flights`, airline filters are `alliances` and `exclude_alliances`. MCP and the CLI call those `alliance` and `exclude_alliance`.

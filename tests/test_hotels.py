@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import tempfile
 import unittest
 from datetime import date, datetime
@@ -8,7 +9,6 @@ from random import Random
 from typing import List, Sequence, Tuple, Union
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 import viajante.hotels as hotels_module
 from viajante.booking import BookingResultsTimeout, HotelPage, RawHotelCard
 from viajante.google_hotels_rpc import EmptyHotelResults, HotelsParseMiss
@@ -664,6 +664,13 @@ class HotelOrchestrationTests(unittest.TestCase):
 
         booking.assert_not_called()
         google.assert_not_called()
+
+    def test_past_check_in_is_rejected_before_a_source_is_built(self) -> None:
+        past = query(check_in=date(2020, 1, 1), check_out=date(2020, 1, 4))
+        with patch("viajante.hotels.BookingHotelsSource") as booking:
+            with self.assertRaisesRegex(ValueError, "check-in date is in the past: 2020-01-01"):
+                search_hotels((past,), currency="USD")
+        booking.assert_not_called()
 
     def test_google_source_sets_provider_and_skips_browser_delay(self) -> None:
         source = FakeSource([HotelPage(cards=()), HotelPage(cards=())])

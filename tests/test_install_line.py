@@ -5,11 +5,10 @@ Offline. Reads the checked-in files only; no copy is generated from another.
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import re
 import unittest
 from pathlib import Path
-
-import _isolate  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,6 +38,68 @@ class InstallLineAgreementTest(unittest.TestCase):
                 if uvx is None:
                     self.fail("no-Node `uvx --from viajante[mcp] viajante-mcp` is missing")
                 self.assertLess(npx.start(), uvx.start(), "npx must come before uvx")
+
+    def test_landing_asks_web_or_desktop_before_copying(self) -> None:
+        text = (ROOT / "landing/index.html").read_text(encoding="utf-8")
+        names = re.findall(r'data-name="([^"]+)"', text)
+        self.assertEqual(
+            names,
+            [
+                "Claude",
+                "ChatGPT",
+                "Grok Bot",
+                "Muse",
+                "Hermes Agent",
+                "Terminal or editor",
+                "Instinct",
+            ],
+        )
+        self.assertEqual(text.count('data-surface="web"'), 2)
+        self.assertEqual(text.count('data-surface="desktop"'), 2)
+        self.assertEqual(text.count(">Web</button>"), 2)
+        self.assertEqual(text.count(">Desktop app</button>"), 2)
+        self.assertIn('aria-expanded="false"', text)
+        self.assertIn('aria-pressed="false"', text)
+        self.assertEqual(text.count("You are ChatGPT on the web"), 1)
+        self.assertEqual(text.count("You cannot edit a local MCP config"), 1)
+        self.assertEqual(text.count("You are the ChatGPT desktop app"), 1)
+        self.assertIn("select MCP servers, then Add server", text)
+        self.assertIn('command "npx" and args ["-y", "@viajante/mcp"]', text)
+        self.assertEqual(text.count("You are Claude on claude.ai"), 1)
+        self.assertEqual(text.count("You are Claude Desktop"), 1)
+        self.assertIn("claude_desktop_config.json", text)
+        self.assertIn("releases/latest/download/viajante.mcpb", text)
+        self.assertNotIn("not published as a desktop extension", text)
+        self.assertIn("Install in Hermes Agent", text)
+
+    def test_landing_offers_each_terminal_and_editor_once_with_its_own_message(self) -> None:
+        text = (ROOT / "landing/index.html").read_text(encoding="utf-8")
+        tools = {
+            "claudecode": ("Claude Code", "/plugin install viajante@viajante"),
+            "codex": ("Codex", "codex mcp add viajante -- npx -y @viajante/mcp"),
+            "gemini": ("Gemini CLI", "gemini mcp add -s user viajante npx -y @viajante/mcp"),
+            "cursor": ("Cursor", "~/.cursor/mcp.json for every project"),
+            "vscode": ("VS Code", '"mcpServers":{"viajante":{"type":"stdio"'),
+            "zed": ("Zed", '"context_servers":{"viajante"'),
+            "goose": ("Goose", 'goose session --with-extension "npx -y @viajante/mcp"'),
+            "opencode": ("OpenCode", '"mcp":{"servers":{"viajante":{"type":"local"'),
+        }
+        for surface, (label, command) in tools.items():
+            with self.subTest(tool=label):
+                self.assertEqual(text.count(f'data-surface="{surface}" data-restore="{label}"'), 1)
+                self.assertEqual(text.count(f"      {surface}: '"), 1)
+                self.assertIn(command, text)
+
+    def test_landing_installs_agree_with_the_client_docs(self) -> None:
+        docs = (ROOT / "docs/clients.md").read_text(encoding="utf-8")
+        for command in (
+            "codex mcp add viajante -- npx -y @viajante/mcp",
+            "gemini mcp add -s user viajante npx -y @viajante/mcp",
+            "/plugin install viajante@viajante",
+            "~/.cursor/mcp.json",
+            'goose session --with-extension "npx -y @viajante/mcp"',
+        ):
+            self.assertIn(command, docs)
 
 
 if __name__ == "__main__":

@@ -7,9 +7,12 @@ import re
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from selectolax.lexbor import LexborHTMLParser
+
+if TYPE_CHECKING:  # the browser extra is optional
+    from playwright.sync_api import Page
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
 from viajante.control import (
@@ -139,6 +142,17 @@ CONSENT_SELECTORS = [
     'text="Rechazar todo"',
     'button:has-text("Reject")',
 ]
+
+
+def _is_wait_timeout(exc: BaseException) -> bool:
+    """Playwright timeouts do not subclass the builtin ``TimeoutError``."""
+    if isinstance(exc, TimeoutError):
+        return True
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    except ImportError:
+        return False
+    return isinstance(exc, PlaywrightTimeout)
 
 
 def _text_or_none(node) -> Optional[str]:
@@ -489,13 +503,20 @@ class GoogleFlightsSource:
         self._query_meta[trip] = (self.partial_error, self.scope_bound)
         return tuple(complete)
 
-    def _multi_board(self, page: object, leg: FlightLeg) -> list[tuple[int, RawFlightCard]]:
+    def _multi_board(self, page: Page, leg: FlightLeg) -> list[tuple[int, RawFlightCard]]:
         """(DOM row index, card) pairs echoing the requested journey leg.
 
         The index counts every ``ul.Rk10dc li`` in document order so the row can
         be clicked back with ``locator(CARD_SELECTOR).nth(index)``.
         """
-        page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
+        try:
+            page.locator(BOARD_READY_SELECTOR).first.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
+        except SearchDeadline:
+            raise
+        except Exception as exc:
+            if _is_wait_timeout(exc):
+                checkpoint()  # a wait the deadline cut short is a deadline, not a drifted board
+            raise
         checkpoint()
         html = page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
         matched: list[tuple[int, RawFlightCard]] = []
@@ -514,7 +535,7 @@ class GoogleFlightsSource:
         return self._query_meta.get(trip, (None, False))
 
     @staticmethod
-    def _multi_sig(page: object) -> str:
+    def _multi_sig(page: Page) -> str:
         return page.evaluate(
             "() => {"
             "const m = document.querySelector('[role=\"main\"]');"
@@ -524,7 +545,7 @@ class GoogleFlightsSource:
             "return (h ? h.textContent : '') + '|' + (r ? r.textContent : '');}"
         )
 
-    def _multi_click(self, page: object, dom_index: int) -> None:
+    def _multi_click(self, page: Page, dom_index: int) -> None:
         """Click one board row and wait for the board to advance."""
         prev_sig = self._multi_sig(page)
         page.locator(CARD_SELECTOR).nth(dom_index).click(
@@ -550,7 +571,7 @@ class GoogleFlightsSource:
                 "The clicked board did not advance to the next journey."
             ) from exc
 
-    def _multi_reset(self, page: object, url: str) -> None:
+    def _multi_reset(self, page: Page, url: str) -> None:
         """Return to the first journey's board for the next candidate."""
         checkpoint()
         try:
@@ -561,6 +582,7 @@ class GoogleFlightsSource:
         except (SearchDeadline, GoogleFlightsBlocked):
             raise
         except Exception as exc:
+            checkpoint()  # a wait the deadline cut short is a deadline, not a drifted board
             raise GoogleFlightsMarkupError("Could not reload the first journey board.") from exc
 
     def reset(self) -> None:
@@ -579,13 +601,22 @@ class GoogleFlightsSource:
             self._started = True
         page = self._session.new_page()
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=bounded_ms(PAGE_TIMEOUT_MS))
-            if "consent.google" in page.url:
-                self._dismiss_consent(page)
-            if looks_blocked("", page.url):
-                raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
-            self._await_results(page)
-            return page.evaluate("() => document.querySelector('[role=\"main\"]')?.innerHTML || ''")
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=bounded_ms(PAGE_TIMEOUT_MS))
+                if "consent.google" in page.url:
+                    self._dismiss_consent(page)
+                if looks_blocked("", page.url):
+                    raise GoogleFlightsBlocked(f"Google Flights blocked the browser at {page.url}")
+                self._await_results(page)
+                return page.evaluate(
+                    "() => document.querySelector('[role=\"main\"]')?.innerHTML || ''"
+                )
+            except SearchDeadline:
+                raise
+            except Exception as exc:
+                if _is_wait_timeout(exc):
+                    checkpoint()
+                raise
         finally:
             with contextlib.suppress(Exception):
                 page.close()
@@ -596,26 +627,37 @@ class GoogleFlightsSource:
         try:
             ready.wait_for(timeout=bounded_ms(READY_PROBE_MS))
             return
+        except SearchDeadline:
+            raise
         except Exception as exc:
-            from playwright.sync_api import TimeoutError as PlaywrightTimeout
-
-            if not isinstance(exc, PlaywrightTimeout):
+            if not _is_wait_timeout(exc):
                 raise
+        checkpoint()  # a wait the deadline cut short is a deadline, not a drifted board
         if page.evaluate("() => document.readyState") == "complete":
             raise GoogleFlightsMarkupError(
                 "Results page finished loading with no results grid and no empty state."
             )
-        ready.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
+        try:
+            ready.wait_for(timeout=bounded_ms(PAGE_TIMEOUT_MS))
+        except SearchDeadline:
+            raise
+        except Exception as exc:
+            if _is_wait_timeout(exc):
+                checkpoint()
+            raise
 
     @staticmethod
     def _dismiss_consent(page) -> None:
         for selector in CONSENT_SELECTORS:
-            click_ms = bounded_ms(CONSENT_CLICK_TIMEOUT_MS)
             try:
+                click_ms = bounded_ms(CONSENT_CLICK_TIMEOUT_MS)
                 button = page.locator(selector).first
                 if button.count() > 0:
                     button.click(timeout=click_ms)
                     break
+            except SearchDeadline:
+                raise
             except Exception:
+                checkpoint()
                 continue
-        page.wait_for_timeout(CONSENT_SETTLE_MS)
+        page.wait_for_timeout(bounded_ms(CONSENT_SETTLE_MS))

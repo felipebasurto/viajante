@@ -38,6 +38,7 @@ from viajante.flight_routes import (
     _is_route_spec,
     _overlay_carrier_filters,
     _progress_label,
+    _reject_same_metro,
     as_trips,
     drop_excluded_airport_trips,
     expand_nearby_trips,
@@ -71,7 +72,7 @@ from viajante.models import (
     Trip,
     normalize_country,
 )
-from viajante.models_common import DEFAULT_TOP
+from viajante.models_common import DEFAULT_TOP, empty_reason_for_rows
 from viajante.orchestration import (
     inter_query_delay_seconds,
     retry_backoff_seconds,
@@ -79,7 +80,7 @@ from viajante.orchestration import (
     should_retry,
     sweep_inter_query_delay_seconds,
 )
-from viajante.quote import first_origin_iata, resolve_baggage_buffer, resolve_quote_currency
+from viajante.quote import resolve_baggage_buffer, resolve_trips_currency
 from viajante.ratelimit import NOT_SENT
 from viajante.storage import default_state_dir
 
@@ -176,7 +177,12 @@ def prepare_flight_search(
     """Prepare the same provider request for execution and offline validation."""
     if not queries:
         raise ValueError("at least one query is required")
-    currency = resolve_quote_currency(currency, first_origin_iata(queries[0]))
+    for trip in queries:
+        origin = getattr(trip, "origin", None)
+        destination = getattr(trip, "destination", None)
+        if isinstance(origin, str) and isinstance(destination, str):
+            _reject_same_metro(origin, destination)
+    currency = resolve_trips_currency(currency, queries)
     baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     country = normalize_country(country)
     kept = keep_included_dest_trips(queries, include_airports)
@@ -201,12 +207,16 @@ def prepare_flight_search(
 
 
 class _SourceConfig(Protocol):
-    html_lang: str
-    currency: str
+    @property
+    def html_lang(self) -> str: ...
+
+    @property
+    def currency(self) -> str: ...
 
 
 class _FlightSource(Protocol):
-    config: _SourceConfig
+    @property
+    def config(self) -> _SourceConfig: ...
 
     def fetch(self, trip: Trip) -> Sequence[RawFlightCard]: ...
 
@@ -292,6 +302,7 @@ def _run_search(
             scope_bound=scope_bound,
             price_insight=insight,
             price_insight_error=insight_error,
+            empty_reason=None if ranked else empty_reason_for_rows(len(cards)),
         )
 
     def _stamp(result: QueryResult) -> QueryResult:
@@ -347,6 +358,19 @@ def _run_search(
         try:
             checkpoint()
             batch_rows = fetch_batch(list(trips))
+        except SearchDeadline as exc:
+            # The deadline is final: no resend, every query is `deadline`, not `no_results`.
+            failure = classify_failure(exc)
+            for trip in trips:
+                results.append(_stamp(QueryFailure(query=trip, error=failure)))
+            return _report_with_evidence(
+                results,
+                searched_at=now(),
+                locale=locale,
+                currency=currency,
+                fetch_backend=fetch_backend,
+                fetch_ms=None,
+            )
         except Exception:
             batch_rows = None
         if batch_rows is not None:
@@ -754,9 +778,10 @@ def search_flights(
     report_progress = progress or (lambda _: None)
     started = time.perf_counter()
 
-    def _zero_backoff(_attempt: int, _rng: random.Random) -> float:
+    def _zero_backoff(_attempt: int, _rng: Any) -> float:
         return 0.0
 
+    backoff: Callable[[int, Any], float]
     if planned == "sweep":
         source: _FlightSource = GoogleFlightsHttpSource(
             currency=currency, country=country, proxy=proxy
@@ -778,7 +803,7 @@ def search_flights(
         fetch_backend: FetchBackend,
         retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
     ) -> SearchReport:
-        grid_client: Optional[_FlightSource] = None
+        grid_client: Optional[GoogleFlightsHttpSource] = None
         try:
             report = _run_search(
                 trips_to_search,
@@ -798,7 +823,7 @@ def search_flights(
                 retry_backoff=retry_backoff,
                 include_price_history=include_price_history,
             )
-            client = source
+            client: _FlightSource = source
             if (
                 nearby_days
                 and fetch_backend == "detail"

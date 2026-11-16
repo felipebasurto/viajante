@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import importlib.util
 import json
@@ -16,7 +17,6 @@ from random import Random
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers
 from viajante.dates import search_dates, search_flex
 from viajante.envelope import (
@@ -70,6 +70,7 @@ ENVELOPE_KEYS = {
     "completeness",
     "empty_reason",
     "empty_note",
+    "completeness_note",
     "error_code",
     "retry_after",
     "retry_after_seconds",
@@ -192,9 +193,15 @@ class EnvelopeShapeTests(unittest.TestCase):
         self.assertIn(payload["completeness"], COMPLETENESS)
         if payload["empty_reason"] is not None:
             self.assertIn(payload["empty_reason"], EMPTY_REASONS)
-            self.assertEqual(payload["empty_note"], EMPTY_NOTES[payload["empty_reason"]])
+            note = payload["empty_note"]
+            self.assertIsInstance(note, str)
+            self.assertTrue(note.startswith(EMPTY_NOTES[payload["empty_reason"]].split(". ")[0]))
         else:
             self.assertIsNone(payload["empty_note"])
+        if payload["completeness"] == "complete":
+            self.assertIsNone(payload["completeness_note"])
+        else:
+            self.assertTrue(payload["completeness_note"])
         if payload["observed_at_basis"] is not None:
             self.assertIn(payload["observed_at_basis"], OBSERVED_BASES)
         for key, value in expected.items():
@@ -823,6 +830,63 @@ class LocalToolTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "ok")
 
 
+class NearbyDatesEnvelopeTests(unittest.TestCase):
+    def test_a_priced_nearby_day_is_evidence_when_the_shopped_date_is_empty(self) -> None:
+        payload = stamp_search(
+            {
+                "searched_at": "2026-08-10T10:00:00Z",
+                "queries": [
+                    {
+                        "query": {"origin": "JFK", "destination": "LHR"},
+                        "error": {"code": "no_results", "message": "none"},
+                        "nearby_dates": {
+                            "days": 1,
+                            "prices": [
+                                {
+                                    "status": "empty",
+                                    "price": None,
+                                    "empty_reason": "provider_empty",
+                                    "offset_days": 0,
+                                },
+                                {"status": "ok", "price": 420.0, "offset_days": 1},
+                            ],
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(payload["status"], "ok")
+        self.assertIsNone(payload["empty_reason"])
+        self.assertEqual(payload["completeness"], "complete")
+        self.assertIsNone(payload["error_code"])
+
+    def test_a_failed_nearby_day_keeps_the_envelope_partial(self) -> None:
+        payload = stamp_search(
+            {
+                "searched_at": "2026-08-10T10:00:00Z",
+                "queries": [
+                    {
+                        "query": {"origin": "JFK", "destination": "NRT"},
+                        "offers": [{"price": 800}],
+                        "nearby_dates": {
+                            "prices": [
+                                {"status": "ok", "price": 800},
+                                {
+                                    "status": "error",
+                                    "error": {"code": "blocked", "message": "wall"},
+                                },
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["error_code"], "blocked")
+        self.assertIsNone(payload["empty_reason"])
+
+
 class UnknownShapeTests(unittest.TestCase):
     def test_an_unrecognised_payload_raises_instead_of_reading_as_no_results(self) -> None:
         for payload in (
@@ -850,6 +914,27 @@ class UnknownShapeTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(EnvelopeShapeError):
                     stamp_search(dict(payload))
+
+    def test_each_explore_destination_is_counted_by_its_own_empty_reason(self) -> None:
+        def stamped(destinations):
+            return stamp_search({"destinations": destinations}, now=NOW)
+
+        self.assertEqual(
+            stamped([{"iata": "LHR", "empty_reason": "provider_empty"}])["empty_reason"],
+            "provider_empty",
+        )
+        self.assertEqual(
+            stamped([{"iata": "CDG", "empty_reason": "filtered_out"}])["empty_reason"],
+            "filtered_out",
+        )
+        self.assertEqual(stamped([{"iata": "SIN"}])["empty_reason"], "not_loaded")
+        month = stamped(
+            [{"iata": "NRT", "empty_reason": "not_loaded", "shopped_date": "2026-11-01"}]
+        )
+        self.assertEqual(month["empty_reason"], "not_loaded")
+        self.assertEqual(month["destinations"][0]["shopped_date"], "2026-11-01")
+        with self.assertRaises(EnvelopeShapeError):
+            stamped([{"iata": "GRU", "empty_reason": "bogus"}])
 
 
 class VerifyAnswerEnvelopeTests(unittest.TestCase):
@@ -1188,12 +1273,13 @@ class ErrorTaxonomyTests(unittest.TestCase):
 
 class ContractTextTests(unittest.TestCase):
     def test_only_provider_empty_may_say_nothing_was_found(self) -> None:
-        self.assertIn("returned no results", EMPTY_NOTES["provider_empty"])
+        self.assertIn("No fares came back", EMPTY_NOTES["provider_empty"])
+        self.assertIn("Try other dates or airports", EMPTY_NOTES["provider_empty"])
         for reason in ("filtered_out", "not_loaded"):
             note = EMPTY_NOTES[reason].casefold()
             for phrase in ("no results", "no flights", "no hotels", "none found", "nothing found"):
                 self.assertNotIn(phrase, note)
-        self.assertIn("filters removed", EMPTY_NOTES["filtered_out"])
+        self.assertIn("filters removed", EMPTY_NOTES["filtered_out"].casefold())
         self.assertIn("did not complete", EMPTY_NOTES["not_loaded"])
         self.assertEqual(set(EMPTY_NOTES), set(EMPTY_REASONS))
 

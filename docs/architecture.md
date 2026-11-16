@@ -48,7 +48,7 @@ One library, three ways in:
 | --- | --- | --- |
 | MCP (stdio; opt-in local Streamable HTTP) | `viajante-mcp` → `mcp_server.py` → `mcp_handlers.py` | The main surface. 22 tools. |
 | CLI | `viajante <cmd>` → `cli.py` | Same searches, human tables, `--save` JSON. |
-| Library | `viajante.search_*`, `get_flights` | What both of the above call. |
+| Library | names in `viajante.__all__`, including `get_flights` | `search_hotels` defaults to Booking. `search_hotel_rooms` and `search_split_tickets` are not package-level imports. |
 
 | MCP tool | CLI | What it is |
 | --- | --- | --- |
@@ -85,7 +85,8 @@ in-process cache (`cached: true`) instead of asking Google again.
 `watch_price` and `recheck_offer` bypass this replay cache for fresh searches.
 
 Loopback HTTP passes `transport_security` to `run()` explicitly, so the allowed Host and Origin
-list is viajante's and does not depend on the SDK default.
+list is viajante's and does not depend on the SDK default. The server has no authentication
+and is not hosted; `server.json` has no `remotes`.
 
 MCP client compatibility lives at the adapter edge. `mcp_server.py` registers each
 tool with a title and read-only annotations (`openWorldHint` only for tools that go
@@ -248,8 +249,21 @@ Only failures that can succeed on a second try are retried:
 - A raw data-less RPC status 13 is preserved in additive diagnostics even when
   the body also resembles a shopping `ErrorResponse`. For a direct session it
   records the existing guessed cooldown; it is not replayed and pending work
-  stops. Status 13 alone does not prove an IP block or explain the cause. Error
-  diagnostics report only the endpoint host and path, HTTP/RPC status, whether the
+  stops. That code stays in diagnostics. The first message says Google paused
+  the request, that availability is unknown, to wait 15-30 minutes, and not to
+  add airports. A public-page error frame of that kind, and an Explore catalog
+  body with no `wrb.fr` payload, are counted in a file beside the cooldown so
+  separate CLI runs add up. Three of them inside 2 minutes
+  record that same guessed cooldown (`heuristic_rpc_13`) with no `Retry-After`.
+  The call then stops unsent calendar cells, expanded-airport queries and later
+  date-window batches, and a partial calendar carries `retry_after`. One error
+  frame stays a blocked cell and does not pause the machine. Later searches
+  fail immediately while the cooldown runs. That message says Google Flights is
+  likely blocking this shared IP because viajante is running in a cloud-hosted
+  agent or sandbox, names how long to wait, and says it works much better on your
+  own computer: the ChatGPT or Claude desktop app with the viajante MCP
+  (`npx -y @viajante/mcp`), or `pip install viajante`. Error diagnostics report only the
+  endpoint host and path, HTTP/RPC status, whether the
   request was sent, attempts, and cooldown basis; they omit query parameters.
   An already active cooldown reports no request sent, zero attempts, and null
   HTTP/RPC status. The browser path detects `google.com/sorry` right away
@@ -259,7 +273,8 @@ Only failures that can succeed on a second try are retried:
 
 Every MCP tool except `lookup_airports` returns the same top-level fields,
 stamped in `envelope.py` from the report the handler already built (no second
-code path): `status`, `completeness`, `empty_reason`, `empty_note`, `error_code`,
+code path): `status`, `completeness`, `empty_reason`, `empty_note`,
+`completeness_note`, `error_code`,
 `retry_after` / `retry_after_seconds`, `observed_at`, `observed_at_basis`.
 
 The envelope tallies the report's own units (query rows, date rows, explore
@@ -273,9 +288,13 @@ that may be called "no flights/hotels found". `filtered_out` (the provider retur
 rows, viajante's filters removed them all) must say filters removed results.
 `not_loaded` (no usable response) must say the search did not complete.
 `completeness` is `partial` when only some units answered, some came back
-unproven, or the search is scope-bound, `blocked` when none did. A calendar day
+unproven, or the search is scope-bound, `blocked` when none did. Whenever it is
+`partial` or `blocked`, `completeness_note` says what happened and what to do
+next. A calendar with failed days is not status `ok`; the note names how many
+days did not load. A calendar day
 that is missing or unpriced is `not_loaded`: the calendar cannot prove there are
-no flights, so only a shop that answered empty is `provider_empty`. `error_code`
+no flights, so only a shop that answered empty is `provider_empty`. `empty_note`
+includes the next step for that empty reason. `error_code`
 only accompanies the `empty_reason` it supports; an `ok` / `partial` result may
 carry the worst failure's code with `empty_reason` null. An explore destination
 without a price is `not_loaded`, never a usable row. `observed_at` is null when a
@@ -296,14 +315,17 @@ cannot carry top-level fields without breaking its shape).
   window, capped at 31 days. Each day is an independent row; successful days
   remain visible when other days fail.
 - **Flex** uses the same bounded per-day GETs for its named window, chooses the
-  cheapest returned day, then makes one fresh public-page shop for that date.
-  It does not guess a winner from failed or unpriced days.
+  cheapest returned day, and ranks that day's offers from the cards those GETs
+  already fetched (`calendar_then_sweep`). It does not guess a winner from
+  failed or unpriced days.
 - **Explore** reads the catalog request the Explore page issues in Chromium
   (one adult, economy), then shops each owned destination over the public
   page on the start date only. A connection failure loading that page
   (`net::ERR_*`) is a transport error: one retry, then `fetch_failed`, not a
   block. A catalog body with no `wrb.fr` payload is markup drift, or a block
-  when the body is a consent, sorry, or other block page. A metro origin fans
+  when the body is a consent, sorry, or other block page. Three of those
+  missing payloads, or status-13 error frames, inside 2 minutes record the
+  shared cooldown and stop the airports that have not run. A metro origin fans
   out to its member airports, sequentially, and stops on a rate limit. A
   status 13 on the catalog stops it and records the shared cooldown. An empty
   shop inside a `month` window is `not_loaded` for that date, not
@@ -407,9 +429,12 @@ improvement loops.
   that drift shows up as `markup_drift` and not as a wrong fare.
 - **Throttling is a guess.** Google publishes no quota. The cooldown lengths
   are marked with `ponytail:` comments and should learn from real recoveries.
-  A data-less RPC status 13 now writes the same cooldown (direct sessions only);
-  Skiplagged keeps its own `skiplagged-rate-limit.json` and a one-second pace.
-  A status 13 unrelated to throttling can cause a 2-minute pause.
+  A data-less RPC status 13 now writes the same cooldown (direct sessions only).
+  Three public-page status-13 error frames, or Explore bodies with no `wrb.fr`
+  payload, inside 2 minutes write it too. Skiplagged keeps its own
+  `skiplagged-rate-limit.json` and a one-second pace.
+  A status 13 unrelated to throttling can cause a 2-minute pause. One error
+  frame does not.
 - **Room capacity and type need confirmation.** Skiplagged's `occupancy_limit`
   is the provider's number per room type, not proof that a party fits across
   several rooms. Google hostel totals may price dormitory beds; Google gives

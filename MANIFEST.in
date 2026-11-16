@@ -4,4 +4,4 @@ prune .impeccable
 exclude DESIGN.md PRODUCT.md
 
 include CHANGELOG.md llms.txt
-include docs/usage.md docs/architecture.md
+include docs/usage.md docs/architecture.md docs/clients.md docs/composition.md

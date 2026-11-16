@@ -17,6 +17,7 @@ from viajante.models import (
     QuerySuccess,
     SearchReport,
 )
+from viajante.models_common import UrlEvidenceKind
 
 
 def _stamp_google_flights_urls(
@@ -76,6 +77,7 @@ def _stamp_offer_evidence(
         ).encode()
         query_url = result.google_flights_url
         offer_url = offer.google_flights_url
+        url_kind: UrlEvidenceKind
         if offer.booking_token and offer_url:
             url_kind = "booking"
         elif query_url:

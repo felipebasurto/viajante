@@ -143,6 +143,8 @@ def _valid(line: bytes) -> Optional[dict]:
         )
     ):
         return None
+    text_keys: tuple[str, ...]
+    count_keys: tuple[str, ...]
     if row["kind"] == "hotel":
         text_keys, count_keys = ("location", "check_in", "check_out"), ("adults", "rooms")
     elif row["kind"] == "flight":
@@ -165,18 +167,12 @@ def _lines() -> list[bytes]:
     return [] if data is None else [line for line in data.split(b"\n") if line.strip()]
 
 
-def read_observations(*, strict: bool = False) -> list[dict]:
+def read_observations() -> list[dict]:
     """Every readable entry, oldest first. Unparsable lines are skipped one by one.
 
-    An unreadable file reads as empty unless ``strict``, which raises UnreadableStateError.
+    Only a missing file is an empty log. Any other read error raises UnreadableStateError.
     """
-    try:
-        lines = _lines()
-    except UnreadableStateError:
-        if strict:
-            raise
-        return []
-    return [row for row in map(_valid, lines) if row is not None]
+    return [row for row in map(_valid, _lines()) if row is not None]
 
 
 def append_observations(entries: Sequence[Mapping[str, Any]]) -> None:
@@ -222,7 +218,8 @@ def short_reason(exc: BaseException) -> str:
 def _plain(value: object) -> object:
     if isinstance(value, (list, tuple)):
         items = [_plain(item) for item in value]
-        return sorted(items) if all(isinstance(item, str) for item in items) else items
+        strings = [item for item in items if isinstance(item, str)]
+        return sorted(strings) if len(strings) == len(items) else items
     return value
 
 
@@ -446,7 +443,7 @@ def series(rows: Sequence[Mapping[str, Any]], *, limit: int = DEFAULT_OBSERVATIO
         groups.setdefault((row["query_key"], row["currency"]), []).append(row)
     out = []
     for (key, currency), group in groups.items():
-        shown = group[-limit:] if limit > 0 else group
+        shown = group[-limit:]
         out.append(
             {
                 "kind": group[0]["kind"],
@@ -477,9 +474,11 @@ def price_history(
     """Recorded observations and per-series facts. Local read; sends no request."""
     if kind not in (None, "flight", "hotel"):
         raise ValueError("kind must be flight or hotel")
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
     read_error: Optional[str] = None
     try:
-        stored = read_observations(strict=True)
+        stored = read_observations()
     except UnreadableStateError as exc:
         stored, read_error = [], short_reason(exc)
     matched = select(

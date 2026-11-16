@@ -35,11 +35,11 @@ from viajante.google_flights_public import PublicGoogleFlightsHttpSource as Goog
 from viajante.google_flights_public import classify_failure
 from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.models import (
+    EmptyReason,
     ExploreDestination,
     ExploreReport,
     FlightCabin,
     FlightOffer,
-    FlightQuery,
     QueryFailure,
     SearchCoverage,
     SearchError,
@@ -69,14 +69,14 @@ class ExploreSource(Protocol):
         infants_on_lap: int = 0,
     ) -> Sequence[CompactExplorePlace]: ...
 
-    def fetch(self, query: FlightQuery) -> Sequence[RawFlightCard]: ...
+    def fetch(self, trip: Trip) -> Sequence[RawFlightCard]: ...
 
     def close(self) -> None: ...
 
 
 def validate_explore_window(start: date, days: int, *, today: Optional[date] = None) -> None:
     if days < 1:
-        raise ValueError("--days must be at least 1")
+        raise ValueError(f"--days must be at least 1, got {days}")
     check = today or date.today()
     if start < check:
         raise ValueError(f"start date is in the past: {start.isoformat()}")
@@ -105,7 +105,7 @@ def month_window(
         year_text, month_text = value.split("-", 1)
         start = date(int(year_text), int(month_text), 1)
     except ValueError as exc:
-        raise ValueError(f"{flag} must look like YYYY-MM") from exc
+        raise ValueError(f"{flag} {value!r} must look like YYYY-MM") from exc
     length = calendar.monthrange(start.year, start.month)[1]
     check = today or date.today()
     if (start.year, start.month) == (check.year, check.month):
@@ -233,6 +233,7 @@ def search_explore(
     )
     allowed = frozenset(parsed_include_airports or ())
     blocked = frozenset(parsed_exclude_airports or ())
+    origins: tuple[tuple[str, Optional[str]], ...]
     if members:
         origins = tuple((code, f"metro {origin}") for code in members if code not in blocked)
     else:
@@ -374,7 +375,7 @@ def search_explore(
             )
             priced.append(dest)
         stop_reason, stop_note = explore_stop(error, pricing_errors)
-        empty_reason = None
+        empty_reason: Optional[EmptyReason] = None
         if not priced and error is None and not pricing_errors:
             if window_misses and month_window_shop:
                 empty_reason = "not_loaded"
@@ -422,8 +423,14 @@ def search_explore(
 
     try:
         if not members:
-            return one_or_many([explore_origin(code, label) for code, label in origins])
-        reports: list[ExploreReport] = []
+            reports: list[ExploreReport] = []
+            for code, label in origins:
+                report = explore_origin(code, label)
+                reports.append(report)
+                if _limited(report):
+                    break
+            return one_or_many(reports)
+        reports = []
         for code, label in origins:
             report = explore_origin(code, label)
             reports.append(report)
@@ -441,10 +448,12 @@ def search_explore(
 def _prefer_destination(
     current: ExploreDestination, candidate: ExploreDestination
 ) -> ExploreDestination:
-    """Cheapest owned fare. An unpriced row does not replace a fare."""
-    if current.price is None:
+    """Cheapest owned fare. An unpriced row keeps a fare and a stated empty reason."""
+    if current.price is not None and (candidate.price is None or candidate.price >= current.price):
+        return current
+    if candidate.price is not None and (current.price is None or candidate.price < current.price):
         return candidate
-    if candidate.price is None or candidate.price >= current.price:
+    if current.empty_reason and not candidate.empty_reason:
         return current
     return candidate
 
@@ -481,6 +490,7 @@ def _merge_metro_reports(
     if skipped:
         stop_reason = "rate_limited"
         stop_note = f"not sent after rate limit: {', '.join(skipped)}; {stop_note}"
+    empty_reason: Optional[EmptyReason]
     if destinations:
         empty_reason = None
     elif any(report.empty_reason == "not_loaded" for report in reports):

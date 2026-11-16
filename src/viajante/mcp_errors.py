@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from viajante.envelope import EnvelopeShapeError
 
@@ -86,7 +86,7 @@ def is_internal(exc: ValueError) -> bool:
     return isinstance(exc, (UnicodeError, json.JSONDecodeError, EnvelopeShapeError))
 
 
-def validation_body(errors: Sequence[Mapping[str, object]]) -> str:
+def validation_body(errors: Sequence[Mapping[str, Any]]) -> str:
     """JSON error body for the SDK's argument-model errors (``ValidationError.errors()``)."""
     parts = []
     for error in errors:

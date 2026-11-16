@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import os
 import re
 import subprocess
@@ -9,7 +10,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_history import _flight_report
 from viajante import bench
 from viajante.history import (
@@ -66,6 +66,34 @@ class SuiteIsolationTests(unittest.TestCase):
             if not re.search(r"^import _isolate\b", path.read_text(encoding="utf-8"), re.M)
         ]
         self.assertEqual(missing, [], "add `import _isolate  # noqa: F401` to these test modules")
+
+    def test_isolation_comes_before_any_datetime_import(self) -> None:
+        late = []
+        for path in sorted(Path(__file__).parent.glob("test_*.py")):
+            text = path.read_text(encoding="utf-8")
+            isolate = re.search(r"^import _isolate\b", text, re.M)
+            clock = re.search(r"^(from datetime import|import datetime)\b", text, re.M)
+            if isolate and clock and clock.start() < isolate.start():
+                late.append(path.name)
+        self.assertEqual(
+            late,
+            [],
+            "`import _isolate` must precede `from datetime import`, or the module keeps the "
+            "real `date` and its fixtures drift from the frozen today",
+        )
+
+    def test_today_is_frozen_for_the_tests_and_the_package(self) -> None:
+        from datetime import date, datetime
+
+        from viajante import dates, hotels
+
+        frozen = date(*_isolate.FROZEN_TODAY)
+        self.assertEqual(date.today(), frozen)
+        self.assertEqual(dates.date.today(), frozen)
+        self.assertEqual(hotels.date.today(), frozen)
+        # A date built by datetime is still a date to isinstance checks on either side.
+        self.assertIsInstance(datetime(2027, 1, 2).date(), dates.date)
+        self.assertIsInstance(date(2027, 1, 2), dates.date)
 
     @unittest.skipUnless(os.environ.get(CHILD) == "1", "probe only runs inside the child")
     def test_probe_a_real_search_records_nothing_under_an_exported_opt_in(self) -> None:

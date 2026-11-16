@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import base64
 import json
 import unittest
@@ -12,7 +13,6 @@ from urllib.parse import parse_qs, urlparse
 
 from selectolax.lexbor import LexborHTMLParser
 
-import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
 from viajante.envelope import stamp_search
@@ -50,8 +50,8 @@ from viajante.models import (
 )
 from viajante.storage import reports_payload
 
-OUT = date(2026, 11, 14)
-BACK = date(2026, 11, 25)
+OUT = date(2027, 3, 14)
+BACK = date(2027, 3, 25)
 
 
 def _leg(origin: str, dest: str, day: date, clock: str, flight: str) -> RawJourneyLeg:
@@ -151,7 +151,7 @@ class PublicFlightsSourceTests(unittest.TestCase):
         query = FlightQuery("HAN", "SIN", OUT, max_stops=0, adults=2)
         wrong = (
             _card("SGN", "SIN", OUT, "08:00", "TA1", "€100"),
-            _card("HAN", "SIN", date(2026, 11, 15), "08:00", "TA2", "€100"),
+            _card("HAN", "SIN", date(2027, 3, 15), "08:00", "TA2", "€100"),
             RawFlightCard(
                 "Test Air",
                 "08:00",
@@ -561,7 +561,8 @@ class PublicErrorFrameTests(unittest.TestCase):
             source._parse_response(response, response.url, FlightQuery("HAN", "SIN", OUT, adults=2))
         self.assertIsNone(caught.exception.status)
         self.assertEqual((caught.exception.diagnostics or {}).get("rpc_status"), 13)
-        self.assertIn("availability is not disproved", str(caught.exception))
+        self.assertIn("paused this request", str(caught.exception))
+        self.assertIn("15-30", str(caught.exception))
 
     def test_error_frame_days_are_blocked_and_not_replayed(self):
         class GetManyOnly:
@@ -582,8 +583,8 @@ class PublicErrorFrameTests(unittest.TestCase):
         report = search_dates(
             "HAN",
             "SIN",
-            date(2026, 11, 14),
-            date(2026, 11, 15),
+            date(2027, 3, 14),
+            date(2027, 3, 15),
             adults=2,
             max_stops=0,
             currency="EUR",
@@ -618,8 +619,8 @@ class PublicErrorFrameTests(unittest.TestCase):
         report = search_dates(
             "HAN",
             "SIN",
-            date(2026, 11, 14),
-            date(2026, 11, 15),
+            date(2027, 3, 14),
+            date(2027, 3, 15),
             adults=2,
             max_stops=0,
             currency="EUR",
@@ -633,7 +634,7 @@ class PublicErrorFrameTests(unittest.TestCase):
     def test_transport_failure_without_a_block_still_replays_once(self):
         # Control: the suppression above comes from the block, not from the
         # transport failure itself, which keeps its one replay.
-        day = date(2026, 11, 14)
+        day = date(2027, 3, 14)
         card = _card("HAN", "SIN", day, "08:00", "TA101", "€41")
 
         class FlakyOnce:
@@ -685,7 +686,7 @@ class PublicCalendarIntegrationTests(unittest.TestCase):
         )
 
     def test_search_dates_keeps_priced_day_and_reports_stopped_days_as_unknown(self):
-        start = date(2026, 11, 14)
+        start = date(2027, 3, 14)
         card = _card("HAN", "SIN", start, "08:00", "TA101", "€41")
 
         class GetManyOnly:
@@ -709,7 +710,7 @@ class PublicCalendarIntegrationTests(unittest.TestCase):
                 "HAN",
                 "SIN",
                 start,
-                date(2026, 11, 16),
+                date(2027, 3, 16),
                 adults=2,
                 max_stops=0,
                 currency="EUR",
@@ -724,8 +725,8 @@ class PublicCalendarIntegrationTests(unittest.TestCase):
         self.assertTrue(all(row.error.code.value == "blocked" for row in report.days[1:]))
 
     def test_search_flex_keeps_priced_grid_without_a_post_block_shop(self):
-        around = date(2026, 11, 15)
-        card = _card("HAN", "SIN", date(2026, 11, 14), "08:00", "TA101", "€41")
+        around = date(2027, 3, 15)
+        card = _card("HAN", "SIN", date(2027, 3, 14), "08:00", "TA101", "€41")
 
         class GetManyOnly:
             def __init__(self):
@@ -735,7 +736,7 @@ class PublicCalendarIntegrationTests(unittest.TestCase):
             def get_many(self, urls, *, timeout):
                 self.calls += 1
                 self.sent_urls.extend(urls[:2])
-                return self_outer._responses(date(2026, 11, 14))
+                return self_outer._responses(date(2027, 3, 14))
 
             def get(self, *args, **kwargs):
                 raise AssertionError("flex must not start a fresh shop after the 429")
@@ -763,7 +764,7 @@ class PublicCalendarIntegrationTests(unittest.TestCase):
         self.assertEqual(report.offers, ())
 
     def test_context_mismatch_is_unknown_not_provider_empty_in_dates(self):
-        start = date(2026, 11, 14)
+        start = date(2027, 3, 14)
         card = _card("HAN", "SIN", start, "08:00", "TA101", "€41")
 
         class WrongContext:
@@ -845,7 +846,7 @@ class PublicPartialRoundTripTests(unittest.TestCase):
 
 class PublicRoundTripCoverageTests(unittest.TestCase):
     def test_rt_date_and_flex_reports_keep_bounded_scope_and_additive_page_error(self):
-        start = date(2026, 11, 14)
+        start = date(2027, 3, 14)
         nights = 11
         source = _source()
         page_error = GoogleFlightsMarkupError("one outbound return page was not readable")
@@ -901,7 +902,7 @@ class PublicRoundTripCoverageTests(unittest.TestCase):
         self.assertTrue(flexed.offers)
 
     def test_one_way_calendar_coverage_remains_finite_and_unbounded(self):
-        start = date(2026, 11, 14)
+        start = date(2027, 3, 14)
         source = _source()
         card = _card("HAN", "SIN", start, "08:00", "TA101", "€100")
 

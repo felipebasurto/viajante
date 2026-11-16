@@ -7,7 +7,7 @@ import threading
 import time
 from copy import deepcopy
 from datetime import date
-from typing import Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, metro_members, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
@@ -55,6 +55,7 @@ from viajante.flight_routes import (
     _overlay_carrier_filters,
     as_trips,
     expand_nearby_trips,
+    metro_fanout_warning,
     parse_flight_plan,
 )
 from viajante.flights import (
@@ -80,8 +81,9 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    first_origin_iata,
+    resolve_baggage_buffer,
     resolve_quote_and_buffer,
+    resolve_trips_currency,
 )
 from viajante.recheck import recheck_offer
 from viajante.skiplagged import search_hidden_city
@@ -121,7 +123,7 @@ def _shop_filters(
     require_overnight: Optional[str] = None,
     exclude_airports: Optional[str] = None,
     include_airports: Optional[str] = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Parse the raw shop filter strings the flight-shaped tools share, under one set of names."""
     return dict(
         depart_window=parse_depart_window(depart_window),
@@ -175,7 +177,7 @@ def _with_search_lock(fn):
 def _owned(payload: dict, report=None) -> dict:
     check_cancelled()
     selections = selection_records(payload, report)
-    record(payload, selections=selections)
+    record(payload, selections=selections, cancelled=check_cancelled)
     _SELECTION_CONTEXT.records = selections
     return payload
 
@@ -198,7 +200,7 @@ def _cached(fn):
         if hit is not None and now - hit[0] < CACHE_SECONDS:
             check_cancelled()
             result = {**deepcopy(hit[1]), "cached": True}
-            record(result, selections=hit[2])
+            record(result, selections=hit[2], cancelled=check_cancelled)
             return result
         _SELECTION_CONTEXT.records = {}
         control = current_control() or SearchControl()
@@ -287,9 +289,8 @@ def search_flights_tool(
     )
     trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
-    currency, baggage_buffer = resolve_quote_and_buffer(
-        currency, first_origin_iata(trips[0]), baggage_buffer
-    )
+    currency = resolve_trips_currency(currency, trips)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     carriers = dict(
         airlines=parse_airline_codes(airlines),
         exclude_airlines=parse_airline_codes(exclude_airlines),
@@ -333,12 +334,13 @@ def search_flights_tool(
         hide_separate_tickets=hide_separate_tickets,
         **carriers,
     )
+    warning = metro_fanout_warning(trips, exclude_airports=excluded)
 
     def execute():
         report = search_flights(
             trips,
             top=top,
-            fetch=fetch,  # type: ignore[arg-type]
+            fetch=fetch,
             baggage_buffer=baggage_buffer,
             sort=sort,
             currency=currency,
@@ -353,9 +355,12 @@ def search_flights_tool(
             **carriers,
             **search,
         )
-        return _searched(reports_payload(report), report)
+        payload = reports_payload(report)
+        if warning:
+            payload["warnings"] = [warning]
+        return _searched(payload, report)
 
-    return execute
+    return execute  # type: ignore[return-value]  # _prepared_search runs it under the lock
 
 
 @_cached
@@ -398,6 +403,7 @@ def search_split_tickets_tool(
     exclude_airports: Optional[str] = None,
     include_airports: Optional[str] = None,
     baggage_buffer: Optional[int] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> Mapping[str, object]:
     plan = parse_flight_plan(
         [route],
@@ -449,8 +455,8 @@ def search_split_tickets_tool(
         offer=parse_offer_filters(
             **{k: v for k, v in shop.items() if k not in _SPLIT_NOT_OFFER_KEYS}
         ),
-        exclude_airports=shop["exclude_airports"] or (),  # type: ignore[arg-type]
-        include_airports=shop["include_airports"] or (),  # type: ignore[arg-type]
+        exclude_airports=shop["exclude_airports"] or (),
+        include_airports=shop["include_airports"] or (),
     )
     report = _with_search_lock(
         lambda: search_split_tickets(
@@ -467,6 +473,7 @@ def search_split_tickets_tool(
             currency=currency,
             country=country,
             proxy=proxy,
+            deadline_seconds=deadline_seconds,
         )
     )
     return _owned(stamp_split(dict(report.to_dict())))
@@ -872,7 +879,7 @@ def search_hotels_tool(
         )
         return _searched(reports_payload(report), report)
 
-    return execute
+    return execute  # type: ignore[return-value]  # _prepared_search runs it under the lock
 
 
 @_cached
@@ -886,6 +893,8 @@ def search_hotel_rooms_tool(
     adults: int = 2,
     rooms: int = 1,
 ) -> Mapping[str, object]:
+    """city is City or City, qualifier: an ISO country (UK is GB) or an English
+    country or region (Paris, FR; Paris, France; Paris, Texas)."""
     check_in_date = date.fromisoformat(check_in)
     check_out_date = date.fromisoformat(check_out)
     _reject_past((check_in_date,), label="check-in")
@@ -964,9 +973,8 @@ def search_trip_tool(
     )
     trips = expand_nearby_trips(as_trips(plan), nearby=nearby)
     _reject_past([leg.departure_date for item in trips for leg in item.legs])
-    currency, baggage_buffer = resolve_quote_and_buffer(
-        currency, first_origin_iata(trips[0]), baggage_buffer
-    )
+    currency = resolve_trips_currency(currency, trips)
+    baggage_buffer = resolve_baggage_buffer(baggage_buffer, currency)
     window = stay_window_from_trips(trips)
     if check_in:
         check_in_date = date.fromisoformat(check_in)
@@ -1020,7 +1028,14 @@ def search_trip_tool(
             deadline_seconds=deadline_seconds,
         )
     )
-    return _searched(reports_payload(report), report)
+    payload = reports_payload(report)
+    warning = metro_fanout_warning(
+        trips,
+        exclude_airports=parse_via_airports(exclude_airports, role="exclude-airports"),
+    )
+    if warning:
+        payload["warnings"] = [warning]
+    return _searched(payload, report)
 
 
 @_cached
@@ -1111,7 +1126,11 @@ def split_stay_costs_tool(
     inputs = [stay.total for stay in report.stays]
     if report.fee_per_person_night is not None:
         inputs.append(report.fee_per_person_night)
-    return record(payload) if owns_amounts(inputs, report.currency) else payload
+    return (
+        record(payload, cancelled=check_cancelled)
+        if owns_amounts(inputs, report.currency)
+        else payload
+    )
 
 
 def validate_itinerary_tool(
@@ -1155,16 +1174,16 @@ def recheck_offer_tool(
     )
     stamp_recheck(result)
     owned = dict(result)
-    if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
+    if result["previous"]["source"] != "search_evidence":
         del owned["previous"]
         if "differences" in owned:
-            owned["differences"] = _without_previous(owned["differences"])  # type: ignore[arg-type]
+            owned["differences"] = _without_previous(owned["differences"])
         if "closest_candidate" in owned:
-            closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
+            closest = dict(owned["closest_candidate"])
             closest["differences"] = _without_previous(closest["differences"])
             owned["closest_candidate"] = closest
     if result["check_completed"]:
-        record(owned)
+        record(owned, cancelled=check_cancelled)
     return result
 
 
@@ -1194,5 +1213,5 @@ def get_hotel_details_tool(selection_id: str, *, room_rates: bool = False) -> Ma
     detail["original_quote"]["offer"]["selection_id"] = selection_id
     quotes = detail.get("room_quotes")
     if room_rates and quotes and quotes.get("rates") and not failure_codes(quotes):
-        record(quotes)
+        record(quotes, cancelled=check_cancelled)
     return detail

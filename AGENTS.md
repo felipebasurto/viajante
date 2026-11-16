@@ -61,6 +61,11 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - MCP input-error JSON body: `src/viajante/mcp_errors.py`
 - MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`
 - Low-cost carrier list (partial): `src/viajante/flight_offers.py` (`LOW_COST_NAMES`)
+- Claude Desktop extension (`.mcpb`, a uv bundle that installs the PyPI release): `mcpb/`; built after PyPI by the publish workflow
+- Claude Code plugin and marketplace: `.claude-plugin/marketplace.json`, `integrations/claude-code/` (its skill is a byte copy of the Hermes one)
+- Container image for stdio clients and the Docker MCP Catalog: `Dockerfile`
+- Per-client install snippets and landing picker messages: `docs/clients.md`, `landing/index.html`
+- Recipes for pairing with other MCP servers (documented, never built in): `docs/composition.md`
 - Airline aliases and alliance tfs carrier codes: `src/viajante/carriers.py`
 - Offline keep-or-revert bench: `src/viajante/bench.py`
 - Bench baseline: `bench-baseline.json` (update only when a human merges a win)
@@ -165,7 +170,9 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   or a provider block. Its `ds:1` data is extracted as balanced JSON and never
   executed. Do not fabricate an RPC envelope. Flights, dates, and flex send no
   unsigned shopping or calendar RPC. A status 13 on the explore catalog is recorded
-  as a cooldown like any other.
+  as a cooldown like any other. Three public-page status-13 error frames, or
+  Explore bodies with no `wrb.fr` payload, inside 2 minutes record it too; one
+  error frame does not.
 - Refused before any network call: checked bags, `carry_on` 0, alliance exclusion
   on the public path, and multi-city on sweep (use explicit `--fetch detail`).
   Detail refuses every bag and carrier filter. `exclude_basic_economy` is refused on
@@ -347,7 +354,8 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 
 ## Providers, cooldowns, and pacing
 
-- A direct Google 429, or a data-less RPC status 13, writes
+- A direct Google 429, a data-less RPC status 13, or three public-page status-13
+  error frames or Explore bodies with no `wrb.fr` payload inside 2 minutes, writes
   `google-rate-limit.json` in the state directory. The cooldown is a guess: 2 minutes,
   or a named `Retry-After` up to 30 minutes. While it runs,
   every Google flight or hotel search in any process fails `blocked` with
@@ -356,10 +364,20 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   endpoint host and path, the HTTP or RPC status, `request_sent`, `attempts`, and
   the cooldown basis. Never include query parameters.
 - A public page whose `ds:1` is the provider's error frame (`[status, null, [[...ErrorResponse...]]]`)
-  is `blocked` with the frame status in diagnostics, never `markup_drift`. Once a block
-  is seen in a batch, the batch replay is suppressed.
+  is `blocked` with the frame status in diagnostics, never `markup_drift`. The
+  user-facing sentence does not lead with that code: it says Google paused the
+  request and what to do next. One frame does not record a cooldown. The burst
+  counter is stored beside the cooldown file, so separate CLI runs add up. Three
+  inside 2 minutes record the cooldown, and the call stops
+  unsent work. Once a block is seen in a batch, the batch replay is suppressed.
 - HTTP 429 and status 13 stop pending sweep work. Nothing replays and nothing falls
-  back to detail. Empty results, drift, and HTTP 5xx may be retried once.
+  back to detail. Empty results, drift, and HTTP 5xx may be retried once. A burst
+  that records the cooldown stops the same way, and a partial calendar carries
+  `retry_after`. The message says Google Flights is likely blocking this shared IP
+  because viajante is running in a cloud-hosted agent or sandbox, names how long
+  to wait, and says it works much better on your own computer: the ChatGPT or
+  Claude desktop app with the viajante MCP (`npx -y @viajante/mcp`), or
+  `pip install viajante`.
 - A Skiplagged 429 writes `skiplagged-rate-limit.json` and does not retry. Live
   Skiplagged calls are paced 1 second apart.
 - Detail: 4.5 s plus up to 1.5 s of jitter between queries; 3 attempts with 8 s
@@ -389,6 +407,10 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Primary agent install is `npx -y @viajante/mcp` (needs `uv` and Python 3.10+). The
   no-Node form is `uvx --from viajante[mcp] viajante-mcp`. Keep `README.md`, `llms.txt`,
   `mcp_guide.py`, the skill, and the landing page's copy-message on that same order.
+  `docs/clients.md` and the picker's per-client messages must name commands their client
+  accepts: check a snippet against the client's own docs or CLI before adding it. Viajante
+  stays one MCP server; do not add client-specific code paths, a hosted endpoint, or an
+  integration that is not a local stdio MCP entry.
 - Check `viajante --version` or MCP `get_runtime_info` before using a new feature.
   Hotel JSON carries `viajante_version`. An npm MCP and a separately installed uv
   tool can run different versions; an unpinned `uvx` may reuse an old install.
@@ -399,14 +421,22 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 ```bash
 uv sync --locked
 uv run python -m unittest discover -s tests -v
-uv run ruff check src tests
+uv run ruff check src tests scripts
+uv run mypy
 uv run viajante bench
 ```
 
 - The suite is offline: no network and no Chromium. It isolates itself from the
   caller's environment through `tests/_isolate.py`. Every `tests/test_*.py` must begin
   with `import _isolate  # noqa: F401`, and a test enforces that. Keep new tests off
-  the real state directory.
+  the real state directory. `_isolate` also freezes `date.today()` at 2026-11-01:
+  build fixture dates from `FROZEN_TODAY`, never from the wall clock.
+- `uv run mypy` must stay clean over `src/viajante`. Fix the type, or add a scoped
+  `# type: ignore[code]` with the reason; do not widen to bare `ignore` or `Any` to
+  silence a real mismatch.
+- `scripts/check-release.py` runs in the publish `verify` job: a tag whose version
+  disagrees with any pinned manifest (including `mcpb/` and `integrations/claude-code/`)
+  stops the release before anything is uploaded.
 - Pin owned seams: request bytes, recorded provider bodies, filters, ranking, JSON
   keys. A renamed or dropped JSON key is a breaking change.
 - `viajante bench` is the keep-or-revert gate. Do not optimize `score_ms`. Live

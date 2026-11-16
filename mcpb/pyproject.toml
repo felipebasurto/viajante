@@ -1,0 +1,6 @@
+[project]
+name = "viajante-mcpb"
+version = "1.5.7"
+description = "Claude Desktop extension for viajante. The host installs the pinned PyPI release with uv."
+requires-python = ">=3.10"
+dependencies = ["viajante[mcp,browser]==1.5.7"]

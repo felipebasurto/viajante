@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import unittest
 from contextlib import redirect_stderr
 from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.cli import main
 from viajante.models import SearchReport
 from viajante.quote import (

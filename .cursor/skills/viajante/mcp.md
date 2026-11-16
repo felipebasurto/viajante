@@ -2,7 +2,7 @@
 
 Stdio process by default. No API keys. Local Streamable HTTP is opt-in (see below). One search at a time.
 
-A second search while one is running raises `a viajante search is already running in this process` immediately. That busy error is not `MCP error -32001: Request timed out`. Do not treat timeouts as lock-busy. `lookup_airports` and the offline `validate_itinerary` may run during a search. A cancelled search frees the lock. Optional `deadline_seconds` on flights, dates, flex, explore, hotels, and trip returns a partial result (`coverage.complete: false`, `stopping_reason: "deadline"`, unfinished rows `error.code: "deadline"`); `VIAJANTE_MCP_DEADLINE_SECONDS` sets a default. Optional `country` is Google `gl` (origin market); omit when unset; do not pass a destination ISO. `max_stops` is 0, 1, or 2. If a calendar returns `blocked`, stop that request.
+A second search while one is running raises `a viajante search is already running in this process` immediately. That busy error is not `MCP error -32001: Request timed out`. Do not treat timeouts as lock-busy. `lookup_airports` and the offline `validate_itinerary` may run during a search. A cancelled search frees the lock. Optional `deadline_seconds` on flights, dates, flex, explore, hotels, trip, and split tickets returns a partial result (`coverage.complete: false`, `stopping_reason: "deadline"`, unfinished rows `error.code: "deadline"`); `VIAJANTE_MCP_DEADLINE_SECONDS` sets a default. Optional `country` is Google `gl` (origin market); omit when unset; do not pass a destination ISO. `max_stops` is 0, 1, or 2. If a calendar returns `blocked`, stop that request.
 
 Paste this into Cursor Settings → MCP, Claude Desktop, or any `mcpServers` client. Requires [`uv`](https://docs.astral.sh/uv/) and Python 3.10+. No clone.
 
@@ -34,6 +34,8 @@ Native Python:
 }
 ```
 
+If `viajante-mcp` exits saying it needs the mcp extra, you are not in a checkout: use that uvx command. `uv sync --extra mcp` only works in a git checkout, and it does not put `viajante-mcp` on PATH (`uv run viajante-mcp` does).
+
 Hermes Agent (`config.yaml` has no JSON form here; `--args` goes last): `hermes mcp add viajante --connect-timeout 300 --command npx --args -y @viajante/mcp`, then `/reload-mcp`. The first start downloads the Python package, hence the long connect timeout.
 
 Reload MCP. The 22 tools are: `get_runtime_info` (offline executing package/Python/schema versions), `search_flights`, `search_dates`, `search_flex`, `search_explore`, `search_hotels` (Google by default; `stays` batches up to 8 stays; named `near` adds straight-line distance; `max_distance_km` requires `near` and excludes outside/unknown coordinates before ranking), `search_hotel_rooms` (Skiplagged room rates, USD), `get_hotel_details` (a hotel offer this process returned; `room_rates` true fetches a separate USD room quote and is open-world, `room_rates` false is a local read; a quote that does not echo adults, rooms, and dates is partial), `search_trip`, `search_split_tickets` (opt-in separately ticketed itineraries from real one-way quotes; capped extra searches; not protected), `lookup_airports`, `search_hidden_city` (Skiplagged, opt-in; USD/omit currency), `compare_awards`, `lookup_transfers`, `validate_itinerary` (offline tri-state validation; pass legs in travel order), `recheck_offer` (one fresh Google Flights search that re-checks an earlier offer by flight numbers and departure times; a search, so it takes the one-search lock and is never cached; `check_failed` means it could not complete), `plan_stay_blocks`, `split_stay_costs` (offline roster blocks and per-person cost split), `verify_answer` (offline draft-reply evidence check), `price_history` (offline read of this machine's opt-in `VIAJANTE_PRICE_HISTORY=1` observation log: one series per exact query and currency, no forecast; `series` is null with `read_error` when the log cannot be read), `watch_price` (re-run one saved flight/hotel search on demand and report the change; saves the watch and records the observation, so it is not read-only; no scheduler, do not loop), and `get_guide` (the long operational guide; the same markdown is the `viajante://guide` resource). Every tool has a human title and annotations (`readOnlyHint`, `destructiveHint: false`, `idempotentHint`); all are read-only and idempotent except `watch_price`, which writes. `openWorldHint` is true for `search_*`, `recheck_offer`, `watch_price`, and `get_hotel_details`. Needs `mcp>=2.3.0,<3` (MCP SDK 2.x).
@@ -48,8 +50,13 @@ not prove a party fits across several rooms. Google hostel totals may price
 dormitory beds; check room names and confirm on the provider.
 
 On `rate_limited: true`, stop and wait (`retry_after` / `retry_after_seconds` on the error say how long when a cooldown was recorded; otherwise 30–60 minutes); do not retry or switch
-method. Direct Google HTTP 429 and data-less status 13 share a cooldown;
-Skiplagged HTTP 429 has its own cooldown and no retry. Status 13 can cause a
+method. Direct Google HTTP 429, a data-less status 13, or three public-page status-13
+error frames or Explore bodies with no `wrb.fr` payload inside 2 minutes share a cooldown.
+One status-13 frame does not. Skiplagged HTTP 429 has its own cooldown and no retry.
+The status-13 message says Google Flights is likely blocking this shared IP because
+viajante is running in a cloud-hosted agent or sandbox, how long to wait, and that it
+works much better on your own computer: the ChatGPT or Claude desktop app with the
+viajante MCP (`npx -y @viajante/mcp`), or `pip install viajante`. Status 13 can cause a
 2-minute pause even when its cause is not throttling.
 
 Check `get_runtime_info` before searching (available in 1.4.0+), and `viajante --version` for the CLI. Hotel reports carry `viajante_version`. An npm MCP pins its own Python package; it does not upgrade a separate installed uv tool. Unpinned `uvx --from viajante` can reuse that tool. Upgrade it explicitly with `uv tool upgrade viajante`, or use `uvx --refresh --from 'viajante==VERSION' viajante --version` with the published version. Do not assume latest was installed.

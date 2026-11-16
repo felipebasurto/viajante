@@ -5,7 +5,7 @@
 This guide assumes Viajante is installed. See the
 [quick start](../README.md#quick-start) for installation and
 [browser support](../README.md#optional-browser-support) for Booking.com.
-Examples use November 2026; replace the dates with future travel dates.
+Examples use April 2027; replace them if they are not in the future.
 
 Release history is in the [changelog](../CHANGELOG.md).
 
@@ -23,13 +23,13 @@ Release history is in the [changelog](../CHANGELOG.md).
 Use airport codes and ISO dates: `ORIGIN-DEST:YYYY-MM-DD`.
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep
+viajante flights JFK-LHR:2027-04-12 --fetch sweep
 ```
 
 To search a round trip as one itinerary, add a return date and `--trip rt`:
 
 ```bash
-viajante flights JFK-LHR:2026-11-15:2026-11-22 --trip rt --fetch sweep
+viajante flights JFK-LHR:2027-04-12:2027-04-19 --trip rt --fetch sweep
 ```
 
 Without `--trip rt`, a route with outbound and return dates produces two
@@ -44,7 +44,7 @@ are ranked by fare plus any baggage buffer you specify, with up to eight
 offers shown. The buffer defaults to zero.
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep \
+viajante flights JFK-LHR:2027-04-12 --fetch sweep \
   --max-stops 0 --adults 2 --top 5 --sort fare
 ```
 
@@ -58,7 +58,7 @@ list and accepted values.
 | `--max-stops 0` | Set the maximum number of stops to `0`, `1`, or `2`. |
 | `--airlines BA,AA` / `--exclude-airlines BA,AA` | Include or exclude airline codes. Public page only (`--fetch auto` or `sweep`); see the limits below. |
 | `--alliance oneworld` | Include `oneworld`, `skyteam`, or `star`. Public page only (`--fetch auto` or `sweep`). `--exclude-alliance` is refused: no page evidence can prove it. |
-| `--carry-on` | Request one carry-on bag for the whole party (Google's counter is a party total). Public page only (`--fetch auto` or `sweep`). |
+| `--carry-on` / `--carry-on N` | Cabin bags for the whole party (bare `--carry-on` means 1). Public page only (`--fetch auto` or `sweep`). Checked `--bags` is refused. |
 | `--bags N` | Checked bags. Refused: no transport can verify them. |
 | `--depart-window 06:00-12:00` | Keep flights departing within a local time window. |
 | `--depart-after 08:00` / `--arrive-before 20:00` | Filter on reported local departure or arrival times. |
@@ -136,7 +136,7 @@ Name a metro code instead of an airport to search every airport in that city
 group:
 
 ```bash
-viajante flights NYC-LON:2026-11-15 --currency USD
+viajante flights NYC-LON:2027-04-12 --currency USD
 ```
 
 `NYC` searches `JFK`, `EWR` and `LGA`; `LON` searches `LHR`, `LGW`, `STN`,
@@ -169,8 +169,10 @@ A recommendation's comparison always leaves those connections out, whatever the 
 and `recommendation.slow_connections_hidden` counts them when a recommendation is
 built. Other sorts keep every connection in `offers`.
 
-`--carry-on` asks Google Flights to price one carry-on. `--bags N` is refused
-before any request, because no transport can verify checked bags. A baggage
+`--carry-on` asks Google Flights to price one cabin bag for the whole party;
+`--carry-on N` asks for N. `--bags N` is refused before any request: pass
+`--carry-on` for cabin bags, then confirm bag rules on the airline or Google
+Flights page. A baggage
 buffer is your own ranking allowance, not a provider fee. The list of low-cost
 carriers is partial, so absence from the list does not mean bags are included.
 Check baggage terms before booking.
@@ -318,9 +320,9 @@ searches per hub (three with `--split-overnight`); mixed one-ways use two search
 
 ```bash
 # One-way: origin to hub on one ticket, hub to destination on another
-viajante flights JFK-NRT:2026-11-10 --fetch sweep --split-tickets --split-via HKG,ICN
+viajante flights JFK-NRT:2027-04-07 --fetch sweep --split-tickets --split-via HKG,ICN
 # Round trip: cheapest outbound one-way plus cheapest return one-way vs the package
-viajante flights --trip rt JFK-NRT:2026-11-10:2026-11-24 --split-tickets
+viajante flights --trip rt JFK-NRT:2027-04-07:2027-04-21 --split-tickets
 ```
 
 | Option | Meaning |
@@ -381,17 +383,17 @@ Use `dates` to compare departure dates across an inclusive window of up to
 departure is priced as a round trip of that length.
 
 ```bash
-viajante dates BOS-LHR --from 2026-11-01 --to 2026-11-30 --nights 7
+viajante dates BOS-LHR --from 2027-04-01 --to 2027-04-30 --nights 7
 ```
 
 Use `flex` when you have a target departure date and can move a few days either
 side of it:
 
 ```bash
-viajante flex BOS-LHR --around 2026-11-15 --flex 3 --nights 7
+viajante flex BOS-LHR --around 2027-04-12 --flex 3 --nights 7
 ```
 
-This checks November 12–18 with one public-page GET per day (up to 31), selects
+This checks April 9–15 with one public-page GET per day (up to 31), selects
 the cheapest returned date, and ranks that date's offers from the page it already
 fetched, unless a provider block stopped the search. Day failures
 remain attached to their rows; an unpriced or failed day is never treated as a
@@ -428,7 +430,8 @@ that date is `not_loaded` with `shopped_date`. It is not `no_results` and not
 `provider_empty`.
 `--exclude-regions` is explore-only and excludes
 destinations by owned IANA time-zone prefix. Unnamed sort is by price. A raw RPC status 13
-on the catalog stops the search and records the shared Google cooldown. A raw status 13 on the catalog request can stop the read, so an empty or blocked
+on the catalog stops the search and records the shared Google cooldown. Three catalog
+bodies with no `wrb.fr` payload inside 2 minutes do the same. A raw status 13 on the catalog request can stop the read, so an empty or blocked
 explore proves nothing about destinations; name routes and use `flights`,
 `dates`, or `flex` instead.
 
@@ -440,14 +443,14 @@ The defaults are two adults, one room, and free cancellation required.
 For Google Hotels, which uses HTTP:
 
 ```bash
-viajante hotels Tokyo 2026-11-12 2026-11-16 \
+viajante hotels Tokyo 2027-04-09 2027-04-13 \
   --currency JPY --source google --min-rating 4
 ```
 
 For Booking.com, which requires Chromium:
 
 ```bash
-viajante hotels Tokyo 2026-11-12 2026-11-16 \
+viajante hotels Tokyo 2027-04-09 2027-04-13 \
   --currency JPY --source booking --min-rating 8.5 --entire-home
 ```
 
@@ -499,8 +502,8 @@ loosely; `resolved_place` is the place it actually searched. Its rows are never 
 For one to three finalists, fetch room rates (at most five rooms per request, in provider order, USD):
 
 ```bash
-viajante hotel-rooms 2026-11-12 2026-11-16 --hotel-id ID
-viajante hotel-rooms 2026-11-12 2026-11-16 --name "Hotel Name" --city Lisbon
+viajante hotel-rooms 2027-04-09 2027-04-13 --hotel-id ID
+viajante hotel-rooms 2027-04-09 2027-04-13 --name "Hotel Name" --city Lisbon
 ```
 
 A name matches only after normalization; no match or several matches is `no_results`, never a guessed id.
@@ -512,7 +515,7 @@ the original price. Hotel ids belong to the process that issued them.
 Use `trip` to search flights and accommodation in sequence:
 
 ```bash
-viajante trip JFK-LHR:2026-11-15:2026-11-22 --trip rt \
+viajante trip JFK-LHR:2027-04-12:2027-04-19 --trip rt \
   --hotel London --adults 2 --currency GBP --fetch sweep --source google
 ```
 
@@ -535,7 +538,7 @@ a `{query, offer}` row) and runs one fresh Google Flights search; it never
 replays a cache.
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep --save /tmp/flights.json
+viajante flights JFK-LHR:2027-04-12 --fetch sweep --save /tmp/flights.json
 # put one offer (or {"query": ..., "offer": ...}) from that file into offer.json
 viajante recheck-offer --offer offer.json --save /tmp/recheck.json
 ```
@@ -671,7 +674,7 @@ after a limit viajante pauses Google searches on the machine for minutes.
 
 ## Hidden-city (opt-in, Skiplagged)
 
-`viajante hidden-city JFK-LHR:2026-11-15` (add `--return DATE` for a round trip) searches Skiplagged only and is
+`viajante hidden-city JFK-LHR:2027-04-12` (add `--return DATE` for a round trip) searches Skiplagged only and is
 never mixed with Google evidence. Its cards are USD: omit `--currency` or pass `USD`. Another keep that matches
 no owned card is `currency_mismatch`, with the owned quote stamped, not a silent empty result. A hidden-city fare
 is not a legal fare until you confirm it on the `booking_url`; viajante does not scrape Skiplagged.
@@ -700,7 +703,7 @@ or `no_search_recorded` when nothing was searched).
 Search commands print tables. Add `--save FILE` to write JSON as well:
 
 ```bash
-viajante flights JFK-LHR:2026-11-15 --fetch sweep --save /tmp/viajante-flights.json
+viajante flights JFK-LHR:2027-04-12 --fetch sweep --save /tmp/viajante-flights.json
 ```
 
 Reports include query status, quote currency, and returned offers or error
@@ -711,11 +714,11 @@ parsed fields. The report types and JSON fields are defined in
 
 | Error code | Meaning |
 | --- | --- |
-| `no_results` | The search returned no results. |
+| `no_results` | The search returned no results. On a public page the message names the route and dates asked for. |
 | `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
-| `rejected` | The provider rejected the request. |
-| `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 or an error frame in place of results is reported without assuming its cause, and the batch is not replayed. |
-| `markup_drift` | The response could not be read in the expected page, `ds:1` or Explore catalog format, including a catalog that lists destination cards but no priced rows. |
+| `rejected` | Google Flights rejected this query. Check the route and dates, or try one airport. On a public page the message names them. |
+| `blocked` | Google paused the request or blocked access. The message says how long to wait. Do not add airports or start a new search until then. The batch is not replayed. |
+| `markup_drift` | The page could not be read. Wait and retry this one search once. If it persists, run viajante on your own computer. A catalog that lists destination cards but no priced rows is the same code. |
 | `cards_unparsed` | A public Flights or Booking page loaded, but some attempted cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |
@@ -760,14 +763,14 @@ from datetime import date
 from viajante import FlightQuery, HotelQuery, search_flights, search_hotels
 
 flights = search_flights(
-    [FlightQuery(origin="JFK", destination="LHR", departure_date=date(2026, 11, 15))],
+    [FlightQuery(origin="JFK", destination="LHR", departure_date=date(2027, 4, 12))],
     currency="GBP",
     fetch="sweep",
     top=5,
 )
 
 hotels = search_hotels(
-    [HotelQuery(location="London", check_in=date(2026, 11, 15), check_out=date(2026, 11, 22))],
+    [HotelQuery(location="London", check_in=date(2027, 4, 12), check_out=date(2027, 4, 19))],
     currency="GBP",
     source="google",
     top=5,
@@ -785,8 +788,15 @@ for result in hotels.queries:
 into a route is the calling agent's job. For other search types, use
 `search_dates`, `search_flex`, `search_explore`, or `search_trip`.
 
-See the exported types in [`viajante.__init__`](../src/viajante/__init__.py)
-for the Python interface.
+`search_hotels` defaults to `source="booking"`, which needs the browser extra.
+The call above passes `source="google"` (HTTP, no Chromium), which is also the
+MCP default. Hotels have no origin airport, so `currency` is required.
+`get_hotel_details(report, query_index, offer_index)` reads a report already
+in hand. The MCP tool of the same name takes `selection_id` instead.
+Airline filters on `get_flights` and `search_flights` are `alliances` and
+`exclude_alliances`. MCP and the CLI call those `alliance` and `exclude_alliance`.
+
+See the exported names in [`viajante.__init__`](../src/viajante/__init__.py).
 
 ## MCP tool calls
 
@@ -804,22 +814,22 @@ bounds did not load its results (the browser page fetches them separately), so i
 
 After configuring the [MCP server](../README.md#connect-an-ai-assistant), your
 assistant sends structured arguments to the tools. For example, a request
-to compare seven-night trips across November maps to:
+to compare seven-night trips across April maps to:
 
 ```text
-search_dates(route="BOS-LHR", start="2026-11-01", end="2026-11-30", nights=7)
+search_dates(route="BOS-LHR", start="2027-04-01", end="2027-04-30", nights=7)
 ```
 
-For a departure that can move three days either side of November 15:
+For a departure that can move three days either side of April 12:
 
 ```text
-search_flex(route="JFK-LHR", around="2026-11-15", flex=3, nights=7)
+search_flex(route="JFK-LHR", around="2027-04-12", flex=3, nights=7)
 ```
 
 For flights and a hotel stay in one request:
 
 ```text
-search_trip(routes=["JFK-LHR:2026-11-15:2026-11-22"], location="London", trip="rt")
+search_trip(routes=["JFK-LHR:2027-04-12:2027-04-19"], location="London", trip="rt")
 ```
 
 To re-check a finalist from an earlier `search_flights` result, pass its offer:
@@ -830,8 +840,9 @@ recheck_offer(offer={...offer from search_flights...})
 
 These are tool-call examples, not Python library calls. The MCP server uses
 stdio by default (local Streamable HTTP is opt-in, see below) and runs one
-search at a time. See the signatures in
-[`mcp_server.py`](../src/viajante/mcp_server.py) for all arguments.
+search at a time. Parameters and defaults are in
+[`mcp_handlers.py`](../src/viajante/mcp_handlers.py); `mcp_server.py` copies
+those signatures into the client schema.
 
 ### Progress, cancellation, and deadlines
 
@@ -913,13 +924,21 @@ search at a time. See the signatures in
   from the recorded cooldown. Both are omitted when no cooldown was recorded, for
   example a proxied 429. The envelope's top-level `retry_after` fields repeat the
   latest of these per-error values exactly, so they are null whenever the errors carry none.
-  Sweep provider failures may also include `diagnostics`: endpoint host and path,
+  Sweep provider failures, including `markup_drift`, `rejected` and `no_results` from a
+  public page, may also include `diagnostics`: endpoint host and path,
   `http_status`, raw `rpc_status`, `request_sent`, `attempts`, and
   `cooldown_basis`. A locally active cooldown has `request_sent: false`,
   `attempts: 0`, and null HTTP/RPC status. HTTP 429 or raw RPC status 13 stops
   pending sweep work without a replay or browser fallback. Status 13 is a
   provider response; by itself it does not identify the cause or prove an IP
-  block.
+  block. Three public-page status-13 error frames, or Explore responses with no
+  `wrb.fr` payload, inside 2 minutes record that same cooldown without a
+  `Retry-After` header. A partial calendar from the burst still carries
+  `retry_after`. Later searches fail immediately while it runs. The message says
+  Google Flights is likely blocking this shared IP because viajante is running in
+  a cloud-hosted agent or sandbox, names how long to wait, and says it works much
+  better on your own computer: the ChatGPT or Claude desktop app with the viajante
+  MCP (`npx -y @viajante/mcp`), or `pip install viajante`.
 - **Local HTTP transport.** `viajante-mcp --transport streamable-http [--host 127.0.0.1]
   [--port 8000]` serves `http://127.0.0.1:8000/mcp`. It has no authentication and is
   not meant to be hosted. A non-loopback `--host` prints a warning: every client
@@ -953,11 +972,11 @@ selected rows locally:
 ```python
 from viajante import get_flights, validate_itinerary
 
-report = get_flights("JFK-LHR:2026-11-15", fetch="sweep")
+report = get_flights("JFK-LHR:2027-04-12", fetch="sweep")
 result = report.to_dict()["queries"][0]
 selected = [{"status": "ok", "query": result["query"], "offer": result["offers"][0]}]
 validation = validate_itinerary(selected, {
-    "arrival_deadline": "2026-11-16T12:00Z",
+    "arrival_deadline": "2027-04-13T12:00Z",
     "chronological": True,
 })
 ```
@@ -983,8 +1002,9 @@ explore, and hidden-city rows do not. The id belongs to this process. A read
 does not search and does not push the search out of `verify_answer`. Unknown
 ids fail before any provider call.
 
-`get_hotel_details(selection_id)` returns the stored quote. `room_rates` must
-be a boolean. `room_rates` false is `ok` / `complete` and may run during a
+MCP `get_hotel_details(selection_id)` returns the stored quote. The library
+call is `get_hotel_details(report, query_index, offer_index)`, shown below.
+`room_rates` must be a boolean. `room_rates` false is `ok` / `complete` and may run during a
 search. `room_rates=true` asks Skiplagged for a separate USD room quote
 in `room_quotes`; `original_quote` keeps the price that was searched. The
 envelope on that quote follows the room quote: `ok`, `no_results` /

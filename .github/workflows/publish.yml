@@ -11,17 +11,42 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  verify:
+    # Nothing below can be taken back from PyPI, npm, or the MCP Registry, so the tagged
+    # commit has to pass what a pull request passes, and every version pin has to name the tag.
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Every version pin matches the tag
+        run: python3 scripts/check-release.py "$GITHUB_REF_NAME"
+      - run: uv sync --locked --group dev --extra mcp --extra browser
+      - run: uv run --no-sync ruff check src tests scripts
+      - run: uv run --no-sync ruff format --check src tests scripts
+      - run: uv run --no-sync mypy
+      - run: uv run --no-sync python -m unittest discover -s tests
+        env:
+          VIAJANTE_STATE_DIR: ${{ runner.temp }}/viajante-state
+
+  build:
+    needs: verify
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           python-version: "3.13"
       - run: uv build --no-sources
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
@@ -36,12 +61,43 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
           path: dist
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv publish
+
+  desktop-extension:
+    # The extension installs the PyPI release it is pinned to, so it is built after PyPI has it.
+    needs: pypi
+    if: ${{ !cancelled() && needs.pypi.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Pack the extension
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          curl --fail --silent --show-error "https://pypi.org/pypi/viajante/$version/json" >/dev/null
+          npx --yes @anthropic-ai/mcpb@2.1.2 pack mcpb viajante.mcpb
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: viajante-mcpb
+          path: viajante.mcpb
+      - name: Attach it to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" viajante.mcpb --clobber
+          else
+            echo "::notice::No GitHub release for $GITHUB_REF_NAME yet. Attach the viajante-mcpb artifact to it: gh release upload $GITHUB_REF_NAME viajante.mcpb"
+          fi
 
   npm:
     needs: pypi
@@ -56,10 +112,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.release_tag || github.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
@@ -110,7 +166,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.release_tag || github.ref }}
       - name: Set registry versions
@@ -123,10 +179,16 @@ jobs:
             server.json > server.tmp
           mv server.tmp server.json
       - name: Install MCP publisher
+        # A pinned release and its checksum, not whatever "latest" is when the tag lands.
+        # To move to a newer one, download its linux_amd64 tarball and update both lines.
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.9
+          MCP_PUBLISHER_SHA256: 4d527ca8f1ced0394c962dc925c2a4a4addef441cbefd62501c875e9481823a8
         run: |
-          curl -L \
-            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
-            | tar xz mcp-publisher
+          curl --fail --silent --show-error --location --output mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --check --strict
+          tar xzf mcp-publisher.tar.gz mcp-publisher
       - name: Authenticate to MCP Registry
         run: ./mcp-publisher login github-oidc
       - name: Publish to MCP Registry

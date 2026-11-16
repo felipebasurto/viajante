@@ -1,0 +1,12 @@
+{
+  "name": "viajante",
+  "description": "Flight and hotel search evidence over a local MCP server.",
+  "owner": { "name": "Felipe Basurto", "url": "https://felipebasurto.com" },
+  "plugins": [
+    {
+      "name": "viajante",
+      "source": "./integrations/claude-code",
+      "description": "Flight and hotel search from your own machine: Google Flights, Google Hotels and Booking evidence over a local MCP server. No API keys."
+    }
+  ]
+}

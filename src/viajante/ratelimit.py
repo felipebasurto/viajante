@@ -9,22 +9,45 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 from datetime import datetime, timezone
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
 
 from viajante.runtime import package_version
 from viajante.storage import default_state_dir, exclusive_lock, write_json_atomic
 
 GOOGLE_RATE_LIMIT_FILE = "google-rate-limit.json"
+GOOGLE_THROTTLE_HITS_FILE = "google-throttle-hits.json"
 SKIPLAGGED_RATE_LIMIT_FILE = "skiplagged-rate-limit.json"
 # ponytail: neither provider publishes a quota. The cooldown is a guess: 2 min, or the
 # Retry-After the provider names (at most 30 min). Upgrade: learn it from recoveries.
 RATE_LIMIT_COOLDOWN_SECONDS = 120.0
 RATE_LIMIT_MAX_COOLDOWN_SECONDS = 1800.0
+# ponytail: one status-13 error frame is one failed search, not an IP block. Three of
+# those, or a catalog with no wrb.fr payload, inside this same 2-minute guess is a
+# burst that clears only after a pause. Upgrade: learn the count from recoveries.
+THROTTLE_REPEAT_THRESHOLD = 3
+THROTTLE_REPEAT_WINDOW_SECONDS = RATE_LIMIT_COOLDOWN_SECONDS
 NOT_SENT = "Not sent. "
 PAUSE_PHRASE = "searches until"
+# Shown when the status-13 cooldown is recorded. One error frame is not this pause.
+# "Likely": a status 13 does not prove the IP is a hosted sandbox.
+_HOSTED_THROTTLE_HINT = (
+    "Google Flights is likely blocking this shared IP because viajante is running "
+    "in a cloud-hosted agent or sandbox. It works much better on your own computer, "
+    "in the ChatGPT or Claude desktop app with the viajante MCP (npx -y @viajante/mcp), "
+    "or with pip install viajante."
+)
+# The first pause, before the cooldown is recorded. The code stays in diagnostics.
+PAUSE_MESSAGE = (
+    "Google Flights paused this request. That often happens after many searches, "
+    "or on a shared cloud IP. Availability is unknown. Wait 15-30 minutes. "
+    "Don't add airports or start a new search until then. "
+    "This works better on your own computer, in the ChatGPT or Claude desktop app "
+    "with npx -y @viajante/mcp, or with pip install viajante."
+)
 _COOLDOWN_BASES = {
     "provider_retry_after",
     "heuristic_http_429",
@@ -139,7 +162,82 @@ def note_rate_limited(
         return {**state, "persisted": False}
 
 
-def recorded_expiry(state: Mapping[str, object]) -> Optional[float]:
+_throttle_hits: list[float] = []
+_throttle_lock = threading.Lock()
+
+
+def throttle_hits_file(rate_file: str = GOOGLE_RATE_LIMIT_FILE) -> str:
+    """Sibling of the cooldown file, so separate CLI runs share one burst count."""
+    if rate_file.endswith("-rate-limit.json"):
+        return rate_file.replace("-rate-limit.json", "-throttle-hits.json")
+    return rate_file + ".throttle-hits.json"
+
+
+def _read_throttle_hits(path, now: float) -> list[float]:
+    cutoff = now - THROTTLE_REPEAT_WINDOW_SECONDS
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        hits = payload.get("hits", ())
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+    kept: list[float] = []
+    for hit in hits:
+        if isinstance(hit, (int, float)) and math.isfinite(hit) and float(hit) > cutoff:
+            kept.append(float(hit))
+    return kept
+
+
+def reset_throttle_signals() -> None:
+    """Drop the burst counter so one search does not leak into the next."""
+    with _throttle_lock:
+        _throttle_hits.clear()
+    try:
+        (default_state_dir() / GOOGLE_THROTTLE_HITS_FILE).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def note_repeated_throttle(
+    now: Optional[float] = None,
+    *,
+    endpoint: Optional[str] = None,
+    file: str = GOOGLE_RATE_LIMIT_FILE,
+) -> Optional[dict]:
+    """Count one status-13 or missing-payload signal. At the threshold, record the cooldown.
+
+    A data-less RPC status 13 still records on its own, in the caller. This is the
+    burst of signals that today are not a cooldown: a public-page error frame and a
+    catalog with no ``wrb.fr`` payload. Hits are stored beside the cooldown file, so
+    separate CLI runs add up. Later signals in the same window return the recorded
+    cooldown and do not extend it.
+    """
+    current = time.time() if now is None else now
+    path = default_state_dir() / throttle_hits_file(file)
+    with _throttle_lock:
+        try:
+            with exclusive_lock(path):
+                hits = _read_throttle_hits(path, current)
+                hits.append(current)
+                write_json_atomic({"hits": hits}, path)
+                _throttle_hits[:] = hits
+                tripped = len(hits) >= THROTTLE_REPEAT_THRESHOLD
+        except OSError:
+            cutoff = current - THROTTLE_REPEAT_WINDOW_SECONDS
+            _throttle_hits[:] = [hit for hit in _throttle_hits if hit > cutoff]
+            _throttle_hits.append(current)
+            tripped = len(_throttle_hits) >= THROTTLE_REPEAT_THRESHOLD
+    if not tripped:
+        return None
+    return note_rate_limited(
+        now=current,
+        basis="heuristic_rpc_13",
+        cause="rpc_13",
+        endpoint=endpoint,
+        file=file,
+    )
+
+
+def recorded_expiry(state: Mapping[str, Any]) -> Optional[float]:
     """Only a persisted cooldown can pause a later process."""
     return float(state["until"]) if state.get("persisted", True) else None
 
@@ -170,9 +268,19 @@ def rate_limit_advice(
     minutes = max(1, math.ceil((state["until"] - time.time()) / 60))
     prefix = "" if sent else NOT_SENT
     if state.get("cause") == "rpc_13":
-        observation = f"{provider} returned RPC status 13; its cause is unknown"
-    else:
-        observation = f"{provider} is rate-limiting this machine"
+        pause = (
+            "Viajante could not save the cooldown. "
+            if state.get("persisted") is False
+            else (
+                f"Viajante pauses {provider} {PAUSE_PHRASE} {clock(state['until'])} UTC "
+                f"(~{minutes} min). "
+            )
+        )
+        return (
+            f"{prefix}{_HOSTED_THROTTLE_HINT} {pause}"
+            "Tell the user to wait; do not retry or switch fetch mode."
+        )
+    observation = f"{provider} is rate-limiting this machine"
     if state.get("persisted") is False:
         return (
             f"{prefix}{observation} ({reason}). Viajante could not save the cooldown. "

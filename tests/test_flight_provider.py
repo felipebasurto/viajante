@@ -3,6 +3,7 @@ the local clock checks that stay exact, and the refusals for options the page ca
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import contextlib
 import io
 import unittest
@@ -11,7 +12,6 @@ from datetime import date
 from typing import Any
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_flights import card
 from viajante.cli import main
 from viajante.flight_filters import NO_OFFER_FILTERS, parse_offer_filters
@@ -216,7 +216,7 @@ class SurfaceWiringTest(unittest.TestCase):
 
     def test_cli_flags_reach_search_flights(self) -> None:
         with patch("viajante.cli.search_flights", side_effect=self._Stop()) as search:
-            with self.assertRaises(self._Stop):
+            self.assertEqual(
                 main(
                     [
                         "flights",
@@ -230,7 +230,9 @@ class SurfaceWiringTest(unittest.TestCase):
                         "--less-emissions",
                         "--hide-separate-tickets",
                     ]
-                )
+                ),
+                1,
+            )
         kwargs = search.call_args.kwargs
         self.assertEqual(kwargs["depart_before"], 18 * 60 + 30)
         self.assertEqual(kwargs["arrive_after"], 8 * 60)

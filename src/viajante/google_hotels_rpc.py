@@ -343,7 +343,7 @@ def _priced_adults(record: list[Any]) -> Optional[int]:
     return None
 
 
-def _coordinates(record: list[Any]) -> dict[str, Optional[float]]:
+def _coordinates(record: list[Any]) -> dict[str, Any]:
     try:
         lat, lng = record[2][0]
     except (IndexError, KeyError, TypeError, ValueError):

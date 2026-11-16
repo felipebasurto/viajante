@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import base64
 import contextlib
@@ -11,7 +12,6 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
 from viajante.google_capabilities import GoogleFlightsUnsupported, validate_capabilities
@@ -305,7 +305,8 @@ class PublicRoundTripEdgeTests(unittest.TestCase):
         self.assertEqual(len(offers), 1)
         partial_error, _ = source.metadata_for(query)
         self.assertIsInstance(partial_error, GoogleFlightsBlocked)
-        self.assertIn("13", str(partial_error))
+        self.assertIn("paused this request", str(partial_error))
+        self.assertEqual(partial_error.diagnostics["rpc_status"], 13)
         self.assertIsNotNone(source._stopped_error)
 
     def test_markup_drift_on_one_follow_up_does_not_stop_the_rest(self) -> None:

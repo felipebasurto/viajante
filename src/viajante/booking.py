@@ -52,6 +52,15 @@ FAILURE_META_NAME = "booking-last-failure.txt"
 FAILURE_PNG_NAME = "booking-last-failure.png"
 
 
+def _page_where(page) -> str:
+    """Host and path of the page that failed. The query string names the stay, so it is left out."""
+    with contextlib.suppress(Exception):
+        parts = urlsplit(str(getattr(page, "url", "") or ""))
+        if parts.netloc:
+            return f"({parts.netloc}{parts.path})"
+    return "(address not read)"
+
+
 class BookingResultsTimeout(TimeoutError):
     """Cards or empty state never appeared; likely consent, challenge, or markup drift."""
 
@@ -229,7 +238,11 @@ class BookingHotelsSource:
                 if self._has_empty_state(page):
                     return HotelPage(cards=())
                 self._record_failure(page)
-                raise RuntimeError("Booking results page has no recognized result state")
+                raise RuntimeError(
+                    f"Booking results page {_page_where(page)} shows neither property cards nor "
+                    "a known empty state, so availability is unknown. "
+                    "A failure dump was saved in the state directory."
+                )
 
             cards: list[RawHotelCard] = []
             for provider_card in provider_cards[:limit]:
@@ -241,9 +254,14 @@ class BookingHotelsSource:
                     continue
             if not cards:
                 self._record_failure(page)
-                raise RuntimeError("Booking property cards could not be parsed")
+                raise RuntimeError(
+                    f"Booking results page {_page_where(page)} listed "
+                    f"{len(provider_cards[:limit])} "
+                    "property cards and none could be parsed, so availability is unknown. "
+                    "A failure dump was saved in the state directory."
+                )
             seen = len(provider_cards[:limit])
-            errors = ()
+            errors: tuple[SearchError, ...] = ()
             if len(cards) < seen:
                 errors = (
                     SearchError(

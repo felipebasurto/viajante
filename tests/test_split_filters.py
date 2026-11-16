@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import unittest
 from dataclasses import replace
 
-import _isolate  # noqa: F401
 from test_split import DAY, NEXT, FakeSearch, _hub_table, _offer, _packaged_via, _segment
 from viajante.flight_filters import OfferFilters
 from viajante.models import FlightQuery, RawJourneyLeg

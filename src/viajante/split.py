@@ -16,12 +16,14 @@ searches run sequentially in the calling process.
 from __future__ import annotations
 
 import math
+import threading
 from collections import Counter
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal, Mapping, Optional, Sequence
 
 from viajante.airports import airport_geo
+from viajante.control import controlled
 from viajante.flight_filters import parse_code_list
 from viajante.flights import DEFAULT_TOP, search_flights
 from viajante.models import (
@@ -46,7 +48,7 @@ from viajante.models_split import (
 )
 from viajante.parsers import normalize_clock
 from viajante.quote import first_origin_iata, resolve_quote_currency
-from viajante.ratelimit import rate_limit_advice, rate_limit_status
+from viajante.ratelimit import NOT_SENT, rate_limit_advice, rate_limit_status
 from viajante.split_filters import SplitFilters, search_bounds
 from viajante.split_filters import passes as split_passes
 from viajante.temporal import local_instant
@@ -430,6 +432,7 @@ def validate_split_request(
     return kind, named
 
 
+@controlled
 def search_split_tickets(
     query: FlightQuery | RoundTrip,
     *,
@@ -448,6 +451,10 @@ def search_split_tickets(
     search: SearchFn = search_flights,
     filters: Optional[SplitFilters] = None,
     baggage_buffer: int = 0,
+    less_emissions: bool = False,
+    hide_separate_tickets: bool = False,
+    cancel: Optional[threading.Event] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> SplitReport:
     """Search split tickets for one one-way (via hubs) or one round-trip (mixed one-ways).
 
@@ -478,6 +485,8 @@ def search_split_tickets(
         proxy=proxy,
         progress=progress,
         baggage_buffer=baggage_buffer,
+        less_emissions=less_emissions,
+        hide_separate_tickets=hide_separate_tickets,
     )
 
     packaged_searched = packaged is None
@@ -561,13 +570,31 @@ def search_split_tickets(
             tail_bounds = search_bounds(filters, end="last")
             if head_bounds == tail_bounds:
                 report = search(trips, top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)
+                extra += len(trips)
             else:
                 # ponytail: with named clock bounds a hub costs two sequential sweeps instead of
                 # one. Upgrade: merge them once the provider takes per-query clock filters.
                 head = search(trips[:1], top=SPLIT_LEG_TOP, sort="fare", **shop, **head_bounds)
-                tail = search(trips[1:], top=SPLIT_LEG_TOP, sort="fare", **shop, **tail_bounds)
-                report = replace(head, queries=(*head.queries, *tail.queries), coverage=None)
-            extra += len(trips)
+                blocked = _rate_limited([head])
+                if blocked is None:
+                    tail = search(trips[1:], top=SPLIT_LEG_TOP, sort="fare", **shop, **tail_bounds)
+                    report = replace(head, queries=(*head.queries, *tail.queries), coverage=None)
+                    extra += len(trips)
+                else:
+                    pending = tuple(
+                        QueryFailure(
+                            query=trip,
+                            error=SearchError(
+                                SearchErrorCode.BLOCKED,
+                                NOT_SENT + "Remaining split searches stopped after a rate limit.",
+                                rate_limited=True,
+                                retry_until=blocked.retry_until,
+                            ),
+                        )
+                        for trip in trips[1:]
+                    )
+                    report = replace(head, queries=(*head.queries, *pending), coverage=None)
+                    extra += 1
             tried.append(hub)
             reports.append(report)
             legs.extend(_leg_rows(report, hub))

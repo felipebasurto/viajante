@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from datetime import date
-from typing import Callable, Sequence
+from typing import Any, Callable, Optional, Sequence, cast
 from urllib.parse import urlencode
 
 from viajante.airports import same_city_iata
@@ -67,7 +67,9 @@ from viajante.models import (
 from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.parsers import parse_price
 from viajante.ratelimit import (
+    PAUSE_MESSAGE,
     note_rate_limited,
+    note_repeated_throttle,
     rate_limit_advice,
     rate_limit_status,
     recorded_expiry,
@@ -85,11 +87,11 @@ def _ranked_outbounds(cards: Sequence[RawFlightCard]) -> tuple[RawFlightCard, ..
 
 def _cached_return_reader(
     outcomes: Sequence[object],
-) -> Callable[[RoundTrip, RawFlightCard], object]:
+) -> Callable[[RoundTrip, RawFlightCard], Any]:
     """Return pages already fetched, in the order ``_round_trip_packages`` asks for them."""
     pending = iter(outcomes)
 
-    def read_return(_trip: RoundTrip, _outbound: RawFlightCard) -> object:
+    def read_return(_trip: RoundTrip, _outbound: RawFlightCard) -> Any:
         outcome = next(pending)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -109,6 +111,8 @@ def _response_halts(response: SweepHttpResponse) -> bool:
         return False
     if response.stopped and not response.request_sent:
         return True
+    if response.rate_limited:
+        return True
     if response.status in {403, 429}:
         return True
     if raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS:
@@ -119,7 +123,13 @@ def _response_halts(response: SweepHttpResponse) -> bool:
 def _sent_batch_block(responses: Sequence[SweepHttpResponse]) -> SweepHttpResponse | None:
     sent = [r for r in responses if r.request_sent and _response_halts(r)]
     return next(
-        (r for r in sent if r.status == 429 or raw_rpc_error_status(r.text) == RPC_THROTTLE_STATUS),
+        (
+            r
+            for r in sent
+            if r.status == 429
+            or r.rate_limited
+            or raw_rpc_error_status(r.text) == RPC_THROTTLE_STATUS
+        ),
         sent[0] if sent else None,
     )
 
@@ -129,7 +139,11 @@ def _batch_block_provenance(responses: Sequence[SweepHttpResponse]) -> list[Swee
     block = _sent_batch_block(responses)
     if block is None:
         return list(responses)
-    limited = block.status == 429 or raw_rpc_error_status(block.text) == RPC_THROTTLE_STATUS
+    limited = (
+        block.status == 429
+        or block.rate_limited
+        or raw_rpc_error_status(block.text) == RPC_THROTTLE_STATUS
+    )
     return [
         replace(
             r,
@@ -167,14 +181,39 @@ _EXPLORE_OCCUPANCY = [1, 0, 0, 0]
 NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
 
 
-REJECTED_MESSAGE = "Google Flights rejected this query; the provider did not identify the cause."
+def trip_label(trip: Trip | None) -> str:
+    """The route and dates a query asked for, as the caller wrote them: ``JFK-LHR 2027-03-01``."""
+    if trip is None:
+        return ""
+    return ", ".join(
+        f"{leg.origin}-{leg.destination} {leg.departure_date.isoformat()}" for leg in trip.legs
+    )
+
+
+REJECTED_MESSAGE = (
+    "Google Flights rejected this query. Check the route and dates, or try one airport."
+)
+UNREADABLE_PAGE = (
+    "Google Flights returned a page that could not be read. "
+    "Wait and retry this one search once. If it persists, run viajante on your own computer."
+)
+
+
+def _unreadable_page(label: str) -> str:
+    return UNREADABLE_PAGE.replace(
+        "a page that could not be read.", f"a page for {label} that could not be read.", 1
+    )
 
 
 def classify_failure(exc: BaseException) -> SearchError:
+    label = getattr(exc, "trip_label", "")
     if isinstance(exc, NoFlightsFound):
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
-            message=NO_RESULTS_MESSAGE,
+            message=f"Google Flights returned no flights for {label}."
+            if label
+            else NO_RESULTS_MESSAGE,
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsUnsupported):
         return SearchError(
@@ -192,7 +231,13 @@ def classify_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, GoogleFlightsRejected):
         return SearchError(
             code=SearchErrorCode.REJECTED,
-            message=REJECTED_MESSAGE,
+            message=(
+                f"Google Flights rejected the query for {label}. "
+                "Check the route and dates, or try one airport."
+                if label
+                else REJECTED_MESSAGE
+            ),
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsBlocked):
         return SearchError(
@@ -203,9 +248,12 @@ def classify_failure(exc: BaseException) -> SearchError:
             diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsMarkupError):
+        detail = str(exc).strip()
+        message = detail if detail and "Error:" not in detail and "Exception:" not in detail else ""
         return SearchError(
             code=SearchErrorCode.MARKUP_DRIFT,
-            message=str(exc) or "Google Flights markup could not be parsed.",
+            message=message or (UNREADABLE_PAGE if not label else _unreadable_page(label)),
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     return classify_provider_failure(exc)
 
@@ -272,13 +320,14 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
 
     The fare, token and bag evidence come from the return card, since that card priced the
     package. Carriers come from both legs, so an exclusion on either leg still applies.
+    Flight numbers are both legs in order, or unknown when either leg has none.
     """
     sides = (outbound, returned)
     if any(side.airline_codes is None and not side.airline for side in sides):
         codes, airline = None, ""
     else:
         codes = None
-        if all(side.airline_codes is not None for side in sides):
+        if outbound.airline_codes is not None and returned.airline_codes is not None:
             codes = tuple(dict.fromkeys(outbound.airline_codes + returned.airline_codes))
         airline = ", ".join(dict.fromkeys(side.airline for side in sides if side.airline))
     return replace(
@@ -290,7 +339,11 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
         checked_bags=returned.checked_bags,
         carry_on=returned.carry_on,
         legs=(outbound.legs[0], returned.legs[0]),
-        flight_numbers=tuple((outbound.flight_numbers or ()) + (returned.flight_numbers or ())),
+        flight_numbers=(
+            outbound.flight_numbers + returned.flight_numbers
+            if outbound.flight_numbers and returned.flight_numbers
+            else None
+        ),
     )
 
 
@@ -364,8 +417,10 @@ def _verify_provider_echo(labels: set[str | None], provider: ProviderShop) -> No
     ):
         if field is None:
             continue
-        echoed = [_chip_minutes(match) for match in (pattern.match(c) for c in chips) if match]
-        echoed = [minutes for minutes in echoed if minutes is not None]
+        parsed_chips = [
+            _chip_minutes(match) for match in (pattern.match(c) for c in chips) if match
+        ]
+        echoed = [minutes for minutes in parsed_chips if minutes is not None]
         if not echoed or min(echoed) < field:
             raise GoogleFlightsMarkupError(f"Public page did not echo the requested {label} limit.")
     if provider.less_emissions and _LESS_EMISSIONS_CHIP not in chips:
@@ -436,6 +491,25 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         *,
         capture_insight: bool = False,
     ) -> tuple[RawFlightCard, ...]:
+        """Read one page. A failure that names no cause of its own says which query and
+        which request it was: the route and dates asked for and the response's diagnostics."""
+        try:
+            return self._parse_page(response, url, trip, capture_insight=capture_insight)
+        except (GoogleFlightsMarkupError, GoogleFlightsRejected, NoFlightsFound) as exc:
+            if getattr(exc, "diagnostics", None) is None:
+                exc.diagnostics = response_diagnostics(response, url)
+            if trip is not None and not getattr(exc, "trip_label", ""):
+                exc.trip_label = trip_label(trip)
+            raise
+
+    def _parse_page(
+        self,
+        response: SweepHttpResponse,
+        url: str,
+        trip: Trip | None = None,
+        *,
+        capture_insight: bool = False,
+    ) -> tuple[RawFlightCard, ...]:
         try:
             raise_for_sweep_response(response, url)
         except GoogleFlightsBlocked as exc:
@@ -463,16 +537,45 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             except ShoppingErrorFrame as exc:
                 # An owned error frame is the provider's answer, not unreadable markup:
                 # like an RPC error status it neither proves nor disproves availability.
+                # A burst of status 13 records the shared cooldown; one frame does not.
                 diagnostics = response_diagnostics(response, url)
                 diagnostics["rpc_status"] = exc.status
-                raise GoogleFlightsBlocked(
-                    f"Google Flights answered with error status {exc.status} and no results. "
-                    "The cause is unknown; availability is not disproved.",
-                    diagnostics=diagnostics,
-                ) from exc
+                state = None
+                if (
+                    exc.status == RPC_THROTTLE_STATUS
+                    and not response.throttle_observed
+                    and self._proxy is None
+                ):
+                    state = note_repeated_throttle(endpoint=url)
+                cooled = state is not None or (
+                    exc.status == RPC_THROTTLE_STATUS and response.rate_limited
+                )
+                unknown = (
+                    PAUSE_MESSAGE
+                    if exc.status == RPC_THROTTLE_STATUS
+                    else (
+                        "Google Flights could not return this search. "
+                        "Availability is unknown. Wait a minute and retry this one search."
+                    )
+                )
+                if cooled:
+                    until = recorded_expiry(state) if state is not None else response.retry_until
+                    basis = (state or {}).get("basis", response.cooldown_basis)
+                    advice = (
+                        rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}")
+                        if state is not None
+                        else response.rate_limit
+                    )
+                    raise GoogleFlightsBlocked(
+                        advice or unknown,
+                        status=429,
+                        retry_until=until,
+                        diagnostics={**diagnostics, "cooldown_basis": basis},
+                    ) from exc
+                raise GoogleFlightsBlocked(unknown, diagnostics=diagnostics) from exc
             except UnpricedShoppingResults as exc:
                 provider = getattr(trip, "provider", None)
-                if provider is None or provider.max_price is None:
+                if trip is None or provider is None or provider.max_price is None:
                     raise GoogleFlightsMarkupError(str(exc)) from exc
                 # Below its cheapest fare, Google echoes the cap and lists the flights unpriced.
                 self._verify_carrier_filters(html, (), trip)
@@ -635,7 +738,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self,
         trip: RoundTrip,
         outbound_cards: Sequence[RawFlightCard],
-        read_return: Callable[[RoundTrip, RawFlightCard], object],
+        read_return: Callable[[RoundTrip, RawFlightCard], Any],
     ) -> tuple[RawFlightCard, ...]:
         """Join each selected outbound with its return page. Outbound amounts are not fares."""
         self.partial_error = None
@@ -729,7 +832,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         except Exception as exc:
             diagnostics = getattr(exc, "diagnostics", None)
             if isinstance(diagnostics, dict):
-                exc.diagnostics = {**diagnostics, "attempts": 2}
+                exc.diagnostics = {**diagnostics, "attempts": 2}  # type: ignore[attr-defined]  # checked above
             raise
 
     def _round_trip_batch_client(self):
@@ -883,7 +986,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 (
                     (url, response)
                     for url, response in zip(urls, responses, strict=True)
-                    if response is selected_block
+                    if selected_block is not None and response is selected_block
                 ),
                 None,
             )
@@ -1005,9 +1108,9 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         if all(isinstance(trip, RoundTrip) for trip in trips):
             client = self._round_trip_batch_client()
             if client is not None:
-                return self._fetch_many_round_trips(client, trips)
+                return self._fetch_many_round_trips(client, cast("Sequence[RoundTrip]", trips))
         if any(not isinstance(trip, FlightQuery) for trip in trips):
-            results = []
+            results: list[object] = []
             for index, trip in enumerate(trips):
                 try:
                     results.append(self.fetch(trip))
@@ -1017,7 +1120,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 except Exception as exc:
                     results.append(exc)
             return results
-        results: list[object] = [None] * len(trips)
+        results = [None] * len(trips)
         pending = []
         for index, trip in enumerate(trips):
             try:
@@ -1135,6 +1238,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             stopped = (
                 response.status in {403, 429}
                 or response.stopped
+                or response.rate_limited
                 or raw_rpc_error_status(response.text) == 13
                 or looks_blocked(response.text, response.url)
             )
@@ -1202,7 +1306,23 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         try:
             catalog = parse_explore_catalog(body, origins=accepted)
         except CompactParseMiss as exc:
-            raise _catalog_parse_error(body, exc) from exc
+            failure = _catalog_parse_error(body, exc)
+            if (
+                isinstance(failure, GoogleFlightsMarkupError)
+                and self._proxy is None
+                and "no wrb.fr" in str(exc)
+                and "payload" in str(exc)
+            ):
+                state = note_repeated_throttle(endpoint=EXPLORE_URL)
+                if state is not None:
+                    blocked = GoogleFlightsBlocked(
+                        rate_limit_advice(state, reason="no wrb.fr payload"),
+                        status=429,
+                        retry_until=recorded_expiry(state),
+                    )
+                    self._stopped_error = blocked
+                    raise blocked from exc
+            raise failure from exc
         if catalog.origin_echo is not None and catalog.origin_echo not in accepted:
             raise GoogleFlightsMarkupError(
                 f"Google Explore catalog echoed origin {catalog.origin_echo}, "
@@ -1224,7 +1344,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
         return catalog.places
 
-    def _explore_page(self, url: str) -> list[tuple[object, str]]:
+    def _explore_page(self, url: str) -> list[tuple[Optional[str], str]]:
         """Load the Explore page in Chromium; return its catalog request/response pairs."""
         checkpoint()
         self._check_stopped("www.google.com/travel/explore")

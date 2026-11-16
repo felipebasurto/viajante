@@ -14,6 +14,7 @@ from selectolax.lexbor import LexborHTMLParser
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     RawFlightCard,
+    error_frame_status,
     parse_price_insight,
     parse_shopping_data,
     price_insight_code,
@@ -151,9 +152,9 @@ def _callback_properties(source: str, index: int) -> tuple[Optional[str], object
                 # ds:1 data is a JSON array, so a string value is malformed.
                 data_value = None
         else:
-            raw_value, index = _skip_value(source, index)
+            skipped, index = _skip_value(source, index)
             if property_key == "data":
-                data_value = raw_value
+                data_value = skipped
         index = _skip_space(source, index)
         if index >= len(source) or source[index] not in ",}":
             raise ValueError("invalid callback separator")
@@ -175,13 +176,22 @@ def _ds1_data_in(script: str) -> Optional[list]:
 
 
 def extract_ds1_data(html: str) -> list:
-    """Extract the balanced JSON data array for the page's ds:1 callback."""
+    """Extract the balanced JSON data array for the page's ds:1 callback.
+
+    Inside ``shared_page_tree`` the decode is kept with the tree, so the card
+    parse, the price insight and the alliance echo read one payload.
+    """
+    slot = getattr(_SHARED, "slot", None)
+    if slot is not None and slot[0] is html and len(slot) > 2:
+        return slot[2]
     root = page_tree(html)
     for node in root.css("script"):
         if "ds:1" not in (node.attributes.get("class") or "").split():
             continue
         data = _ds1_data_in(node.text(deep=True))
         if data is not None:
+            if slot is not None and slot[0] is html:
+                slot.append(data)
             return data
     raise CompactParseMiss("Google Flights page has no readable ds:1 payload")
 
@@ -189,6 +199,17 @@ def extract_ds1_data(html: str) -> list:
 def parse_shopping_page(html: str, *, currency: str) -> tuple[RawFlightCard, ...]:
     """Parse public HTML shopping results through the owned compact-data decoder."""
     return parse_shopping_data(extract_ds1_data(html), currency=currency)
+
+
+def ds1_error_frame_status(html: str) -> Optional[int]:
+    """Status of a ``ds:1`` provider error frame in this page, else None."""
+    if "ErrorResponse" not in html:
+        return None
+    try:
+        data = extract_ds1_data(html)
+    except CompactParseMiss:
+        return None
+    return error_frame_status(data)
 
 
 def _current_level_label(html: str) -> Optional[str]:
@@ -212,12 +233,13 @@ def price_insight_from_page(
     """Insight when ``data[5]`` and the rendered heading name the same level.
 
     No insight on the page is ``(None, None)``. A heading and slot that do not
-    confirm each other is ``(None, "markup_drift")``. This never raises.
+    confirm each other, or a parse that threw, is ``(None, "markup_drift")``: a decode
+    failure is not "the page has no insight". This never raises.
     """
     try:
         return _confirmed_price_insight(html, data, currency=currency)
     except Exception:
-        return None, None
+        return None, "markup_drift"
 
 
 def _confirmed_price_insight(

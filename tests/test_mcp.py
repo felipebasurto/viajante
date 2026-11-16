@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import inspect
 import io
 import json
@@ -13,7 +14,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante import mcp_handlers
 from viajante.explore import DEFAULT_EXPLORE_TOP
 from viajante.mcp_handlers import (

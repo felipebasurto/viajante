@@ -6,6 +6,7 @@ from typing import Callable, Optional, Tuple, TypeVar
 
 from viajante.control import SearchDeadline, note_cut
 from viajante.models import SearchError, SearchErrorCode
+from viajante.runtime import package_version
 
 T = TypeVar("T")
 
@@ -39,7 +40,7 @@ NON_RETRIABLE_CODES = frozenset(
 ERROR_MESSAGE_MAX_CHARS = 500
 BROWSER_INSTALL_HINT = (
     "Chromium is not available to Playwright. "
-    "uvx --from 'viajante[mcp,browser]==<version>' playwright install chromium. "
+    f"uvx --from 'viajante[mcp,browser]=={package_version()}' playwright install chromium. "
     "Detail is optional: pip install 'viajante[browser]' && playwright install chromium."
 )
 
@@ -59,6 +60,16 @@ def _is_timeout(exc: BaseException) -> bool:
     )
 
 
+TIMEOUT_MESSAGE = "The request timed out. Wait a minute and retry this one search."
+CONNECT_MESSAGE = "Could not reach the provider. Wait a minute and retry this one search."
+_CONNECT_TOKENS = ("connecterror", "connectionerror", "connectionreset", "connecttimeout")
+
+
+def _is_connect(exc: BaseException) -> bool:
+    blob = f"{type(exc).__name__} {exc}".casefold()
+    return any(token in blob for token in _CONNECT_TOKENS)
+
+
 def classify_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, SearchDeadline):
         note_cut()
@@ -70,10 +81,18 @@ def classify_failure(exc: BaseException) -> SearchError:
             code=SearchErrorCode.BROWSER_UNAVAILABLE,
             message=BROWSER_INSTALL_HINT,
         )
+    if _is_timeout(exc):
+        return SearchError(
+            code=SearchErrorCode.FETCH_FAILED,
+            message=TIMEOUT_MESSAGE,
+            timeout=True,
+        )
+    if _is_connect(exc):
+        return SearchError(code=SearchErrorCode.FETCH_FAILED, message=CONNECT_MESSAGE)
     return SearchError(
         code=SearchErrorCode.FETCH_FAILED,
         message=_clip_error_message(text),
-        timeout=_is_timeout(exc),
+        timeout=False,
     )
 
 
@@ -126,7 +145,7 @@ def run_attempts(
         except Exception as exc:
             failure = classify(exc)
             on_failure(failure)
-            if give_up(exc, failure):
+            if isinstance(exc, SearchDeadline) or give_up(exc, failure):
                 break
             if index + 1 < MAX_ATTEMPTS:
                 delay = backoff(index)

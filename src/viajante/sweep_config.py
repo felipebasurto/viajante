@@ -26,5 +26,5 @@ def get_sweep_config() -> SweepConfig:
     if raw_mode not in _MODE_CONCURRENCY:
         choices = ", ".join(_MODE_CONCURRENCY)
         raise ValueError(f"VIAJANTE_SWEEP_MODE must be one of: {choices}; got {raw_mode!r}")
-    mode: SweepMode = raw_mode  # type: ignore[assignment]
+    mode: SweepMode = raw_mode
     return SweepConfig(mode=mode, concurrency=_MODE_CONCURRENCY[mode])

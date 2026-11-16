@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import unittest
 
-import _isolate  # noqa: F401
 from viajante import evidence
 
 URL = "https://www.google.com/travel/flights?hl=en&curr=USD&booking_token=abc"
@@ -30,6 +30,19 @@ class VerifyAnswerTests(unittest.TestCase):
         result = evidence.verify_answer("JFK-LHR is 291 USD")
         self.assertFalse(result["ok"])
         self.assertEqual(result["searches"], 0)
+
+    def test_dollar_and_yen_glyphs_name_their_currencies(self) -> None:
+        evidence.record(FLIGHTS)
+        yen = evidence.verify_answer("¥295")
+        self.assertFalse(yen["ok"])
+        self.assertIn({"kind": "amount", "text": "¥295"}, yen["unowned"])
+        evidence.clear()
+        evidence.record({"currency": "JPY", "queries": [{"offers": [{"price": 295.0}]}]})
+        self.assertTrue(evidence.verify_answer("¥295")["ok"])
+        dollars = evidence.verify_answer("$295")
+        self.assertFalse(dollars["ok"])
+        self.assertIn({"kind": "amount", "text": "$295"}, dollars["unowned"])
+        self.assertIn({"kind": "currency", "text": "$295"}, dollars["unowned"])
 
     def test_owned_claims_pass_and_rounding_is_tolerated(self) -> None:
         evidence.record(FLIGHTS)

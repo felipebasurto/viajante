@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import json
 import os
@@ -12,7 +13,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers
 from viajante.cli import main
 from viajante.google_flights import note_rate_limited
@@ -427,6 +427,11 @@ class IdentityTests(unittest.TestCase):
     def test_flight_numbers_ignore_spacing_case_and_leading_zeros(self) -> None:
         spaced = _segment("JFK", "LHR", "19:30", "07:30", "ba 0178")
         result = recheck_offer(_previous(spaced), search=_Stub(_report(_offer(500.0, (OUTBOUND,)))))
+        self.assertEqual(result["outcome"], "same_price")
+
+    def test_airport_codes_match_regardless_of_case(self) -> None:
+        lower = _segment("jfk", "lhr", "19:30", "07:30", "BA178")
+        result = recheck_offer(_previous(lower), search=_Stub(_report(_offer(500.0, (OUTBOUND,)))))
         self.assertEqual(result["outcome"], "same_price")
 
     def test_a_different_segment_date_is_not_identical(self) -> None:

@@ -9,7 +9,7 @@ import re
 import threading
 import time
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Callable, Literal, Optional, Protocol, Sequence, Tuple
 
 from viajante.booking import (
@@ -458,6 +458,10 @@ def validate_hotel_search_args(queries: Sequence[HotelQuery], *, top: int, sourc
             validate_search_party(query.adults, query.rooms)
             if query.entire_home:
                 raise ValueError("entire_home is not supported with source skiplagged")
+    today = date.today()
+    for query in queries:
+        if query.check_in < today:
+            raise ValueError(f"check-in date is in the past: {query.check_in.isoformat()}")
 
 
 def _fetch_hotel_query_once(

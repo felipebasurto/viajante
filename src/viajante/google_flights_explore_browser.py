@@ -7,7 +7,7 @@ import time
 from typing import Callable
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
-from viajante.control import SearchDeadline, checkpoint
+from viajante.control import SearchDeadline, bounded_ms, checkpoint
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     SweepHttpResponse,
@@ -47,14 +47,16 @@ def explore_session(
     )
 
 
-def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tuple[object, str]]:
+def capture_catalog(
+    session: ChromiumSession, url: str, check: Check
+) -> list[tuple[str | None, str]]:
     """Load the Explore page; return its catalog request/response pairs.
 
     ``check`` raises for a block, throttle or error response as soon as one arrives, so a
     provider stop ends the wait at once instead of after the full catalog timeout.
     """
     page = session.new_page()
-    captured: list[tuple[object, SweepHttpResponse, float | None]] = []
+    captured: list[tuple[str | None, SweepHttpResponse, float | None]] = []
 
     read_error: SweepTransportError | None = None
 
@@ -90,10 +92,13 @@ def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tu
     page.on("response", _capture)
     try:
         try:
-            navigation = page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            navigation = page.goto(
+                url, wait_until="domcontentloaded", timeout=bounded_ms(PAGE_TIMEOUT_MS)
+            )
         except SearchDeadline:
             raise
         except Exception as exc:
+            checkpoint()
             transport = _network_failure(exc)
             if transport is not None:
                 raise transport from exc

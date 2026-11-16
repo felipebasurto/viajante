@@ -20,10 +20,21 @@ from viajante.models import FlightOffer, Trip
 
 
 def package_shop_filters(filters: OfferFilters, packaged: bool) -> OfferFilters:
-    """What the one-way normalizer judges on each journey; the package pass judges the rest."""
+    """Filters the one-way normalizer must not judge on a package total.
+
+    Via, overnight, and the duration cap are applied to every journey by the
+    package pass. The cap is per journey; the offer's duration is the sum.
+    """
     if not packaged:
         return filters
-    return replace(filters, via=None, exclude_via=None, no_overnight=None, require_overnight=None)
+    return replace(
+        filters,
+        via=None,
+        exclude_via=None,
+        no_overnight=None,
+        require_overnight=None,
+        max_duration_hours=None,
+    )
 
 
 def _packaged_eligible(

@@ -131,7 +131,7 @@ def award_offer_from_mapping(raw: Mapping[str, Any]) -> AwardOffer:
         program=program,
         points=points,
         evidence=evidence,  # type: ignore[arg-type]
-        cabin=cabin,  # type: ignore[arg-type]
+        cabin=cabin,
         taxes=float(taxes) if taxes is not None else None,
         currency=_optional_str(raw.get("currency")),
         remaining_seats=remaining,
@@ -257,6 +257,7 @@ def compare_award(
     currency: Optional[str] = None,
     balances: Sequence[PointsBalance] = (),
 ) -> AwardCompareReport:
+    quote: Optional[str]
     if cash_price is not None:
         quote = resolve_quote_currency(currency, award.origin)
     elif currency:

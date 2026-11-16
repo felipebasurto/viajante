@@ -11,7 +11,7 @@ import re
 import threading
 from collections import deque
 from copy import deepcopy
-from typing import Iterable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 from uuid import uuid4
 
 from viajante.airports import is_known_iata
@@ -38,7 +38,16 @@ _MONEY_KEYS = frozenset(
 )
 # Recommendation score maps reuse "price" as a key for a 0-1 score, not an amount.
 _SCORE_KEYS = frozenset({"breakdown", "weights"})
-_GLYPH_CURRENCY = {"€": "EUR", "£": "GBP", "₹": "INR", "₩": "KRW"}
+# ponytail: `$` is USD and `¥` is JPY. C$/A$/NT$ share the glyph and are flagged
+# unless the ISO code is written out. Upgrade: a prefix map ahead of the glyph.
+_GLYPH_CURRENCY = {
+    "$": "USD",
+    "€": "EUR",
+    "£": "GBP",
+    "¥": "JPY",
+    "₹": "INR",
+    "₩": "KRW",
+}
 _URL = re.compile(r"https?://[^\s)\]>\"'`]+")
 _ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _CODE = re.compile(r"\b[A-Z]{3}\b")
@@ -50,7 +59,7 @@ _MONEY = re.compile(
 _lock = threading.Lock()
 _ledger: deque[Mapping[str, object]] = deque(maxlen=LEDGER_SIZE)
 _selection_groups: deque[dict[str, object]] = deque(maxlen=LEDGER_SIZE)
-_selections: dict[str, object] = {}
+_selections: dict[str, Any] = {}
 
 
 def selection_records(payload: Mapping[str, object], report=None) -> dict[str, object]:
@@ -93,21 +102,59 @@ def selection_records(payload: Mapping[str, object], report=None) -> dict[str, o
     return records
 
 
-def record(payload: Mapping[str, object], *, selections=None) -> Mapping[str, object]:
+def _rebuild_selections() -> None:
+    _selections.clear()
+    for group in _selection_groups:
+        _selections.update(group)
+
+
+def record(
+    payload: Mapping[str, object],
+    *,
+    selections=None,
+    cancelled: Optional[Callable[[], None]] = None,
+) -> Mapping[str, object]:
+    """Add one payload to the ledger.
+
+    ``cancelled`` runs after the append and raises when the search was cancelled in the
+    meantime. The entry is then taken back out: a cancelled search is never evidence.
+    """
+    entry = deepcopy(payload)
+    group = selections or {}
     with _lock:
-        _ledger.append(deepcopy(payload))
-        _selection_groups.append(selections or {})
-        _selections.clear()
-        for group in _selection_groups:
-            _selections.update(group)
+        _ledger.append(entry)
+        _selection_groups.append(group)
+        _rebuild_selections()
+    if cancelled is not None:
+        try:
+            cancelled()
+        except BaseException:
+            with _lock:
+                kept = [row for row in _ledger if row is not entry]
+                _ledger.clear()
+                _ledger.extend(kept)
+                groups = [item for item in _selection_groups if item is not group]
+                _selection_groups.clear()
+                _selection_groups.extend(groups)
+                _rebuild_selections()
+            raise
     return payload
 
 
 def selected_reference(selection_id: str, kind: str):
     with _lock:
         selected = _selections.get(selection_id)
-    if selected is None or selected[0] != kind:
-        raise ValueError("unknown or evicted selection_id for this process and tool")
+    if selected is None:
+        raise ValueError(
+            f"selection_id {selection_id!r} is not known to this process: no search here returned "
+            f"it, or it fell out of the last {LEDGER_SIZE} searches. "
+            f"Run the {kind} search again and use the new selection_id."
+        )
+    if selected[0] != kind:
+        raise ValueError(
+            f"selection_id {selection_id!r} belongs to a {selected[0]} result; "
+            f"this tool needs a {kind} selection_id."
+        )
     return selected[1:]
 
 

@@ -104,8 +104,8 @@ def _journeys(offer: Mapping[str, Any]) -> tuple[tuple[_Segment, ...], ...]:
                         airline=_text(row.get("airline")),
                         clock=normalize_clock(_text(row.get("departure"))),
                         day=_text(row.get("departure_date")),
-                        origin=_text(row.get("origin")),
-                        destination=_text(row.get("destination")),
+                        origin=(_text(row.get("origin")) or "").upper() or None,
+                        destination=(_text(row.get("destination")) or "").upper() or None,
                     )
                     for row in (_mapping(r, role="offer.legs[].segments[]") for r in rows)
                 )
@@ -200,13 +200,16 @@ def _closeness(old: tuple, new: tuple) -> Optional[tuple[int, int]]:
 
 
 def _path(segments: tuple[_Segment, ...]) -> Optional[list[str]]:
-    if not all(s.origin and s.destination for s in segments):
+    places = [segments[0].origin, *(s.destination for s in segments)]
+    owned = [place for place in places if place]
+    if not all(s.origin and s.destination for s in segments) or len(owned) != len(places):
         return None
-    return [segments[0].origin, *(s.destination for s in segments)]  # type: ignore[misc,list-item]
+    return owned
 
 
 def _numbers(segments: tuple[_Segment, ...]) -> Optional[list[str]]:
-    return [s.flight_number for s in segments] if all(s.flight_number for s in segments) else None  # type: ignore[misc]
+    numbers = [s.flight_number for s in segments if s.flight_number]
+    return numbers if len(numbers) == len(segments) else None
 
 
 def _differences(
@@ -294,11 +297,11 @@ def _trip_from_query(query: Mapping[str, Any]) -> Trip:
         rows = query.get("legs")
         if not isinstance(rows, Sequence) or isinstance(rows, str):
             raise ValueError("query.legs is required for a multi-city offer")
-        legs = []
+        built: list[FlightLeg] = []
         for index, raw in enumerate(rows):
             role = f"query.legs[{index}]"
             row = _mapping(raw, role=role)
-            legs.append(
+            built.append(
                 FlightLeg(
                     _place(row, "origin", role),
                     _place(row, "destination", role),
@@ -306,8 +309,7 @@ def _trip_from_query(query: Mapping[str, Any]) -> Trip:
                     row.get("max_stops", stops),
                 )
             )
-        legs = tuple(legs)
-        return MultiCity(legs=legs, **shop)
+        return MultiCity(legs=tuple(built), **shop)
     head = {
         "origin": _place(query, "origin", "query"),
         "destination": _place(query, "destination", "query"),
@@ -709,7 +711,7 @@ def recheck_offer(
         reason = "rate_limited" if error.rate_limited else error.code.value
         return _check_failed(out, reason, dict(error.to_dict()))
 
-    fresh = [item.to_dict(report.currency) for item in result.offers]
+    fresh: list[Mapping[str, Any]] = [item.to_dict(report.currency) for item in result.offers]
     complete = []
     for item in fresh:
         if len(item["legs"]) != len(old):
@@ -768,24 +770,24 @@ def recheck_offer(
         out["filter_violations"] = _violations(found, journeys, trip, prep.price_cap)
         return _found(out, found, report.currency, price, "identical")
 
-    missing = len(fresh) - len(complete)
-    if missing:
+    incomplete = len(fresh) - len(complete)
+    if incomplete:
         return _check_failed(
             out,
             "incomplete_offers",
             {
                 "code": "incomplete_offers",
                 "message": (
-                    f"{missing} fresh offer(s) came back without complete journey or segment "
+                    f"{incomplete} fresh offer(s) came back without complete journey or segment "
                     "identity, so the original itinerary cannot be ruled out."
                 ),
             },
         )
 
-    close = [(score, d, j) for d, j in complete if (score := _closeness(old, j)) is not None]
+    scored = [(score, d, j) for d, j in complete if (score := _closeness(old, j)) is not None]
     close = [
         (score, d, j, differences)
-        for score, d, j in close
+        for score, d, j in scored
         if (differences := _differences(old, j, prep.reference["legs"], d["legs"]))
     ]
     if close:

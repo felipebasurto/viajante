@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import inspect
 import json
 import random
@@ -10,7 +11,6 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.flights import _run_search
 from viajante.google_flights import SweepHttpResponse
 from viajante.google_flights_page import price_insight_from_page
@@ -157,7 +157,7 @@ class PriceInsightDecodeTests(unittest.TestCase):
         )
         self.assertEqual(
             price_insight_from_page(None, _data(_slot(2)), currency="EUR"),  # type: ignore[arg-type]
-            (None, None),
+            (None, "markup_drift"),
         )
 
     def test_bad_amounts_drop_the_figure_and_a_bad_history_drops_the_series(self) -> None:

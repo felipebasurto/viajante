@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import unittest
 from datetime import date, datetime, timezone
 
-import _isolate  # noqa: F401
 from _json_contract import assert_json_serialisable, assert_no_forbidden_keys
 from viajante.models import (
     ExploreDestination,

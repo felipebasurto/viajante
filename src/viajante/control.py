@@ -42,13 +42,15 @@ class SearchDeadline(Exception):
         super().__init__(message)
 
 
-def validate_deadline_seconds(value: Optional[float]) -> Optional[float]:
+def validate_deadline_seconds(value: object) -> Optional[float]:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("deadline_seconds must be a number")
+        raise ValueError(f"deadline_seconds must be a number, got {value!r}")
     if not math.isfinite(value) or value <= 0:
-        raise ValueError("deadline_seconds must be a positive, finite number of seconds")
+        raise ValueError(
+            f"deadline_seconds must be a positive, finite number of seconds, got {value!r}"
+        )
     return float(value)
 
 
@@ -179,8 +181,11 @@ def bounded_ms(milliseconds: int) -> int:
     control.checkpoint()
     if control.deadline_at is None:
         return milliseconds
-    left = int((control.deadline_at - control.clock()) * 1000)
-    return max(1, min(milliseconds, left))
+    left = (control.deadline_at - control.clock()) * 1000
+    if left < 1:
+        control.mark_cut()
+        raise SearchDeadline()
+    return min(milliseconds, int(left))
 
 
 def check_cancelled() -> None:

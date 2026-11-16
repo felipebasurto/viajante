@@ -1,13 +1,13 @@
 {
   "name": "@viajante/mcp",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "mcpName": "io.github.felipebasurto/viajante",
   "description": "npx front door for viajante (Python flight and hotel search). Runs uvx against PyPI.",
   "license": "MIT",
   "bin": {
-    "mcp": "bin/cli.js",
-    "viajante": "bin/cli.js",
-    "viajante-mcp": "bin/cli.js"
+    "mcp": "bin/mcp.js",
+    "viajante": "bin/viajante.js",
+    "viajante-mcp": "bin/mcp.js"
   },
   "files": [
     "bin",

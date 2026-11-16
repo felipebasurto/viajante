@@ -67,7 +67,7 @@ def parse_airline_codes(text: Optional[str]) -> Optional[Tuple[str, ...]]:
         return None
     codes = tuple(part.strip().upper() for part in text.split(",") if part.strip())
     if not codes:
-        raise ValueError("airline list must not be empty")
+        raise ValueError(f"airline list {text!r} names no code; give IATA codes such as LH,UA")
     for code in codes:
         if not (2 <= len(code) <= 3 and code.isalnum()):
             raise ValueError(f"invalid airline code: {code!r}")
@@ -87,7 +87,9 @@ def parse_alliances(text: Optional[str]) -> Optional[Tuple[str, ...]]:
             raise ValueError(f"invalid alliance: {part.strip()!r}")
         names.append(canonical)
     if not names:
-        raise ValueError("alliance list must not be empty")
+        raise ValueError(
+            f"alliance list {text!r} names no alliance; give oneworld, skyteam or star"
+        )
     return _unique(names)
 
 

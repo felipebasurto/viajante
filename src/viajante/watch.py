@@ -180,10 +180,10 @@ def watch_price_tool(
     validate_deadline_seconds(spec["params"].get("deadline_seconds"))
     with active(current_control() or SearchControl()), forced_recording() as written:
         # Remove only the replay wrapper; preparation and the search lock still run.
-        payload = _TOOLS[spec["kind"]].__wrapped__(**spec["params"])
+        payload = _TOOLS[spec["kind"]].__wrapped__(**spec["params"])  # type: ignore[attr-defined]
     read_error: Optional[str] = None
     try:
-        stored = read_observations(strict=True)
+        stored = read_observations()
     except UnreadableStateError as exc:
         stored, read_error = [], short_reason(exc)
     insights = _flight_insights(payload) if spec["kind"] == "flight" else {}

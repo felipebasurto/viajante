@@ -244,9 +244,10 @@ def _selected_flight_data(segment: RawSegment) -> bytes:
     number = identity[len(carrier) :]
     if not number:
         raise ValueError("selected outbound segment lacks a bare flight number")
+    assert segment.departure_date is not None  # validated by caller
     return (
         _string(1, segment.origin or "")
-        + _string(2, segment.departure_date.isoformat())  # validated by caller
+        + _string(2, segment.departure_date.isoformat())
         + _string(3, segment.destination or "")
         + _string(5, carrier)
         + _string(6, number)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from statistics import median
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from viajante.models import (
     FlightOffer,
@@ -31,7 +31,7 @@ def typical_from_daily_prices(
     return float(median(owned))
 
 
-def _typical_fields(price: float, typical: Optional[float]) -> Optional[dict[str, object]]:
+def _typical_fields(price: float, typical: Optional[float]) -> Optional[dict[str, Any]]:
     label = vs_typical(price, typical)
     pct = vs_typical_pct(price, typical)
     if typical is None or label is None or pct is None:

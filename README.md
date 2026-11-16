@@ -65,6 +65,15 @@ Without Node, use `"command": "uvx"` with
 Flights and Hotels with no Chromium. The npm entry also includes the browser
 extra, which `search_explore` needs.
 
+One-step installs:
+
+- **Claude Desktop:** download `viajante.mcpb` from the
+  [latest release](https://github.com/felipebasurto/viajante/releases/latest) and open it.
+- **Claude Code:** `/plugin marketplace add felipebasurto/viajante`, then
+  `/plugin install viajante@viajante`.
+- **Codex, Gemini CLI, Cursor, VS Code, Zed, Goose, OpenCode, or a container:** the snippet for
+  each is in [docs/clients.md](https://github.com/felipebasurto/viajante/blob/main/docs/clients.md).
+
 Then ask in plain language:
 
 > Find a seven-night round trip from BOS to LHR, departing any day in

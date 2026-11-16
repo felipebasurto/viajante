@@ -1,8 +1,9 @@
 """Stdio MCP smoke: starts viajante-mcp, checks the result envelope end to end.
 
 Run it in an environment that has viajante and an `mcp` SDK installed. CI runs it
-on the minimum supported SDK. Offline: calls only a local tool. Exits 1 with the
-failed check on stderr.
+on the minimum supported SDK. Give a command after the script name to smoke another
+launcher: `mcp-smoke.py docker run -i --rm viajante`. Offline: calls only a local tool.
+Exits 1 with the failed check on stderr.
 """
 
 import asyncio
@@ -19,6 +20,7 @@ ENVELOPE = {
     "completeness",
     "empty_reason",
     "empty_note",
+    "completeness_note",
     "error_code",
     "retry_after",
     "retry_after_seconds",
@@ -32,6 +34,13 @@ def server_command() -> str:
     return str(beside) if beside.exists() else shutil.which("viajante-mcp") or str(beside)
 
 
+def server_parameters() -> StdioServerParameters:
+    """The installed viajante-mcp, or the command given on the line (a container, say)."""
+    if sys.argv[1:]:
+        return StdioServerParameters(command=sys.argv[1], args=sys.argv[2:])
+    return StdioServerParameters(command=server_command())
+
+
 def check(condition: bool, message: str) -> None:
     if not condition:
         print(f"mcp smoke failed: {message}", file=sys.stderr)
@@ -39,7 +48,7 @@ def check(condition: bool, message: str) -> None:
 
 
 async def main() -> None:
-    async with stdio_client(StdioServerParameters(command=server_command())) as (read, write):
+    async with stdio_client(server_parameters()) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = (await session.list_tools()).tools

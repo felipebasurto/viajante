@@ -34,10 +34,17 @@ from typing import (
 )
 
 from viajante.control import SearchControl, active
-from viajante.envelope import COMPLETENESS, OBSERVED_BASES, STATUSES, stamp_local
+from viajante.envelope import (
+    COMPLETENESS,
+    OBSERVED_BASES,
+    STATUSES,
+    EnvelopeShapeError,
+    stamp_local,
+)
 from viajante.mcp_errors import (
     SEARCH_IN_PROGRESS_MESSAGE,
     SearchInProgress,
+    error_body,
     structured_error,
     unknown_arguments_body,
     validation_body,
@@ -64,6 +71,7 @@ from viajante.mcp_handlers import (
     verify_answer_tool,
 )
 from viajante.models import EmptyReason
+from viajante.orchestration import classify_failure as classify_provider_failure
 from viajante.runtime import get_runtime_info as runtime_info
 from viajante.runtime import package_version
 from viajante.watch import price_history_tool, watch_price_tool
@@ -97,7 +105,7 @@ usage: viajante-mcp [--transport {{stdio,streamable-http}}] [--host HOST] [--por
   --port        streamable-http port (default {_DEFAULT_PORT}); the endpoint is /mcp
 
 Install:  npx -y @viajante/mcp   (no Node: uvx --from 'viajante[mcp]' viajante-mcp)
-Checkout: uv sync --extra mcp && viajante-mcp
+Checkout: uv sync --extra mcp && uv run viajante-mcp
 
 Tools: search_flights, get_hotel_details, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, search_split_tickets, lookup_airports,
@@ -286,9 +294,11 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     """
     if "deadline_seconds" in kwargs and kwargs["deadline_seconds"] is None:
         kwargs["deadline_seconds"] = _ENV_DEADLINE
+    # Tools that take deadline_seconds pass it through; the env must not cap that value.
+    inherited = None if "deadline_seconds" in kwargs else _ENV_DEADLINE
     loop = asyncio.get_running_loop()
     relay = _progress_relay(loop)
-    control = SearchControl(progress=relay)
+    control = SearchControl(progress=relay, deadline_seconds=inherited)
     finished = threading.Event()
     if not _SEARCH_BUSY.acquire(blocking=False):
         holder = _CURRENT[0] if _CURRENT else None
@@ -370,17 +380,29 @@ def _unlabelled(node: Any) -> Any:
 
 
 def _tool_error_text(name: str, exc: Exception) -> str:
-    """The text a failed tool call returns: the original error, never the SDK's wrapper."""
+    """The text a failed tool call returns: a JSON error body, never a raw exception."""
     cause = exc.__cause__ or exc
+    prefix = _TOOL_ERROR_PREFIX.format(name=name)
     if isinstance(cause, ValueError) and callable(getattr(cause, "errors", None)):
-        body = validation_body(
-            cause.errors(include_url=False, include_context=False, include_input=False)
+        return prefix + validation_body(
+            cause.errors(  # type: ignore[attr-defined]  # pydantic's ValidationError
+                include_url=False, include_context=False, include_input=False
+            )
         )
-        return _TOOL_ERROR_PREFIX.format(name=name) + body
     text = str(cause)
-    if text.startswith('{"error"'):
-        return _TOOL_ERROR_PREFIX.format(name=name) + text
-    return text
+    if text.startswith(prefix) or text.startswith('{"error"'):
+        return text if text.startswith(prefix) else prefix + text
+    if isinstance(cause, EnvelopeShapeError):
+        return prefix + json.dumps(error_body("internal", text))
+    if isinstance(cause, ValueError):
+        return prefix + json.dumps(error_body("invalid_parameter", text))
+    failure = classify_provider_failure(cause)
+    message = failure.message
+    if message.startswith(type(cause).__name__):
+        message = (
+            "This search failed before a result came back. Wait a minute and retry this one search."
+        )
+    return prefix + json.dumps(error_body("internal", message))
 
 
 def _error_result(text: str) -> Any:
@@ -416,9 +438,9 @@ def _wire_type(hint: Any) -> Any:
     if origin is Union:
         return Union[tuple(_wire_type(arg) for arg in args)]
     if origin in (abc.Sequence, list):
-        return list[_wire_type(args[0])]
+        return list[_wire_type(args[0])]  # type: ignore[misc]  # built at runtime from a hint
     if origin in (abc.Mapping, dict):
-        return dict[_wire_type(args[0]), _wire_type(args[1])]
+        return dict[_wire_type(args[0]), _wire_type(args[1])]  # type: ignore[misc]
     return hint
 
 
@@ -470,6 +492,7 @@ def build_server():
         completeness: Literal[COMPLETENESS]
         empty_reason: Optional[EmptyReason]
         empty_note: Optional[str]
+        completeness_note: Optional[str]
         error_code: Optional[str]
         retry_after: Optional[str]
         retry_after_seconds: Optional[int]
@@ -561,7 +584,7 @@ def build_server():
         # it never deletes: destructiveHint stays False.
         register = server.tool(
             title=title,
-            annotations=ToolAnnotations(
+            annotations=ToolAnnotations(  # type: ignore[call-arg]  # the wire names are aliases
                 readOnlyHint=not writes,
                 destructiveHint=False,
                 idempotentHint=not writes,
@@ -639,8 +662,10 @@ def build_server():
         ORIGIN-DEST:YYYY-MM-DD. Use search_dates for the cheapest week and search_flex for
         +/-N days. fetch=detail needs the browser extra and Chromium. Currency is currency, or
         inferred from a named origin's owned country; if unproven, ask. Viajante does not
-        convert. Do not invent a bag fee. max_stops is 0, 1 or 2. Metro codes (LON, NYC)
-        expand on one-way and rt routes. One-way searches send clock bounds, max_duration,
+        convert. Do not invent a bag fee. Cabin bags are carry_on (a total for the whole
+        party); checked bags is refused. max_stops is 0, 1 or 2. Metro codes (LON, NYC)
+        expand on one-way and rt routes and the result names how many Google requests that is.
+        One-way searches send clock bounds, max_duration,
         max_layover, price_cap, less_emissions and hide_separate_tickets to the page, and check
         each one locally. exclude_basic_economy is refused. nearby_days (default 0, off)
         adds a ±N cheapest-fare grid on that search; round trips shift both dates and
@@ -680,9 +705,11 @@ def build_server():
     def search_dates():
         """Cheapest-per-day calendar for one named route, up to 31 days. route is ORIGIN-DEST;
         start and end are ISO dates. Use search_flex for +/-N around one date. This calendar
-        is HTTP only and has no fetch mode. If it returns blocked, stop: do not switch to a
-        browser or follow with search_flex or search_flights. Currency and country as in
-        search_flights. Viajante does not convert.
+        is HTTP only and has no fetch mode. If status is blocked, or any day failed because
+        Google paused the request, stop: do not switch to a browser or follow with search_flex
+        or search_flights. A city code such as LON is not a calendar origin; name one airport.
+        Cabin bags are carry_on, not bags. Currency and country as in search_flights.
+        Viajante does not convert.
         """
 
     @tool("Flexible-date flight search", search_flex_tool, network=True)
@@ -691,7 +718,8 @@ def build_server():
         day. route is ORIGIN-DEST; around is an ISO date. Use search_dates for a cheapest-week
         calendar; do not brute-force a date matrix. Currency and country as in search_flights.
         A markup_drift day is not no_results: do not invent a cheapest week.
-        A named-date search_flights is allowed.
+        If a day is blocked or Google paused the request, stop; do not follow with more searches.
+        A named-date search_flights is allowed. Cabin bags are carry_on, not bags.
         """
 
     @tool("Explore destinations", search_explore_tool, network=True)
@@ -730,7 +758,9 @@ def build_server():
         """Room rates for one Skiplagged hotel, for 1-3 finalists. Name it by hotel_id (the
         provider_id of a skiplagged search_hotels offer) or by hotel_name plus city. A name
         must match exactly (case, accents and punctuation ignored); no match or several
-        matches is no_results, never a guess. Use the name form for a Google finalist: a
+        matches is no_results, never a guess. city is City or City, qualifier: an ISO
+        country (UK is GB) or an English country or region (Paris, FR; Paris, France;
+        Paris, Texas). Use the name form for a Google finalist: a
         Google hostel price can be a dorm bed, and these rates say what the room is. Rates are
         USD, not converted, in provider order. total_price is the whole stay for the party and
         rooms searched. occupancy_limit is per room type and is not proof that a party fits
@@ -765,7 +795,12 @@ def build_server():
         """
 
     @tool("Look up airports", lookup_airports_tool, network=False, envelope=False)
-    def lookup_airports(): ...
+    def lookup_airports():
+        """Offline. query is a city name or an IATA code (JFK, LHR, NRT, GRU, SIN).
+        A three-letter code returns that airport, or every airport in a metro code.
+        limit caps the rows (default 20). The result is a list, not the search envelope.
+        It may run while a search is in progress.
+        """
 
     @tool("Search hidden-city fares", search_hidden_city_tool, network=True)
     def search_hidden_city():
@@ -920,7 +955,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit(f"viajante-mcp: {exc}") from exc
     except ImportError as exc:
         raise SystemExit(
-            "viajante-mcp requires the mcp extra. Install with: uv sync --extra mcp"
+            "viajante-mcp requires the mcp extra. "
+            "Install with: uv sync --extra mcp. "
+            "Or, with no checkout: uvx --from 'viajante[mcp]' viajante-mcp"
         ) from exc
     server.run(transport=parsed.transport, **_run_options(http=http, host=host, port=port))
 

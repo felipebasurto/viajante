@@ -9,6 +9,133 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.5.7] - 2026-11-16
+
+### Fixed
+
+- Failures and partial results say what happened and what to do next. A calendar
+  with days that did not load is no longer a plain `ok`: it carries
+  `completeness_note`, and the CLI marks those days `!` and prints the sentence
+  above the summary. `empty_note` includes a next step, and the CLI prints that
+  sentence instead of the raw code.
+- The first Google pause says to wait 15-30 minutes and not to add airports.
+  The provider code stays in diagnostics. The burst counter is saved beside the
+  cooldown file, so separate CLI runs add up. The shared cooldown is still
+  recorded on the third pause, as before.
+- A city code such as LON on `search_flights` or `search_trip` names the airports
+  and how many Google requests that is. On `search_dates` and `search_flex` it
+  names the airports and asks for one. Currency inferred from a city code uses
+  that city's country.
+- Checked bags are refused in plain language. `--carry-on N` sets the cabin-bag
+  total; bare `--carry-on` still means 1.
+- Timeouts, rejected queries, and unreadable pages say what to do next.
+  Unexpected MCP errors use the `{"error": {"code", "message"}}` body. The CLI
+  prints one line for an unexpected error, and a traceback only with `--debug`
+  or `VIAJANTE_DEBUG=1`.
+- A burst of public-page status-13 error frames, or Explore catalog bodies with no
+  `wrb.fr` payload, records the shared Google cooldown after 3 such signals inside
+  2 minutes. The cooldown is the same 2-minute guess as a bare 429 (`heuristic_rpc_13`),
+  with no `Retry-After` header. The call stops unsent calendar cells, expanded-airport
+  queries and later date-window work, and the result carries `retry_after`, including
+  a partial calendar. Later searches fail fast on that cooldown instead of calling
+  Google again. The message says Google Flights is likely blocking this shared IP
+  because viajante is running in a cloud-hosted agent or sandbox, names how long to
+  wait, and says it works much better on your own computer: the ChatGPT or Claude
+  desktop app with the viajante MCP (`npx -y @viajante/mcp`), or `pip install viajante`.
+  One error frame stays a blocked cell with an unknown cause. A data-less
+  RPC status 13 still records the cooldown on the first response and uses the same message.
+- `search_trip` keeps `trip_total` when one airport of a nearby or metro group is
+  unpriced but a sibling is priced. `recheck_offer` uppercases IATA codes, so
+  `jfk` is no longer reported as a missing offer.
+- A layover city label no longer proves a different airport ("London" proved LHR
+  when the segments were LGW). A round-trip duration cap applies per leg, not to
+  the summed duration. Rank dedupe keeps itineraries that differ by layover city
+  or flight numbers.
+- `validate_itinerary`: a round trip ends at its origin, a missing arrival time
+  no longer hides a later overlap, NaN and infinity fail numeric bounds,
+  `depart_after` and `arrive_before` apply to the trip's first and last segment,
+  and an empty selection is unknown rather than a pass.
+- A search with origins in different currencies and no `currency` is an input
+  error instead of being shopped in the first origin's currency. Flight results
+  with no rows carry `empty_reason` (`provider_empty` or `filtered_out`).
+- Airport lookup ignores accents (Krakow finds Kraków). "Saint Louis" returns
+  both Missouri and Senegal and proves neither.
+- Skiplagged hotels: an English country name matches its ISO code, a homonym
+  slug (`paris-texas`) is not accepted for `Paris, FR`, accented and aliased
+  city names resolve, and a named state separates same-country homonyms. A
+  hidden-city leg with no attributes stays unknown.
+- The CLI prints `empty_reason`, `scope_bound`, `page_errors` and
+  `price_insight_error`, so a bounded or partial result no longer looks complete.
+  Duration, departure and arrival sorts no longer print a summed `Best pair`.
+- `nearby_dates` failures and empty days reach the envelope. `verify_answer`
+  no longer accepts `$` and `¥` amounts in any currency.
+- A deadline during a detail probe or an Explore navigation is `deadline`, not
+  `markup_drift` or `fetch_failed`. A rate limit on the first split-ticket leg
+  stops the second search; split legs keep `less_emissions` and
+  `hide_separate_tickets`.
+- A round-trip package no longer shows one leg's flight numbers as the whole
+  package. Shopping card flight numbers cover every journey segment.
+- The Windows npm `viajante` bin runs the CLI, not the MCP server.
+- A deadline that lands inside a batched one-way fetch is final: every query is
+  `deadline` and nothing is resent. It used to fall into the per-query loop.
+- `search_split_tickets` takes `deadline_seconds`, like the other long searches.
+- The price-history reader treats only a missing log as empty. An unreadable log
+  is an error everywhere, not just in append and `--clear`. `history --limit`
+  below 1 is an input error instead of printing the whole series, and a failed
+  `--clear` no longer prints a filesystem path.
+- When every matched Skiplagged hotel is priced in a currency other than USD, the
+  result is `currency_mismatch`, not `markup_drift`.
+- A cancel that lands after a result reached the evidence ledger removes it again.
+- An HTTP-date `Retry-After` sets the cooldown instead of being ignored. A price
+  insight that fails to decode is `markup_drift`, not "no insight".
+
+### Changed
+
+- The landing page asks Web or Desktop app before copying the Claude or ChatGPT
+  install message.
+
+### MCP clients
+
+- Claude Desktop extension: `mcpb/` is a uv bundle that installs the pinned PyPI release,
+  built after PyPI by the publish workflow and attached to the GitHub release as
+  `viajante.mcpb`. CI validates and packs it with the official MCPB CLI.
+- Claude Code plugin and marketplace (`/plugin marketplace add felipebasurto/viajante`):
+  the MCP server and the skill in one install. Validated with `claude plugin validate`.
+- `docs/clients.md`: install snippets for Codex, Gemini CLI, VS Code, Zed, Goose and
+  OpenCode, each checked against the client's own docs, and the landing picker gets a
+  "terminal or editor" choice with the same commands.
+- `Dockerfile` for container-based clients and the Docker MCP Catalog. CI builds it and
+  runs the stdio smoke against the image.
+- `docs/composition.md`: recipes for pairing with calendar, spreadsheet and currency servers.
+  Nothing new is built into viajante for them.
+- `scripts/check-release.py` also pins the extension and the plugin to the tag.
+
+### Errors
+
+- A public Google page that fails as `markup_drift`, `rejected` or `no_results` now
+  carries `diagnostics` (endpoint host and path, HTTP status, `request_sent`,
+  `attempts`), and its message names the route and dates it was for. The endpoint
+  never includes query parameters.
+- Input errors repeat the value they refused: depart windows and clocks, airline and
+  alliance lists (with an example), date windows (both dates), `--near`, `--flex`,
+  `--days`, `nights`, `nearby_days`, `deadline_seconds`, and returns before departure.
+- `selection_id` errors say whether the id is unknown (never returned or pushed out of
+  the last 20 searches) or belongs to another kind of result, and what to run again.
+- Booking page failures name the page (host and path, no query string) and how many
+  cards were seen, and say availability is unknown.
+
+### Tooling
+
+- The offline suite freezes `date.today()` at 2026-11-01 (`tests/_isolate.py`), so
+  fixtures with fixed dates stop rotting as the calendar moves.
+- Publishing is gated: `scripts/check-release.py` checks that the tag matches
+  `pyproject.toml`, `uv.lock`, the npm package, `server.json` and the hermes pins,
+  and the `verify` job must pass before `build`, PyPI, npm and the MCP registry.
+- GitHub Actions are pinned by commit SHA, `mcp-publisher` is pinned and checked
+  against a sha256, and Dependabot keeps both current.
+- `mypy` runs in CI over the whole package (the package ships `py.typed`).
+- Removed the stray `MAD-BCN.json` from the repo root.
+
 ## [1.5.6] - 2026-11-08
 
 ### Fixed
@@ -568,7 +695,9 @@ history up to commit 6ee0fb7.
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.5...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.7...develop
+[1.5.7]: https://github.com/felipebasurto/viajante/compare/v1.5.6...v1.5.7
+[1.5.6]: https://github.com/felipebasurto/viajante/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/felipebasurto/viajante/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/felipebasurto/viajante/compare/v1.5.3...v1.5.4
 [1.5.3]: https://github.com/felipebasurto/viajante/compare/v1.5.2...v1.5.3

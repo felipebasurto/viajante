@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import importlib.util
 import json
 import sys
 import unittest
-
-import _isolate  # noqa: F401
 
 BOOTSTRAP = """
 from datetime import date, datetime, timezone
@@ -314,7 +313,8 @@ class StdioFinalistTests(unittest.TestCase):
                         "get_hotel_details", {"selection_id": "sel_missing"}
                     )
                     self.assertTrue(missing.is_error)
-                    self.assertIn("unknown or evicted", missing.content[0].text)
+                    self.assertIn("not known to this process", missing.content[0].text)
+                    self.assertIn("sel_missing", missing.content[0].text)
                     metro = await session.call_tool(
                         "search_flights",
                         {"routes": ["LON-CDG:2099-07-01"], "fetch": "sweep", "top": 1},

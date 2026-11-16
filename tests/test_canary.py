@@ -1,9 +1,8 @@
+import _isolate  # noqa: F401
 import importlib.util
 import unittest
 from datetime import date
 from pathlib import Path
-
-import _isolate  # noqa: F401
 
 _SPEC = importlib.util.spec_from_file_location(
     "canary", Path(__file__).resolve().parent.parent / "scripts" / "canary.py"

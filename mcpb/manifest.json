@@ -1,0 +1,145 @@
+{
+  "manifest_version": "0.4",
+  "name": "viajante",
+  "display_name": "Viajante",
+  "version": "1.5.7",
+  "description": "Flight and hotel search from your own machine: Google Flights, Google Hotels and Booking evidence. No API keys.",
+  "long_description": "Viajante returns provider evidence for flights and hotels: fares, dates, stops, clocks, hotel stays and re-checks of a finalist. It reads the public pages from this computer, so it needs no account or API key. Every result carries a status, so an empty or unfinished search is never reported as \"no flights\". Viajante does not convert currencies and does not recommend; the assistant weighs the evidence.",
+  "author": {
+    "name": "Felipe Basurto",
+    "url": "https://felipebasurto.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/felipebasurto/viajante.git"
+  },
+  "homepage": "https://viajante.felipebasurto.com",
+  "documentation": "https://github.com/felipebasurto/viajante/blob/main/docs/usage.md",
+  "support": "https://github.com/felipebasurto/viajante/issues",
+  "license": "MIT",
+  "keywords": [
+    "travel",
+    "flights",
+    "hotels",
+    "mcp"
+  ],
+  "server": {
+    "type": "uv",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "server/main.py"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "search_flights",
+      "description": "Search flights"
+    },
+    {
+      "name": "search_dates",
+      "description": "Cheapest-dates calendar"
+    },
+    {
+      "name": "search_flex",
+      "description": "Flexible-date flight search"
+    },
+    {
+      "name": "search_trip",
+      "description": "Search flights and hotel"
+    },
+    {
+      "name": "search_explore",
+      "description": "Explore destinations"
+    },
+    {
+      "name": "lookup_airports",
+      "description": "Look up airports"
+    },
+    {
+      "name": "search_hotels",
+      "description": "Search hotels"
+    },
+    {
+      "name": "search_hotel_rooms",
+      "description": "Hotel room rates"
+    },
+    {
+      "name": "get_hotel_details",
+      "description": "Hotel finalist details"
+    },
+    {
+      "name": "search_split_tickets",
+      "description": "Split-ticket itineraries"
+    },
+    {
+      "name": "search_hidden_city",
+      "description": "Search hidden-city fares"
+    },
+    {
+      "name": "compare_awards",
+      "description": "Compare award to cash"
+    },
+    {
+      "name": "lookup_transfers",
+      "description": "Look up point transfers"
+    },
+    {
+      "name": "validate_itinerary",
+      "description": "Validate itinerary"
+    },
+    {
+      "name": "recheck_offer",
+      "description": "Re-check offer"
+    },
+    {
+      "name": "plan_stay_blocks",
+      "description": "Plan stay blocks"
+    },
+    {
+      "name": "split_stay_costs",
+      "description": "Split stay costs"
+    },
+    {
+      "name": "verify_answer",
+      "description": "Verify draft answer"
+    },
+    {
+      "name": "price_history",
+      "description": "Price history"
+    },
+    {
+      "name": "watch_price",
+      "description": "Watch a price"
+    },
+    {
+      "name": "get_runtime_info",
+      "description": "Runtime info"
+    },
+    {
+      "name": "get_guide",
+      "description": "Operational guide"
+    }
+  ],
+  "tools_generated": false,
+  "privacy_policies": [
+    "https://policies.google.com/privacy",
+    "https://www.booking.com/content/privacy.html",
+    "https://skiplagged.com/privacy"
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  }
+}

@@ -15,6 +15,7 @@ from viajante.history import (
     MAX_ENTRIES,
     clear_history,
     price_history,
+    short_reason,
 )
 from viajante.storage import write_json_atomic
 from viajante.watch import list_watches, remove_watch, watch_price_tool
@@ -46,7 +47,8 @@ or the 5-minute cache means a run records nothing.
 
 
 def _amount(amount: float, *, signed: bool = False) -> str:
-    digits = max(2, -Decimal(str(amount)).as_tuple().exponent)
+    exponent = Decimal(str(amount)).as_tuple().exponent
+    digits = max(2, -exponent if isinstance(exponent, int) else 0)
     return format(amount, f"{'+' if signed else ''},.{digits}f")
 
 
@@ -125,7 +127,7 @@ def run_history(args: argparse.Namespace) -> int:
         try:
             valid, unreadable = clear_history()
         except OSError as exc:
-            print(f"error: could not clear the price history: {exc}", file=sys.stderr)
+            print(f"error: could not clear the price history: {short_reason(exc)}", file=sys.stderr)
             return 1
         noun = "observation" if valid == 1 else "observations"
         extra = ""

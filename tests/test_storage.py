@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import json
 import os
 import tempfile
@@ -8,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.models import SearchReport
 from viajante.storage import (
     default_state_dir,

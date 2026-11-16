@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import re
 import sys
-from typing import Optional, Sequence, Tuple
+from typing import Iterable, Optional, Sequence, Tuple
 
 from viajante.airports import lookup_airports
 from viajante.dates import (
+    calendar_gap_line,
     format_sparkline,
     format_summary_line,
     format_week_calendar,
 )
+from viajante.envelope import EMPTY_NOTES
 from viajante.flight_offers import FlightSort, _effective_cost
 from viajante.google_flights import google_flights_url
 from viajante.models import (
@@ -21,6 +23,7 @@ from viajante.models import (
     ExploreReport,
     FlexSearchReport,
     FlightOffer,
+    FlightQuery,
     HiddenCityReport,
     HotelOffer,
     HotelQuery,
@@ -210,6 +213,8 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
         if not (
             isinstance(outbound, QuerySuccess)
             and isinstance(inbound, QuerySuccess)
+            and isinstance(outbound.query, FlightQuery)
+            and isinstance(inbound.query, FlightQuery)
             and outbound.query.origin == inbound.query.destination
             and outbound.query.destination == inbound.query.origin
             and outbound.offers
@@ -223,10 +228,13 @@ def _print_best_pairs(report, sort: FlightSort) -> None:
             out_value = _effective_cost(out_offer)
             back_value = _effective_cost(back_offer)
             unit = "ranked"
-        else:
+        elif sort in ("fare", "price"):
             out_value = out_offer.price
             back_value = back_offer.price
             unit = "fare"
+        else:
+            index += 2
+            continue
         currency = report.currency
         print(
             f"\nBest pair ({unit}): "
@@ -349,7 +357,8 @@ def _print_nearby_dates(grid: NearbyDates, currency: str) -> None:
             print(f"    {when}  {offset}  ERROR: {cell.error.message}")
             continue
         if cell.price is None:
-            reason = f"  {cell.empty_reason}" if cell.empty_reason else ""
+            note = EMPTY_NOTES.get(cell.empty_reason or "")
+            reason = f"  {note}" if note else ""
             print(f"    {when}  {offset}  —{reason}")
             continue
         delta = "0" if cell.delta == 0 else f"{cell.delta:+.0f}"
@@ -360,6 +369,35 @@ def _print_nearby_dates(grid: NearbyDates, currency: str) -> None:
 def _print_google_flights_url(url: Optional[str], *, indent: str = "    ") -> None:
     if url:
         print(f"{indent}{url}")
+
+
+def _print_page_errors(errors, *, indent: str = "  ") -> None:
+    for error in errors:
+        extra = ""
+        diagnostics = error.diagnostics or {}
+        bits = [f"{key} {diagnostics[key]}" for key in ("seen", "parsed") if key in diagnostics]
+        if bits:
+            extra = f" ({', '.join(bits)})"
+        print(f"{indent}{error.code.value}: {error.message}{extra}")
+
+
+def _print_flight_limits(result: QuerySuccess) -> None:
+    if result.empty_reason:
+        print(f"  empty_reason: {result.empty_reason}")
+    if result.scope_bound:
+        if isinstance(result.query, MultiCity):
+            limit = max(2, 8 // (len(result.query.legs) - 1))
+            print(f"  scope_bound: multi_city_leader_limit {limit}")
+        else:
+            print("  scope_bound: public_page_outbound_limit 8")
+    if result.price_insight_error:
+        print(f"  price_insight_error: {result.price_insight_error}")
+    _print_page_errors(result.page_errors)
+
+
+def _print_day_scope(days) -> None:
+    if any(row.scope_bound for row in days):
+        print("  scope_bound: public_page_outbound_limit 8")
 
 
 def _print_report(report, *, sort: FlightSort = "ranked") -> None:
@@ -378,6 +416,7 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
         )
         if isinstance(result, QuerySuccess):
             any_success = True
+            _print_flight_limits(result)
             if not result.offers:
                 print("  (no eligible offers)")
                 _print_google_flights_url(query_url, indent="  ")
@@ -688,31 +727,32 @@ def _print_split_report(report: SplitReport) -> None:
         print(f"  ERROR: {report.error.message}")
     if not report.itineraries:
         print("  (no split itinerary from the quotes returned)")
-    for number, row in enumerate(report.itineraries, start=1):
+    for number, itinerary in enumerate(report.itineraries, start=1):
         total = (
-            f"{format_money(row.total, row.currency)} total"
-            if row.total is not None and row.currency
+            f"{format_money(itinerary.total, itinerary.currency)} total"
+            if itinerary.total is not None and itinerary.currency
             else "total unknown (parts are in different currencies; nothing converts)"
         )
         via = ""
-        if row.kind == "hub":
-            overnight = ", overnight" if row.overnight_at_hub else ""
-            via = f"  via {row.hub}, {_format_connection(row.connection_minutes)} connection"
+        if itinerary.kind == "hub":
+            overnight = ", overnight" if itinerary.overnight_at_hub else ""
+            connection = _format_connection(itinerary.connection_minutes)
+            via = f"  via {itinerary.hub}, {connection} connection"
             via += overnight
         print(f"\n  {number}. {total}{via}")
-        if row.kind == "mixed_one_ways" and not row.timing_proven:
+        if itinerary.kind == "mixed_one_ways" and not itinerary.timing_proven:
             print(f"     NOTE: {TIMING_UNPROVEN_NOTE}")
-        if row.savings is not None and row.packaged is not None:
-            amount = format_money(abs(row.savings), row.packaged.currency)
-            verb = "saves" if row.savings >= 0 else "costs"
-            tail = "" if row.savings >= 0 else " more"
+        if itinerary.savings is not None and itinerary.packaged is not None:
+            amount = format_money(abs(itinerary.savings), itinerary.packaged.currency)
+            verb = "saves" if itinerary.savings >= 0 else "costs"
+            tail = "" if itinerary.savings >= 0 else " more"
             print(
                 f"     {verb} {amount}{tail} vs best packaged "
-                f"{format_money(row.packaged.price, row.packaged.currency)}"
+                f"{format_money(itinerary.packaged.price, itinerary.packaged.currency)}"
             )
-        elif row.packaged is not None and row.total is not None:
-            print(f"     not compared: packaged quote is in {row.packaged.currency}")
-        for ticket, part in enumerate(row.parts, start=1):
+        elif itinerary.packaged is not None and itinerary.total is not None:
+            print(f"     not compared: packaged quote is in {itinerary.packaged.currency}")
+        for ticket, part in enumerate(itinerary.parts, start=1):
             leg = part.query
             print(
                 f"     ticket {ticket} ({part.role.replace('_', ' ')})  "
@@ -751,17 +791,25 @@ def _print_dates_report(report: DateCalendarReport) -> None:
     spark = format_sparkline(report.days)
     if spark:
         print(f"  {spark}")
+    gap = calendar_gap_line(report.days)
+    if gap:
+        print(f"  {gap}")
     if report.summary is not None:
         print(format_summary_line(report.summary, report.currency))
     print()
+    _print_day_scope(report.days)
     any_price = False
     currency = report.currency
     for row in report.days:
         if row.status == "error" and row.error is not None:
             print(f"  {row.departure_date.isoformat()}   ERROR: {row.error.message}")
+            _print_page_errors(row.page_errors, indent="    ")
             continue
         if row.price is None:
-            print(f"  {row.departure_date.isoformat()}      —")
+            note = EMPTY_NOTES.get(row.empty_reason or "", row.empty_reason)
+            suffix = f"  {note}" if note else ""
+            print(f"  {row.departure_date.isoformat()}      —{suffix}")
+            _print_page_errors(row.page_errors, indent="    ")
             continue
         any_price = True
         extra = ""
@@ -776,6 +824,7 @@ def _print_dates_report(report: DateCalendarReport) -> None:
         )
         if row.stops_compare is not None:
             print(format_stops_compare(row.stops_compare, currency))
+        _print_page_errors(row.page_errors, indent="    ")
     if any_price:
         print(VERIFY_BAGGAGE_LINE)
 
@@ -790,7 +839,9 @@ def _print_explore_report(report: ExploreReport) -> None:
     )
     _print_google_flights_url(report.google_flights_url, indent="  ")
     for failure in report.pricing_errors:
-        print(f"  ERROR pricing {failure.query.destination}: {failure.error.message}")
+        query = failure.query
+        place = query.destination if isinstance(query, FlightQuery) else "?"
+        print(f"  ERROR pricing {place}: {failure.error.message}")
     if report.error is not None and not report.destinations:
         print(f"  ERROR: {report.error.message}")
         return
@@ -808,7 +859,7 @@ def _print_explore_report(report: ExploreReport) -> None:
         if row.origin_airport:
             extra += f"  from {row.origin_airport}"
         if row.empty_reason:
-            extra += f"  {row.empty_reason}"
+            extra += f"  {EMPTY_NOTES.get(row.empty_reason, row.empty_reason)}"
             if row.shopped_date:
                 extra += f" {row.shopped_date}"
         print(
@@ -850,7 +901,7 @@ def _as_report_tuple(result: object) -> tuple:
     return (result,)
 
 
-def _combine_exit_codes(codes: Sequence[int]) -> int:
+def _combine_exit_codes(codes: Iterable[int]) -> int:
     owned = tuple(codes)
     if not owned:
         return 0
@@ -877,6 +928,11 @@ def _print_flex_report(report: FlexSearchReport) -> None:
         f"±{report.flex_days}  {report.start_date.isoformat()} .. {report.end_date.isoformat()}"
         f"{stay}{nearby} ==="
     )
+    _print_day_scope(report.days)
+    for row in report.days:
+        if row.empty_reason:
+            print(f"  {row.departure_date.isoformat()}  {row.empty_reason}")
+        _print_page_errors(row.page_errors)
     if report.error is not None and report.chosen_date is None:
         print(f"  ERROR: {report.error.message}")
         _print_google_flights_url(report.google_flights_url, indent="  ")
@@ -923,7 +979,7 @@ def _print_hidden_city_report(report: HiddenCityReport) -> None:
         return
     print(f"{'price':>12}  {'hidden':<7}  airline")
     for offer in report.offers:
-        flag = {True: "yes", False: "no"}.get(offer.hidden_city, "unknown")
+        flag = "unknown" if offer.hidden_city is None else ("yes" if offer.hidden_city else "no")
         airline = offer.airline or "?"
         extra = ""
         if offer.ticketed_destination:

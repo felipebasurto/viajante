@@ -19,7 +19,7 @@ fewest requirements are relaxed; ties relax the earlier name in
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Callable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 from viajante.models import FlightOffer
 from viajante.models_flights import (
@@ -75,7 +75,7 @@ def _duration_key(offer: FlightOffer) -> float:
     return offer.duration_hours if offer.duration_hours is not None else float("inf")
 
 
-def _status(offer: FlightOffer, name: str, value: object) -> Status:
+def _status(offer: FlightOffer, name: str, value: Any) -> Status:
     """An unknown observation cannot establish a hard requirement."""
     if name == "max_stops":
         if offer.stops_count is None:
@@ -330,16 +330,16 @@ def recommend_offers(
             break
         chosen.append((extra, ["alternative"]))
 
-    entries = []
+    entries: list[ShortlistEntry] = []
     for offer, labels in chosen:
         good, bad = _facts(offer, statuses[id(offer)], requirements)
-        score, parts = by_offer[id(offer)]
+        score, breakdown = by_offer[id(offer)]
         entries.append(
             ShortlistEntry(
                 labels=tuple(labels),
                 offer=offer,
                 score=score,
-                breakdown=parts,
+                breakdown=breakdown,
                 requirements=statuses[id(offer)],
                 highlights=good,
                 tradeoffs=bad,

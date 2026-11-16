@@ -7,6 +7,8 @@ import threading
 import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 from urllib.parse import urlencode, urljoin, urlsplit
@@ -21,6 +23,7 @@ from viajante.control import (
     current_control,
     wait_for_future,
 )
+from viajante.google_flights_page import ds1_error_frame_status
 from viajante.google_flights_rpc import (  # noqa: F401 - RawFlightCard is re-exported for callers
     RawFlightCard,
     raw_rpc_error_status,
@@ -32,9 +35,11 @@ from viajante.models import (
 )
 from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tests
     NOT_SENT,
+    PAUSE_MESSAGE,
     RATE_LIMIT_COOLDOWN_SECONDS,
     RATE_LIMIT_MAX_COOLDOWN_SECONDS,
     note_rate_limited,
+    note_repeated_throttle,
     rate_limit_advice,
     rate_limit_status,
     recorded_expiry,
@@ -64,6 +69,9 @@ BLOCK_BODY_MARKERS = (
 class NoFlightsFound(Exception):
     """Google rendered a results page with no priced offers."""
 
+    diagnostics: Optional[Mapping[str, object]] = None
+    trip_label: str = ""
+
     def __init__(self, observed_text: str = "") -> None:
         self.observed_text = observed_text
         message = "Google Flights returned no flights for this route and date."
@@ -74,6 +82,10 @@ class NoFlightsFound(Exception):
 
 class GoogleFlightsMarkupError(RuntimeError):
     """Neither a results grid nor a recognized empty state was found."""
+
+    # Filled by the public source: the request's diagnostics and the route and dates asked for.
+    diagnostics: Optional[Mapping[str, object]] = None
+    trip_label: str = ""
 
 
 class GoogleFlightsBlocked(RuntimeError):
@@ -103,6 +115,9 @@ class SweepTransportError(RuntimeError):
 
 class GoogleFlightsRejected(RuntimeError):
     """Shopping RPC rejected the query without an owned cause."""
+
+    diagnostics: Optional[Mapping[str, object]] = None
+    trip_label: str = ""
 
 
 def build_search_params(
@@ -237,6 +252,9 @@ class SweepHttpResponse:
     cooldown_basis: Optional[str] = None
     retry_until: Optional[float] = None
     rate_limited: bool = False
+    # Set once this body has been counted toward the status-13 burst, so a later
+    # parse of the same response does not count it again.
+    throttle_observed: bool = False
 
 
 # Not an HTTP status: marks a multiplexed job whose request raised before any response.
@@ -247,13 +265,23 @@ SWEEP_TRANSPORT_STATUS = 599
 RPC_THROTTLE_STATUS = 13
 
 
-def _retry_after_seconds(response: Any) -> Optional[float]:
+def _retry_after_seconds(response: Any, *, now: Optional[datetime] = None) -> Optional[float]:
+    """Seconds from a Retry-After header: delta-seconds or an HTTP date. Never negative."""
     headers = getattr(response, "headers", None) or {}
-    try:
-        value = float(headers.get("retry-after") or headers.get("Retry-After"))
-    except (TypeError, ValueError):
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if raw is None:
         return None
-    return value if math.isfinite(value) else None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        try:
+            when = parsedate_to_datetime(str(raw))
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        value = (when - (now or datetime.now(timezone.utc))).total_seconds()
+    return value if math.isfinite(value) and value > 0 else None
 
 
 def _settle_batch(
@@ -525,6 +553,21 @@ class ChromeSweepClient:
                 cooldown_basis=state.get("basis", "unknown"),
                 retry_until=recorded_expiry(state),
             )
+        elif out.status == 200 and ds1_error_frame_status(out.text) == RPC_THROTTLE_STATUS:
+            repeated = note_repeated_throttle(endpoint=str(response.url))
+            if repeated is None:
+                out = replace(out, throttle_observed=True)
+            else:
+                out = replace(
+                    out,
+                    throttle_observed=True,
+                    rate_limit=rate_limit_advice(
+                        repeated, reason=f"RPC status {RPC_THROTTLE_STATUS}"
+                    ),
+                    cooldown_basis=repeated.get("basis", "unknown"),
+                    retry_until=recorded_expiry(repeated),
+                    rate_limited=True,
+                )
         return out
 
     async def _aget(
@@ -670,6 +713,7 @@ class ChromeSweepClient:
                 out[index] = response
                 if (
                     response.status == 429
+                    or response.rate_limited
                     or raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS
                 ):
                     stop.set()
@@ -771,6 +815,7 @@ def dispatch_posts(
 def is_rate_limited_response(response: SweepHttpResponse) -> bool:
     return (
         response.status == 429
+        or response.rate_limited
         or raw_rpc_error_status(response.text) == RPC_THROTTLE_STATUS
         or (response.stopped and response.status == 0)
     )
@@ -799,11 +844,13 @@ def _raise_if_blocked(
         if advice and rpc_status == RPC_THROTTLE_STATUS:
             # status=429 so the caller treats it as a rate limit and does not replay or fall back.
             raise GoogleFlightsBlocked(advice, status=429)
-        # Seen alongside google.com/sorry for the same IP while shopping still answers.
+        if rpc_status == RPC_THROTTLE_STATUS:
+            # The numeric code stays in diagnostics. One frame does not record the cooldown.
+            raise GoogleFlightsBlocked(PAUSE_MESSAGE)
         raise GoogleFlightsBlocked(
-            f"Google Flights answered with RPC error status {rpc_status} and no data "
+            f"Google Flights could not return this search "
             f"from {urlsplit(fallback_url).netloc}{urlsplit(fallback_url).path}. "
-            "The cause is unknown; this status alone does not prove an IP block."
+            "Wait a minute and retry this one search."
         )
     if looks_blocked(body, final_url):
         raise GoogleFlightsBlocked(
@@ -838,10 +885,7 @@ def raise_for_sweep_response(response: SweepHttpResponse, url: str) -> None:
         )
     raw_status = raw_rpc_error_status(response.text)
     if raw_status == RPC_THROTTLE_STATUS:
-        message = response.rate_limit or (
-            "Google Flights returned RPC status 13. The cause is unknown; "
-            "availability is not disproved."
-        )
+        message = response.rate_limit or PAUSE_MESSAGE
         raise GoogleFlightsBlocked(
             message,
             status=429,
