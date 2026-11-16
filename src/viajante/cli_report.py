@@ -805,7 +805,7 @@ def _print_dates_report(report: DateCalendarReport) -> None:
             _print_page_errors(row.page_errors, indent="    ")
             continue
         if row.price is None:
-            note = EMPTY_NOTES.get(row.empty_reason or "")
+            note = EMPTY_NOTES.get(row.empty_reason or "", row.empty_reason)
             suffix = f"  {note}" if note else ""
             print(f"  {row.departure_date.isoformat()}      —{suffix}")
             _print_page_errors(row.page_errors, indent="    ")

@@ -881,7 +881,7 @@ class NearbyDatesEnvelopeTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["status"], "blocked")
         self.assertEqual(payload["completeness"], "partial")
         self.assertEqual(payload["error_code"], "blocked")
         self.assertIsNone(payload["empty_reason"])

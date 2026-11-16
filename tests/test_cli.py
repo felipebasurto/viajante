@@ -2463,7 +2463,7 @@ class IncompleteEvidencePrintTests(unittest.TestCase):
         dates = buffer.getvalue()
         self.assertIn("scope_bound: public_page_outbound_limit 8", dates)
         self.assertIn("2027-03-15", dates)
-        self.assertIn("provider_empty", dates)
+        self.assertIn("No fares came back for this exact query", dates)
         self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", dates)
 
         flex = FlexSearchReport(
