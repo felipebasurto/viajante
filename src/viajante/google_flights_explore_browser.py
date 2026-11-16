@@ -7,7 +7,7 @@ import time
 from typing import Callable
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
-from viajante.control import SearchDeadline, checkpoint
+from viajante.control import SearchDeadline, bounded_ms, checkpoint
 from viajante.google_flights import (
     GoogleFlightsBlocked,
     SweepHttpResponse,
@@ -90,10 +90,13 @@ def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tu
     page.on("response", _capture)
     try:
         try:
-            navigation = page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            navigation = page.goto(
+                url, wait_until="domcontentloaded", timeout=bounded_ms(PAGE_TIMEOUT_MS)
+            )
         except SearchDeadline:
             raise
         except Exception as exc:
+            checkpoint()
             transport = _network_failure(exc)
             if transport is not None:
                 raise transport from exc

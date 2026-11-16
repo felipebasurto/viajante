@@ -97,7 +97,7 @@ usage: viajante-mcp [--transport {{stdio,streamable-http}}] [--host HOST] [--por
   --port        streamable-http port (default {_DEFAULT_PORT}); the endpoint is /mcp
 
 Install:  npx -y @viajante/mcp   (no Node: uvx --from 'viajante[mcp]' viajante-mcp)
-Checkout: uv sync --extra mcp && viajante-mcp
+Checkout: uv sync --extra mcp && uv run viajante-mcp
 
 Tools: search_flights, get_hotel_details, search_dates, search_flex, search_explore,
 search_hotels, search_hotel_rooms, search_trip, search_split_tickets, lookup_airports,
@@ -286,9 +286,11 @@ async def run_mcp_tool(fn: Callable[..., _T], /, *args: object, **kwargs: object
     """
     if "deadline_seconds" in kwargs and kwargs["deadline_seconds"] is None:
         kwargs["deadline_seconds"] = _ENV_DEADLINE
+    # Tools that take deadline_seconds pass it through; the env must not cap that value.
+    inherited = None if "deadline_seconds" in kwargs else _ENV_DEADLINE
     loop = asyncio.get_running_loop()
     relay = _progress_relay(loop)
-    control = SearchControl(progress=relay)
+    control = SearchControl(progress=relay, deadline_seconds=inherited)
     finished = threading.Event()
     if not _SEARCH_BUSY.acquire(blocking=False):
         holder = _CURRENT[0] if _CURRENT else None
@@ -730,7 +732,9 @@ def build_server():
         """Room rates for one Skiplagged hotel, for 1-3 finalists. Name it by hotel_id (the
         provider_id of a skiplagged search_hotels offer) or by hotel_name plus city. A name
         must match exactly (case, accents and punctuation ignored); no match or several
-        matches is no_results, never a guess. Use the name form for a Google finalist: a
+        matches is no_results, never a guess. city is City or City, qualifier: an ISO
+        country (UK is GB) or an English country or region (Paris, FR; Paris, France;
+        Paris, Texas). Use the name form for a Google finalist: a
         Google hostel price can be a dorm bed, and these rates say what the room is. Rates are
         USD, not converted, in provider order. total_price is the whole stay for the party and
         rooms searched. occupancy_limit is per room type and is not proof that a party fits
@@ -765,7 +769,12 @@ def build_server():
         """
 
     @tool("Look up airports", lookup_airports_tool, network=False, envelope=False)
-    def lookup_airports(): ...
+    def lookup_airports():
+        """Offline. query is a city name or an IATA code (JFK, LHR, NRT, GRU, SIN).
+        A three-letter code returns that airport, or every airport in a metro code.
+        limit caps the rows (default 20). The result is a list, not the search envelope.
+        It may run while a search is in progress.
+        """
 
     @tool("Search hidden-city fares", search_hidden_city_tool, network=True)
     def search_hidden_city():
@@ -920,7 +929,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit(f"viajante-mcp: {exc}") from exc
     except ImportError as exc:
         raise SystemExit(
-            "viajante-mcp requires the mcp extra. Install with: uv sync --extra mcp"
+            "viajante-mcp requires the mcp extra. "
+            "Install with: uv sync --extra mcp. "
+            "Or, with no checkout: uvx --from 'viajante[mcp]' viajante-mcp"
         ) from exc
     server.run(transport=parsed.transport, **_run_options(http=http, host=host, port=port))
 

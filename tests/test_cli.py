@@ -13,10 +13,21 @@ from unittest.mock import patch
 import _isolate  # noqa: F401
 import viajante
 from viajante.cli import main
-from viajante.cli_report import _format_clock, _join_cancellation_rows, _print_report
+from viajante.cli_report import (
+    _format_clock,
+    _join_cancellation_rows,
+    _print_dates_report,
+    _print_flex_report,
+    _print_report,
+)
+from viajante.mcp_handlers import search_flights_tool, search_trip_tool
 from viajante.models import (
     AppliedHotelFilters,
     CancellationEvidence,
+    DateCalendarReport,
+    DatePriceRow,
+    FlexSearchReport,
+    FlightLeg,
     FlightOffer,
     FlightQuery,
     HotelOffer,
@@ -25,6 +36,7 @@ from viajante.models import (
     HotelQuerySuccess,
     HotelSearchReport,
     LodgingKind,
+    MultiCity,
     PriceInsight,
     PropertyTypeEvidence,
     QueryFailure,
@@ -43,6 +55,7 @@ from viajante.models import (
 from viajante.models_flights import Requirements
 from viajante.recommend import recommend_offers
 from viajante.storage import write_json_atomic
+from viajante.trip import search_trip
 
 FUTURE_DATE = date.today() + timedelta(days=30)
 PAST_DATE = date.today() - timedelta(days=1)
@@ -336,6 +349,82 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(search.call_args.kwargs["currency"], "USD")
         self.assertEqual(search.call_args.kwargs["country"], "US")
+
+    def test_split_tickets_keep_echo_only_filters(self) -> None:
+        class _Split:
+            error = None
+
+            def to_dict(self):
+                return {}
+
+        with (
+            patch("viajante.cli.search_flights", return_value=_report()) as flights,
+            patch("viajante.cli.search_split_tickets", return_value=_Split()) as split,
+            patch("viajante.cli._print_report"),
+            patch("viajante.cli._print_split_report"),
+        ):
+            code = main(
+                [
+                    "flights",
+                    ROUTE,
+                    "--split-tickets",
+                    "--split-via",
+                    "BOS",
+                    "--less-emissions",
+                    "--hide-separate-tickets",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIs(flights.call_args.kwargs["less_emissions"], True)
+        self.assertIs(flights.call_args.kwargs["hide_separate_tickets"], True)
+        self.assertIs(split.call_args.kwargs["less_emissions"], True)
+        self.assertIs(split.call_args.kwargs["hide_separate_tickets"], True)
+
+    def test_mixed_origin_routes_ask_for_currency_before_search(self) -> None:
+        day = FUTURE_DATE.isoformat()
+        mixed = [f"JFK-LHR:{day}", f"NRT-LHR:{day}"]
+        err = io.StringIO()
+        with patch("viajante.cli.search_flights") as search, redirect_stderr(err):
+            code = main(["flights", *mixed])
+        self.assertEqual(code, 1)
+        search.assert_not_called()
+        self.assertIn("currency", err.getvalue().casefold())
+        with (
+            patch("viajante.cli.search_flights", return_value=_report()) as named,
+            patch("viajante.cli._print_report"),
+        ):
+            code = main(["flights", *mixed, "--currency", "USD"])
+        self.assertEqual(code, 0)
+        self.assertEqual(named.call_args.kwargs["currency"], "USD")
+        with (
+            patch("viajante.cli.search_flights", return_value=_report()) as same,
+            patch("viajante.cli._print_report"),
+        ):
+            code = main(["flights", f"JFK-LHR:{day}", f"LAX-NRT:{day}"])
+        self.assertEqual(code, 0)
+        self.assertEqual(same.call_args.kwargs["currency"], "USD")
+        stay = HotelQuery("London", FUTURE_DATE, FUTURE_DATE + timedelta(days=2))
+        with patch("viajante.trip.search_flights") as library:
+            with self.assertRaises(ValueError) as caught:
+                search_trip(
+                    (
+                        FlightQuery("JFK", "LHR", FUTURE_DATE),
+                        FlightQuery("NRT", "LHR", FUTURE_DATE),
+                    ),
+                    stay,
+                )
+        library.assert_not_called()
+        self.assertIn("currency", str(caught.exception).casefold())
+        with patch("viajante.mcp_handlers.search_flights") as flights:
+            with self.assertRaises(ValueError) as caught:
+                search_flights_tool(mixed)
+        flights.assert_not_called()
+        self.assertIn("currency", str(caught.exception).casefold())
+        with patch("viajante.trip.search_flights") as trip_flights:
+            with self.assertRaises(ValueError) as caught:
+                search_trip_tool(mixed, "London")
+        trip_flights.assert_not_called()
+        self.assertIn("currency", str(caught.exception).casefold())
 
     def test_proxy_reaches_search(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
@@ -1054,14 +1143,14 @@ class ReportRenderingTests(unittest.TestCase):
     def test_trip_one_way_keeps_rt_sugar(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", "--trip", "one-way", RT_ROUTE])
+                code = main(["flights", "--trip", "one-way", RT_ROUTE, "--currency", "USD"])
         self.assertEqual(code, 0)
         self.assertEqual(len(search.call_args.args[0]), 2)
 
     def test_rt_sugar_builds_return_leg(self) -> None:
         with patch("viajante.cli.search_flights", return_value=_report()) as search:
             with patch("viajante.cli._print_report"):
-                code = main(["flights", RT_ROUTE])
+                code = main(["flights", RT_ROUTE, "--currency", "USD"])
         self.assertEqual(code, 0)
         queries = search.call_args.args[0]
         self.assertEqual(len(queries), 2)
@@ -1109,6 +1198,51 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("Best pair (fare):", fare)
         self.assertIn("LAX->NRT 75 USD fare", fare)
         self.assertIn("= 155 USD", fare)
+
+    def test_best_pair_only_sums_two_one_ways(self) -> None:
+        one = FlightQuery("JFK", "LHR", date(2027, 3, 15))
+        multi = MultiCity(
+            (
+                FlightLeg("LHR", "NRT", date(2027, 3, 20)),
+                FlightLeg("NRT", "SIN", date(2027, 3, 24)),
+            )
+        )
+        packaged = RoundTrip("LHR", "JFK", date(2027, 4, 1), date(2027, 4, 8))
+        back = FlightQuery("JFK", "LHR", date(2027, 4, 1))
+        for queries in (
+            (
+                QuerySuccess(query=one, raw_count=1, eligible_count=1, offers=(_offer(),)),
+                QuerySuccess(query=multi, raw_count=1, eligible_count=1, offers=(_offer(),)),
+            ),
+            (
+                QuerySuccess(query=packaged, raw_count=1, eligible_count=1, offers=(_offer(),)),
+                QuerySuccess(query=back, raw_count=1, eligible_count=1, offers=(_offer(),)),
+            ),
+        ):
+            printed = _rendered(
+                SearchReport(searched_at=SEARCHED_AT, currency="USD", queries=queries)
+            )
+            self.assertNotIn("Best pair", printed)
+            self.assertIn("JFK", printed)
+
+    def test_best_pair_does_not_sum_fares_for_a_time_sort(self) -> None:
+        outbound = FlightQuery("LAX", "NRT", date(2026, 10, 9), max_stops=1)
+        inbound = FlightQuery("NRT", "LAX", date(2026, 10, 12), max_stops=1)
+        report = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="USD",
+            queries=(
+                QuerySuccess(
+                    query=outbound, raw_count=1, eligible_count=1, offers=(_offer(price=75.0),)
+                ),
+                QuerySuccess(
+                    query=inbound, raw_count=1, eligible_count=1, offers=(_offer(price=80.0),)
+                ),
+            ),
+        )
+        for sort in ("duration", "departure", "arrival"):
+            self.assertNotIn("Best pair", _rendered(report, sort=sort))
+        self.assertIn("Best pair (fare)", _rendered(report, sort="price"))
 
     def test_flights_help_preserves_examples_epilog(self) -> None:
         buffer = io.StringIO()
@@ -1882,6 +2016,31 @@ class HotelCliTests(unittest.TestCase):
                     self.assertEqual(data["schema_version"], 2)
                     self.assertEqual(data["price_basis"], "total_stay")
 
+    def test_hotel_rooms_city_help_names_the_qualifier(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["hotel-rooms", "--help"])
+        self.assertEqual(code, 0)
+        self.assertIn("Paris, FR", out.getvalue())
+        self.assertIn("UK is GB", out.getvalue())
+
+    def test_hotel_rooms_bad_date_names_the_field(self) -> None:
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = main(["hotel-rooms", "15 March", "2027-03-20", "--hotel-id", "1"])
+        self.assertEqual(code, 1)
+        self.assertIn("check-in", err.getvalue())
+        self.assertIn("YYYY-MM-DD", err.getvalue())
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = main(
+                ["hotel-rooms", "2027-03-15", "next-friday", "--name", "Inn", "--city", "Lisbon"]
+            )
+        self.assertEqual(code, 1)
+        text = err.getvalue()
+        self.assertIn("check-out", text)
+        self.assertIn("YYYY-MM-DD", text)
+
 
 class TripCliTests(unittest.TestCase):
     return_date = FUTURE_DATE + timedelta(days=4)
@@ -2229,6 +2388,110 @@ class TripCliTests(unittest.TestCase):
         self.assertEqual(len(trips), 1)
         self.assertEqual(trips[0].destination, "LHR")
         self.assertIsNone(trips[0].nearby_label)
+
+
+class IncompleteEvidencePrintTests(unittest.TestCase):
+    def test_flight_date_and_flex_print_limits_already_on_the_result(self) -> None:
+        unparsed = SearchError(
+            code=SearchErrorCode.CARDS_UNPARSED,
+            message="2 cards skipped",
+            diagnostics={"seen": 4, "parsed": 2},
+        )
+        round_trip = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="USD",
+            queries=(
+                QuerySuccess(
+                    query=RoundTrip("JFK", "LHR", date(2027, 3, 15), date(2027, 3, 22)),
+                    raw_count=0,
+                    eligible_count=0,
+                    offers=(),
+                    empty_reason="filtered_out",
+                    scope_bound=True,
+                    page_errors=(unparsed,),
+                    price_insight_error="markup_drift",
+                ),
+            ),
+        )
+        multi = SearchReport(
+            searched_at=SEARCHED_AT,
+            currency="USD",
+            queries=(
+                QuerySuccess(
+                    query=MultiCity(
+                        (
+                            FlightLeg("JFK", "LHR", date(2027, 4, 1)),
+                            FlightLeg("LHR", "NRT", date(2027, 4, 4)),
+                            FlightLeg("NRT", "SIN", date(2027, 4, 8)),
+                        )
+                    ),
+                    raw_count=1,
+                    eligible_count=1,
+                    offers=(_offer(),),
+                    scope_bound=True,
+                ),
+            ),
+        )
+        printed = _rendered(round_trip)
+        self.assertIn("empty_reason: filtered_out", printed)
+        self.assertIn("scope_bound: public_page_outbound_limit 8", printed)
+        self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", printed)
+        self.assertIn("price_insight_error: markup_drift", printed)
+        self.assertIn("scope_bound: multi_city_leader_limit 4", _rendered(multi))
+
+        day = date(2027, 3, 15)
+        calendar = DateCalendarReport(
+            searched_at=SEARCHED_AT,
+            origin="GRU",
+            destination="SIN",
+            start_date=day,
+            end_date=day,
+            days=(
+                DatePriceRow(
+                    departure_date=day,
+                    status="empty",
+                    empty_reason="provider_empty",
+                    scope_bound=True,
+                    page_errors=(unparsed,),
+                ),
+            ),
+            currency="BRL",
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            _print_dates_report(calendar)
+        dates = buffer.getvalue()
+        self.assertIn("scope_bound: public_page_outbound_limit 8", dates)
+        self.assertIn("2027-03-15", dates)
+        self.assertIn("provider_empty", dates)
+        self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", dates)
+
+        flex = FlexSearchReport(
+            searched_at=SEARCHED_AT,
+            origin="NRT",
+            destination="GRU",
+            around=day,
+            flex_days=1,
+            start_date=day,
+            end_date=day,
+            days=(
+                DatePriceRow(
+                    departure_date=day,
+                    price=400.0,
+                    scope_bound=True,
+                    page_errors=(unparsed,),
+                ),
+            ),
+            chosen_date=day,
+            offers=(_offer(),),
+            currency="JPY",
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            _print_flex_report(flex)
+        flexed = buffer.getvalue()
+        self.assertIn("scope_bound: public_page_outbound_limit 8", flexed)
+        self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", flexed)
 
 
 if __name__ == "__main__":

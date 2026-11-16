@@ -104,8 +104,8 @@ def _journeys(offer: Mapping[str, Any]) -> tuple[tuple[_Segment, ...], ...]:
                         airline=_text(row.get("airline")),
                         clock=normalize_clock(_text(row.get("departure"))),
                         day=_text(row.get("departure_date")),
-                        origin=_text(row.get("origin")),
-                        destination=_text(row.get("destination")),
+                        origin=(_text(row.get("origin")) or "").upper() or None,
+                        destination=(_text(row.get("destination")) or "").upper() or None,
                     )
                     for row in (_mapping(r, role="offer.legs[].segments[]") for r in rows)
                 )

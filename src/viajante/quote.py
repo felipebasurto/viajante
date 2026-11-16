@@ -11,7 +11,7 @@ agents) may convert for the user.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from viajante.airports import get_airport
 from viajante.models import normalize_currency
@@ -319,6 +319,42 @@ def resolve_quote_currency(
     if proven:
         return proven
     raise ValueError(missing)
+
+
+def resolve_trips_currency(
+    explicit: Optional[str],
+    trips: Sequence[object],
+    *,
+    missing: str = CURRENCY_REQUIRED,
+) -> str:
+    """One ISO 4217 code for every trip.
+
+    Pass ``explicit`` (``--currency`` / ``currency``) or omit it when every
+    named origin's country uses the same cash currency. Origins that do not
+    share one currency raise; name one code. Viajante does not convert.
+    """
+    if explicit is not None and str(explicit).strip():
+        return normalize_currency(explicit)
+    if explicit is not None:
+        raise ValueError(f"invalid currency code: {explicit!r}")
+    proven: list[tuple[str, str]] = []
+    for trip in trips:
+        origin = first_origin_iata(trip)
+        cash = cash_currency_for_origin(origin)
+        if not origin or not cash:
+            raise ValueError(missing)
+        proven.append((origin, cash))
+    if not proven:
+        raise ValueError(missing)
+    currencies = {cash for _, cash in proven}
+    if len(currencies) > 1:
+        named = ", ".join(f"{origin} {cash}" for origin, cash in proven)
+        raise ValueError(
+            "These origins use different currencies "
+            f"({named}). Pass --currency / currency with one ISO 4217 code. "
+            "Viajante does not convert currencies."
+        )
+    return proven[0][1]
 
 
 def resolve_quote_and_buffer(

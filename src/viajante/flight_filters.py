@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
-from viajante.airports import get_airport, is_known_iata
+from viajante.airports import is_known_iata, place_label_codes
 from viajante.google_flights_rpc import RawFlightCard
 from viajante.models import FlightOffer, RawJourneyLeg, RawLayover
 from viajante.parsers import clock_minutes as _clock_minutes
@@ -273,53 +273,113 @@ def parse_offer_filters(
     )
 
 
-def _via_aliases(code: str) -> Tuple[str, ...]:
-    aliases = [code.casefold()]
-    airport = get_airport(code)
-    if airport is not None and airport.city:
-        city = airport.city.strip().casefold()
-        if city and city not in aliases:
-            aliases.append(city)
-    return tuple(aliases)
+@dataclass(frozen=True)
+class _ConnectionPlace:
+    """One connection. ``code`` is proven; ``also`` are airports it might be."""
+
+    code: Optional[str] = None
+    label: Optional[str] = None
+    also: tuple[str, ...] = ()
 
 
-def _token_matches_via(token: str, code: str) -> bool:
-    folded = token.strip().casefold()
-    if not folded:
+def _clean_place(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _known_iata(value: Optional[str]) -> Optional[str]:
+    if value and is_known_iata(value):
+        return value.strip().upper()
+    return None
+
+
+def _place_from_ends(
+    left: Optional[str],
+    right: Optional[str],
+    label: Optional[str],
+) -> _ConnectionPlace:
+    """A segment IATA outranks the city label. Disagreeing ends prove neither."""
+    left_code = _known_iata(left)
+    right_code = _known_iata(right)
+    if left_code and right_code and left_code != right_code:
+        return _ConnectionPlace(None, _clean_place(label), (left_code, right_code))
+    code = left_code or right_code
+    if code:
+        return _ConnectionPlace(code, None)
+    text = _clean_place(label) or _clean_place(left) or _clean_place(right)
+    named = _known_iata(text)
+    if named:
+        return _ConnectionPlace(named, None)
+    return _ConnectionPlace(None, text)
+
+
+def _leg_places(leg: RawJourneyLeg) -> tuple[_ConnectionPlace, ...]:
+    segments = leg.segments
+    layovers = leg.layovers
+    slots = max(len(layovers), max(0, len(segments) - 1))
+    places: list[_ConnectionPlace] = []
+    for index in range(slots):
+        left = segments[index].destination if index < len(segments) else None
+        right = segments[index + 1].origin if index + 1 < len(segments) else None
+        city = layovers[index].city if index < len(layovers) else None
+        places.append(_place_from_ends(left, right, city))
+    return tuple(places)
+
+
+def _summary_place(city: Optional[str]) -> _ConnectionPlace:
+    text = _clean_place(city)
+    named = _known_iata(text)
+    if named:
+        return _ConnectionPlace(named, None)
+    return _ConnectionPlace(None, text)
+
+
+def _connection_places(raw: RawFlightCard | FlightOffer) -> tuple[_ConnectionPlace, ...]:
+    """One place per connection. A known segment airport is not also its city."""
+    places = [place for leg in raw.legs for place in _leg_places(leg)]
+    located = [place for place in places if place.code or place.label or place.also]
+    if located:
+        return tuple(located)
+    if raw.layover_city:
+        return (_summary_place(raw.layover_city),)
+    return ()
+
+
+def _proven_code(place: _ConnectionPlace) -> Optional[str]:
+    """The one airport this connection proves, or None when it could be several."""
+    if place.code:
+        return place.code
+    if place.also:
+        return None
+    text = _clean_place(place.label)
+    if not text:
+        return None
+    named = _known_iata(text)
+    if named:
+        return named
+    codes = place_label_codes(text)
+    if len(codes) == 1:
+        return codes[0]
+    return None
+
+
+def _could_be(place: _ConnectionPlace, code: str) -> bool:
+    """True when the connection cannot be shown to be some other airport."""
+    if place.code:
+        return place.code == code
+    if code in place.also:
+        return True
+    if place.also:
         return False
-    return folded in _via_aliases(code)
-
-
-def _connection_tokens(raw: RawFlightCard | FlightOffer) -> Tuple[str, ...]:
-    tokens: list[str] = []
-    seen: set[str] = set()
-
-    def add(value: Optional[str]) -> None:
-        if not value:
-            return
-        text = value.strip()
-        if not text:
-            return
-        key = text.casefold()
-        if key in seen:
-            return
-        seen.add(key)
-        tokens.append(text)
-
-    add(raw.layover_city)
-    for leg in raw.legs:
-        for layover in leg.layovers:
-            add(layover.city)
-        airports: list[str] = []
-        for segment in leg.segments:
-            if segment.origin:
-                airports.append(segment.origin)
-            if segment.destination:
-                airports.append(segment.destination)
-        if len(airports) >= 3:
-            for code in airports[1:-1]:
-                add(code)
-    return tuple(tokens)
+    text = _clean_place(place.label)
+    if not text:
+        return False
+    named = _known_iata(text)
+    if named:
+        return named == code
+    return code in place_label_codes(text)
 
 
 def _leg_connections_complete(leg: RawJourneyLeg, stops: Optional[int]) -> bool:
@@ -360,15 +420,14 @@ def _passes_via_filters(
         return True
     if exclude_via and not _connections_complete(raw):
         return False
-    tokens = _connection_tokens(raw)
-    if exclude_via and tokens:
+    places = _connection_places(raw)
+    if exclude_via and places:
         for code in exclude_via:
-            if any(_token_matches_via(token, code) for token in tokens):
+            if any(_could_be(place, code) for place in places):
                 return False
     if via:
-        if not tokens:
-            return False
-        if not any(any(_token_matches_via(token, code) for token in tokens) for code in via):
+        proven = {_proven_code(place) for place in places}
+        if not any(code in proven for code in via):
             return False
     return True
 
@@ -395,71 +454,79 @@ def _overnight_from_owned_clocks(
     return None
 
 
-def _leg_layover_nights(leg: RawJourneyLeg) -> Tuple[tuple[Optional[str], Optional[bool]], ...]:
-    events: list[tuple[Optional[str], Optional[bool]]] = []
+def _leg_layover_nights(
+    leg: RawJourneyLeg,
+) -> tuple[tuple[_ConnectionPlace, Optional[bool]], ...]:
     segs = leg.segments
     lays = leg.layovers
-    count = max(len(lays), max(0, len(segs) - 1))
-    for index in range(count):
-        city: Optional[str] = None
-        hours: Optional[float] = None
-        arr: Optional[str] = None
-        dep: Optional[str] = None
-        if index < len(lays):
-            city = lays[index].city
-            hours = lays[index].hours
-        if index + 1 < len(segs):
-            inbound = segs[index]
-            outbound = segs[index + 1]
-            arr = inbound.arrival
-            dep = outbound.departure
-            if not city:
-                city = inbound.destination or outbound.origin
-        events.append((city, _overnight_from_owned_clocks(arr, dep, hours)))
+    places = _leg_places(leg)
+    events: list[tuple[_ConnectionPlace, Optional[bool]]] = []
+    for index, place in enumerate(places):
+        hours = lays[index].hours if index < len(lays) else None
+        arr = segs[index].arrival if index < len(segs) else None
+        dep = segs[index + 1].departure if index + 1 < len(segs) else None
+        events.append((place, _overnight_from_owned_clocks(arr, dep, hours)))
     return tuple(events)
 
 
 def _layover_nights(
     raw: RawFlightCard | FlightOffer,
-) -> Tuple[tuple[Optional[str], Optional[bool]], ...]:
+) -> tuple[tuple[_ConnectionPlace, Optional[bool]], ...]:
     events = [event for leg in raw.legs for event in _leg_layover_nights(leg)]
     if not events and (raw.layover_city or raw.layover_hours is not None):
         events.append(
-            (raw.layover_city, _overnight_from_owned_clocks(None, None, raw.layover_hours))
+            (
+                _summary_place(raw.layover_city),
+                _overnight_from_owned_clocks(None, None, raw.layover_hours),
+            )
         )
     return tuple(events)
 
 
-def _overnight_city_match(city: Optional[str], code: str) -> Optional[bool]:
+def _overnight_place_match(place: _ConnectionPlace, code: str) -> Optional[bool]:
+    """True, False, or None when the connection's airport is not proven."""
     if code == OVERNIGHT_ANY:
         return True
-    if not city or not city.strip():
+    if place.code:
+        return place.code == code
+    if code in place.also:
         return None
-    if _token_matches_via(city, code):
-        return True
+    if place.also:
+        return False
+    text = _clean_place(place.label)
+    if not text:
+        return None
+    named = _known_iata(text)
+    if named:
+        return named == code
+    codes = place_label_codes(text)
+    if len(codes) == 1:
+        return codes[0] == code
+    if code in codes:
+        return None
     return False
 
 
 def _satisfies_no_overnight(
-    events: Sequence[tuple[Optional[str], Optional[bool]]],
+    events: Sequence[tuple[_ConnectionPlace, Optional[bool]]],
     codes: Sequence[str],
 ) -> bool:
     for code in codes:
-        for city, overnight in events:
+        for place, overnight in events:
             if overnight is False:
                 continue
-            if _overnight_city_match(city, code) is not False:
+            if _overnight_place_match(place, code) is not False:
                 return False
     return True
 
 
 def _satisfies_require_overnight(
-    events: Sequence[tuple[Optional[str], Optional[bool]]],
+    events: Sequence[tuple[_ConnectionPlace, Optional[bool]]],
     codes: Sequence[str],
 ) -> bool:
     for code in codes:
-        for city, overnight in events:
-            if _overnight_city_match(city, code) is True and overnight is True:
+        for place, overnight in events:
+            if _overnight_place_match(place, code) is True and overnight is True:
                 return True
     return False
 

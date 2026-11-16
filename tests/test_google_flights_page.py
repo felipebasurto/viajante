@@ -6,7 +6,7 @@ import unittest
 from datetime import date
 
 import _isolate  # noqa: F401
-from viajante.google_flights_page import extract_ds1_data, parse_shopping_page
+from viajante.google_flights_page import extract_ds1_data, parse_shopping_page, shared_page_tree
 from viajante.google_flights_rpc import (
     CompactParseMiss,
     EmptyShoppingResults,
@@ -37,6 +37,15 @@ class GoogleFlightsPageTests(unittest.TestCase):
         data = [None, None, ["quoted ] ) } text", 1]]
         html = _page(data, props="hash:'brace } and comma, data: nope', nested:{data:[0]},")
         self.assertEqual(extract_ds1_data(html), data)
+
+    def test_one_page_decodes_ds1_once(self) -> None:
+        data = [None, None, ["quoted", 1]]
+        html = _page(data)
+        with shared_page_tree(html):
+            first = extract_ds1_data(html)
+            second = extract_ds1_data(html)
+        self.assertIs(first, second)
+        self.assertEqual(second, data)
 
     def test_public_page_data_uses_the_owned_shopping_decoder(self) -> None:
         data = [None, None, [[_itinerary()], None, False], [[], 0, False]]

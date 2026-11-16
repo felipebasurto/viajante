@@ -94,9 +94,9 @@ from viajante.points import (
     transfer_paths,
 )
 from viajante.quote import (
-    first_origin_iata,
     resolve_baggage_buffer,
     resolve_quote_currency,
+    resolve_trips_currency,
 )
 from viajante.recheck import run_recheck_cli
 from viajante.runtime import package_version
@@ -259,7 +259,7 @@ def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dic
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
     trips = as_trips(plan)
     trips = expand_nearby_trips(trips, nearby=bool(getattr(args, "nearby", False)))
-    _resolve_quote_from_args(args, first_origin_iata(trips[0]))
+    _resolve_quote_from_args(args, trips=trips)
     return trips, shop
 
 
@@ -448,6 +448,8 @@ def _run_flights(args: argparse.Namespace) -> int:
                 country=args.country,
                 proxy=getattr(args, "proxy", None) or None,
                 progress=lambda line: print(line, file=sys.stderr),
+                less_emissions=bool(getattr(args, "less_emissions", False)),
+                hide_separate_tickets=bool(getattr(args, "hide_separate_tickets", False)),
             )
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -804,11 +806,19 @@ def _add_baggage_buffer_flag(parser: argparse.ArgumentParser, extra: str = "") -
     )
 
 
-def _resolve_quote_from_args(args: argparse.Namespace, origin: Optional[str]) -> None:
+def _resolve_quote_from_args(
+    args: argparse.Namespace,
+    origin: Optional[str] = None,
+    trips: Optional[Sequence[object]] = None,
+) -> None:
     if getattr(args, "baggage_buffer", None) is not None and args.baggage_buffer < 0:
         raise ValueError("--baggage-buffer must not be negative")
     args.country = normalize_country(getattr(args, "country", None))
-    args.currency = resolve_quote_currency(getattr(args, "currency", None), origin)
+    explicit = getattr(args, "currency", None)
+    if trips is not None:
+        args.currency = resolve_trips_currency(explicit, trips)
+    else:
+        args.currency = resolve_quote_currency(explicit, origin)
     args.baggage_buffer = resolve_baggage_buffer(
         getattr(args, "baggage_buffer", None), args.currency
     )
@@ -1372,8 +1382,8 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
 
 def _run_hotel_rooms(args: argparse.Namespace) -> int:
     try:
-        check_in = date.fromisoformat(args.check_in)
-        check_out = date.fromisoformat(args.check_out)
+        check_in = _parse_iso_date(args.check_in, "check-in")
+        check_out = _parse_iso_date(args.check_out, "check-out")
         if check_in < date.today():
             raise ValueError(f"check-in date is in the past: {check_in.isoformat()}")
         report = search_hotel_rooms(
@@ -1622,7 +1632,14 @@ def _build_parser() -> argparse.ArgumentParser:
     rooms.add_argument(
         "--name", default=None, help="Exact hotel name (normalized match); needs --city"
     )
-    rooms.add_argument("--city", default=None, help="City to look the name up in")
+    rooms.add_argument(
+        "--city",
+        default=None,
+        help=(
+            "City, or City, qualifier: an ISO country (UK is GB) or an English "
+            "country or region (Paris, FR; Paris, France; Paris, Texas)"
+        ),
+    )
     rooms.add_argument("--adults", type=int, default=2, help="Number of adults (default 2)")
     rooms.add_argument("--rooms", type=int, default=1, help="Rooms, 1 to 5 (default 1)")
     _add_save_flag(rooms)
@@ -1817,8 +1834,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default="sweep",
         choices=["auto", "sweep", "detail"],
         help=(
-            "Shops each day on the public results page, then one fresh shop on the chosen day. "
-            "detail is accepted and ignored."
+            "Shops each day on the public results page and ranks the chosen day from "
+            "those cards (calendar_then_sweep). detail is accepted and ignored."
         ),
     )
     _add_save_flag(flex)

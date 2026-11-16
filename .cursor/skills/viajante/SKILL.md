@@ -7,15 +7,26 @@ description: Search live Google Flights and hotel prices with the viajante CLI o
 
 Local Google Flights and hotel search. No implied home hub. Fetch locale is English. User prompts may be any language.
 
+## Which path
+
+| You have | Do this |
+| --- | --- |
+| MCP tools listed | You are connected. Read `status`, `completeness`, and `empty_reason` before the rows. `get_guide` is the long rules. `get_runtime_info` is the running version. |
+| A shell, nothing installed | Primary: `npx -y @viajante/mcp` (needs `uv` and Python 3.10+). No Node: `uvx --from viajante[mcp] viajante-mcp`. Client JSON: [mcp.md](mcp.md). The npx launcher includes the browser extra; the uvx line does not. |
+| The `viajante` CLI only | `viajante <cmd> --help`. `viajante --version` before a new flag. Hotels need `--currency`. This install has no MCP server. |
+| Python | `from viajante import get_flights, search_flights, search_hotels, validate_itinerary`. `get_flights` takes a route spec (`JFK-LHR:YYYY-MM-DD`), not a sentence. `search_hotels` defaults to Booking (browser extra); pass `source="google"` and `currency`. `get_hotel_details(report, query_index, offer_index)` is not the MCP `selection_id` form. |
+| This skill, tool not installed | Use the shell row, then the tool table. A checkout runs `uv run --extra mcp viajante-mcp`. `.cursor/mcp.json` is contributors only. `uv sync` does not put the binary on PATH. |
+| No shell and no local process | You cannot search. Loopback HTTP has no auth and is never hosted. `server.json` has no remotes. Do not invent a URL. |
+
+If `viajante-mcp` says it needs the mcp extra, you are not in a checkout: use the uvx line, not `uv sync`. An npm MCP and a separate uv tool can differ; unpinned `uvx` can reuse an old install. Confirm with `get_runtime_info` or `viajante --version`.
+
 Currency is `--currency` / MCP `currency`, or inferred from a **named** origin airport country (JFK USD, LHR GBP, NRT JPY, GRU BRL). Google and Booking hotels require currency; opt-in Skiplagged hotels default to USD. If origin, dest, country, or currency is unproven (several airports, “Europe”, two currencies), ask or error. Do not invent IATA, `gl`, ISO 4217, fares, typicals, tokens, bag fees, or via lists. Viajante does not convert.
 
-Flags: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP signatures: `src/viajante/mcp_server.py`. This skill is not argparse.
-
-**Install the MCP:** [mcp.md](mcp.md) — `npx -y @viajante/mcp` (or `uvx --from viajante[mcp] viajante-mcp`) in the client’s `mcpServers`. Checkout `.cursor/mcp.json` is contributors only.
+Flags: `src/viajante/cli.py` (`viajante <cmd> --help`). MCP parameters: `src/viajante/mcp_handlers.py` (the client schema is copied from those signatures). This skill is not argparse. On `get_flights` / `search_flights` the airline filters are `alliances` and `exclude_alliances`; MCP and the CLI call them `alliance` and `exclude_alliance` (`--alliance`, `--exclude-alliance`).
 
 ## Dates
 
-CLI rejects dates in the past. Compute ISO dates from **today**. Roll a named season to the next legal year if that month is already past. Never copy a calendar date from this skill, README, or old chat. Grammar: `ORIGIN-DEST:YYYY-MM-DD`. Two dates on one spec without `--trip` are two one-ways. `--trip rt` is one package. `--flex` is required. Explore needs `--from` or `--month`. `max_stops` is 0, 1, or 2; cannot require 3+. If the user needs 3+, say so and search with 2, or refuse — do not invent a fare.
+CLI rejects dates in the past. Compute ISO dates from **today**. Roll a named season to the next legal year if that month is already past. Never copy a calendar date from this skill, README, or old chat. Grammar: `ORIGIN-DEST:YYYY-MM-DD`. Two dates on one spec without `--trip` are two one-ways. `--trip rt` is one package. `viajante flex` needs `--around` and `--flex`. `viajante explore` needs `--from` or `--month`; its `--max-stops` is 0 or 1. On flights, `max_stops` is 0, 1, or 2; cannot require 3+. If the user needs 3+, say so and search with 2, or refuse. Do not invent a fare.
 
 Fuzzy timing (for example, “late October / early November”) is not an ISO window. Propose the computed `start` and `end`, then wait for the user's confirmation before searching. For `search_flights`, every `routes` entry is exactly `ORIGIN-DEST:YYYY-MM-DD`; for `search_dates`, `route` is `ORIGIN-DEST` and `start` / `end` are separate ISO dates. Do not replace the colon with whitespace.
 
@@ -30,7 +41,7 @@ Fuzzy timing (for example, “late October / early November”) is not an ISO wi
 | Named route and date | `search_flights` (`routes`; `nearby_days` N for a ±N grid) | `viajante flights` (`--nearby-days`) |
 | Cheapest week (max 31 days) | `search_dates` (`route`, `start`, `end`) | `viajante dates` |
 | ±N around one date, then one shop | `search_flex` (`route`, `around`, `flex`) | `viajante flex` |
-| Dest triage from a named origin | `search_explore` (`origin`, `start` or `month`) | `viajante explore` |
+| Dest triage from a named origin | `search_explore` (`origin`, `start` or `month`) | `viajante explore` (`--from` or `--month`; `--max-stops` 0 or 1) |
 | Stay only | `search_hotels` (`location`, `check_in`, `check_out`, `currency`; default source google) | `viajante hotels` (CLI default source Booking) |
 | Room rates for one finalist (Skiplagged, USD) | `search_hotel_rooms` (`check_in`, `check_out`, then `hotel_id` or `hotel_name` + `city`) | `viajante hotel-rooms` |
 | Flights then hotel | `search_trip` (`routes`, `location`) | `viajante trip` |
@@ -88,13 +99,13 @@ Hotel evidence rules:
 
 ## Fetch
 
-Check `get_runtime_info` or `viajante --version` before relying on new flags/tools. Hotel reports stamp `viajante_version`. An npm MCP and a separate uv tool may be different versions; unpinned `uvx` can reuse an installed old tool. Explicitly upgrade or refresh the version and check again. Run batches sequentially and inspect every error. In zsh use a flags array expanded as `"${flags[@]}"`; a space-separated scalar is one argument.
+Hotel reports stamp `viajante_version`. Run batches sequentially and inspect every error. In zsh use a flags array expanded as `"${flags[@]}"`; a space-separated scalar is one argument.
 
 `--fetch auto`: public-page sweep. Explicit detail needs Playwright. A provider block (including RPC 13) never switches backends; it stops pending work. `markup_drift` does not fall back. Sweep needs no Chromium. Detail and Booking sleep ~4.5–6s between queries. Never shorten that or parallelize. One MCP search at a time. A second search while one is running raises `a viajante search is already running in this process` immediately. That is not `MCP error -32001: Request timed out`; do not treat timeouts as lock-busy or retry them in a long wait loop. `lookup_airports` may run during a search.
 
 `search_dates` is a per-day public-page window (HTTP GETs) and has no `fetch` parameter; installing Chromium cannot switch it to detail. `fetch=detail` applies only to `search_flights`, and requires the browser extra and Chromium in the MCP environment. Optional MCP `country` is Google `gl` (origin market). Omit when unset. Do not pass a destination ISO.
 
-Unnamed `baggage_buffer` is 0. The public-page transport sends `carry_on` (one bag for the whole party, not per passenger), `airlines`, `exclude_airlines` and `alliances`; every page must echo them or the read fails. The page applied an airline exclusion in a live check, but not for every card, so viajante also drops excluded and carrier-unknown cards locally; operator and codeshare evidence is limited. It refuses named checked `bags`, `exclude_alliances`, `exclude_basic_economy`, and multi-city (use `fetch=detail`) before network work. For a one-way search, `auto` and `sweep` also send the clock bounds (`depart_after`, `depart_before`, `depart_window`, `arrive_before`, `arrive_after`), `max_duration`, `max_layover`, `price_cap`, `less_emissions` and `hide_separate_tickets` to the page; each must be echoed, and the local filter still runs on every row. `less_emissions` and `hide_separate_tickets` are refused on detail, round-trip and multi-city. `search_explore` needs the browser extra and accepts only one adult in economy. Detail refuses bag and carrier filters. Do not remove requested filters silently; a base-fare search is a separate scenario. Round-trip results complete up to eight owned outbound selections and remain scope-bound/partial. Automatic typical-price fanout is disabled. `VIAJANTE_SWEEP_MODE=conservative` caps HTTP/2 dispatch at two instead of eight. Do not invent a bag fee.
+Unnamed `baggage_buffer` is 0. The public-page transport sends `carry_on` (one bag for the whole party, not per passenger), `airlines`, `exclude_airlines` and `alliance`; every page must echo them or the read fails. The page applied an airline exclusion in a live check, but not for every card, so viajante also drops excluded and carrier-unknown cards locally; operator and codeshare evidence is limited. It refuses named checked `bags`, `exclude_alliance`, `exclude_basic_economy`, and multi-city (use `fetch=detail`) before network work. For a one-way search, `auto` and `sweep` also send the clock bounds (`depart_after`, `depart_before`, `depart_window`, `arrive_before`, `arrive_after`), `max_duration`, `max_layover`, `price_cap`, `less_emissions` and `hide_separate_tickets` to the page; each must be echoed, and the local filter still runs on every row. `less_emissions` and `hide_separate_tickets` are refused on detail, round-trip and multi-city. `search_explore` needs the browser extra and accepts only one adult in economy. Detail refuses bag and carrier filters. Do not remove requested filters silently; a base-fare search is a separate scenario. Round-trip results complete up to eight owned outbound selections and remain scope-bound/partial. Automatic typical-price fanout is disabled. `VIAJANTE_SWEEP_MODE=conservative` caps HTTP/2 dispatch at two instead of eight. Do not invent a bag fee.
 
 ## Destination triage
 

@@ -11,6 +11,7 @@ import _isolate  # noqa: F401
 from viajante.airports import (
     METRO_GROUPS,
     airport_geo,
+    canonical_city_name,
     dest_blocked_by_exclude_regions,
     get_airport,
     is_known_iata,
@@ -20,6 +21,7 @@ from viajante.airports import (
     metro_of,
     owned_tz_region_tokens,
     parse_exclude_regions,
+    place_label_codes,
     same_city_iata,
 )
 from viajante.cli import main
@@ -57,6 +59,18 @@ class AirportLookupTests(unittest.TestCase):
     def test_ciudad_de_mexico_finds_mex(self) -> None:
         codes = {row.iata for row in lookup_airports("Ciudad de México")}
         self.assertIn("MEX", codes)
+
+    def test_folded_city_names_find_the_catalogue_without_one_saint_louis(self) -> None:
+        self.assertIn("KRK", {row.iata for row in lookup_airports("Krakow")})
+        paulo = {row.iata for row in lookup_airports("São Paulo")}
+        self.assertTrue({"GRU", "CGH"} <= paulo)
+        self.assertEqual(canonical_city_name("Saint Louis"), "saint louis")
+        self.assertEqual(canonical_city_name("St Louis"), "st louis")
+        for label in ("Saint Louis", "St Louis"):
+            codes = place_label_codes(label)
+            self.assertIn("STL", codes)
+            self.assertIn("XLS", codes)
+            self.assertGreater(len(codes), 1)
 
     def test_sapporo_includes_new_chitose_ahead_of_okadama(self) -> None:
         codes = [row.iata for row in lookup_airports("Sapporo")]

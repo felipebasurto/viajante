@@ -682,6 +682,50 @@ class NearbyTripTests(unittest.TestCase):
         self.assertEqual(report.trip_total.hotel_stay, 50)
         self.assertEqual(report.trip_total.total, 140)
 
+    def test_a_failed_nearby_alternative_keeps_the_priced_fare(self) -> None:
+        packaged = parse_flight_plan(
+            ["BOS-LHR:2026-09-18:2026-09-22"],
+            trip="rt",
+            max_stops=1,
+        )
+        expanded = expand_nearby_trips((packaged,), nearby=True)
+        priced = next(item for item in expanded if item.destination == "LHR")
+        empty = next(item for item in expanded if item.destination == "LGW")
+        missed = next(item for item in expanded if item.destination == "LCY")
+        flights = _flight_report(
+            QueryFailure(
+                query=missed,
+                error=SearchError(SearchErrorCode.NO_RESULTS, "No flights"),
+            ),
+            QuerySuccess(
+                query=empty,
+                raw_count=0,
+                eligible_count=0,
+                offers=(),
+            ),
+            QuerySuccess(
+                query=priced,
+                raw_count=1,
+                eligible_count=1,
+                offers=(_flight_offer(price=90),),
+            ),
+        )
+        hotels = _hotel_report(
+            HotelQuerySuccess(
+                query=HotelQuery("London", date(2026, 9, 18), date(2026, 9, 22)),
+                applied=_applied(),
+                raw_count=1,
+                eligible_count=1,
+                offers=(_hotel_offer(total_price=50),),
+            )
+        )
+        total = owned_trip_total(flights, hotels)
+        self.assertIsNotNone(total)
+        assert total is not None
+        self.assertEqual(total.flight_fare, 90)
+        self.assertEqual(total.hotel_stay, 50)
+        self.assertEqual(total.total, 140)
+
     def test_nearby_unknown_city_does_not_invent_codes(self) -> None:
         queries = parse_route_specs(["MAD-BCN:2026-09-18"], max_stops=1)
         expanded = expand_nearby_trips(queries, nearby=True)

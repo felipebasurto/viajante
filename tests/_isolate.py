@@ -30,6 +30,7 @@ unittest.TestCase.run = _run_isolated
 
 os.environ.pop("VIAJANTE_PRICE_HISTORY", None)
 os.environ.pop("VIAJANTE_SWEEP_MODE", None)
+os.environ.pop("VIAJANTE_MCP_DEADLINE_SECONDS", None)
 if _MARK not in os.environ.get("VIAJANTE_STATE_DIR", ""):
     _STATE = tempfile.mkdtemp(prefix=_MARK)
     os.environ["VIAJANTE_STATE_DIR"] = _STATE

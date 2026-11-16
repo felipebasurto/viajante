@@ -331,6 +331,8 @@ def _rank_offers(
             offer.price,
             offer.stops_count,
             offer.duration_hours,
+            offer.layover_city,
+            offer.flight_numbers,
         )
         if key in seen:
             continue

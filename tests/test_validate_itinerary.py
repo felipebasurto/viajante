@@ -178,6 +178,61 @@ class ValidateItineraryTests(unittest.TestCase):
         self.assertEqual(_status(report, "depart_after"), "pass")
         self.assertEqual(_status(report, "arrive_before"), "pass")
 
+    def test_clock_bounds_use_the_journey_the_search_filters(self) -> None:
+        connecting = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="connect",
+            stops_count=1,
+            segments=[
+                _segment("JFK", "BOS", departure="15:00", arrival="16:30"),
+                _segment("BOS", "LHR", departure="06:00", arrival="18:00"),
+            ],
+        )
+        kept = validate_itinerary(
+            [connecting],
+            {"depart_after": "09:00", "arrive_before": "19:00"},
+            currency="USD",
+        )
+        self.assertEqual(_status(kept, "depart_after"), "pass")
+        self.assertEqual(_status(kept, "arrive_before"), "pass")
+        early = validate_itinerary([connecting], {"depart_after": "16:00"}, currency="USD")
+        self.assertEqual(_status(early, "depart_after"), "fail")
+
+        packaged = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="rt-clock",
+            segments=[_segment("JFK", "LHR", departure="15:00", arrival="18:00")],
+        )
+        packaged["query"]["trip"] = "rt"
+        packaged["query"]["return_date"] = "2026-10-08"
+        packaged["offer"]["evidence"]["query"] = dict(packaged["query"])
+        packaged["offer"]["legs"] = [
+            {
+                "segments": [_segment("JFK", "LHR", departure="15:00", arrival="18:00")],
+                "layovers": [],
+            },
+            {
+                "segments": [_segment("LHR", "JFK", departure="06:00", arrival="09:00")],
+                "layovers": [],
+            },
+        ]
+        round_trip = validate_itinerary([packaged], {"depart_after": "09:00"}, currency="USD")
+        self.assertEqual(_status(round_trip, "depart_after"), "pass")
+
+        later = _row(
+            "LHR",
+            "NRT",
+            "2026-10-02",
+            evidence_id="later",
+            segments=[_segment("LHR", "NRT", departure="03:00", arrival="18:00")],
+        )
+        both = validate_itinerary([connecting, later], {"depart_after": "09:00"}, currency="USD")
+        self.assertEqual(_status(both, "depart_after"), "fail")
+
     def test_fare_total_mismatch_fails(self) -> None:
         row = _row(
             "JFK",
@@ -190,6 +245,69 @@ class ValidateItineraryTests(unittest.TestCase):
         report = validate_itinerary([row], {"claimed_fare_total": 96.0}, currency="USD")
         self.assertEqual(report.fare_total, 88.0)
         self.assertEqual(_status(report, "fare_total"), "fail")
+
+    def test_non_finite_amounts_do_not_pass(self) -> None:
+        nan_price = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-price",
+            price=float("nan"),
+            segments=[_segment("JFK", "LHR")],
+        )
+        priced = validate_itinerary([nan_price], {}, currency="USD")
+        self.assertEqual(_status(priced, "currency"), "unknown")
+        self.assertIsNone(priced.feasible)
+        self.assertIsNone(priced.fare_total)
+
+        infinite = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="inf-price",
+            price=float("inf"),
+            segments=[_segment("JFK", "LHR")],
+        )
+        infinite_report = validate_itinerary([infinite], {}, currency="USD")
+        self.assertEqual(_status(infinite_report, "currency"), "unknown")
+
+        layover = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-layover",
+            stops_count=1,
+            segments=[
+                _segment("JFK", "BOS"),
+                _segment("BOS", "LHR"),
+            ],
+        )
+        layover["offer"]["legs"][0]["layovers"] = [{"hours": float("nan")}]
+        report = validate_itinerary([layover], {"min_layover": 1, "max_layover": 4}, currency="USD")
+        self.assertEqual(_status(report, "min_layover"), "unknown")
+        self.assertEqual(_status(report, "max_layover"), "unknown")
+        self.assertIsNone(report.feasible)
+
+        owned = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-claim",
+            segments=[_segment("JFK", "LHR")],
+        )
+        for claimed in (float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                validate_itinerary([owned], {"claimed_fare_total": claimed}, currency="USD")
+        poisoned = _row(
+            "JFK",
+            "LHR",
+            "2026-10-01",
+            evidence_id="nan-buffer",
+            segments=[_segment("JFK", "LHR")],
+        )
+        poisoned["offer"]["baggage_buffer"] = float("nan")
+        with self.assertRaises(ValueError):
+            validate_itinerary([poisoned], {}, currency="USD")
 
     def test_missing_segments_yields_unknown_segment_checks(self) -> None:
         row = _row("JFK", "LHR", "2026-10-01", evidence_id="aggregate")
@@ -316,6 +434,31 @@ class ValidateItineraryTests(unittest.TestCase):
         )
         report = validate_itinerary([row], {"minimum_savings": 200}, currency="USD")
         self.assertEqual(_status(report, "minimum_savings"), "unknown")
+
+    def test_empty_selection_does_not_pass(self) -> None:
+        report = validate_itinerary(
+            [],
+            {
+                "depart_after": "09:00",
+                "arrive_before": "18:00",
+                "max_segments": 2,
+                "max_stops": 1,
+                "min_layover": 1,
+                "max_layover": 4,
+                "bags": 1,
+                "carry_on": 1,
+                "no_airport_changes": True,
+                "no_overnight": True,
+                "no_consecutive_same_operator": True,
+                "require_reproducible": True,
+                "travel_start": "2026-10-01",
+                "travel_end": "2026-10-15",
+            },
+            currency="USD",
+        )
+        self.assertIsNone(report.feasible)
+        passed = [check.constraint for check in report.checks if check.status == "pass"]
+        self.assertEqual(passed, [])
 
     def test_route_break_fails(self) -> None:
         first = _row(

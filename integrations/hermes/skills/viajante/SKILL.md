@@ -8,6 +8,13 @@ compatibility: Needs the viajante MCP server (uv and Python 3.10 or later on the
 
 viajante returns provider evidence. You weigh it: price, duration, stops, clocks, rating. It never converts currency and never guesses.
 
+## Which path
+
+- **Tools are listed.** You are connected. Read `status` and `empty_reason` before the rows. `get_guide` is the long rules. `get_runtime_info` is the running version.
+- **Nothing installed, you have a shell.** Primary: `npx -y @viajante/mcp` (needs uv and Python 3.10+). No Node: `uvx --from viajante[mcp] viajante-mcp`. If `viajante-mcp` says it needs the mcp extra, you are not in a checkout: use that uvx line, not `uv sync`.
+- **CLI only.** `viajante <cmd> --help` and `viajante --version`. Hotels need `--currency`.
+- **No shell and no local process.** You cannot search. Loopback HTTP has no auth and is never hosted. `server.json` has no remotes. Do not invent a URL.
+
 ## Before a search
 
 - Name the origin and destination as IATA codes, or call `lookup_airports`. Ask when a city has several airports.

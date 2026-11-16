@@ -179,8 +179,11 @@ def bounded_ms(milliseconds: int) -> int:
     control.checkpoint()
     if control.deadline_at is None:
         return milliseconds
-    left = int((control.deadline_at - control.clock()) * 1000)
-    return max(1, min(milliseconds, left))
+    left = (control.deadline_at - control.clock()) * 1000
+    if left < 1:
+        control.mark_cut()
+        raise SearchDeadline()
+    return min(milliseconds, int(left))
 
 
 def check_cancelled() -> None:

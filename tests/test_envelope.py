@@ -823,6 +823,63 @@ class LocalToolTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "ok")
 
 
+class NearbyDatesEnvelopeTests(unittest.TestCase):
+    def test_a_priced_nearby_day_is_evidence_when_the_shopped_date_is_empty(self) -> None:
+        payload = stamp_search(
+            {
+                "searched_at": "2026-08-10T10:00:00Z",
+                "queries": [
+                    {
+                        "query": {"origin": "JFK", "destination": "LHR"},
+                        "error": {"code": "no_results", "message": "none"},
+                        "nearby_dates": {
+                            "days": 1,
+                            "prices": [
+                                {
+                                    "status": "empty",
+                                    "price": None,
+                                    "empty_reason": "provider_empty",
+                                    "offset_days": 0,
+                                },
+                                {"status": "ok", "price": 420.0, "offset_days": 1},
+                            ],
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(payload["status"], "ok")
+        self.assertIsNone(payload["empty_reason"])
+        self.assertEqual(payload["completeness"], "complete")
+        self.assertIsNone(payload["error_code"])
+
+    def test_a_failed_nearby_day_keeps_the_envelope_partial(self) -> None:
+        payload = stamp_search(
+            {
+                "searched_at": "2026-08-10T10:00:00Z",
+                "queries": [
+                    {
+                        "query": {"origin": "JFK", "destination": "NRT"},
+                        "offers": [{"price": 800}],
+                        "nearby_dates": {
+                            "prices": [
+                                {"status": "ok", "price": 800},
+                                {
+                                    "status": "error",
+                                    "error": {"code": "blocked", "message": "wall"},
+                                },
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["completeness"], "partial")
+        self.assertEqual(payload["error_code"], "blocked")
+        self.assertIsNone(payload["empty_reason"])
+
+
 class UnknownShapeTests(unittest.TestCase):
     def test_an_unrecognised_payload_raises_instead_of_reading_as_no_results(self) -> None:
         for payload in (
@@ -850,6 +907,27 @@ class UnknownShapeTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(EnvelopeShapeError):
                     stamp_search(dict(payload))
+
+    def test_each_explore_destination_is_counted_by_its_own_empty_reason(self) -> None:
+        def stamped(destinations):
+            return stamp_search({"destinations": destinations}, now=NOW)
+
+        self.assertEqual(
+            stamped([{"iata": "LHR", "empty_reason": "provider_empty"}])["empty_reason"],
+            "provider_empty",
+        )
+        self.assertEqual(
+            stamped([{"iata": "CDG", "empty_reason": "filtered_out"}])["empty_reason"],
+            "filtered_out",
+        )
+        self.assertEqual(stamped([{"iata": "SIN"}])["empty_reason"], "not_loaded")
+        month = stamped(
+            [{"iata": "NRT", "empty_reason": "not_loaded", "shopped_date": "2026-11-01"}]
+        )
+        self.assertEqual(month["empty_reason"], "not_loaded")
+        self.assertEqual(month["destinations"][0]["shopped_date"], "2026-11-01")
+        with self.assertRaises(EnvelopeShapeError):
+            stamped([{"iata": "GRU", "empty_reason": "bogus"}])
 
 
 class VerifyAnswerEnvelopeTests(unittest.TestCase):

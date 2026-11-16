@@ -38,7 +38,16 @@ _MONEY_KEYS = frozenset(
 )
 # Recommendation score maps reuse "price" as a key for a 0-1 score, not an amount.
 _SCORE_KEYS = frozenset({"breakdown", "weights"})
-_GLYPH_CURRENCY = {"€": "EUR", "£": "GBP", "₹": "INR", "₩": "KRW"}
+# ponytail: `$` is USD and `¥` is JPY. C$/A$/NT$ share the glyph and are flagged
+# unless the ISO code is written out. Upgrade: a prefix map ahead of the glyph.
+_GLYPH_CURRENCY = {
+    "$": "USD",
+    "€": "EUR",
+    "£": "GBP",
+    "¥": "JPY",
+    "₹": "INR",
+    "₩": "KRW",
+}
 _URL = re.compile(r"https?://[^\s)\]>\"'`]+")
 _ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _CODE = re.compile(r"\b[A-Z]{3}\b")
