@@ -263,7 +263,9 @@ def shift_day(day: date, nights: int) -> date:
 
 def validate_date_window(start: date, end: date, *, today: Optional[date] = None) -> None:
     if end < start:
-        raise ValueError("end date must be on or after the start date")
+        raise ValueError(
+            f"end date {end.isoformat()} must be on or after the start date {start.isoformat()}"
+        )
     span = date_window_days(start, end)
     if span > MAX_DATE_WINDOW_DAYS:
         raise ValueError(f"date window is at most {MAX_DATE_WINDOW_DAYS} days (got {span})")
@@ -282,7 +284,7 @@ def resolve_date_trip(
         raise ValueError("date search does not support multi-city")
     if nights is not None:
         if nights < 1:
-            raise ValueError("nights must be at least 1")
+            raise ValueError(f"nights must be at least 1, got {nights}")
         if kind == "one-way":
             kind = "rt"
     if kind == "rt" and nights is None:
@@ -724,9 +726,9 @@ def search_dates(
 def validate_nearby_days(days: int) -> int:
     """0 disables the grid. The cap matches flex so the window stays within 31 days."""
     if isinstance(days, bool) or not isinstance(days, int):
-        raise ValueError("nearby_days must be an integer")
+        raise ValueError(f"nearby_days must be an integer, got {days!r}")
     if days < 0:
-        raise ValueError("nearby_days must be 0 or greater (0 disables the date grid)")
+        raise ValueError(f"nearby_days must be 0 or greater (0 disables the date grid), got {days}")
     if days > MAX_FLEX_DAYS:
         raise ValueError(
             f"nearby_days is at most {MAX_FLEX_DAYS} (window cap {MAX_DATE_WINDOW_DAYS})"
@@ -742,7 +744,7 @@ def flex_window(
 ) -> tuple[date, date]:
     """Inclusive [around-flex, around+flex], clamped to today. Cap is 31 days."""
     if flex_days < 1:
-        raise ValueError("flex must be at least 1 day")
+        raise ValueError(f"flex must be at least 1 day, got {flex_days}")
     if flex_days > MAX_FLEX_DAYS:
         raise ValueError(
             f"flex is at most {MAX_FLEX_DAYS} days (window cap {MAX_DATE_WINDOW_DAYS})"

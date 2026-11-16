@@ -352,9 +352,31 @@ class BookingHotelsSourceTests(unittest.TestCase):
         page = FakePage(cards=(provider_card(title=None),))
         with tempfile.TemporaryDirectory() as tmp:
             source = self.source_for(page, Path(tmp))
-            with self.assertRaisesRegex(RuntimeError, "could not be parsed"):
+            with self.assertRaisesRegex(RuntimeError, "none could be parsed"):
                 source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
         self.assertTrue(page.closed)
+
+    def test_unparsed_page_failure_names_the_page_and_counts_without_the_query(self) -> None:
+        page = FakePage(cards=(provider_card(title=None),))
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self.source_for(page, Path(tmp))
+            with self.assertRaises(RuntimeError) as caught:
+                source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
+        message = str(caught.exception)
+        self.assertIn("www.booking.com/searchresults.html", message)
+        self.assertIn("listed 1 property cards", message)
+        self.assertNotIn("?", message)
+
+    def test_a_page_with_no_known_state_says_availability_is_unknown(self) -> None:
+        page = FakePage()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self.source_for(page, Path(tmp))
+            with self.assertRaises(RuntimeError) as caught:
+                source.fetch(query(), build_applied_filters(query(), currency="EUR"), 24)
+        message = str(caught.exception)
+        self.assertIn("neither property cards nor a known empty state", message)
+        self.assertIn("availability is unknown", message)
+        self.assertIn("www.booking.com/searchresults.html", message)
 
     def test_fetch_honors_limit(self) -> None:
         page = FakePage(

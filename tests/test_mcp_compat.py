@@ -461,7 +461,10 @@ class InvalidParameterTests(_StateDir):
         body = self.call("search_dates", route="JFK-LHR", start=FUTURE_END, end=FUTURE)
         self.assertEqual(body["code"], "invalid_parameter")
         self.assertIsNone(body["field"])
-        self.assertIn("end date must be on or after the start date", body["message"])
+        self.assertEqual(
+            body["message"],
+            f"end date {FUTURE} must be on or after the start date {FUTURE_END}",
+        )
 
     def test_the_message_keeps_the_original_wording(self) -> None:
         body = self.call("search_explore", origin="JFK", start=FUTURE, top=0)

@@ -69,6 +69,9 @@ BLOCK_BODY_MARKERS = (
 class NoFlightsFound(Exception):
     """Google rendered a results page with no priced offers."""
 
+    diagnostics: Optional[Mapping[str, object]] = None
+    trip_label: str = ""
+
     def __init__(self, observed_text: str = "") -> None:
         self.observed_text = observed_text
         message = "Google Flights returned no flights for this route and date."
@@ -79,6 +82,10 @@ class NoFlightsFound(Exception):
 
 class GoogleFlightsMarkupError(RuntimeError):
     """Neither a results grid nor a recognized empty state was found."""
+
+    # Filled by the public source: the request's diagnostics and the route and dates asked for.
+    diagnostics: Optional[Mapping[str, object]] = None
+    trip_label: str = ""
 
 
 class GoogleFlightsBlocked(RuntimeError):
@@ -108,6 +115,9 @@ class SweepTransportError(RuntimeError):
 
 class GoogleFlightsRejected(RuntimeError):
     """Shopping RPC rejected the query without an owned cause."""
+
+    diagnostics: Optional[Mapping[str, object]] = None
+    trip_label: str = ""
 
 
 def build_search_params(

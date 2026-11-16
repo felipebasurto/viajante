@@ -144,8 +144,17 @@ def record(
 def selected_reference(selection_id: str, kind: str):
     with _lock:
         selected = _selections.get(selection_id)
-    if selected is None or selected[0] != kind:
-        raise ValueError("unknown or evicted selection_id for this process and tool")
+    if selected is None:
+        raise ValueError(
+            f"selection_id {selection_id!r} is not known to this process: no search here returned "
+            f"it, or it fell out of the last {LEDGER_SIZE} searches. "
+            f"Run the {kind} search again and use the new selection_id."
+        )
+    if selected[0] != kind:
+        raise ValueError(
+            f"selection_id {selection_id!r} belongs to a {selected[0]} result; "
+            f"this tool needs a {kind} selection_id."
+        )
     return selected[1:]
 
 

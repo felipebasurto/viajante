@@ -94,6 +94,20 @@ history up to commit 6ee0fb7.
 - The landing page asks Web or Desktop app before copying the Claude or ChatGPT
   install message.
 
+### Errors
+
+- A public Google page that fails as `markup_drift`, `rejected` or `no_results` now
+  carries `diagnostics` (endpoint host and path, HTTP status, `request_sent`,
+  `attempts`), and its message names the route and dates it was for. The endpoint
+  never includes query parameters.
+- Input errors repeat the value they refused: depart windows and clocks, airline and
+  alliance lists (with an example), date windows (both dates), `--near`, `--flex`,
+  `--days`, `nights`, `nearby_days`, `deadline_seconds`, and returns before departure.
+- `selection_id` errors say whether the id is unknown (never returned or pushed out of
+  the last 20 searches) or belongs to another kind of result, and what to run again.
+- Booking page failures name the page (host and path, no query string) and how many
+  cards were seen, and say availability is unknown.
+
 ### Tooling
 
 - The offline suite freezes `date.today()` at 2026-11-01 (`tests/_isolate.py`), so

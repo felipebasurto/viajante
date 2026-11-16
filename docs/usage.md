@@ -714,9 +714,9 @@ parsed fields. The report types and JSON fields are defined in
 
 | Error code | Meaning |
 | --- | --- |
-| `no_results` | The search returned no results. |
+| `no_results` | The search returned no results. On a public page the message names the route and dates asked for. |
 | `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
-| `rejected` | Google Flights rejected this query. Check the route and dates, or try one airport. |
+| `rejected` | Google Flights rejected this query. Check the route and dates, or try one airport. On a public page the message names them. |
 | `blocked` | Google paused the request or blocked access. The message says how long to wait. Do not add airports or start a new search until then. The batch is not replayed. |
 | `markup_drift` | The page could not be read. Wait and retry this one search once. If it persists, run viajante on your own computer. A catalog that lists destination cards but no priced rows is the same code. |
 | `cards_unparsed` | A public Flights or Booking page loaded, but some attempted cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
@@ -924,7 +924,8 @@ those signatures into the client schema.
   from the recorded cooldown. Both are omitted when no cooldown was recorded, for
   example a proxied 429. The envelope's top-level `retry_after` fields repeat the
   latest of these per-error values exactly, so they are null whenever the errors carry none.
-  Sweep provider failures may also include `diagnostics`: endpoint host and path,
+  Sweep provider failures, including `markup_drift`, `rejected` and `no_results` from a
+  public page, may also include `diagnostics`: endpoint host and path,
   `http_status`, raw `rpc_status`, `request_sent`, `attempts`, and
   `cooldown_basis`. A locally active cooldown has `request_sent: false`,
   `attempts: 0`, and null HTTP/RPC status. HTTP 429 or raw RPC status 13 stops

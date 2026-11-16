@@ -314,7 +314,7 @@ def _parse_near(raw: Optional[str]) -> Optional[Tuple[float, float]]:
     except ValueError:
         lat = lng = None
     if lat is None or lng is None:
-        raise ValueError("--near must be LAT,LNG, e.g. 50.0875,14.4213")
+        raise ValueError(f"--near {raw!r} must be LAT,LNG, e.g. 50.0875,14.4213")
     return (lat, lng)
 
 
@@ -1188,7 +1188,7 @@ def _run_flex(args: argparse.Namespace) -> int:
         origin, destination = parse_route_pair(args.route)
         around = _parse_iso_date(args.around, "--around")
         if args.flex_days < 1:
-            raise ValueError("--flex must be at least 1")
+            raise ValueError(f"--flex must be at least 1, got {args.flex_days}")
         occupancy = _occupancy_from_args(args)
         if args.top <= 0:
             raise ValueError("--top must be a positive integer")
@@ -1367,7 +1367,10 @@ def _run_hidden_city(args: argparse.Namespace) -> int:
         if departure < today:
             raise ValueError(f"departure date is in the past: {departure.isoformat()}")
         if back is not None and back < departure:
-            raise ValueError("return date must not be before departure")
+            raise ValueError(
+                f"return date {back.isoformat()} must not be before "
+                f"departure {departure.isoformat()}"
+            )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -545,7 +545,10 @@ def search_hidden_city(
     if departure_date < today:
         raise ValueError(f"departure date is in the past: {departure_date.isoformat()}")
     if return_date is not None and return_date < departure_date:
-        raise ValueError("return date must not be before departure")
+        raise ValueError(
+            f"return date {return_date.isoformat()} must not be before "
+            f"departure {departure_date.isoformat()}"
+        )
     FlightQuery(origin, destination, departure_date, adults=adults)
     named_currency = normalize_currency(currency) if currency else None
     started = time.perf_counter()

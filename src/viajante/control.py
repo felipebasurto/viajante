@@ -46,9 +46,11 @@ def validate_deadline_seconds(value: object) -> Optional[float]:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("deadline_seconds must be a number")
+        raise ValueError(f"deadline_seconds must be a number, got {value!r}")
     if not math.isfinite(value) or value <= 0:
-        raise ValueError("deadline_seconds must be a positive, finite number of seconds")
+        raise ValueError(
+            f"deadline_seconds must be a positive, finite number of seconds, got {value!r}"
+        )
     return float(value)
 
 

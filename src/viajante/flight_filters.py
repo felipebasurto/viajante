@@ -50,29 +50,29 @@ def parse_depart_window(text: Optional[str]) -> Optional[Tuple[int, int]]:
         return None
     raw = text.strip()
     if not raw:
-        raise ValueError("depart window must look like 6-20 or 06:00-20:00")
+        raise ValueError(f"depart window {raw!r} must look like 6-20 or 06:00-20:00")
     try:
         start_text, end_text = raw.split("-", 1)
     except ValueError as exc:
-        raise ValueError("depart window must look like 6-20 or 06:00-20:00") from exc
+        raise ValueError(f"depart window {raw!r} must look like 6-20 or 06:00-20:00") from exc
     start_text = start_text.strip()
     end_text = end_text.strip()
     if _looks_like_clock_token(start_text) or _looks_like_clock_token(end_text):
         start = _clock_token_minutes(start_text)
         end = _clock_token_minutes(end_text)
         if start is None or end is None:
-            raise ValueError("depart window must look like 6-20 or 06:00-20:00")
+            raise ValueError(f"depart window {raw!r} must look like 6-20 or 06:00-20:00")
         if start > end:
-            raise ValueError("depart window start must be at or before the end")
+            raise ValueError(f"depart window {raw!r}: the start must be at or before the end")
         return start, end
     try:
         start_hour, end_hour = int(start_text), int(end_text)
     except ValueError as exc:
-        raise ValueError("depart window must look like 6-20 or 06:00-20:00") from exc
+        raise ValueError(f"depart window {raw!r} must look like 6-20 or 06:00-20:00") from exc
     if not (0 <= start_hour <= 23 and 0 <= end_hour <= 23):
-        raise ValueError("depart window hours must be between 0 and 23")
+        raise ValueError(f"depart window {raw!r}: hours must be between 0 and 23")
     if start_hour > end_hour:
-        raise ValueError("depart window start must be at or before the end hour")
+        raise ValueError(f"depart window {raw!r}: the start must be at or before the end")
     return start_hour * 60, end_hour * 60 + 59
 
 
@@ -82,12 +82,12 @@ def parse_named_clock(text: Optional[str], *, role: str = "clock") -> Optional[i
         return None
     raw = text.strip()
     if not raw:
-        raise ValueError(f"{role} must look like HH:MM")
+        raise ValueError(f"{role} {raw!r} must look like HH:MM, e.g. 06:30")
     minutes = _clock_token_minutes(raw)
     if minutes is None:
         minutes = _clock_minutes(raw)
     if minutes is None:
-        raise ValueError(f"{role} must look like HH:MM")
+        raise ValueError(f"{role} {raw!r} must look like HH:MM, e.g. 06:30")
     return minutes
 
 

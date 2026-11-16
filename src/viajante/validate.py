@@ -47,19 +47,19 @@ def _items(value: object, *, role: str) -> tuple[object, ...]:
 
 def _number(value: object, *, role: str, minimum: float = 0.0) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{role} must be a number")
+        raise ValueError(f"{role} must be a number, got {value!r}")
     number = float(value)
     if not math.isfinite(number):
         raise ValueError(f"{role} must be a finite number")
     if number < minimum:
-        raise ValueError(f"{role} must be at least {minimum:g}")
+        raise ValueError(f"{role} must be at least {minimum:g}, got {number:g}")
     return number
 
 
 def _integer(value: object, *, role: str, minimum: int = 0) -> int:
     number = _number(value, role=role, minimum=float(minimum))
     if not number.is_integer():
-        raise ValueError(f"{role} must be an integer")
+        raise ValueError(f"{role} must be an integer, got {number:g}")
     return int(number)
 
 

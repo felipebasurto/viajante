@@ -302,7 +302,7 @@ def get_hotel_details(
         return stamp_local(detail)
     query = result["query"]
     if date.fromisoformat(query["check_in"]) < date.today():
-        raise ValueError("check-in date is in the past")
+        raise ValueError(f"check-in date is in the past: {query['check_in']}")
     owned_id = offer.get("provider_id") if payload.get("fetch_backend") == "skiplagged" else None
     anchor = None
     expected_city = None

@@ -181,6 +181,15 @@ _EXPLORE_OCCUPANCY = [1, 0, 0, 0]
 NO_RESULTS_MESSAGE = "Google Flights returned no flights for this route and date."
 
 
+def trip_label(trip: Trip | None) -> str:
+    """The route and dates a query asked for, as the caller wrote them: ``JFK-LHR 2027-03-01``."""
+    if trip is None:
+        return ""
+    return ", ".join(
+        f"{leg.origin}-{leg.destination} {leg.departure_date.isoformat()}" for leg in trip.legs
+    )
+
+
 REJECTED_MESSAGE = (
     "Google Flights rejected this query. Check the route and dates, or try one airport."
 )
@@ -190,11 +199,21 @@ UNREADABLE_PAGE = (
 )
 
 
+def _unreadable_page(label: str) -> str:
+    return UNREADABLE_PAGE.replace(
+        "a page that could not be read.", f"a page for {label} that could not be read.", 1
+    )
+
+
 def classify_failure(exc: BaseException) -> SearchError:
+    label = getattr(exc, "trip_label", "")
     if isinstance(exc, NoFlightsFound):
         return SearchError(
             code=SearchErrorCode.NO_RESULTS,
-            message=NO_RESULTS_MESSAGE,
+            message=f"Google Flights returned no flights for {label}."
+            if label
+            else NO_RESULTS_MESSAGE,
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsUnsupported):
         return SearchError(
@@ -212,7 +231,13 @@ def classify_failure(exc: BaseException) -> SearchError:
     if isinstance(exc, GoogleFlightsRejected):
         return SearchError(
             code=SearchErrorCode.REJECTED,
-            message=REJECTED_MESSAGE,
+            message=(
+                f"Google Flights rejected the query for {label}. "
+                "Check the route and dates, or try one airport."
+                if label
+                else REJECTED_MESSAGE
+            ),
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     if isinstance(exc, GoogleFlightsBlocked):
         return SearchError(
@@ -227,7 +252,8 @@ def classify_failure(exc: BaseException) -> SearchError:
         message = detail if detail and "Error:" not in detail and "Exception:" not in detail else ""
         return SearchError(
             code=SearchErrorCode.MARKUP_DRIFT,
-            message=message or UNREADABLE_PAGE,
+            message=message or (UNREADABLE_PAGE if not label else _unreadable_page(label)),
+            diagnostics=getattr(exc, "diagnostics", None),
         )
     return classify_provider_failure(exc)
 
@@ -458,6 +484,25 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         return super()._ensure_client()
 
     def _parse_response(
+        self,
+        response: SweepHttpResponse,
+        url: str,
+        trip: Trip | None = None,
+        *,
+        capture_insight: bool = False,
+    ) -> tuple[RawFlightCard, ...]:
+        """Read one page. A failure that names no cause of its own says which query and
+        which request it was: the route and dates asked for and the response's diagnostics."""
+        try:
+            return self._parse_page(response, url, trip, capture_insight=capture_insight)
+        except (GoogleFlightsMarkupError, GoogleFlightsRejected, NoFlightsFound) as exc:
+            if getattr(exc, "diagnostics", None) is None:
+                exc.diagnostics = response_diagnostics(response, url)
+            if trip is not None and not getattr(exc, "trip_label", ""):
+                exc.trip_label = trip_label(trip)
+            raise
+
+    def _parse_page(
         self,
         response: SweepHttpResponse,
         url: str,

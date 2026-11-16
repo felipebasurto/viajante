@@ -76,7 +76,7 @@ class ExploreSource(Protocol):
 
 def validate_explore_window(start: date, days: int, *, today: Optional[date] = None) -> None:
     if days < 1:
-        raise ValueError("--days must be at least 1")
+        raise ValueError(f"--days must be at least 1, got {days}")
     check = today or date.today()
     if start < check:
         raise ValueError(f"start date is in the past: {start.isoformat()}")
@@ -105,7 +105,7 @@ def month_window(
         year_text, month_text = value.split("-", 1)
         start = date(int(year_text), int(month_text), 1)
     except ValueError as exc:
-        raise ValueError(f"{flag} must look like YYYY-MM") from exc
+        raise ValueError(f"{flag} {value!r} must look like YYYY-MM") from exc
     length = calendar.monthrange(start.year, start.month)[1]
     check = today or date.today()
     if (start.year, start.month) == (check.year, check.month):
