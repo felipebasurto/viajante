@@ -22,9 +22,11 @@ per feature.
 
 `flights`, `dates`, `flex`, `explore`, `hotels`, `trip`, `recheck-offer`, `watch`, and
 `hidden-city` send real requests to Google, Booking, or Skiplagged from this machine's IP.
-Nothing about this is mocked. A Google 429 or RPC status 13 sets a **machine-wide cooldown**
-(2 min, or the `Retry-After` Google names, up to 30 min) that blocks every viajante process,
-including the user's own MCP sessions.
+Nothing about this is mocked. A Google 429, a data-less RPC status 13, or three
+public-page status-13 frames or missing Explore payloads inside 2 minutes sets a
+**machine-wide cooldown** (2 min, or the `Retry-After` Google names, up to 30 min)
+that blocks every viajante process, including the user's own MCP sessions. One
+status-13 error frame does not.
 
 - Run `doctor.sh` first. If its `live` line says `BLOCKED`, run no live search and report the
   time it gives.
