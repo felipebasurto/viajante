@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import math
 import unittest
@@ -7,7 +8,6 @@ from contextlib import redirect_stdout
 from datetime import date
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.airports import (
     METRO_GROUPS,
     airport_geo,

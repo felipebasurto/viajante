@@ -90,8 +90,10 @@ def _bag_evidence(
 def _package_totals(legs: Sequence[RawJourneyLeg]) -> tuple[Optional[int], Optional[float]]:
     stops = [parse_stops_count(leg.stops) for leg in legs]
     hours = [parse_duration_hours(leg.duration) for leg in legs]
-    stops_count = max(stops) if None not in stops else None
-    total = sum(hours) if None not in hours else None
+    known_stops = [count for count in stops if count is not None]
+    known_hours = [value for value in hours if value is not None]
+    stops_count = max(known_stops) if len(known_stops) == len(stops) else None
+    total = sum(known_hours) if len(known_hours) == len(hours) else None
     return stops_count, total
 
 

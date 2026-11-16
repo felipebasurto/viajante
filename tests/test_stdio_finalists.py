@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import importlib.util
 import json
 import sys
 import unittest
-
-import _isolate  # noqa: F401
 
 BOOTSTRAP = """
 from datetime import date, datetime, timezone

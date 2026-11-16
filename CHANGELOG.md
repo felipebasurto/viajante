@@ -94,6 +94,18 @@ history up to commit 6ee0fb7.
 - The landing page asks Web or Desktop app before copying the Claude or ChatGPT
   install message.
 
+### Tooling
+
+- The offline suite freezes `date.today()` at 2026-11-01 (`tests/_isolate.py`), so
+  fixtures with fixed dates stop rotting as the calendar moves.
+- Publishing is gated: `scripts/check-release.py` checks that the tag matches
+  `pyproject.toml`, `uv.lock`, the npm package, `server.json` and the hermes pins,
+  and the `verify` job must pass before `build`, PyPI, npm and the MCP registry.
+- GitHub Actions are pinned by commit SHA, `mcp-publisher` is pinned and checked
+  against a sha256, and Dependabot keeps both current.
+- `mypy` runs in CI over the whole package (the package ships `py.typed`).
+- Removed the stray `MAD-BCN.json` from the repo root.
+
 ## [1.5.6] - 2026-11-08
 
 ### Fixed

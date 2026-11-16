@@ -7,9 +7,12 @@ import re
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from selectolax.lexbor import LexborHTMLParser
+
+if TYPE_CHECKING:  # the browser extra is optional
+    from playwright.sync_api import Page
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
 from viajante.control import (
@@ -500,7 +503,7 @@ class GoogleFlightsSource:
         self._query_meta[trip] = (self.partial_error, self.scope_bound)
         return tuple(complete)
 
-    def _multi_board(self, page: object, leg: FlightLeg) -> list[tuple[int, RawFlightCard]]:
+    def _multi_board(self, page: Page, leg: FlightLeg) -> list[tuple[int, RawFlightCard]]:
         """(DOM row index, card) pairs echoing the requested journey leg.
 
         The index counts every ``ul.Rk10dc li`` in document order so the row can
@@ -532,7 +535,7 @@ class GoogleFlightsSource:
         return self._query_meta.get(trip, (None, False))
 
     @staticmethod
-    def _multi_sig(page: object) -> str:
+    def _multi_sig(page: Page) -> str:
         return page.evaluate(
             "() => {"
             "const m = document.querySelector('[role=\"main\"]');"
@@ -542,7 +545,7 @@ class GoogleFlightsSource:
             "return (h ? h.textContent : '') + '|' + (r ? r.textContent : '');}"
         )
 
-    def _multi_click(self, page: object, dom_index: int) -> None:
+    def _multi_click(self, page: Page, dom_index: int) -> None:
         """Click one board row and wait for the board to advance."""
         prev_sig = self._multi_sig(page)
         page.locator(CARD_SELECTOR).nth(dom_index).click(
@@ -568,7 +571,7 @@ class GoogleFlightsSource:
                 "The clicked board did not advance to the next journey."
             ) from exc
 
-    def _multi_reset(self, page: object, url: str) -> None:
+    def _multi_reset(self, page: Page, url: str) -> None:
         """Return to the first journey's board for the next candidate."""
         checkpoint()
         try:

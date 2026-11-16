@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Literal, Mapping, Optional, Sequence, Tuple, get_args
+from typing import Any, Literal, Mapping, Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata
 
@@ -32,7 +32,7 @@ _VS_TYPICAL: tuple[VsTypical, ...] = get_args(VsTypical)
 NEAR_TYPICAL_RATIO = 0.10
 
 
-def require_mapping(value: object, *, role: str) -> Mapping[str, object]:
+def require_mapping(value: object, *, role: str) -> Mapping[str, Any]:
     """Read a caller-supplied JSON object without guessing its shape."""
     if not isinstance(value, Mapping):
         raise ValueError(f"{role} must be an object")
@@ -426,4 +426,4 @@ _EVIDENCE: tuple[EvidenceLevel, ...] = ("confirmed", "user_supplied", "cached", 
 def _require_evidence(value: str) -> EvidenceLevel:
     if value not in _EVIDENCE:
         raise ValueError(f"invalid evidence: {value!r}")
-    return value  # type: ignore[return-value]
+    return value

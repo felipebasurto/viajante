@@ -243,7 +243,7 @@ class BookingHotelsSource:
                 self._record_failure(page)
                 raise RuntimeError("Booking property cards could not be parsed")
             seen = len(provider_cards[:limit])
-            errors = ()
+            errors: tuple[SearchError, ...] = ()
             if len(cards) < seen:
                 errors = (
                     SearchError(

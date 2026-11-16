@@ -510,12 +510,16 @@ def _layover_check(
         if not _complete_journeys(query, offer):
             return _status(constraint, "unknown", "journey evidence is incomplete")
         journeys = _journey_legs(offer)
+        if journeys is None:
+            return _status(constraint, "unknown", "journey evidence is incomplete")
         for journey in journeys:
             text = journey.get("stops")
             stops = parse_stops_count(text) if isinstance(text, str) else None
             if stops is None and len(journeys) == 1:
-                stops = offer.get("stops_count")
-            if isinstance(stops, bool) or not isinstance(stops, int):
+                count = offer.get("stops_count")
+                if isinstance(count, int) and not isinstance(count, bool):
+                    stops = count
+            if stops is None:
                 return _status(constraint, "unknown", "a journey stop count is missing")
             layovers = journey.get("layovers")
             if layovers is None:

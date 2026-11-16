@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from typing import Callable, Optional, Protocol, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Optional, Protocol, Sequence, Tuple, TypeVar, cast
 
 from viajante.airports import metro_members
 from viajante.control import SearchDeadline, checkpoint, controlled
@@ -127,9 +127,9 @@ def format_week_calendar(days: Sequence[DatePriceRow]) -> tuple[str, ...]:
                 cells.append(" " * width)
                 continue
             in_window = True
-            row = by_day.get(day)
-            price = None if row is None else row.price
-            if row is not None and row.status == "error":
+            cell = by_day.get(day)
+            price = None if cell is None else cell.price
+            if cell is not None and cell.status == "error":
                 cells.append(f"{FAILED_DAY_MARK:>{width}}")
             elif price is None or price <= 0:
                 cells.append(f"{EMPTY_DAY_MARK:>{width}}")
@@ -377,7 +377,8 @@ def _stamp_offer_urls(
         fetch_backend="sweep",
         currency=currency,
     )
-    return result.offers
+    # The stamp keeps the QuerySuccess it was given.
+    return cast(QuerySuccess, result).offers
 
 
 def refuse_calendar_metro(origin: str, destination: str) -> None:
@@ -418,7 +419,7 @@ def calendar_trip(
     exclude_codes = tuple(exclude_airlines) if exclude_airlines is not None else None
     alliance_names = tuple(alliances) if alliances is not None else None
     exclude_alliance_names = tuple(exclude_alliances) if exclude_alliances is not None else None
-    occupancy = {
+    occupancy: dict[str, Any] = {
         "adults": adults,
         "children": children,
         "infants_in_seat": infants_in_seat,
@@ -463,11 +464,12 @@ def _seed_trips(
     nearby: bool,
     include_airports: Optional[Sequence[str]],
     exclude_airports: Optional[Sequence[str]],
-) -> tuple[Trip, ...]:
+) -> tuple[FlightQuery | RoundTrip, ...]:
     exclude = parse_code_list(exclude_airports, role="exclude-airports")
     include = parse_code_list(include_airports, role="include-airports")
     trips = keep_included_dest_trips(expand_nearby_trips((seed,), nearby=nearby), include)
-    return drop_excluded_airport_trips(trips, exclude)
+    # A one-way or round-trip seed expands only into trips of its own kind.
+    return cast("tuple[FlightQuery | RoundTrip, ...]", drop_excluded_airport_trips(trips, exclude))
 
 
 def _empty_dates_report(
@@ -1193,7 +1195,7 @@ def _sweep_per_day(
         cursor = shift_day(cursor, 1)
     span = len(day_queries)
 
-    def row_for(day: date, day_query: FlightQuery | RoundTrip, result: object) -> DatePriceRow:
+    def row_for(day: date, day_query: FlightQuery | RoundTrip, result: Any) -> DatePriceRow:
         returning = _return_for(day, nights)
         if isinstance(result, BaseException):
             return _row_from_day_error(day, result, returning)
@@ -1203,7 +1205,7 @@ def _sweep_per_day(
             day, day_query, result, returning, filters, baggage_buffer, by_fare=by_fare
         )
         if getattr(source, "transport", None) == "public_page":
-            page_error, scope_bound = source.metadata_for(day_query)
+            page_error, scope_bound = source.metadata_for(day_query)  # type: ignore[attr-defined]  # public_page sources carry it
             page_errors = (classify_failure(page_error),) if page_error is not None else ()
             card_error = getattr(source, "card_parse_error", None)
             if callable(card_error):
@@ -1231,7 +1233,12 @@ def _sweep_per_day(
     if one_way_batch:
         try:
             checkpoint()
-            results = fetch_many([day_query for _day, day_query in day_queries])
+            results = fetch_many(
+                [
+                    day_query  # type: ignore[misc]  # one_way_batch proves it callable
+                    for _day, day_query in day_queries
+                ]
+            )
         except SearchDeadline as exc:
             return tuple(row_for(day, day_query, exc) for day, day_query in day_queries)
         for index, ((day, day_query), result) in enumerate(

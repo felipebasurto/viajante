@@ -412,14 +412,21 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 ```bash
 uv sync --locked
 uv run python -m unittest discover -s tests -v
-uv run ruff check src tests
+uv run ruff check src tests scripts
+uv run mypy
 uv run viajante bench
 ```
 
 - The suite is offline: no network and no Chromium. It isolates itself from the
   caller's environment through `tests/_isolate.py`. Every `tests/test_*.py` must begin
   with `import _isolate  # noqa: F401`, and a test enforces that. Keep new tests off
-  the real state directory.
+  the real state directory. `_isolate` also freezes `date.today()` at 2026-11-01:
+  build fixture dates from `FROZEN_TODAY`, never from the wall clock.
+- `uv run mypy` must stay clean over `src/viajante`. Fix the type, or add a scoped
+  `# type: ignore[code]` with the reason; do not widen to bare `ignore` or `Any` to
+  silence a real mismatch.
+- `scripts/check-release.py` runs in the publish `verify` job: a tag whose version
+  disagrees with any pinned manifest stops the release before anything is uploaded.
 - Pin owned seams: request bytes, recorded provider bodies, filters, ranking, JSON
   keys. A renamed or dropped JSON key is a breaking change.
 - `viajante bench` is the keep-or-revert gate. Do not optimize `score_ms`. Live

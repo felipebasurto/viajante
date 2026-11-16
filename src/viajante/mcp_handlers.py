@@ -7,7 +7,7 @@ import threading
 import time
 from copy import deepcopy
 from datetime import date
-from typing import Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from viajante.airports import lookup_airports, metro_members, parse_exclude_regions
 from viajante.carriers import parse_airline_codes, parse_alliances
@@ -123,7 +123,7 @@ def _shop_filters(
     require_overnight: Optional[str] = None,
     exclude_airports: Optional[str] = None,
     include_airports: Optional[str] = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Parse the raw shop filter strings the flight-shaped tools share, under one set of names."""
     return dict(
         depart_window=parse_depart_window(depart_window),
@@ -340,7 +340,7 @@ def search_flights_tool(
         report = search_flights(
             trips,
             top=top,
-            fetch=fetch,  # type: ignore[arg-type]
+            fetch=fetch,
             baggage_buffer=baggage_buffer,
             sort=sort,
             currency=currency,
@@ -360,7 +360,7 @@ def search_flights_tool(
             payload["warnings"] = [warning]
         return _searched(payload, report)
 
-    return execute
+    return execute  # type: ignore[return-value]  # _prepared_search runs it under the lock
 
 
 @_cached
@@ -455,8 +455,8 @@ def search_split_tickets_tool(
         offer=parse_offer_filters(
             **{k: v for k, v in shop.items() if k not in _SPLIT_NOT_OFFER_KEYS}
         ),
-        exclude_airports=shop["exclude_airports"] or (),  # type: ignore[arg-type]
-        include_airports=shop["include_airports"] or (),  # type: ignore[arg-type]
+        exclude_airports=shop["exclude_airports"] or (),
+        include_airports=shop["include_airports"] or (),
     )
     report = _with_search_lock(
         lambda: search_split_tickets(
@@ -879,7 +879,7 @@ def search_hotels_tool(
         )
         return _searched(reports_payload(report), report)
 
-    return execute
+    return execute  # type: ignore[return-value]  # _prepared_search runs it under the lock
 
 
 @_cached
@@ -1174,12 +1174,12 @@ def recheck_offer_tool(
     )
     stamp_recheck(result)
     owned = dict(result)
-    if result["previous"]["source"] != "search_evidence":  # type: ignore[index]
+    if result["previous"]["source"] != "search_evidence":
         del owned["previous"]
         if "differences" in owned:
-            owned["differences"] = _without_previous(owned["differences"])  # type: ignore[arg-type]
+            owned["differences"] = _without_previous(owned["differences"])
         if "closest_candidate" in owned:
-            closest = dict(owned["closest_candidate"])  # type: ignore[call-overload]
+            closest = dict(owned["closest_candidate"])
             closest["differences"] = _without_previous(closest["differences"])
             owned["closest_candidate"] = closest
     if result["check_completed"]:

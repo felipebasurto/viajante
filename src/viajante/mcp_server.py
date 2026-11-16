@@ -385,7 +385,9 @@ def _tool_error_text(name: str, exc: Exception) -> str:
     prefix = _TOOL_ERROR_PREFIX.format(name=name)
     if isinstance(cause, ValueError) and callable(getattr(cause, "errors", None)):
         return prefix + validation_body(
-            cause.errors(include_url=False, include_context=False, include_input=False)
+            cause.errors(  # type: ignore[attr-defined]  # pydantic's ValidationError
+                include_url=False, include_context=False, include_input=False
+            )
         )
     text = str(cause)
     if text.startswith(prefix) or text.startswith('{"error"'):
@@ -436,9 +438,9 @@ def _wire_type(hint: Any) -> Any:
     if origin is Union:
         return Union[tuple(_wire_type(arg) for arg in args)]
     if origin in (abc.Sequence, list):
-        return list[_wire_type(args[0])]
+        return list[_wire_type(args[0])]  # type: ignore[misc]  # built at runtime from a hint
     if origin in (abc.Mapping, dict):
-        return dict[_wire_type(args[0]), _wire_type(args[1])]
+        return dict[_wire_type(args[0]), _wire_type(args[1])]  # type: ignore[misc]
     return hint
 
 
@@ -582,7 +584,7 @@ def build_server():
         # it never deletes: destructiveHint stays False.
         register = server.tool(
             title=title,
-            annotations=ToolAnnotations(
+            annotations=ToolAnnotations(  # type: ignore[call-arg]  # the wire names are aliases
                 readOnlyHint=not writes,
                 destructiveHint=False,
                 idempotentHint=not writes,

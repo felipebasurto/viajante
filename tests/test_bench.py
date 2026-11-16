@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import json
 import shutil
@@ -10,7 +11,6 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante.bench import (
     LIVE_ENV,
     MIN_PARSED_CARDS,

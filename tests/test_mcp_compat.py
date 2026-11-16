@@ -5,6 +5,7 @@ Offline. Every test runs against a throwaway state dir, never the developer's ow
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import calendar
 import contextlib
@@ -27,7 +28,6 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante import mcp_handlers, mcp_server
 from viajante.envelope import EnvelopeShapeError
 from viajante.flights import classify_failure

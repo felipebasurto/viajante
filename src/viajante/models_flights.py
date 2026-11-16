@@ -5,7 +5,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
-from typing import AbstractSet, Callable, Literal, Mapping, Optional, Sequence, Tuple, Union
+from typing import (
+    AbstractSet,
+    Callable,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Sized,
+    Tuple,
+    Union,
+)
 
 from viajante.models_common import (
     MAX_STOPS_CHOICES,
@@ -493,7 +503,8 @@ class FlightOffer:
                 if query.get("trip") == "rt":
                     expected_journeys = 2
                 elif query.get("trip") == "multi":
-                    expected_journeys = len(query["legs"])
+                    query_legs = query["legs"]
+                    expected_journeys = len(query_legs) if isinstance(query_legs, Sized) else 0
             object.__setattr__(
                 self,
                 "completeness",

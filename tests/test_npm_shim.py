@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import json
 import os
 import re
@@ -9,8 +10,6 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
-import _isolate  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 NPM = ROOT / "npm"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import base64
 import json
 import os
@@ -11,7 +12,6 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
-import _isolate  # noqa: F401
 from viajante import google_flights
 from viajante.flight_offers import _normalize_offer
 from viajante.google_capabilities import GoogleFlightsUnsupported

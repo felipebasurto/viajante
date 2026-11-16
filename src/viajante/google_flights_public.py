@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from datetime import date
-from typing import Callable, Sequence
+from typing import Any, Callable, Optional, Sequence, cast
 from urllib.parse import urlencode
 
 from viajante.airports import same_city_iata
@@ -87,11 +87,11 @@ def _ranked_outbounds(cards: Sequence[RawFlightCard]) -> tuple[RawFlightCard, ..
 
 def _cached_return_reader(
     outcomes: Sequence[object],
-) -> Callable[[RoundTrip, RawFlightCard], object]:
+) -> Callable[[RoundTrip, RawFlightCard], Any]:
     """Return pages already fetched, in the order ``_round_trip_packages`` asks for them."""
     pending = iter(outcomes)
 
-    def read_return(_trip: RoundTrip, _outbound: RawFlightCard) -> object:
+    def read_return(_trip: RoundTrip, _outbound: RawFlightCard) -> Any:
         outcome = next(pending)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -301,7 +301,7 @@ def _package_card(outbound: RawFlightCard, returned: RawFlightCard) -> RawFlight
         codes, airline = None, ""
     else:
         codes = None
-        if all(side.airline_codes is not None for side in sides):
+        if outbound.airline_codes is not None and returned.airline_codes is not None:
             codes = tuple(dict.fromkeys(outbound.airline_codes + returned.airline_codes))
         airline = ", ".join(dict.fromkeys(side.airline for side in sides if side.airline))
     return replace(
@@ -391,8 +391,10 @@ def _verify_provider_echo(labels: set[str | None], provider: ProviderShop) -> No
     ):
         if field is None:
             continue
-        echoed = [_chip_minutes(match) for match in (pattern.match(c) for c in chips) if match]
-        echoed = [minutes for minutes in echoed if minutes is not None]
+        parsed_chips = [
+            _chip_minutes(match) for match in (pattern.match(c) for c in chips) if match
+        ]
+        echoed = [minutes for minutes in parsed_chips if minutes is not None]
         if not echoed or min(echoed) < field:
             raise GoogleFlightsMarkupError(f"Public page did not echo the requested {label} limit.")
     if provider.less_emissions and _LESS_EMISSIONS_CHIP not in chips:
@@ -528,7 +530,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 raise GoogleFlightsBlocked(unknown, diagnostics=diagnostics) from exc
             except UnpricedShoppingResults as exc:
                 provider = getattr(trip, "provider", None)
-                if provider is None or provider.max_price is None:
+                if trip is None or provider is None or provider.max_price is None:
                     raise GoogleFlightsMarkupError(str(exc)) from exc
                 # Below its cheapest fare, Google echoes the cap and lists the flights unpriced.
                 self._verify_carrier_filters(html, (), trip)
@@ -691,7 +693,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         self,
         trip: RoundTrip,
         outbound_cards: Sequence[RawFlightCard],
-        read_return: Callable[[RoundTrip, RawFlightCard], object],
+        read_return: Callable[[RoundTrip, RawFlightCard], Any],
     ) -> tuple[RawFlightCard, ...]:
         """Join each selected outbound with its return page. Outbound amounts are not fares."""
         self.partial_error = None
@@ -785,7 +787,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         except Exception as exc:
             diagnostics = getattr(exc, "diagnostics", None)
             if isinstance(diagnostics, dict):
-                exc.diagnostics = {**diagnostics, "attempts": 2}
+                exc.diagnostics = {**diagnostics, "attempts": 2}  # type: ignore[attr-defined]  # checked above
             raise
 
     def _round_trip_batch_client(self):
@@ -939,7 +941,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 (
                     (url, response)
                     for url, response in zip(urls, responses, strict=True)
-                    if response is selected_block
+                    if selected_block is not None and response is selected_block
                 ),
                 None,
             )
@@ -1061,9 +1063,9 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
         if all(isinstance(trip, RoundTrip) for trip in trips):
             client = self._round_trip_batch_client()
             if client is not None:
-                return self._fetch_many_round_trips(client, trips)
+                return self._fetch_many_round_trips(client, cast("Sequence[RoundTrip]", trips))
         if any(not isinstance(trip, FlightQuery) for trip in trips):
-            results = []
+            results: list[object] = []
             for index, trip in enumerate(trips):
                 try:
                     results.append(self.fetch(trip))
@@ -1073,7 +1075,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 except Exception as exc:
                     results.append(exc)
             return results
-        results: list[object] = [None] * len(trips)
+        results = [None] * len(trips)
         pending = []
         for index, trip in enumerate(trips):
             try:
@@ -1297,7 +1299,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
             )
         return catalog.places
 
-    def _explore_page(self, url: str) -> list[tuple[object, str]]:
+    def _explore_page(self, url: str) -> list[tuple[Optional[str], str]]:
         """Load the Explore page in Chromium; return its catalog request/response pairs."""
         checkpoint()
         self._check_stopped("www.google.com/travel/explore")

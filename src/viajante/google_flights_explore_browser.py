@@ -47,14 +47,16 @@ def explore_session(
     )
 
 
-def capture_catalog(session: ChromiumSession, url: str, check: Check) -> list[tuple[object, str]]:
+def capture_catalog(
+    session: ChromiumSession, url: str, check: Check
+) -> list[tuple[str | None, str]]:
     """Load the Explore page; return its catalog request/response pairs.
 
     ``check`` raises for a block, throttle or error response as soon as one arrives, so a
     provider stop ends the wait at once instead of after the full catalog timeout.
     """
     page = session.new_page()
-    captured: list[tuple[object, SweepHttpResponse, float | None]] = []
+    captured: list[tuple[str | None, SweepHttpResponse, float | None]] = []
 
     read_error: SweepTransportError | None = None
 

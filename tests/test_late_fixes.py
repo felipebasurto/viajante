@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import threading
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import _isolate  # noqa: F401
 from viajante import evidence, history
 from viajante.control import SearchCancelled
 from viajante.google_flights import _retry_after_seconds

@@ -35,11 +35,11 @@ from viajante.google_flights_public import PublicGoogleFlightsHttpSource as Goog
 from viajante.google_flights_public import classify_failure
 from viajante.google_flights_rpc import CompactExplorePlace
 from viajante.models import (
+    EmptyReason,
     ExploreDestination,
     ExploreReport,
     FlightCabin,
     FlightOffer,
-    FlightQuery,
     QueryFailure,
     SearchCoverage,
     SearchError,
@@ -69,7 +69,7 @@ class ExploreSource(Protocol):
         infants_on_lap: int = 0,
     ) -> Sequence[CompactExplorePlace]: ...
 
-    def fetch(self, query: FlightQuery) -> Sequence[RawFlightCard]: ...
+    def fetch(self, trip: Trip) -> Sequence[RawFlightCard]: ...
 
     def close(self) -> None: ...
 
@@ -233,6 +233,7 @@ def search_explore(
     )
     allowed = frozenset(parsed_include_airports or ())
     blocked = frozenset(parsed_exclude_airports or ())
+    origins: tuple[tuple[str, Optional[str]], ...]
     if members:
         origins = tuple((code, f"metro {origin}") for code in members if code not in blocked)
     else:
@@ -374,7 +375,7 @@ def search_explore(
             )
             priced.append(dest)
         stop_reason, stop_note = explore_stop(error, pricing_errors)
-        empty_reason = None
+        empty_reason: Optional[EmptyReason] = None
         if not priced and error is None and not pricing_errors:
             if window_misses and month_window_shop:
                 empty_reason = "not_loaded"
@@ -429,7 +430,7 @@ def search_explore(
                 if _limited(report):
                     break
             return one_or_many(reports)
-        reports: list[ExploreReport] = []
+        reports = []
         for code, label in origins:
             report = explore_origin(code, label)
             reports.append(report)
@@ -489,6 +490,7 @@ def _merge_metro_reports(
     if skipped:
         stop_reason = "rate_limited"
         stop_note = f"not sent after rate limit: {', '.join(skipped)}; {stop_note}"
+    empty_reason: Optional[EmptyReason]
     if destinations:
         empty_reason = None
     elif any(report.empty_reason == "not_loaded" for report in reports):

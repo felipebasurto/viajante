@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import tempfile
 import unittest
 from datetime import date, datetime
@@ -8,7 +9,6 @@ from random import Random
 from typing import List, Sequence, Tuple, Union
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 import viajante.hotels as hotels_module
 from viajante.booking import BookingResultsTimeout, HotelPage, RawHotelCard
 from viajante.google_hotels_rpc import EmptyHotelResults, HotelsParseMiss

@@ -152,9 +152,9 @@ def _callback_properties(source: str, index: int) -> tuple[Optional[str], object
                 # ds:1 data is a JSON array, so a string value is malformed.
                 data_value = None
         else:
-            raw_value, index = _skip_value(source, index)
+            skipped, index = _skip_value(source, index)
             if property_key == "data":
-                data_value = raw_value
+                data_value = skipped
         index = _skip_space(source, index)
         if index >= len(source) or source[index] not in ",}":
             raise ValueError("invalid callback separator")

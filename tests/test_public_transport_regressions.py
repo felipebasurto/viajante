@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import json
 import os
@@ -13,7 +14,6 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 import test_google_flights as flight_fixtures
 from test_explore import _explore_catalog_body, _explore_post, _explore_priced
 from test_google_flights import _multi_board_html, _MultiPage

@@ -37,8 +37,9 @@ For a focused check, you can run the tools separately:
 
 ```bash
 uv run python -m unittest discover -s tests -v
-uv run ruff check src tests
-uv run ruff format --check src tests
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
+uv run mypy
 ```
 
 Live benchmarks are opt-in. An offline pass verifies the

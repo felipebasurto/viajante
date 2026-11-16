@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import json
 import os
 import tempfile
@@ -11,7 +12,6 @@ from datetime import date, datetime
 from io import StringIO
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.cli import _cli_parser, _owned_shop_filters_from_args, main
 from viajante.cli_report import _print_dates_report
 from viajante.dates import format_week_calendar, search_dates

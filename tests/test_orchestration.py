@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import unittest
 from random import Random
 
-import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.models import SearchError, SearchErrorCode
 from viajante.orchestration import (

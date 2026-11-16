@@ -215,7 +215,7 @@ def search_trip(
         baggage_buffer=baggage_buffer,
         progress=progress,
         sort=sort,
-        fetch=fetch,  # type: ignore[arg-type]
+        fetch=fetch,
         max_layover_hours=max_layover_hours,
         min_layover_hours=min_layover_hours,
         max_duration_hours=max_duration_hours,

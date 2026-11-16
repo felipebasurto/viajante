@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import contextlib
 import io
@@ -16,7 +17,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_google_hotels import _hotel_record, _ScriptedHotelClient, _search_payload, _wrap_wrb
 from viajante import evidence, mcp_handlers, mcp_server
 from viajante.control import (

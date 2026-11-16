@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import base64
 import json
 import unittest
@@ -12,7 +13,6 @@ from urllib.parse import parse_qs, urlparse
 
 from selectolax.lexbor import LexborHTMLParser
 
-import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
 from viajante.envelope import stamp_search

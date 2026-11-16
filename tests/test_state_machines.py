@@ -7,6 +7,7 @@ record written, the driver stopped. Nothing here reads a private field.
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import json
 import os
@@ -18,7 +19,6 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante import browser, google_flights, google_flights_explore_browser, mcp_server
 from viajante.browser import BrowserSessionConfig, ChromiumSession
 from viajante.dates import _sweep_per_day, search_flex

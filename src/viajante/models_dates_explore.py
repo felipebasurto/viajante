@@ -26,7 +26,7 @@ from viajante.models_common import (
     vs_typical,
     vs_typical_pct,
 )
-from viajante.models_flights import FlightOffer, QueryFailure, StopsCompare
+from viajante.models_flights import FlightOffer, FlightQuery, QueryFailure, StopsCompare
 
 DateTripKind = Literal["one-way", "rt"]
 
@@ -515,7 +515,11 @@ class ExploreReport:
         _store_nearby_label(self)
         if self.coverage is None:
             succeeded = sum(row.price is not None for row in self.destinations)
-            failed_destinations = {row.query.destination for row in self.pricing_errors}
+            failed_destinations = {
+                row.query.destination
+                for row in self.pricing_errors
+                if isinstance(row.query, FlightQuery)
+            }
             empty = sum(
                 row.price is None and row.iata not in failed_destinations
                 for row in self.destinations

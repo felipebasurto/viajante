@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
-from typing import Optional, Sequence, Tuple
+from typing import Iterable, Optional, Sequence, Tuple
 
 from viajante.airports import lookup_airports
 from viajante.dates import (
@@ -727,31 +727,32 @@ def _print_split_report(report: SplitReport) -> None:
         print(f"  ERROR: {report.error.message}")
     if not report.itineraries:
         print("  (no split itinerary from the quotes returned)")
-    for number, row in enumerate(report.itineraries, start=1):
+    for number, itinerary in enumerate(report.itineraries, start=1):
         total = (
-            f"{format_money(row.total, row.currency)} total"
-            if row.total is not None and row.currency
+            f"{format_money(itinerary.total, itinerary.currency)} total"
+            if itinerary.total is not None and itinerary.currency
             else "total unknown (parts are in different currencies; nothing converts)"
         )
         via = ""
-        if row.kind == "hub":
-            overnight = ", overnight" if row.overnight_at_hub else ""
-            via = f"  via {row.hub}, {_format_connection(row.connection_minutes)} connection"
+        if itinerary.kind == "hub":
+            overnight = ", overnight" if itinerary.overnight_at_hub else ""
+            connection = _format_connection(itinerary.connection_minutes)
+            via = f"  via {itinerary.hub}, {connection} connection"
             via += overnight
         print(f"\n  {number}. {total}{via}")
-        if row.kind == "mixed_one_ways" and not row.timing_proven:
+        if itinerary.kind == "mixed_one_ways" and not itinerary.timing_proven:
             print(f"     NOTE: {TIMING_UNPROVEN_NOTE}")
-        if row.savings is not None and row.packaged is not None:
-            amount = format_money(abs(row.savings), row.packaged.currency)
-            verb = "saves" if row.savings >= 0 else "costs"
-            tail = "" if row.savings >= 0 else " more"
+        if itinerary.savings is not None and itinerary.packaged is not None:
+            amount = format_money(abs(itinerary.savings), itinerary.packaged.currency)
+            verb = "saves" if itinerary.savings >= 0 else "costs"
+            tail = "" if itinerary.savings >= 0 else " more"
             print(
                 f"     {verb} {amount}{tail} vs best packaged "
-                f"{format_money(row.packaged.price, row.packaged.currency)}"
+                f"{format_money(itinerary.packaged.price, itinerary.packaged.currency)}"
             )
-        elif row.packaged is not None and row.total is not None:
-            print(f"     not compared: packaged quote is in {row.packaged.currency}")
-        for ticket, part in enumerate(row.parts, start=1):
+        elif itinerary.packaged is not None and itinerary.total is not None:
+            print(f"     not compared: packaged quote is in {itinerary.packaged.currency}")
+        for ticket, part in enumerate(itinerary.parts, start=1):
             leg = part.query
             print(
                 f"     ticket {ticket} ({part.role.replace('_', ' ')})  "
@@ -838,7 +839,9 @@ def _print_explore_report(report: ExploreReport) -> None:
     )
     _print_google_flights_url(report.google_flights_url, indent="  ")
     for failure in report.pricing_errors:
-        print(f"  ERROR pricing {failure.query.destination}: {failure.error.message}")
+        query = failure.query
+        place = query.destination if isinstance(query, FlightQuery) else "?"
+        print(f"  ERROR pricing {place}: {failure.error.message}")
     if report.error is not None and not report.destinations:
         print(f"  ERROR: {report.error.message}")
         return
@@ -898,7 +901,7 @@ def _as_report_tuple(result: object) -> tuple:
     return (result,)
 
 
-def _combine_exit_codes(codes: Sequence[int]) -> int:
+def _combine_exit_codes(codes: Iterable[int]) -> int:
     owned = tuple(codes)
     if not owned:
         return 0
@@ -976,7 +979,7 @@ def _print_hidden_city_report(report: HiddenCityReport) -> None:
         return
     print(f"{'price':>12}  {'hidden':<7}  airline")
     for offer in report.offers:
-        flag = {True: "yes", False: "no"}.get(offer.hidden_city, "unknown")
+        flag = "unknown" if offer.hidden_city is None else ("yes" if offer.hidden_city else "no")
         airline = offer.airline or "?"
         extra = ""
         if offer.ticketed_destination:

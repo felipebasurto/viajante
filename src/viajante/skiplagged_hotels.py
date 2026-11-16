@@ -322,7 +322,8 @@ def parse_rooms_report(
     rates = tuple(rate for row in rows if (rate := _rate(row)) is not None)
     if not rates:
         raise SkiplaggedNoHotels("Skiplagged listed no bookable room rates for these dates.")
-    place = detail.get("location") if isinstance(detail.get("location"), dict) else {}
+    location = detail.get("location")
+    place: dict[str, Any] = location if isinstance(location, dict) else {}
     count = detail.get("reviewCount")
     return HotelRoomsReport(
         searched_at=searched_at,

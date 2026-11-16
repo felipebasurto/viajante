@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import unittest
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.flight_filters import parse_named_clock
 from viajante.flight_routes import expand_nearby_trips, parse_flight_plan, parse_route_specs
 from viajante.google_flights import RawFlightCard

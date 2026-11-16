@@ -11,7 +11,7 @@ import re
 import threading
 from collections import deque
 from copy import deepcopy
-from typing import Callable, Iterable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 from uuid import uuid4
 
 from viajante.airports import is_known_iata
@@ -59,7 +59,7 @@ _MONEY = re.compile(
 _lock = threading.Lock()
 _ledger: deque[Mapping[str, object]] = deque(maxlen=LEDGER_SIZE)
 _selection_groups: deque[dict[str, object]] = deque(maxlen=LEDGER_SIZE)
-_selections: dict[str, object] = {}
+_selections: dict[str, Any] = {}
 
 
 def selection_records(payload: Mapping[str, object], report=None) -> dict[str, object]:

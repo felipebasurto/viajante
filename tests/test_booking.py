@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import tempfile
 import unittest
 from datetime import date
@@ -8,7 +9,6 @@ from typing import List, Sequence
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
-import _isolate  # noqa: F401
 import viajante.booking as booking_module
 from viajante.booking import (
     BOOKING_BLOCKED_RESOURCE_TYPES,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from datetime import date
-from typing import Any, Literal, Optional, Sequence, Tuple
+from typing import Any, Iterable, Literal, Optional, Sequence, Tuple, TypeVar, Union, cast
 
 from viajante.airports import get_airport, metro_members, metro_of, same_city_iata
 from viajante.models import FlightCabin, FlightLeg, FlightQuery, MultiCity, RoundTrip, Trip
@@ -17,6 +17,7 @@ _ROUTE_SPEC_RE = re.compile(r"^[A-Za-z]{3}-[A-Za-z]{3}:")
 TripKind = Literal["one-way", "rt", "multi"]
 
 
+_T = TypeVar("_T", bound=Union[FlightQuery, RoundTrip, MultiCity])
 FlightPlan = Tuple[FlightQuery, ...] | RoundTrip | Tuple[RoundTrip, ...] | MultiCity
 
 
@@ -314,7 +315,7 @@ def parse_route_specs(
 ) -> Tuple[FlightQuery, ...]:
     if max_stops not in MAX_STOPS_CHOICES:
         raise ValueError("max_stops must be 0, 1, or 2")
-    occupancy = {
+    occupancy: dict[str, Any] = {
         "adults": adults,
         "children": children,
         "infants_in_seat": infants_in_seat,
@@ -405,7 +406,7 @@ def parse_flight_plan(
     infants_on_lap: int = 0,
 ) -> FlightPlan:
     kind = normalize_trip_kind(trip)
-    shop = {
+    shop: dict[str, Any] = {
         "adults": adults,
         "children": children,
         "infants_in_seat": infants_in_seat,
@@ -428,8 +429,12 @@ def parse_flight_plan(
             "name airports for open-jaw or multi-city"
         )
     if kind == "rt":
+        # One spec is always one RoundTrip; only the two-spec open-jaw form is a MultiCity.
         plan: FlightPlan = tuple(
-            replace(_parse_round_trip_plan([spec], max_stops=max_stops, **shop), nearby_label=label)
+            replace(
+                cast(RoundTrip, _parse_round_trip_plan([spec], max_stops=max_stops, **shop)),
+                nearby_label=label,
+            )
             for spec, label in variants
         )
     else:
@@ -498,13 +503,13 @@ def _parse_multi_city_plan(specs: Sequence[str], *, max_stops: int, **shop: Any)
     return MultiCity(tuple(legs), **shop)
 
 
-def _named_iata(codes: Optional[Sequence[str]]) -> frozenset[str]:
+def _named_iata(codes: Optional[Iterable[str]]) -> frozenset[str]:
     if not codes:
         return frozenset()
     return frozenset(code.strip().upper() for code in codes if str(code).strip())
 
 
-def trip_uses_excluded_airport(trip: Trip, exclude_airports: Optional[Sequence[str]]) -> bool:
+def trip_uses_excluded_airport(trip: Trip, exclude_airports: Optional[Iterable[str]]) -> bool:
     """True when a named origin or dest is in the owned exclude list."""
     blocked = _named_iata(exclude_airports)
     if not blocked:
@@ -530,7 +535,7 @@ def drop_excluded_airport_trips(
     return tuple(trip for trip in trips if not trip_uses_excluded_airport(trip, blocked))
 
 
-def trip_dest_in_include_list(trip: Trip, include_airports: Optional[Sequence[str]]) -> bool:
+def trip_dest_in_include_list(trip: Trip, include_airports: Optional[Iterable[str]]) -> bool:
     """True when the trip dest is in the owned include list.
 
     Include is dests only: origin is not required to be in the list.
@@ -578,14 +583,14 @@ def _is_return_of(trip: Trip, included: set) -> bool:
 
 
 def _overlay_carrier_filters(
-    trips: Sequence[Trip],
+    trips: Sequence[_T],
     *,
     airlines: Optional[Sequence[str]] = None,
     exclude_airlines: Optional[Sequence[str]] = None,
     alliances: Optional[Sequence[str]] = None,
     exclude_alliances: Optional[Sequence[str]] = None,
-) -> Tuple[Trip, ...]:
-    overlay: dict[str, Tuple[str, ...]] = {}
+) -> Tuple[_T, ...]:
+    overlay: dict[str, Any] = {}
     if airlines:
         overlay["airlines"] = tuple(airlines)
     if exclude_airlines:
@@ -612,7 +617,7 @@ def overlay_trip_fields(
     carry_on: Optional[int] = None,
     price_cap: Optional[int] = None,
 ) -> tuple[Trip, ...]:
-    overlay: dict[str, object] = {}
+    overlay: dict[str, Any] = {}
     if adults is not None:
         overlay["adults"] = adults
     if children is not None:

@@ -42,7 +42,7 @@ class SearchDeadline(Exception):
         super().__init__(message)
 
 
-def validate_deadline_seconds(value: Optional[float]) -> Optional[float]:
+def validate_deadline_seconds(value: object) -> Optional[float]:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):

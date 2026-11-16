@@ -8,7 +8,7 @@ import sys
 import traceback
 from datetime import date
 from pathlib import Path
-from typing import Optional, Sequence, Tuple, get_args
+from typing import Any, Optional, Sequence, Tuple, get_args
 
 from viajante.airports import is_known_iata, metro_members, parse_exclude_regions
 from viajante.bench import run_bench
@@ -240,7 +240,7 @@ Examples:
 """
 
 
-def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dict[str, object]]:
+def _parse_and_validate(args: argparse.Namespace) -> tuple[Tuple[Trip, ...], dict[str, Any]]:
     if args.top <= 0:
         raise ValueError("--top must be a positive integer")
     occupancy = _occupancy_from_args(args)
@@ -341,7 +341,7 @@ def _split_min_connection(args: argparse.Namespace) -> float:
 
 
 def _split_query_from_args(
-    args: argparse.Namespace, queries: Tuple[Trip, ...], shop: dict[str, object]
+    args: argparse.Namespace, queries: Tuple[Trip, ...], shop: dict[str, Any]
 ) -> Optional[FlightQuery | RoundTrip]:
     """The one query a split search applies to, validated before any search runs."""
     named = (
@@ -362,10 +362,10 @@ def _split_query_from_args(
         )
     (query,) = _overlay_carrier_filters(
         (queries[0],),
-        airlines=shop["airlines"],  # type: ignore[arg-type]
-        exclude_airlines=shop["exclude_airlines"],  # type: ignore[arg-type]
-        alliances=shop["alliances"],  # type: ignore[arg-type]
-        exclude_alliances=shop["exclude_alliances"],  # type: ignore[arg-type]
+        airlines=shop["airlines"],
+        exclude_airlines=shop["exclude_airlines"],
+        alliances=shop["alliances"],
+        exclude_alliances=shop["exclude_alliances"],
     )
     validate_split_request(
         query,
@@ -378,24 +378,24 @@ def _split_query_from_args(
     return query
 
 
-def _split_filters_from_shop(shop: dict[str, object]) -> SplitFilters:
+def _split_filters_from_shop(shop: dict[str, Any]) -> SplitFilters:
     """The same named filters the one-way search applies, carried into split itineraries."""
     offer = OfferFilters(
-        max_layover_hours=shop["max_layover_hours"],  # type: ignore[arg-type]
-        min_layover_hours=shop["min_layover_hours"],  # type: ignore[arg-type]
-        max_duration_hours=shop["max_duration_hours"],  # type: ignore[arg-type]
-        depart_window=shop["depart_window"],  # type: ignore[arg-type]
-        arrive_before=shop["arrive_before"],  # type: ignore[arg-type]
-        depart_after=shop["depart_after"],  # type: ignore[arg-type]
-        via=shop["via"],  # type: ignore[arg-type]
-        exclude_via=shop["exclude_via"],  # type: ignore[arg-type]
-        no_overnight=shop["no_overnight"],  # type: ignore[arg-type]
-        require_overnight=shop["require_overnight"],  # type: ignore[arg-type]
+        max_layover_hours=shop["max_layover_hours"],
+        min_layover_hours=shop["min_layover_hours"],
+        max_duration_hours=shop["max_duration_hours"],
+        depart_window=shop["depart_window"],
+        arrive_before=shop["arrive_before"],
+        depart_after=shop["depart_after"],
+        via=shop["via"],
+        exclude_via=shop["exclude_via"],
+        no_overnight=shop["no_overnight"],
+        require_overnight=shop["require_overnight"],
     )
     return SplitFilters(
         offer=offer,
-        exclude_airports=shop["exclude_airports"] or (),  # type: ignore[arg-type]
-        include_airports=shop["include_airports"] or (),  # type: ignore[arg-type]
+        exclude_airports=shop["exclude_airports"] or (),
+        include_airports=shop["include_airports"] or (),
     )
 
 
@@ -825,7 +825,7 @@ def _resolve_quote_from_args(
     )
 
 
-def _market_from_args(args: argparse.Namespace, origin: Optional[str] = None) -> dict[str, object]:
+def _market_from_args(args: argparse.Namespace, origin: Optional[str] = None) -> dict[str, Any]:
     _resolve_quote_from_args(args, origin)
     return {
         "currency": args.currency,
@@ -882,7 +882,7 @@ def _add_flight_only_filters(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _flight_only_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
+def _flight_only_filters_from_args(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "depart_before": parse_named_clock(
             getattr(args, "depart_before", None), role="depart-before"
@@ -1066,7 +1066,7 @@ def _add_owned_shop_filters(parser: argparse.ArgumentParser) -> None:
 _TRIP_SHOP_FIELDS = frozenset({"bags", "carry_on", "price_cap"})
 
 
-def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, object]:
+def _owned_shop_filters_from_args(args: argparse.Namespace) -> dict[str, Any]:
     carry_on = args.carry_on
     if args.bags is not None and args.bags < 0:
         raise ValueError("--bags must not be negative")
@@ -1334,12 +1334,12 @@ def _hidden_city_route(
         )
     else:
         trips = as_trips(plan)
-        if len(trips) != 1:
+        query = trips[0] if len(trips) == 1 else None
+        if not isinstance(query, FlightQuery):
             raise ValueError(
                 "hidden-city takes one airport pair (no metro codes) and one DATE or "
                 "ORIGIN-DESTINATION:OUT:BACK"
             )
-        query = trips[0]
         origin, destination, departure, back = (
             query.origin,
             query.destination,

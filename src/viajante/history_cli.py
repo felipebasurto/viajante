@@ -47,7 +47,8 @@ or the 5-minute cache means a run records nothing.
 
 
 def _amount(amount: float, *, signed: bool = False) -> str:
-    digits = max(2, -Decimal(str(amount)).as_tuple().exponent)
+    exponent = Decimal(str(amount)).as_tuple().exponent
+    digits = max(2, -exponent if isinstance(exponent, int) else 0)
     return format(amount, f"{'+' if signed else ''},.{digits}f")
 
 

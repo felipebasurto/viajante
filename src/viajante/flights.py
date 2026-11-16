@@ -207,12 +207,16 @@ def prepare_flight_search(
 
 
 class _SourceConfig(Protocol):
-    html_lang: str
-    currency: str
+    @property
+    def html_lang(self) -> str: ...
+
+    @property
+    def currency(self) -> str: ...
 
 
 class _FlightSource(Protocol):
-    config: _SourceConfig
+    @property
+    def config(self) -> _SourceConfig: ...
 
     def fetch(self, trip: Trip) -> Sequence[RawFlightCard]: ...
 
@@ -774,9 +778,10 @@ def search_flights(
     report_progress = progress or (lambda _: None)
     started = time.perf_counter()
 
-    def _zero_backoff(_attempt: int, _rng: random.Random) -> float:
+    def _zero_backoff(_attempt: int, _rng: Any) -> float:
         return 0.0
 
+    backoff: Callable[[int, Any], float]
     if planned == "sweep":
         source: _FlightSource = GoogleFlightsHttpSource(
             currency=currency, country=country, proxy=proxy
@@ -798,7 +803,7 @@ def search_flights(
         fetch_backend: FetchBackend,
         retry_backoff: Callable[[int, random.Random], float] = retry_backoff_seconds,
     ) -> SearchReport:
-        grid_client: Optional[_FlightSource] = None
+        grid_client: Optional[GoogleFlightsHttpSource] = None
         try:
             report = _run_search(
                 trips_to_search,
@@ -818,7 +823,7 @@ def search_flights(
                 retry_backoff=retry_backoff,
                 include_price_history=include_price_history,
             )
-            client = source
+            client: _FlightSource = source
             if (
                 nearby_days
                 and fetch_backend == "detail"

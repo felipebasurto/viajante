@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import json
 import unittest
 from datetime import date, datetime, timezone
@@ -7,7 +8,6 @@ from pathlib import Path
 from random import Random
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.control import SearchDeadline
 from viajante.hotels import _run_search, search_hotels
 from viajante.models import (

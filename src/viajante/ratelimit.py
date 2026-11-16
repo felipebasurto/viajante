@@ -12,7 +12,7 @@ import math
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
 
 from viajante.runtime import package_version
@@ -237,7 +237,7 @@ def note_repeated_throttle(
     )
 
 
-def recorded_expiry(state: Mapping[str, object]) -> Optional[float]:
+def recorded_expiry(state: Mapping[str, Any]) -> Optional[float]:
     """Only a persisted cooldown can pause a later process."""
     return float(state["until"]) if state.get("persisted", True) else None
 

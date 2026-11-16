@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import unittest
 from contextlib import redirect_stderr
@@ -7,7 +8,6 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante import mcp_handlers
 from viajante.cli import main
 from viajante.flight_routes import (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import json
 import os
@@ -9,7 +10,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.consent import (
     CONSENT_FILE,
     CONSENT_MAX_AGE_SECONDS,

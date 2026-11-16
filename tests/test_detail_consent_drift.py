@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante.control import SearchControl, SearchDeadline, active
 from viajante.google_flights import GoogleFlightsMarkupError
 from viajante.google_flights_detail import (

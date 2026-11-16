@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import base64
 import contextlib
@@ -11,7 +12,6 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.control import SearchCancelled, SearchDeadline
 from viajante.dates import search_dates, search_flex
 from viajante.google_capabilities import GoogleFlightsUnsupported, validate_capabilities

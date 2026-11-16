@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import importlib.util
 import json
@@ -16,7 +17,6 @@ from random import Random
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante import evidence, mcp_handlers
 from viajante.dates import search_dates, search_flex
 from viajante.envelope import (

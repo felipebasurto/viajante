@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import copy
 import io
 import json
@@ -9,7 +10,6 @@ from inspect import getsource
 from pathlib import Path
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.cli import main
 from viajante.control import SearchDeadline
 from viajante.models import (

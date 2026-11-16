@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-import _isolate  # noqa: F401
 from viajante.cli import main
 from viajante.feedback import MESSAGE_LIMIT, NEW_ISSUE_URL, REMINDER, TITLE_LIMIT, issue_url
 from viajante.runtime import package_version

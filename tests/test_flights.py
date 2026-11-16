@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import unittest
 from datetime import date, datetime
 from random import Random
@@ -7,7 +8,6 @@ from types import SimpleNamespace
 from typing import Sequence
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.airports import get_airport, place_label_codes
 from viajante.control import SearchDeadline
 from viajante.flight_filters import (

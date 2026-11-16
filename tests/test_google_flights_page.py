@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import base64
 import json
 import unittest
 from datetime import date
 
-import _isolate  # noqa: F401
 from viajante.google_flights_page import extract_ds1_data, parse_shopping_page, shared_page_tree
 from viajante.google_flights_rpc import (
     CompactParseMiss,

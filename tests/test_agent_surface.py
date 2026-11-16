@@ -5,6 +5,7 @@ Offline. Reads the checked-in text and the local CLI / MCP registration.
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import argparse
 import inspect
 import re
@@ -13,7 +14,6 @@ import sys
 import unittest
 from pathlib import Path
 
-import _isolate  # noqa: F401
 import viajante
 from viajante.cli import _cli_parser
 from viajante.hotels import search_hotels

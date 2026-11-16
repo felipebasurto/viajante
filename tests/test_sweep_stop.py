@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import json
 import unittest
@@ -9,7 +10,6 @@ from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.google_flights import (
     SWEEP_TRANSPORT_STATUS,
     ChromeSweepClient,

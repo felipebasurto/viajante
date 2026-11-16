@@ -5,11 +5,10 @@ Offline. Reads the checked-in files only; no copy is generated from another.
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import re
 import unittest
 from pathlib import Path
-
-import _isolate  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 

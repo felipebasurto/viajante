@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import unittest
 from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_flights import card
 from viajante.cli import main
 from viajante.cli_report import _print_report

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import json
 import tempfile
@@ -10,7 +11,6 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 import viajante
 from viajante.cli import main
 from viajante.cli_report import (

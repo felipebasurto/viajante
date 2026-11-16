@@ -7,8 +7,11 @@ import contextlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import TYPE_CHECKING, Mapping, Optional
 from urllib.parse import unquote, urlsplit
+
+if TYPE_CHECKING:  # the browser extra is optional; nothing here imports it at runtime
+    from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 
 BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
 
@@ -65,12 +68,12 @@ class ChromiumSession:
         self._state_dir = state_dir
         self._config = config
         self._state_path = state_dir / config.state_filename
-        self._pw = None
-        self._browser = None
-        self._context = None
+        self._pw: Optional[Playwright] = None
+        self._browser: Optional[Browser] = None
+        self._context: Optional[BrowserContext] = None
         self._atexit_registered = False
 
-    def new_page(self) -> object:
+    def new_page(self) -> Page:
         return self._ensure_context().new_page()
 
     def reset(self) -> None:
@@ -83,7 +86,7 @@ class ChromiumSession:
             self._persist_state()
         self._teardown()
 
-    def _ensure_context(self) -> object:
+    def _ensure_context(self) -> BrowserContext:
         if self._context is None:
             self._state_dir.mkdir(parents=True, exist_ok=True)
             try:
@@ -94,14 +97,17 @@ class ChromiumSession:
             if not self._atexit_registered:
                 atexit.register(self.close)
                 self._atexit_registered = True
+        assert self._context is not None
         return self._context
 
     def _start(self) -> None:
-        self._pw = _sync_playwright().start()
+        playwright = _sync_playwright().start()
+        self._pw = playwright
         launch_options: dict[str, object] = {"headless": True}
         if self._config.proxy:
             launch_options["proxy"] = _playwright_proxy(self._config.proxy)
-        self._browser = self._pw.chromium.launch(**launch_options)
+        browser = playwright.chromium.launch(**launch_options)
+        self._browser = browser
         options: dict[str, object] = {
             "locale": self._config.locale,
             "storage_state": str(self._state_path) if self._state_path.exists() else None,
@@ -110,8 +116,9 @@ class ChromiumSession:
             options["viewport"] = dict(self._config.viewport)
         if self._config.user_agent is not None:
             options["user_agent"] = self._config.user_agent
-        self._context = self._browser.new_context(**options)
-        self._context.route("**/*", self._block_heavy_resources)
+        context = browser.new_context(**options)
+        context.route("**/*", self._block_heavy_resources)
+        self._context = context
 
     def _block_heavy_resources(self, route) -> None:
         if route.request.resource_type in self._config.blocked_types():

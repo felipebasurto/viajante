@@ -180,7 +180,7 @@ def watch_price_tool(
     validate_deadline_seconds(spec["params"].get("deadline_seconds"))
     with active(current_control() or SearchControl()), forced_recording() as written:
         # Remove only the replay wrapper; preparation and the search lock still run.
-        payload = _TOOLS[spec["kind"]].__wrapped__(**spec["params"])
+        payload = _TOOLS[spec["kind"]].__wrapped__(**spec["params"])  # type: ignore[attr-defined]
     read_error: Optional[str] = None
     try:
         stored = read_observations()

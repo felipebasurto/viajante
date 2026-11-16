@@ -124,8 +124,9 @@ def _places(hits) -> list[list[int]]:
         for right in range(left + 1, len(hits)):
             same_metro = metros[left] and metros[left] == metros[right]
             close = False
-            if geos[left] and geos[right]:
-                close = _raw_distance_km(geos[left], geos[right][0], geos[right][1]) <= _PLACE_KM
+            left_geo, right_geo = geos[left], geos[right]
+            if left_geo and right_geo:
+                close = _raw_distance_km(left_geo, right_geo[0], right_geo[1]) <= _PLACE_KM
             if same_metro or close:
                 parent[find(left)] = find(right)
     groups: dict[int, list[int]] = {}

@@ -391,7 +391,7 @@ def _offer_from_card(
     amount = price_block.get("amount")
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
         return None
-    currency = normalize_currency(price_block.get("currency"))
+    currency = normalize_currency(price_block.get("currency") or "")
     # The query's route is not the card's: a card that names no airport is skipped, not labelled.
     row_origin = _leg_airport(card.get("departure"))
     row_dest = _leg_airport(card.get("arrival"))

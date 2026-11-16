@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import os
 import unittest
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.runtime import get_runtime_info
 from viajante.sweep_config import SweepConfig, get_sweep_config
 

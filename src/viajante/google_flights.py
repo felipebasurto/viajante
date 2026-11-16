@@ -544,16 +544,18 @@ class ChromeSweepClient:
                 retry_until=recorded_expiry(state),
             )
         elif out.status == 200 and ds1_error_frame_status(out.text) == RPC_THROTTLE_STATUS:
-            state = note_repeated_throttle(endpoint=str(response.url))
-            if state is None:
+            repeated = note_repeated_throttle(endpoint=str(response.url))
+            if repeated is None:
                 out = replace(out, throttle_observed=True)
             else:
                 out = replace(
                     out,
                     throttle_observed=True,
-                    rate_limit=rate_limit_advice(state, reason=f"RPC status {RPC_THROTTLE_STATUS}"),
-                    cooldown_basis=state.get("basis", "unknown"),
-                    retry_until=recorded_expiry(state),
+                    rate_limit=rate_limit_advice(
+                        repeated, reason=f"RPC status {RPC_THROTTLE_STATUS}"
+                    ),
+                    cooldown_basis=repeated.get("basis", "unknown"),
+                    retry_until=recorded_expiry(repeated),
                     rate_limited=True,
                 )
         return out

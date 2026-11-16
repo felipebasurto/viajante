@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import os
 import tempfile
@@ -9,7 +10,6 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_explore import _explore_post
 from test_google_flights_public import _card, _context, _ds1_error_frame
 from viajante.dates import search_dates

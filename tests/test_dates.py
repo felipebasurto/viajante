@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import io
 import unittest
 from contextlib import redirect_stdout
@@ -8,7 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.cli import main
 from viajante.control import SearchCancelled, SearchDeadline, current_control
 from viajante.dates import (

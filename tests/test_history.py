@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import contextlib
 import io
 import json
@@ -17,7 +18,6 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from test_recheck import OUTBOUND, _previous
 from test_recheck import _offer as _recheck_offer
 from test_recheck import _report as _recheck_report

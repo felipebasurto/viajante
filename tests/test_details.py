@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import time
 import unittest
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from test_skiplagged_hotels import _details_result, _routing_rpc, _search_result
 from viajante import evidence, mcp_handlers
 from viajante.details import _city_decision, get_hotel_details

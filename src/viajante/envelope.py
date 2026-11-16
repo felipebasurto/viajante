@@ -132,9 +132,10 @@ def _error(
     tally.failures.append((_failure_status(error), code, provider))
     tally.unsent += str(error.get("message", "")).startswith(NOT_SENT)
     _note_pause(error, tally)
-    if error.get("rate_limited") and isinstance(error.get("retry_after"), str):
+    retry_after = error.get("retry_after")
+    if error.get("rate_limited") and isinstance(retry_after, str):
         try:
-            end = datetime.strptime(error["retry_after"], "%Y-%m-%dT%H:%M:%SZ")
+            end = datetime.strptime(retry_after, "%Y-%m-%dT%H:%M:%SZ")
         except ValueError:
             pass
         else:
@@ -419,12 +420,12 @@ def stamp_search(payload: dict, *, now: Optional[float] = None) -> dict:
     elif calendar_mixed:
         status, empty_reason = worst or "failed", None
     elif failures:
-        status, empty_reason = worst, "not_loaded"
+        status, empty_reason = worst or "failed", "not_loaded"
     else:
         status = "no_results"
         empty_reason = _answer_reason(
             not_loaded=bool(tally.not_loaded),
-            provider_only=tally.provider_empty and not tally.filtered_out,
+            provider_only=bool(tally.provider_empty and not tally.filtered_out),
         )
     if failures:
         cut = all(code == "deadline" for _, code, _ in failures)
@@ -512,13 +513,13 @@ def stamp_split(payload: dict, *, now: Optional[float] = None) -> dict:
     if itineraries:
         status = "ok"
     elif failures:
-        status, empty_reason = worst, "not_loaded"
+        status, empty_reason = worst or "failed", "not_loaded"
     else:
         status = "no_results"
         if legs:
             only_provider = leg_empty == len(legs)
         else:
-            only_provider = tally.provider_empty and not (tally.usable or tally.filtered_out)
+            only_provider = bool(tally.provider_empty and not (tally.usable or tally.filtered_out))
         empty_reason = _answer_reason(
             not_loaded=bool(tally.not_loaded), provider_only=only_provider
         )

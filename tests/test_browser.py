@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import _isolate  # noqa: F401
 from viajante.browser import (
     BLOCKED_RESOURCE_TYPES,
     BrowserSessionConfig,

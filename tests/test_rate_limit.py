@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import _isolate  # noqa: F401
 import asyncio
 import json
 import os
@@ -11,7 +12,6 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import _isolate  # noqa: F401
 from viajante import mcp_handlers, skiplagged
 from viajante.control import SearchCancelled, SearchControl, active
 from viajante.flights import classify_failure

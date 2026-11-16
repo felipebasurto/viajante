@@ -143,6 +143,8 @@ def _valid(line: bytes) -> Optional[dict]:
         )
     ):
         return None
+    text_keys: tuple[str, ...]
+    count_keys: tuple[str, ...]
     if row["kind"] == "hotel":
         text_keys, count_keys = ("location", "check_in", "check_out"), ("adults", "rooms")
     elif row["kind"] == "flight":
@@ -216,7 +218,8 @@ def short_reason(exc: BaseException) -> str:
 def _plain(value: object) -> object:
     if isinstance(value, (list, tuple)):
         items = [_plain(item) for item in value]
-        return sorted(items) if all(isinstance(item, str) for item in items) else items
+        strings = [item for item in items if isinstance(item, str)]
+        return sorted(strings) if len(strings) == len(items) else items
     return value
 
 

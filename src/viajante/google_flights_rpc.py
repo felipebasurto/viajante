@@ -317,7 +317,8 @@ def _wrb_chunk_objects(text: str):
 
 
 def first_wrb_data(
-    text: str, extract: Callable[[object], Optional[_T]] = _wrb_data_string
+    text: str,
+    extract: Callable[[object], Optional[_T]] = _wrb_data_string,  # type: ignore[assignment]
 ) -> Optional[_T]:
     """First wrb.fr envelope ``extract`` accepts, across length-prefixed or bare JSON chunks."""
     for obj in _wrb_chunk_objects(text):
