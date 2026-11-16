@@ -9,7 +9,7 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
-## [1.5.7] - 2026-11-14
+## [1.5.7] - 2026-11-16
 
 ### Fixed
 
@@ -44,6 +44,44 @@ history up to commit 6ee0fb7.
   desktop app with the viajante MCP (`npx -y @viajante/mcp`), or `pip install viajante`.
   One error frame stays a blocked cell with an unknown cause. A data-less
   RPC status 13 still records the cooldown on the first response and uses the same message.
+
+- `search_trip` keeps `trip_total` when one airport of a nearby or metro group is
+  unpriced but a sibling is priced. `recheck_offer` uppercases IATA codes, so
+  `jfk` is no longer reported as a missing offer.
+- A layover city label no longer proves a different airport ("London" proved LHR
+  when the segments were LGW). A round-trip duration cap applies per leg, not to
+  the summed duration. Rank dedupe keeps itineraries that differ by layover city
+  or flight numbers.
+- `validate_itinerary`: a round trip ends at its origin, a missing arrival time
+  no longer hides a later overlap, NaN and infinity fail numeric bounds,
+  `depart_after` and `arrive_before` apply to the trip's first and last segment,
+  and an empty selection is unknown rather than a pass.
+- A search with origins in different currencies and no `currency` is an input
+  error instead of being shopped in the first origin's currency. Flight results
+  with no rows carry `empty_reason` (`provider_empty` or `filtered_out`).
+- Airport lookup ignores accents (Krakow finds Kraków). "Saint Louis" returns
+  both Missouri and Senegal and proves neither.
+- Skiplagged hotels: an English country name matches its ISO code, a homonym
+  slug (`paris-texas`) is not accepted for `Paris, FR`, accented and aliased
+  city names resolve, and a named state separates same-country homonyms. A
+  hidden-city leg with no attributes stays unknown.
+- The CLI prints `empty_reason`, `scope_bound`, `page_errors` and
+  `price_insight_error`, so a bounded or partial result no longer looks complete.
+  Duration, departure and arrival sorts no longer print a summed `Best pair`.
+- `nearby_dates` failures and empty days reach the envelope. `verify_answer`
+  no longer accepts `$` and `¥` amounts in any currency.
+- A deadline during a detail probe or an Explore navigation is `deadline`, not
+  `markup_drift` or `fetch_failed`. A rate limit on the first split-ticket leg
+  stops the second search; split legs keep `less_emissions` and
+  `hide_separate_tickets`.
+- A round-trip package no longer shows one leg's flight numbers as the whole
+  package. Shopping card flight numbers cover every journey segment.
+- The Windows npm `viajante` bin runs the CLI, not the MCP server.
+
+### Changed
+
+- The landing page asks Web or Desktop app before copying the Claude or ChatGPT
+  install message.
 
 ## [1.5.6] - 2026-11-08
 
