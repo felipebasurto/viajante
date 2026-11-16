@@ -561,7 +561,8 @@ class PublicErrorFrameTests(unittest.TestCase):
             source._parse_response(response, response.url, FlightQuery("HAN", "SIN", OUT, adults=2))
         self.assertIsNone(caught.exception.status)
         self.assertEqual((caught.exception.diagnostics or {}).get("rpc_status"), 13)
-        self.assertIn("availability is not disproved", str(caught.exception))
+        self.assertIn("paused this request", str(caught.exception))
+        self.assertIn("15-30", str(caught.exception))
 
     def test_error_frame_days_are_blocked_and_not_replayed(self):
         class GetManyOnly:

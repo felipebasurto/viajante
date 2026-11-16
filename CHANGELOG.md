@@ -11,6 +11,25 @@ history up to commit 6ee0fb7.
 
 ### Fixed
 
+- Failures and partial results say what happened and what to do next. A calendar
+  with days that did not load is no longer a plain `ok`: it carries
+  `completeness_note`, and the CLI marks those days `!` and prints the sentence
+  above the summary. `empty_note` includes a next step, and the CLI prints that
+  sentence instead of the raw code.
+- The first Google pause says to wait 15-30 minutes and not to add airports.
+  The provider code stays in diagnostics. The burst counter is saved beside the
+  cooldown file, so separate CLI runs add up. The shared cooldown is still
+  recorded on the third pause, as before.
+- A city code such as LON on `search_flights` or `search_trip` names the airports
+  and how many Google requests that is. On `search_dates` and `search_flex` it
+  names the airports and asks for one. Currency inferred from a city code uses
+  that city's country.
+- Checked bags are refused in plain language. `--carry-on N` sets the cabin-bag
+  total; bare `--carry-on` still means 1.
+- Timeouts, rejected queries, and unreadable pages say what to do next.
+  Unexpected MCP errors use the `{"error": {"code", "message"}}` body. The CLI
+  prints one line for an unexpected error, and a traceback only with `--debug`
+  or `VIAJANTE_DEBUG=1`.
 - A burst of public-page status-13 error frames, or Explore catalog bodies with no
   `wrb.fr` payload, records the shared Google cooldown after 3 such signals inside
   2 minutes. The cooldown is the same 2-minute guess as a bare 429 (`heuristic_rpc_13`),

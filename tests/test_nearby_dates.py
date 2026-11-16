@@ -110,7 +110,8 @@ class NearbyDateGridTests(unittest.TestCase):
             _print_report(report)
         shown = text.getvalue()
         self.assertIn("cheapest", shown)
-        self.assertIn("provider_empty", shown)
+        self.assertIn("No fares came back", shown)
+        self.assertNotIn("provider_empty", shown)
         self.assertIn("-20", shown)
 
     def test_day_queries_keep_the_page_filter(self) -> None:
@@ -204,10 +205,8 @@ class NearbyDateGridTests(unittest.TestCase):
             pass
 
         with patch("viajante.cli.search_flights", side_effect=_Stop) as search:
-            with self.assertRaises(_Stop):
-                main(["flights", route, "--currency", "USD"])
+            self.assertEqual(main(["flights", route, "--currency", "USD"]), 1)
         self.assertEqual(search.call_args.kwargs["nearby_days"], 0)
         with patch("viajante.cli.search_flights", side_effect=_Stop) as search:
-            with self.assertRaises(_Stop):
-                main(["flights", route, "--currency", "USD", "--nearby-days", "2"])
+            self.assertEqual(main(["flights", route, "--currency", "USD", "--nearby-days", "2"]), 1)
         self.assertEqual(search.call_args.kwargs["nearby_days"], 2)

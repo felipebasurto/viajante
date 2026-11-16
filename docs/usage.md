@@ -58,7 +58,7 @@ list and accepted values.
 | `--max-stops 0` | Set the maximum number of stops to `0`, `1`, or `2`. |
 | `--airlines BA,AA` / `--exclude-airlines BA,AA` | Include or exclude airline codes. Public page only (`--fetch auto` or `sweep`); see the limits below. |
 | `--alliance oneworld` | Include `oneworld`, `skyteam`, or `star`. Public page only (`--fetch auto` or `sweep`). `--exclude-alliance` is refused: no page evidence can prove it. |
-| `--carry-on` | Request one carry-on bag for the whole party (Google's counter is a party total). Public page only (`--fetch auto` or `sweep`). |
+| `--carry-on` / `--carry-on N` | Cabin bags for the whole party (bare `--carry-on` means 1). Public page only (`--fetch auto` or `sweep`). Checked `--bags` is refused. |
 | `--bags N` | Checked bags. Refused: no transport can verify them. |
 | `--depart-window 06:00-12:00` | Keep flights departing within a local time window. |
 | `--depart-after 08:00` / `--arrive-before 20:00` | Filter on reported local departure or arrival times. |
@@ -169,8 +169,10 @@ A recommendation's comparison always leaves those connections out, whatever the 
 and `recommendation.slow_connections_hidden` counts them when a recommendation is
 built. Other sorts keep every connection in `offers`.
 
-`--carry-on` asks Google Flights to price one carry-on. `--bags N` is refused
-before any request, because no transport can verify checked bags. A baggage
+`--carry-on` asks Google Flights to price one cabin bag for the whole party;
+`--carry-on N` asks for N. `--bags N` is refused before any request: pass
+`--carry-on` for cabin bags, then confirm bag rules on the airline or Google
+Flights page. A baggage
 buffer is your own ranking allowance, not a provider fee. The list of low-cost
 carriers is partial, so absence from the list does not mean bags are included.
 Check baggage terms before booking.
@@ -714,9 +716,9 @@ parsed fields. The report types and JSON fields are defined in
 | --- | --- |
 | `no_results` | The search returned no results. |
 | `currency_mismatch` | Owned rows existed, but none matched the requested currency keep. Skiplagged cards are USD; viajante does not convert. |
-| `rejected` | The provider rejected the request. |
-| `blocked` | The provider blocked access or presented a challenge; a raw RPC status 13 or an error frame in place of results is reported without assuming its cause, and the batch is not replayed. |
-| `markup_drift` | The response could not be read in the expected page, `ds:1` or Explore catalog format, including a catalog that lists destination cards but no priced rows. |
+| `rejected` | Google Flights rejected this query. Check the route and dates, or try one airport. |
+| `blocked` | Google paused the request or blocked access. The message says how long to wait. Do not add airports or start a new search until then. The batch is not replayed. |
+| `markup_drift` | The page could not be read. Wait and retry this one search once. If it persists, run viajante on your own computer. A catalog that lists destination cards but no priced rows is the same code. |
 | `cards_unparsed` | A public Flights or Booking page loaded, but some attempted cards did not parse. Parsed rows are kept; the query is partial (`seen` and `parsed` on its `page_errors`). Every card failing stays `markup_drift`. |
 | `fetch_failed` | The request failed for another reason. |
 | `browser_unavailable` | A required browser dependency or installation is missing. |

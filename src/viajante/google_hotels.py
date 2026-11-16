@@ -42,6 +42,7 @@ from viajante.models import (
     SearchError,
     SearchErrorCode,
 )
+from viajante.ratelimit import PAUSE_MESSAGE
 
 HTTP_TIMEOUT_SECONDS = 30
 
@@ -188,7 +189,7 @@ class GoogleHotelsSource:
             )
         if response.status < 400 and is_rate_limited_response(response):
             raise HotelsBlocked(
-                advice or "Google Hotels returned RPC status 13; its cause is unknown.",
+                advice or PAUSE_MESSAGE,
                 rate_limited=True,
                 retry_until=response.retry_until,
             )

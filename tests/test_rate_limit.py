@@ -424,7 +424,9 @@ class StatusThirteenTests(_StateDir):
         with self.assertRaises(GoogleFlightsBlocked) as ctx:
             _raise_if_blocked(200, STATUS_13_BODY, CALENDAR_URL, CALENDAR_URL)
         self.assertIsNone(ctx.exception.status)
-        self.assertIn("RPC error status 13", str(ctx.exception))
+        self.assertIn("paused this request", str(ctx.exception))
+        self.assertIn("15-30", str(ctx.exception))
+        self.assertNotIn("status 13", str(ctx.exception).casefold())
 
     def test_hotels_treat_a_recorded_status_13_as_a_rate_limit(self) -> None:
         advice = _exchange(STATUS_13_BODY, proxied=False).rate_limit

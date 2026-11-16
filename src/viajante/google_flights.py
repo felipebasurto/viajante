@@ -33,6 +33,7 @@ from viajante.models import (
 )
 from viajante.ratelimit import (  # noqa: F401 - re-exported for callers and tests
     NOT_SENT,
+    PAUSE_MESSAGE,
     RATE_LIMIT_COOLDOWN_SECONDS,
     RATE_LIMIT_MAX_COOLDOWN_SECONDS,
     note_rate_limited,
@@ -819,11 +820,13 @@ def _raise_if_blocked(
         if advice and rpc_status == RPC_THROTTLE_STATUS:
             # status=429 so the caller treats it as a rate limit and does not replay or fall back.
             raise GoogleFlightsBlocked(advice, status=429)
-        # Seen alongside google.com/sorry for the same IP while shopping still answers.
+        if rpc_status == RPC_THROTTLE_STATUS:
+            # The numeric code stays in diagnostics. One frame does not record the cooldown.
+            raise GoogleFlightsBlocked(PAUSE_MESSAGE)
         raise GoogleFlightsBlocked(
-            f"Google Flights answered with RPC error status {rpc_status} and no data "
+            f"Google Flights could not return this search "
             f"from {urlsplit(fallback_url).netloc}{urlsplit(fallback_url).path}. "
-            "The cause is unknown; this status alone does not prove an IP block."
+            "Wait a minute and retry this one search."
         )
     if looks_blocked(body, final_url):
         raise GoogleFlightsBlocked(
@@ -858,10 +861,7 @@ def raise_for_sweep_response(response: SweepHttpResponse, url: str) -> None:
         )
     raw_status = raw_rpc_error_status(response.text)
     if raw_status == RPC_THROTTLE_STATUS:
-        message = response.rate_limit or (
-            "Google Flights returned RPC status 13. The cause is unknown; "
-            "availability is not disproved."
-        )
+        message = response.rate_limit or PAUSE_MESSAGE
         raise GoogleFlightsBlocked(
             message,
             status=429,

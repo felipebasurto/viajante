@@ -228,7 +228,8 @@ class FailureClassificationTests(unittest.TestCase):
         error = classify_failure(GoogleFlightsRejected("unknown airport"))
         self.assertEqual(error.code, SearchErrorCode.REJECTED)
         self.assertIn("rejected", error.message.casefold())
-        self.assertIn("did not identify the cause", error.message)
+        self.assertIn("Check the route and dates", error.message)
+        self.assertIn("one airport", error.message)
         self.assertNotIn("unknown airport", error.message)
 
     def test_missing_chromium_is_reported_as_browser_unavailable(self) -> None:
@@ -251,7 +252,9 @@ class FailureClassificationTests(unittest.TestCase):
     def test_unrecognised_failures_keep_their_original_text(self) -> None:
         error = classify_failure(TimeoutError("Timeout 60000ms exceeded"))
         self.assertEqual(error.code, SearchErrorCode.FETCH_FAILED)
-        self.assertIn("Timeout 60000ms exceeded", error.message)
+        self.assertIn("timed out", error.message.casefold())
+        self.assertIn("Wait a minute", error.message)
+        self.assertNotIn("Timeout 60000ms exceeded", error.message)
 
 
 class DetailBlockStopsTests(unittest.TestCase):

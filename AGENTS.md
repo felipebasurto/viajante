@@ -359,8 +359,11 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
   endpoint host and path, the HTTP or RPC status, `request_sent`, `attempts`, and
   the cooldown basis. Never include query parameters.
 - A public page whose `ds:1` is the provider's error frame (`[status, null, [[...ErrorResponse...]]]`)
-  is `blocked` with the frame status in diagnostics, never `markup_drift`. One status-13
-  frame does not record a cooldown. Three inside 2 minutes do, and the call stops
+  is `blocked` with the frame status in diagnostics, never `markup_drift`. The
+  user-facing sentence does not lead with that code: it says Google paused the
+  request and what to do next. One frame does not record a cooldown. The burst
+  counter is stored beside the cooldown file, so separate CLI runs add up. Three
+  inside 2 minutes record the cooldown, and the call stops
   unsent work. Once a block is seen in a batch, the batch replay is suppressed.
 - HTTP 429 and status 13 stop pending sweep work. Nothing replays and nothing falls
   back to detail. Empty results, drift, and HTTP 5xx may be retried once. A burst
