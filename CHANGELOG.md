@@ -9,6 +9,18 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-18
+
+### Added
+
+- `python -m viajante` runs the same CLI, for a sandbox or cloud agent where the
+  `viajante` console script is not on PATH.
+- `docs/clients.md`: how ChatGPT on the web reaches a local viajante through OpenAI's
+  Secure MCP Tunnel (the landing page's ChatGPT message says the same), and a "No MCP:
+  scripts" section for agents that only run Python. ChatGPT's own Python tool has no
+  outbound network, so it cannot search.
+- A 1024 px icon for the Claude Code plugin (`integrations/claude-code/.claude-plugin/icon.png`).
+
 ## [1.5.7] - 2026-11-16
 
 ### Fixed

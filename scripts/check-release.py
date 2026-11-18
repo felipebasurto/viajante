@@ -1,7 +1,7 @@
 """Refuse a release whose tag and version pins disagree.
 
-``python scripts/check-release.py v1.5.7`` exits 1 and names every pin that is not
-1.5.7. The publish workflow runs it before anything reaches PyPI, npm, or the MCP
+``python scripts/check-release.py v1.6.0`` exits 1 and names every pin that is not
+1.6.0. The publish workflow runs it before anything reaches PyPI, npm, or the MCP
 Registry, none of which can take a version back.
 """
 

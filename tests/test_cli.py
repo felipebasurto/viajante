@@ -3,6 +3,8 @@ from __future__ import annotations
 import _isolate  # noqa: F401
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -2492,6 +2494,18 @@ class IncompleteEvidencePrintTests(unittest.TestCase):
         flexed = buffer.getvalue()
         self.assertIn("scope_bound: public_page_outbound_limit 8", flexed)
         self.assertIn("cards_unparsed: 2 cards skipped (seen 4, parsed 2)", flexed)
+
+
+class ModuleEntryTests(unittest.TestCase):
+    def test_python_dash_m_runs_the_same_cli(self) -> None:
+        ran = subprocess.run(
+            [sys.executable, "-m", "viajante", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        self.assertEqual(ran.stdout.split()[0], "viajante")
 
 
 if __name__ == "__main__":

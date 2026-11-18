@@ -7,7 +7,7 @@ Fetch locale is English. User prompts may be any language. No implied home hub.
 
 - **MCP tools are listed.** You are connected. Read `status`, `completeness`, and `empty_reason` before the rows. Only `provider_empty` means none found. `get_guide` is the long rules. `get_runtime_info` is the running version.
 - **Nothing installed, you have a shell.** Primary: `npx -y @viajante/mcp` (needs uv and Python 3.10+). No Node: `uvx --from viajante[mcp] viajante-mcp`. Config below. If `viajante-mcp` says it needs the mcp extra, you are not in a checkout: use the uvx line, not `uv sync` (`uv sync` does not put the binary on PATH).
-- **CLI only** (`viajante` runs, no MCP tools). `viajante <cmd> --help`. `viajante --version` before a new flag. Hotels need `--currency`.
+- **CLI only** (`viajante` runs, no MCP tools). `viajante <cmd> --help`. If the command is not on PATH, `python -m viajante <cmd>` is the same CLI. `viajante --version` before a new flag. Hotels need `--currency`.
 - **Python.** `from viajante import get_flights, search_flights, search_hotels, validate_itinerary`. A route spec, not a sentence. `search_hotels` defaults to Booking (browser extra); pass `source="google"` and `currency`. `get_hotel_details(report, query_index, offer_index)` is the library form; MCP takes `selection_id`.
 - **No shell and no local process.** You cannot search. Loopback HTTP has no auth and is never hosted. `server.json` has no remotes. Do not invent a URL.
 
