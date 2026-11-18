@@ -475,6 +475,18 @@ def _run_options(*, http: bool, host: str, port: int) -> dict[str, object]:
     return options
 
 
+# MCP Apps view for search_flights. The tool result stays the same text and JSON envelope;
+# a host that renders Apps shows this page, and every other client ignores the metadata.
+FLIGHTS_APP_URI = "ui://viajante/flights.html"
+APP_MIME_TYPE = "text/html;profile=mcp-app"
+
+
+def _flights_app_html() -> str:
+    from importlib.resources import files
+
+    return files("viajante").joinpath("flights_app.html").read_text(encoding="utf-8")
+
+
 def build_server():
     global _ROOM_RATES, _ENV_DEADLINE, _DeadlineSeconds
     from mcp.server.mcpserver import MCPServer
@@ -578,6 +590,7 @@ def build_server():
         writes: bool = False,
         returns: type = ToolEnvelope,
         search: Optional[Callable[[Mapping[str, object]], bool]] = None,
+        ui_resource: Optional[str] = None,
     ):
         # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
         # provider. A writing tool is neither read-only nor idempotent (it appends), but
@@ -590,6 +603,7 @@ def build_server():
                 idempotentHint=not writes,
                 openWorldHint=network,
             ),
+            meta={"ui": {"resourceUri": ui_resource}} if ui_resource else None,
         )
 
         def decorate(stub):
@@ -637,6 +651,16 @@ def build_server():
         return decorate
 
     @server.resource(
+        FLIGHTS_APP_URI,
+        name="flights-app",
+        title="viajante flight results",
+        description="Read-only view of a search_flights result: envelope, route rows and offers.",
+        mime_type=APP_MIME_TYPE,
+    )
+    def flights_app_resource() -> str:
+        return _flights_app_html()
+
+    @server.resource(
         "viajante://guide",
         name="guide",
         title="viajante operational guide",
@@ -656,7 +680,7 @@ def build_server():
         """
         return stamp_local(dict(runtime_info()))
 
-    @tool("Search flights", search_flights_tool, network=True)
+    @tool("Search flights", search_flights_tool, network=True, ui_resource=FLIGHTS_APP_URI)
     def search_flights():
         """Google Flights search for named routes and dates. Each routes entry is
         ORIGIN-DEST:YYYY-MM-DD. Use search_dates for the cheapest week and search_flex for
