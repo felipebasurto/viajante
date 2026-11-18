@@ -5,113 +5,191 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>viajante flights</title>
 <style>
-/* Evidence view for search_flights. Text and envelope first; color only reinforces. */
+/* Evidence view for search_flights. Follows the host theme; logos are Google Flights' own. */
 :root {
-  --bg: #f4f1ea;
-  --surface: #fffdf8;
-  --ink: #161513;
-  --muted: #6b675e;
-  --line: #e2dccd;
-  --accent: #0f7a57;
-  --accent-soft: #dcefe6;
-  --warn: #b45309;
-  --warn-soft: #f7ead6;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #171714;
-    --surface: #21201c;
-    --ink: #f2efe7;
-    --muted: #a8a293;
-    --line: #37352e;
-    --accent: #5fd0a2;
-    --accent-soft: #1f3a2f;
-    --warn: #f0b15a;
-    --warn-soft: #3a2e1c;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #171714;
-  --surface: #21201c;
-  --ink: #f2efe7;
-  --muted: #a8a293;
-  --line: #37352e;
-  --accent: #5fd0a2;
-  --accent-soft: #1f3a2f;
-  --warn: #f0b15a;
-  --warn-soft: #3a2e1c;
-  color-scheme: dark;
+  color-scheme: light dark;
+  --ink: light-dark(#18181b, #f4f4f5);
+  --muted: light-dark(#71717a, #a1a1aa);
+  --card: light-dark(#f7f7f8, #2a2a2d);
+  --stub: light-dark(#efeff1, #232326);
+  --line: light-dark(#e4e4e7, #3a3a3f);
+  --accent: light-dark(#2563eb, #6ea2ff);
+  --nonstop: light-dark(#15935c, #4ade9a);
+  --one-stop: light-dark(#c27803, #fbbf4a);
+  --two-stops: light-dark(#d9364f, #fb7c8f);
+  --unknown: var(--muted);
+  --shadow: light-dark(0 1px 2px rgb(24 24 27 / 0.05), 0 1px 2px rgb(0 0 0 / 0.3));
+  --shadow-hover: light-dark(0 6px 18px -6px rgb(24 24 27 / 0.16), 0 8px 22px -8px rgb(0 0 0 / 0.6));
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --stub-h: 40px;
 }
 * { box-sizing: border-box; }
+[hidden], #queries:empty { display: none !important; }
 html, body { margin: 0; }
+html { background: var(--host-bg, transparent); }
 body {
-  background: var(--bg);
   color: var(--ink);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 16px 24px;
-  overflow-wrap: anywhere;
+  font: 14px/1.4 var(--font-sans);
+  padding: 4px 4px 10px;
+  -webkit-font-smoothing: antialiased;
 }
-main { max-width: 720px; margin-inline: auto; display: grid; gap: 14px; min-width: 0; }
-h1 { font-size: 18px; margin: 0; font-weight: 800; letter-spacing: -0.01em; }
-h2 { font-size: 15px; margin: 0; font-weight: 700; }
-.muted { color: var(--muted); font-size: 13px; }
-.status { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 12px 14px; display: grid; gap: 4px; }
-.status.warn { border-color: var(--warn); background: var(--warn-soft); }
-.status code, .meta code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 12px; }
+main { display: grid; gap: 20px; min-width: 0; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+
+.note { display: flex; gap: 8px; align-items: baseline; color: var(--muted); font-size: 13px; padding-inline: 2px; }
+.note::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); transform: translateY(-1px); }
+
 .query { display: grid; gap: 10px; min-width: 0; }
-.pill { justify-self: start; font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: var(--ink); color: var(--bg); }
-.offer { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 10px; min-width: 0; }
-.offer-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-.airline { color: var(--muted); font-size: 14px; min-width: 0; }
-.price { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.times { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
-.time { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.1; }
-.time.end { text-align: right; }
-.track { position: relative; height: 2px; background: var(--line); min-width: 40px; }
-.track .label { position: absolute; left: 50%; top: -11px; transform: translateX(-50%); background: var(--surface); padding: 0 6px; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--line); color: var(--ink); }
-.chip.attn { background: var(--warn-soft); color: var(--warn); }
-.meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 13px; }
-.link { color: var(--accent); font-weight: 600; font-size: 14px; justify-self: start; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.empty { color: var(--muted); font-size: 14px; }
-@media (max-width: 420px) {
-  .time { font-size: 20px; }
-  .times { gap: 6px; }
+.query-head { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.route { font-weight: 600; font-size: 13px; padding: 4px 11px; border-radius: 999px; background: var(--ink); color: var(--card); }
+.query-head .count { margin-left: auto; font-size: 13px; }
+
+.card {
+  position: relative;
+  display: block;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  /* Boarding-pass notches where the stub starts. */
+  -webkit-mask: radial-gradient(circle 7px at 0 calc(100% - var(--stub-h)), #0000 97%, #000) left / 51% 100% no-repeat,
+                radial-gradient(circle 7px at 100% calc(100% - var(--stub-h)), #0000 97%, #000) right / 51% 100% no-repeat;
+          mask: radial-gradient(circle 7px at 0 calc(100% - var(--stub-h)), #0000 97%, #000) left / 51% 100% no-repeat,
+                radial-gradient(circle 7px at 100% calc(100% - var(--stub-h)), #0000 97%, #000) right / 51% 100% no-repeat;
+  transition: transform 180ms var(--ease-out), box-shadow 180ms var(--ease-out), border-color 180ms ease;
+  animation: card-in 280ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+.flight { --stops: var(--unknown); }
+.flight[data-stops="0"] { --stops: var(--nonstop); }
+.flight[data-stops="1"] { --stops: var(--one-stop); }
+.flight[data-stops="2"] { --stops: var(--two-stops); }
+@keyframes card-in { from { opacity: 0; transform: translateY(6px); } }
+@media (hover: hover) and (pointer: fine) {
+  a.card:hover { transform: translateY(-1px); box-shadow: var(--shadow-hover); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+}
+a.card:active { transform: scale(0.99); }
+a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .card { animation-name: card-fade; transition: box-shadow 180ms ease, border-color 180ms ease; }
+  a.card:hover, a.card:active { transform: none; }
+  @keyframes card-fade { from { opacity: 0; } }
+}
+
+.top { display: flex; align-items: center; gap: 12px; padding: 14px 16px 0; }
+.logo {
+  flex: none; width: 34px; height: 34px; border-radius: 9px; background: #fff;
+  border: 1px solid light-dark(#e8edf4, transparent);
+  display: grid; place-items: center; overflow: hidden;
+  font: 600 11px/1 var(--font-sans); color: #334155; letter-spacing: 0.02em;
+}
+.logo img { width: 26px; height: 26px; object-fit: contain; display: block; }
+.carrier { min-width: 0; flex: 1; display: grid; }
+.carrier > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.airline { font-weight: 600; }
+.price { font-size: 20px; font-weight: 600; color: var(--accent); letter-spacing: -0.01em; white-space: nowrap; }
+
+.flight { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 16px 16px; }
+.flight + .flight { border-top: 1px solid var(--line); margin-inline: 16px; padding-inline: 0; padding-top: 14px; }
+.end { display: grid; }
+.end.arr { text-align: right; }
+.clock { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.plus { font-size: 12px; font-weight: 600; color: var(--muted); vertical-align: super; margin-left: 2px; }
+.iata { font-size: 12px; color: var(--muted); letter-spacing: 0.08em; font-weight: 500; }
+.path { display: grid; gap: 6px; text-align: center; min-width: 0; }
+.path > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dur { font-size: 12px; color: var(--muted); }
+.track { position: relative; height: 2px; border-radius: 2px; background: var(--stops); opacity: 0.9; }
+.track::before, .track::after { content: ""; position: absolute; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--stops); transform: translate(-50%, -50%); left: 0; }
+.track::after { left: 100%; }
+.stop-dot { position: absolute; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--card); border: 2px solid var(--stops); transform: translate(-50%, -50%); }
+.stops { font-size: 12px; font-weight: 600; color: var(--stops); }
+
+.stub {
+  height: var(--stub-h);
+  display: flex; align-items: center; gap: 18px;
+  padding: 0 16px;
+  background: var(--stub);
+  border-top: 1.5px dashed var(--line);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.field { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.field b { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.field span { overflow: hidden; text-overflow: ellipsis; }
+.bags { color: var(--one-stop); font-weight: 600; }
+.open { margin-left: auto; color: var(--accent); font-weight: 600; }
+
+.empty, .waiting { color: var(--muted); padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; }
+.waiting { display: grid; gap: 12px; margin: 0; }
+.waiting::after {
+  content: ""; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat var(--line);
+  background-size: 35% 100%;
+  animation: scan 1.4s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+}
+@keyframes scan { from { background-position: -60% 0; } to { background-position: 160% 0; } }
+@media (prefers-reduced-motion: reduce) { .waiting::after { animation: none; } }
+
+@media (max-width: 460px) {
+  .clock { font-size: 21px; }
+  .flight { gap: 10px; padding-inline: 14px; }
+  .top, .stub { padding-inline: 14px; }
+  .field.cabin { display: none; }
 }
 </style>
 </head>
 <body>
 <main>
-  <h1>Flight search</h1>
-  <section id="envelope" class="status" aria-live="polite" hidden></section>
-  <section id="queries" class="query-list"></section>
-  <p id="waiting" class="muted">Waiting for the search result from viajante.</p>
+  <section id="queries"></section>
+  <p id="notice" class="note" aria-live="polite" hidden></p>
+  <p id="waiting" class="waiting">Searching…</p>
 </main>
 <script>
 (function () {
   "use strict";
 
   var PROTOCOL = "2026-01-26";
-  var REQUEST_ID = 1;
+  var LOGO_BASE = "https://www.gstatic.com/flights/airline_logos/70px/";
+  var nextId = 1;
+  var INIT_ID = nextId++;
 
-  // Plain sentences for each envelope reason. Only provider_empty may read as "none found".
+  // Fallback sentences when a row carries a reason and no note. Only provider_empty reads as none.
   var REASON_TEXT = {
     provider_empty: "The provider returned no flights for this query.",
     filtered_out: "viajante's filters removed every row the provider returned. Availability is not disproved.",
     not_loaded: "The search did not complete. Availability is unknown."
   };
 
+  function send(msg) { window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, msg), "*"); }
+
   function el(tag, cls, text) {
     var node = document.createElement(tag);
     if (cls) node.className = cls;
-    if (text !== undefined && text !== null) node.textContent = String(text);
+    if (text !== undefined && text !== null && text !== "") node.textContent = String(text);
     return node;
+  }
+
+  function applyHostContext(ctx) {
+    if (!ctx) return;
+    var root = document.documentElement;
+    if (ctx.theme === "light" || ctx.theme === "dark") root.style.colorScheme = ctx.theme;
+    var vars = (ctx.styles && ctx.styles.variables) || {};
+    if (vars["--font-sans"]) root.style.setProperty("--font-sans", vars["--font-sans"]);
+    if (vars["--color-background-primary"]) root.style.setProperty("--host-bg", vars["--color-background-primary"]);
+  }
+
+  function reportSize() {
+    var height = Math.ceil(document.documentElement.getBoundingClientRect().height);
+    if (height === reportSize.last) return;
+    reportSize.last = height;
+    send({ method: "ui/notifications/size-changed", params: { width: Math.ceil(window.innerWidth), height: height } });
   }
 
   function parseResult(params) {
@@ -128,94 +206,214 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; }
     return null;
   }
 
-  function renderEnvelope(data) {
-    var box = document.getElementById("envelope");
-    box.textContent = "";
-    var lines = [];
-    var reason = data.empty_reason;
-    if (data.completeness === "partial") {
-      lines.push("Partial result: read the rows for each query.");
-    }
-    if (reason && REASON_TEXT[reason]) lines.push(REASON_TEXT[reason]);
-    if (data.error_code) lines.push("Error code: " + data.error_code);
-    if (data.retry_after) lines.push("Retry after (UTC): " + data.retry_after);
-    if (!lines.length) {
-      box.hidden = true;
-      return;
-    }
-    box.hidden = false;
-    var warn = reason === "not_loaded" || data.completeness === "partial" || data.completeness === "blocked";
-    box.className = "status" + (warn ? " warn" : "");
-    lines.forEach(function (line) { box.appendChild(el("div", "", line)); });
-    var meta = el("div", "muted", "status " + (data.status || "?") + " · completeness " + (data.completeness || "?"));
-    box.appendChild(meta);
+  function short(text) {
+    return String(text || "").replace(/ hr\b/g, "h").replace(/ min\b/g, "m");
   }
 
-  function renderOffer(offer) {
-    var card = el("article", "offer");
-    var head = el("div", "offer-head");
-    head.appendChild(el("div", "airline", offer.airline || "Airline not returned"));
-    head.appendChild(el("div", "price", offer.price_text || ""));
-    card.appendChild(head);
+  function hm(minutes) {
+    var h = Math.floor(minutes / 60), m = minutes % 60;
+    return (h ? h + "h" : "") + (h && m ? " " : "") + (m ? m + "m" : "");
+  }
 
-    var times = el("div", "times");
-    times.appendChild(el("div", "time", offer.departure || ""));
+  function day(iso) {
+    var t = Date.parse(iso + "T00:00:00Z");
+    if (isNaN(t)) return iso;
+    return new Date(t).toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  // One entry per journey the provider returned; an offer without legs is its own one leg.
+  function journeys(offer) {
+    var legs = (offer.legs || []).filter(Boolean);
+    if (!legs.length) return [{ departure: offer.departure, arrival: offer.arrival, duration: offer.duration, stops: offer.stops, stops_count: offer.stops_count, segments: [], layovers: [] }];
+    return legs.map(function (leg, i) {
+      var segs = leg.segments || [];
+      var own = i === 0 ? offer : {};
+      return {
+        departure: leg.departure || own.departure,
+        arrival: leg.arrival || own.arrival,
+        duration: leg.duration || own.duration,
+        stops: leg.stops || own.stops,
+        stops_count: segs.length ? segs.length - 1 : own.stops_count,
+        segments: segs,
+        layovers: leg.layovers || []
+      };
+    });
+  }
+
+  // Days between the first departure date and the last arrival date the provider returned.
+  function dayShift(segs) {
+    if (!segs.length) return 0;
+    var a = Date.parse(segs[0].departure_date), b = Date.parse(segs[segs.length - 1].arrival_date);
+    return isNaN(a) || isNaN(b) ? 0 : Math.round((b - a) / 86400000);
+  }
+
+  function stopsLabel(leg, segs) {
+    var lays = leg.layovers;
+    var label = leg.stops || "";
+    if (lays.length === 1 && lays[0].city) {
+      var stop = lays[0];
+      var time = typeof stop.hours === "number" ? " " + hm(Math.round(stop.hours * 60)) : "";
+      return label + " · " + stop.city + time;
+    }
+    var via = segs.slice(0, -1).map(function (s) { return s.destination; }).filter(Boolean);
+    return via.length ? label + " · " + via.join(", ") : label;
+  }
+
+  function logo(code, airline) {
+    var box = el("span", "logo");
+    box.setAttribute("aria-hidden", "true");
+    var mark = code || (airline || "").slice(0, 2).toUpperCase();
+    if (code && /^[A-Z0-9]{2}$/.test(code)) {
+      var img = document.createElement("img");
+      img.alt = "";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.onerror = function () { box.textContent = mark; };
+      img.src = LOGO_BASE + code + ".png";
+      box.appendChild(img);
+    } else {
+      box.textContent = mark;
+    }
+    return box;
+  }
+
+  function field(label, value, cls) {
+    var node = el("span", "field" + (cls ? " " + cls : ""));
+    node.appendChild(el("b", "", label));
+    node.appendChild(el("span", "num", value));
+    return node;
+  }
+
+  function openLink(event) {
+    event.preventDefault();
+    send({ id: nextId++, method: "ui/open-link", params: { url: event.currentTarget.href } });
+  }
+
+  function renderLeg(leg, dated) {
+    var segs = leg.segments;
+    var flight = el("div", "flight");
+    if (typeof leg.stops_count === "number") flight.dataset.stops = String(Math.min(leg.stops_count, 2));
+
+    var dep = el("div", "end");
+    dep.appendChild(el("span", "clock num", leg.departure));
+    dep.appendChild(el("span", "iata", segs.length ? segs[0].origin : ""));
+    flight.appendChild(dep);
+
+    var path = el("div", "path");
+    var date = dated && segs.length && segs[0].departure_date ? day(segs[0].departure_date) + " · " : "";
+    path.appendChild(el("span", "dur num", date + short(leg.duration)));
     var track = el("div", "track");
-    var middle = offer.duration || "";
-    if (offer.stops) middle = (middle ? middle + " · " : "") + offer.stops;
-    track.appendChild(el("span", "label", middle));
-    times.appendChild(track);
-    times.appendChild(el("div", "time end", offer.arrival || ""));
-    card.appendChild(times);
+    var count = typeof leg.stops_count === "number" ? leg.stops_count : 0;
+    for (var i = 1; i <= count; i++) {
+      var dot = el("span", "stop-dot");
+      dot.style.left = (100 * i / (count + 1)) + "%";
+      track.appendChild(dot);
+    }
+    path.appendChild(track);
+    path.appendChild(el("span", "stops num", stopsLabel(leg, segs)));
+    flight.appendChild(path);
 
-    var chips = el("div", "chips");
-    if (typeof offer.stops_count === "number") chips.appendChild(el("span", "chip", offer.stops_count + " stop" + (offer.stops_count === 1 ? "" : "s")));
-    if (offer.layover_city) {
-      var lay = "via " + offer.layover_city;
-      if (typeof offer.layover_hours === "number") lay += " · " + offer.layover_hours + " h";
-      chips.appendChild(el("span", "chip", lay));
-    }
-    if (offer.needs_bag_verify) chips.appendChild(el("span", "chip attn", "Bags: verify"));
-    if (chips.childNodes.length) card.appendChild(chips);
+    var arr = el("div", "end arr");
+    var clock = el("span", "clock num", leg.arrival);
+    var shift = dayShift(segs);
+    if (shift > 0) clock.appendChild(el("span", "plus", "+" + shift));
+    arr.appendChild(clock);
+    arr.appendChild(el("span", "iata", segs.length ? segs[segs.length - 1].destination : ""));
+    flight.appendChild(arr);
+    return flight;
+  }
 
-    if (offer.flight_numbers && offer.flight_numbers.length) {
-      card.appendChild(el("div", "meta", offer.flight_numbers.join(" · ")));
+  function renderOffer(offer, q, index) {
+    var url = offer.google_flights_url;
+    var card = el(url ? "a" : "article", "card");
+    card.style.setProperty("--i", String(Math.min(index, 8)));
+    if (url) {
+      card.href = url;
+      card.target = "_blank";
+      card.rel = "noopener noreferrer";
+      card.addEventListener("click", openLink);
     }
-    if (offer.google_flights_url) {
-      var link = el("a", "link", "Open in Google Flights");
-      link.href = offer.google_flights_url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      card.appendChild(link);
-    }
+    var legs = journeys(offer);
+    var first = legs[0].segments[0];
+
+    var top = el("div", "top");
+    top.appendChild(logo(first ? first.carrier : null, offer.airline));
+    var carrier = el("div", "carrier");
+    carrier.appendChild(el("span", "airline", offer.airline || "Airline not returned"));
+    top.appendChild(carrier);
+    top.appendChild(el("span", "price num", offer.price_text));
+    card.appendChild(top);
+
+    legs.forEach(function (leg) { card.appendChild(renderLeg(leg, legs.length > 1)); });
+
+    var stub = el("div", "stub");
+    if (offer.flight_numbers && offer.flight_numbers.length) stub.appendChild(field("Flight", offer.flight_numbers.join(" · ")));
+    if (q.cabin) stub.appendChild(field("Class", q.cabin.replace(/_/g, " ").replace(/^./, function (c) { return c.toUpperCase(); }), "cabin"));
+    if (offer.needs_bag_verify) stub.appendChild(el("span", "bags", "Check bags"));
+    if (url) stub.appendChild(el("span", "open", "Google Flights ↗"));
+    card.appendChild(stub);
     return card;
   }
 
   function renderQueries(data) {
     var list = document.getElementById("queries");
-    list.textContent = "";
+    var notes = [];
     var rows = data.queries || [];
+    var empties = 0;
+    list.textContent = "";
     rows.forEach(function (row) {
       var section = el("section", "query");
       var q = row.query || {};
-      var route = [q.origin, q.destination].filter(Boolean).join(" → ") || "Query";
-      section.appendChild(el("div", "pill", route));
       var offers = row.offers || [];
+
+      var head = el("header", "query-head");
+      var stops = Array.isArray(q.legs) && q.legs.length
+        ? [q.legs[0].origin].concat(q.legs.map(function (leg) { return leg.destination; }))
+        : [q.origin, q.destination];
+      if (q.return_date) stops = [q.origin, q.destination, q.origin];
+      head.appendChild(el("span", "route", stops.filter(Boolean).join(" → ") || "Query"));
+      var dates = [q.departure_date && day(q.departure_date), q.return_date && day(q.return_date)].filter(Boolean).join(" – ");
+      head.appendChild(el("span", "muted", dates));
+      if (offers.length && typeof row.raw_count === "number" && row.raw_count > offers.length) {
+        head.appendChild(el("span", "muted count num", offers.length + " of " + row.raw_count));
+      }
+      section.appendChild(head);
+
+      (row.page_errors || []).forEach(function (err) { if (err && err.message) notes.push(err.message); });
+
       if (!offers.length) {
-        var reason = row.empty_reason;
-        var text = (reason && REASON_TEXT[reason]) || "No offers in this query.";
+        var text = (row.empty_reason && REASON_TEXT[row.empty_reason]) || "No offers in this query.";
         if (row.error && row.error.message) text += " " + row.error.message;
+        empties++;
         section.appendChild(el("div", "empty", text));
       }
-      offers.forEach(function (offer) { section.appendChild(renderOffer(offer)); });
+      offers.forEach(function (offer, i) { section.appendChild(renderOffer(offer, q, i)); });
       list.appendChild(section);
     });
+    return { notes: notes, allEmpty: rows.length > 0 && empties === rows.length };
+  }
+
+  // One quiet line: the per-query parse note when there is one, else the envelope's own note.
+  // When every query already shows its own empty box, that box says it.
+  function renderNotice(data, seen) {
+    var reason = data.empty_reason;
+    var lines = seen.allEmpty ? [] : seen.notes.length ? seen.notes.slice() : [data.completeness_note];
+    if (!seen.allEmpty) lines.push(reason && (data.empty_note || REASON_TEXT[reason]));
+    lines = lines.filter(Boolean);
+    var box = document.getElementById("notice");
+    box.textContent = lines.join(" ");
+    box.hidden = !lines.length;
   }
 
   function render(data) {
     document.getElementById("waiting").hidden = true;
-    renderEnvelope(data);
-    renderQueries(data);
+    renderNotice(data, renderQueries(data));
+  }
+
+  function showWaiting(text) {
+    var waiting = document.getElementById("waiting");
+    waiting.textContent = text;
+    waiting.hidden = false;
   }
 
   // MCP Apps handshake: ui/initialize request, then ui/notifications/initialized.
@@ -224,26 +422,41 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; }
     if (event.source !== window.parent) return;
     var msg = event.data;
     if (!msg || msg.jsonrpc !== "2.0") return;
-    if (msg.id === REQUEST_ID && msg.result) {
-      window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+    if (msg.id === INIT_ID && msg.result) {
+      applyHostContext(msg.result.hostContext);
+      send({ method: "ui/notifications/initialized", params: {} });
       return;
     }
-    if (msg.method === "ui/notifications/tool-result") {
+    if (msg.method === "ui/notifications/host-context-changed") {
+      applyHostContext(msg.params);
+    } else if (msg.method === "ui/notifications/tool-input") {
+      var routes = msg.params && msg.params.arguments && msg.params.arguments.routes;
+      if (routes && document.getElementById("queries").childElementCount === 0) {
+        var pretty = [].concat(routes).map(function (spec) {
+          var m = /^([A-Z]{3})-([A-Z]{3}):(\d{4}-\d{2}-\d{2})/.exec(String(spec));
+          return m ? m[1] + " → " + m[2] + ", " + day(m[3]) : String(spec);
+        });
+        showWaiting("Searching " + pretty.join(" · ") + "…");
+      }
+    } else if (msg.method === "ui/notifications/tool-cancelled") {
+      showWaiting("Search cancelled.");
+    } else if (msg.method === "ui/notifications/tool-result") {
       var data = parseResult(msg.params);
       if (data) render(data);
     }
   });
 
-  window.parent.postMessage({
-    jsonrpc: "2.0",
-    id: REQUEST_ID,
+  new ResizeObserver(reportSize).observe(document.documentElement);
+
+  send({
+    id: INIT_ID,
     method: "ui/initialize",
     params: {
       protocolVersion: PROTOCOL,
       appInfo: { name: "viajante flights", version: "1" },
       appCapabilities: {}
     }
-  }, "*");
+  });
 })();
 </script>
 </body>

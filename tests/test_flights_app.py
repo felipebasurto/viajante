@@ -24,7 +24,9 @@ from viajante.mcp_server import APP_MIME_TYPE, FLIGHTS_APP_URI, build_server
 server = build_server()
 tools = asyncio.run(server.list_tools())
 resources = asyncio.run(server.list_resources())
+read = list(asyncio.run(server.read_resource(FLIGHTS_APP_URI)))
 print(json.dumps({
+    "resource_meta": read[0].meta,
     "uri": FLIGHTS_APP_URI,
     "mime": APP_MIME_TYPE,
     "tools": {t.name: (t.meta or {}) for t in tools},
@@ -65,15 +67,18 @@ class FlightsAppTests(unittest.TestCase):
         self.assertEqual(match[0]["mime"], "text/html;profile=mcp-app")
         self.assertTrue(self.probe["uri"].startswith("ui://"))
 
-    def test_the_view_has_no_network_or_external_loads(self) -> None:
+    def test_the_view_has_no_network_and_loads_only_airline_logos(self) -> None:
         html = self.html
         self.assertNotIn("<link", html)
-        self.assertNotIn("<img", html)
         self.assertNotIn("<iframe", html)
-        stripped = html.replace('target="_blank"', "")
-        self.assertIsNone(re.search(r'(?:src|href)="https?://', stripped))
+        self.assertIsNone(re.search(r'(?:src|href)="https?://', html))
         self.assertNotIn("fetch(", html)
         self.assertNotIn("XMLHttpRequest", html)
+        origins = set(re.findall(r"https://[a-z0-9.-]+", html))
+        self.assertEqual(origins, {"https://www.gstatic.com"})
+        self.assertIn("https://www.gstatic.com/flights/airline_logos/", html)
+        csp = self.probe["resource_meta"]["ui"]["csp"]
+        self.assertEqual(csp, {"resourceDomains": ["https://www.gstatic.com"]})
 
     def test_the_view_speaks_the_mcp_apps_handshake(self) -> None:
         html = self.html
@@ -81,6 +86,9 @@ class FlightsAppTests(unittest.TestCase):
         self.assertIn('"ui/notifications/initialized"', html)
         self.assertIn('"ui/notifications/tool-result"', html)
         self.assertIn("event.source !== window.parent", html)
+        # Without size-changed the host keeps the iframe at its small default height.
+        self.assertIn('"ui/notifications/size-changed"', html)
+        self.assertIn('"ui/open-link"', html)
 
     def test_the_view_keeps_the_design_stance(self) -> None:
         # No recommendation prose and no "none found" wording outside provider_empty.

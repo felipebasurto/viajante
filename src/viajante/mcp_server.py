@@ -479,6 +479,8 @@ def _run_options(*, http: bool, host: str, port: int) -> dict[str, object]:
 # a host that renders Apps shows this page, and every other client ignores the metadata.
 FLIGHTS_APP_URI = "ui://viajante/flights.html"
 APP_MIME_TYPE = "text/html;profile=mcp-app"
+# The view's only external load: Google Flights' airline logo images, by IATA carrier code.
+FLIGHTS_APP_LOGOS = "https://www.gstatic.com"
 
 
 def _flights_app_html() -> str:
@@ -656,6 +658,7 @@ def build_server():
         title="viajante flight results",
         description="Read-only view of a search_flights result: envelope, route rows and offers.",
         mime_type=APP_MIME_TYPE,
+        meta={"ui": {"csp": {"resourceDomains": [FLIGHTS_APP_LOGOS]}, "prefersBorder": False}},
     )
     def flights_app_resource() -> str:
         return _flights_app_html()
