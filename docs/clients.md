@@ -62,6 +62,41 @@ args = ["-y", "@viajante/mcp"]
 startup_timeout_sec = 120
 ```
 
+## ChatGPT
+
+The desktop app reads the Codex entry above. ChatGPT on the web cannot start a program, so it
+reaches viajante through OpenAI's
+[Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels). The
+workspace must allow custom MCP servers, and you need a tunnel and a restricted API key
+(Tunnels Read and Use) from OpenAI Platform. On the computer that runs viajante:
+
+```
+export CONTROL_PLANE_API_KEY="sk-..."
+tunnel-client init --sample sample_mcp_stdio_local --profile viajante \
+  --tunnel-id YOUR_TUNNEL_ID --mcp-command "npx -y @viajante/mcp"
+tunnel-client run --profile viajante
+```
+
+Keep `tunnel-client run` running. In ChatGPT Plugins, add a custom MCP server and set Connection
+to Tunnel. viajante is not hosted and its HTTP server has no authentication, so there is no
+public URL to give ChatGPT.
+
+ChatGPT's own Python tool has no outbound network, so a script there cannot search.
+
+## No MCP: scripts
+
+An agent with Python and outbound network needs no MCP and no skill:
+
+```
+pip install viajante
+python -m viajante flights JFK-LHR:2027-03-15 --fetch sweep --top 5 --save out.json
+```
+
+`python -m viajante` is the `viajante` command for a sandbox where the console script is not on
+PATH. From Python, `get_flights(...).to_dict()` is JSON-ready (see the
+[Python library](usage.md#python-library)). A cloud sandbox shares an IP that Google may block;
+read `error_code` and `retry_after`, and do not retry a `rate_limited` result.
+
 ## Gemini CLI
 
 ```
