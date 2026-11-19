@@ -101,6 +101,7 @@ class RawHotelCard:
     # unit evidence. Google property descriptions are never unit evidence.
     unit_details: Optional[str] = None
     link_context: Literal["stay", "property", "location", "none"] = "none"
+    photos: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,9 @@ class HotelOffer:
     distance_km: Optional[float] = None
     link_context: Literal["stay", "property", "location", "none"] = "none"
     lodging_evidence_conflict: bool = False
+    # Photos the provider shows for the property (it may include the surroundings);
+    # never evidence about the priced room.
+    photos: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         title = self.title.strip()
@@ -196,6 +200,7 @@ class HotelOffer:
             "priced_adults": self.priced_adults,
             "provider_id": self.provider_id,
             "distance_km": self.distance_km,
+            "photos": list(self.photos),
         }
 
 

@@ -422,7 +422,9 @@ read-only evidence; never ask for permission the user already granted.
 Hotel search fields. The hotel request carries adults and rooms only, so never state a room
 split. priced_adults is the party Google priced. resolved_place and place_bounds say where Google
 searched; neighbors outside place_bounds are not the named place. place_types and class_label say
-what a property is (a hotel search also returns hostels). entire_home=true asks for a house or
+what a property is (a hotel search also returns hostels). photos (Google only, up to three) are
+images Google shows for the property, sometimes its surroundings; they never show or prove the
+priced room. entire_home=true asks for a house or
 villa; those offers carry sleeps, bedrooms and beds, and hotels do not. lodging_evidence_conflict
 marks explicit room labels that contradict an entire-unit label; lodging_kind and
 property_type_evidence then stay unknown. stays batches up to 8 location/check_in/check_out

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>viajante results</title>
 <style>
-/* Evidence view for search_flights and search_hotels. Follows the host theme; logos are Google Flights' own. */
+/* Evidence view for search_flights and search_hotels. Follows the host theme; airline logos and hotel photos are Google's own. */
 :root {
   color-scheme: light dark;
   --ink: light-dark(#18181b, #f4f4f5);
@@ -129,6 +129,13 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .stay { padding-bottom: 8px; }
 .blurb { margin: 0; padding: 0 14px 12px 60px; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .blurb:empty { display: none; }
+.photos { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 2px; height: 156px; background: var(--stub); border-radius: 13px 13px 0 0; overflow: hidden; }
+.photos img { width: 100%; height: 100%; object-fit: cover; display: block; min-width: 0; }
+.photos img:first-child { grid-row: span 2; }
+.photos[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.photos[data-count="2"] img { grid-row: span 2; }
+.has-photos .top { padding-top: 12px; }
+.has-photos .blurb { padding-left: 14px; }
 .stay:has(+ .blurb:empty) { padding-bottom: 12px; }
 .stay .logo { width: 36px; height: 36px; border-radius: 10px; border: 0; font-size: 15px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--card)); }
 .kind { font-size: 12.5px; color: var(--muted); }
@@ -184,6 +191,7 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   var PROTOCOL = "2026-01-26";
   var LOGO_BASE = "https://www.gstatic.com/flights/airline_logos/70px/";
+  var PHOTO_BASE = "https://lh3.googleusercontent.com/";
   var FIRST_SHOWN = 3;
   var nextId = 1;
   var INIT_ID = nextId++;
@@ -416,12 +424,42 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     return filtered ? field("Cancellation", "Filter applied") : el("span", "check", "Check cancellation");
   }
 
+  // Google's photo URLs end in a size suffix; ask for one sharp at the card's size.
+  function photoStrip(urls) {
+    urls = (urls || []).filter(function (u) { return String(u).indexOf(PHOTO_BASE) === 0; }).slice(0, 3);
+    if (!urls.length) return null;
+    var strip = el("div", "photos");
+    strip.dataset.count = String(urls.length);
+    urls.forEach(function (url, i) {
+      var img = document.createElement("img");
+      img.alt = "";
+      img.decoding = "async";
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      img.onerror = function () {
+        img.remove();
+        strip.dataset.count = String(strip.childElementCount);
+        if (!strip.childElementCount) strip.remove();
+      };
+      img.src = url.replace(/=[^=\/]*$/, "") + (i ? "=w360-h240-n-k-no" : "=w720-h480-n-k-no");
+      strip.appendChild(img);
+    });
+    return strip;
+  }
+
   function renderHotel(offer, q, chips, provider, currency, index) {
     var card = cardShell(offer.link, index);
+    var strip = photoStrip(offer.photos);
+    if (strip) {
+      card.classList.add("has-photos");
+      card.appendChild(strip);
+    }
     var top = el("div", "top stay");
-    var mark = el("span", "logo", (offer.title || "?").trim().charAt(0).toUpperCase());
-    mark.setAttribute("aria-hidden", "true");
-    top.appendChild(mark);
+    if (!strip) {
+      var mark = el("span", "logo", (offer.title || "?").trim().charAt(0).toUpperCase());
+      mark.setAttribute("aria-hidden", "true");
+      top.appendChild(mark);
+    }
 
     var name = el("div", "carrier");
     name.appendChild(el("span", "airline", offer.title));

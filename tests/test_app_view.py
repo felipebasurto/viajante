@@ -84,18 +84,20 @@ class AppViewTests(unittest.TestCase):
         self.assertEqual(match[0]["mime"], "text/html;profile=mcp-app")
         self.assertTrue(self.probe["uri"].startswith("ui://"))
 
-    def test_the_view_has_no_network_and_loads_only_airline_logos(self) -> None:
+    def test_the_view_loads_only_airline_logos_and_hotel_photos(self) -> None:
         html = self.html
         self.assertNotIn("<link", html)
         self.assertNotIn("<iframe", html)
         self.assertIsNone(re.search(r'(?:src|href)="https?://', html))
         self.assertNotIn("fetch(", html)
         self.assertNotIn("XMLHttpRequest", html)
-        origins = set(re.findall(r"https://[a-z0-9.-]+", html))
-        self.assertEqual(origins, {"https://www.gstatic.com"})
+        images = ["https://www.gstatic.com", "https://lh3.googleusercontent.com"]
+        self.assertEqual(set(re.findall(r"https://[a-z0-9.-]+", html)), set(images))
         self.assertIn("https://www.gstatic.com/flights/airline_logos/", html)
+        # A photo URL from any other host is dropped before it becomes an <img>.
+        self.assertIn("indexOf(PHOTO_BASE) === 0", html)
         csp = self.probe["resource_meta"]["ui"]["csp"]
-        self.assertEqual(csp, {"resourceDomains": ["https://www.gstatic.com"]})
+        self.assertEqual(csp, {"resourceDomains": images})
 
     def test_the_view_speaks_the_mcp_apps_handshake(self) -> None:
         html = self.html

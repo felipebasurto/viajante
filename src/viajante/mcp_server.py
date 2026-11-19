@@ -479,8 +479,9 @@ def _run_options(*, http: bool, host: str, port: int) -> dict[str, object]:
 # JSON envelope; a host that renders Apps shows this page, and every other client ignores it.
 APP_URI = "ui://viajante/results.html"
 APP_MIME_TYPE = "text/html;profile=mcp-app"
-# The view's only external load: Google Flights' airline logo images, by IATA carrier code.
-APP_LOGOS = "https://www.gstatic.com"
+# The view's only external loads: Google Flights' airline logos (by IATA carrier code) and
+# the hotel photos Google Hotels returned.
+APP_IMAGE_ORIGINS = ["https://www.gstatic.com", "https://lh3.googleusercontent.com"]
 
 
 def _app_html() -> str:
@@ -662,7 +663,7 @@ def build_server():
         description="Read-only view of a search_flights or search_hotels result: envelope, "
         "query rows and offers.",
         mime_type=APP_MIME_TYPE,
-        meta={"ui": {"csp": {"resourceDomains": [APP_LOGOS]}, "prefersBorder": False}},
+        meta={"ui": {"csp": {"resourceDomains": APP_IMAGE_ORIGINS}, "prefersBorder": False}},
     )
     def app_resource() -> str:
         return _app_html()

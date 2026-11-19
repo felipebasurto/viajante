@@ -159,6 +159,7 @@ def _normalize_card(card: RawHotelCard) -> Optional[HotelOffer]:
         class_label=card.class_label,
         priced_adults=card.priced_adults,
         provider_id=card.provider_id,
+        photos=card.photos,
     )
 
 

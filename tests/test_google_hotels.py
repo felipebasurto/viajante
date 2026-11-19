@@ -174,6 +174,7 @@ class HotelsEvidenceTests(unittest.TestCase):
         self.assertEqual(card.place_types, ())
         self.assertIsNone(card.class_label)
         self.assertIsNone(card.priced_adults)
+        self.assertEqual(card.photos, ())
         self.assertIsNone(page.resolved_place)
         self.assertIsNone(page.place_bounds)
 
@@ -193,6 +194,38 @@ class HotelsParseTests(unittest.TestCase):
     def test_card_carries_owned_coordinates_and_review_count(self) -> None:
         card = parse_hotels_page(_wrap_wrb(_search_payload(_hotel_record()))).cards[0]
         self.assertEqual((card.latitude, card.longitude, card.review_count), (50.1, 14.4, 10))
+
+    def test_card_keeps_the_first_three_google_photos(self) -> None:
+        # Live shape (London capture): record[5][1] is [[_, [url, ...]], ...].
+        lh3 = "https://lh3.googleusercontent.com/grass-cs/p{}=s287-w287-h192-n-k-no-v1"
+        record = _hotel_record()
+        record[5] = [
+            None,
+            [
+                [None, [lh3.format(1)]],
+                [None, ["https://evil.example/p.jpg"]],
+                [None, None],
+                [None, [lh3.format(2)]],
+                [None, [lh3.format(1)]],
+                [None, [lh3.format(3)]],
+                [None, [lh3.format(4)]],
+            ],
+        ]
+        body = _wrap_wrb(_search_payload(record))
+        card = parse_hotels_page(body).cards[0]
+        self.assertEqual(card.photos, (lh3.format(1), lh3.format(2), lh3.format(3)))
+        client = _ScriptedHotelClient([SweepHttpResponse(200, body, "https://www.google.com/")] * 2)
+        report = _run_search(
+            (QUERY,),
+            top=1,
+            source=GoogleHotelsSource(client=client, currency="EUR"),
+            sleep=lambda _: None,
+            random_gen=Random(0),
+            now=lambda: datetime(2026, 8, 10),
+            provider="google-hotels",
+            currency="EUR",
+        )
+        self.assertEqual(report.to_dict()["queries"][0]["offers"][0]["photos"], list(card.photos))
 
     def test_missing_stay_total_is_a_parse_miss(self) -> None:
         record = _hotel_record()
