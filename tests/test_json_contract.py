@@ -158,7 +158,7 @@ class JsonContractTests(unittest.TestCase):
         self.assertEqual(set(success["offers"][0]), OFFER_KEYS | {"google_flights_url"})
         self.assertTrue(
             str(success["query"]["google_flights_url"]).startswith(
-                "https://www.google.com/travel/flights?"
+                "https://www.google.com/travel/flights/search?"
             )
         )
         self.assertEqual(
@@ -526,7 +526,7 @@ class JsonContractTests(unittest.TestCase):
             baggage_buffer=0,
             needs_bag_verify=False,
             booking_token="tok",
-            google_flights_url=google_flights_url(query, currency="USD", booking_token="tok"),
+            google_flights_url=url,
         )
         data = QuerySuccess(
             query=query,
@@ -536,10 +536,8 @@ class JsonContractTests(unittest.TestCase):
             google_flights_url=url,
         ).to_dict(currency="EUR")
         self.assertEqual(data["query"]["google_flights_url"], url)
-        self.assertIn("booking_token=tok", data["offers"][0]["google_flights_url"])
-        self.assertNotEqual(
-            data["query"]["google_flights_url"], data["offers"][0]["google_flights_url"]
-        )
+        self.assertEqual(data["offers"][0]["google_flights_url"], url)
+        self.assertEqual(data["offers"][0]["booking_token"], "tok")
 
     def test_multi_city_carries_an_owned_google_flights_search_url(self) -> None:
         trip = MultiCity(

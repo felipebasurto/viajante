@@ -2950,11 +2950,10 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
         report = search_flex("JFK", "LHR", date(2026, 9, 12), 1, source=source, baggage_buffer=0)
         shop = calendar_trip("JFK", "LHR", date(2026, 9, 12), max_stops=1)
         expected_query = google_flights_url(shop, currency="USD")
-        expected_offer = google_flights_url(shop, currency="USD", booking_token="tok")
+        expected_offer = expected_query
         self.assertEqual(report.google_flights_url, expected_query)
         self.assertEqual(report.offers[0].google_flights_url, expected_offer)
-        self.assertIn("booking_token=tok", report.offers[0].google_flights_url or "")
-        self.assertNotIn("booking_token=", report.google_flights_url or "")
+        self.assertNotIn("booking_token=", report.offers[0].google_flights_url or "")
         payload = report.to_dict()
         self.assertEqual(payload["google_flights_url"], expected_query)
         self.assertEqual(payload["offers"][0]["google_flights_url"], expected_offer)
@@ -3048,8 +3047,8 @@ class GoogleFlightsUrlShopParityTests(unittest.TestCase):
                 )
         self.assertEqual(code, 0)
         output = buffer.getvalue()
-        self.assertIn("https://www.google.com/travel/flights", output)
-        self.assertIn("booking_token=tok", output)
+        self.assertIn("https://www.google.com/travel/flights/search?tfs=", output)
+        self.assertNotIn("booking_token=", output)
 
     def test_dates_cli_prints_owned_url(self) -> None:
         source = FakeDaySource(_shopped((date(2026, 9, 1), 45.0)))

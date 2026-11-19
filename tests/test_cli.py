@@ -764,26 +764,13 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("…", output)
         self.assertNotIn("A" * 41, output)
 
-    def test_booking_token_prints_a_google_flights_url(self) -> None:
-        token_output = _rendered(_report(_offer(booking_token="tok")))
-        self.assertIn("https://www.google.com/travel/flights", token_output)
-        self.assertIn("booking_token=tok", token_output)
-        plain = _rendered(_report(_offer()))
-        self.assertIn("https://www.google.com/travel/flights", plain)
-        self.assertNotIn("booking_token=", plain)
-        self.assertIn("tfs=", plain)
-
-    def test_shared_search_url_prints_once_per_query(self) -> None:
-        output = _rendered(_report(_offer(), _offer(airline="Other Air")))
-        self.assertEqual(output.count("https://www.google.com/travel/flights"), 1)
-
-    def test_distinct_itinerary_urls_print_per_offer(self) -> None:
+    def test_search_url_prints_once_per_query_even_with_booking_tokens(self) -> None:
         output = _rendered(
             _report(_offer(booking_token="aaa"), _offer(airline="Other Air", booking_token="bbb"))
         )
-        self.assertEqual(output.count("https://www.google.com/travel/flights"), 2)
-        self.assertIn("booking_token=aaa", output)
-        self.assertIn("booking_token=bbb", output)
+        self.assertEqual(output.count("https://www.google.com/travel/flights/search?"), 1)
+        self.assertNotIn("booking_token=", output)
+        self.assertIn("tfs=", output)
 
     def test_flight_success_prints_eligible_counts(self) -> None:
         output = _rendered(_report(_offer()))

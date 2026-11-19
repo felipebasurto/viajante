@@ -33,16 +33,7 @@ def _stamp_google_flights_urls(
     if isinstance(result, QuerySuccess):
 
         def stamp(offer: FlightOffer) -> FlightOffer:
-            return replace(
-                offer,
-                google_flights_url=google_flights_url(
-                    result.query,
-                    html_lang=html_lang,
-                    currency=currency,
-                    country=country,
-                    booking_token=offer.booking_token,
-                ),
-            )
+            return replace(offer, google_flights_url=query_url)
 
         return replace(
             result,
@@ -77,13 +68,7 @@ def _stamp_offer_evidence(
         ).encode()
         query_url = result.google_flights_url
         offer_url = offer.google_flights_url
-        url_kind: UrlEvidenceKind
-        if offer.booking_token and offer_url:
-            url_kind = "booking"
-        elif query_url:
-            url_kind = "query"
-        else:
-            url_kind = "none"
+        url_kind: UrlEvidenceKind = "query" if query_url else "none"
         return replace(
             offer,
             evidence=OfferEvidence(

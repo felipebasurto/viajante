@@ -48,6 +48,7 @@ from viajante.sweep_config import get_sweep_config
 from viajante.tfs import encode_tfs
 
 SEARCH_URL = "https://www.google.com/travel/flights"
+LINK_URL = SEARCH_URL + "/search"
 
 SCRAPE_LANGUAGE = FETCH_LANGUAGE
 # Owned `tfu` blob that selects result tabs; not produced by encode_tfs.
@@ -149,42 +150,24 @@ def build_search_url(
     return f"{SEARCH_URL}?{urlencode(params)}"
 
 
-def build_itinerary_url(
-    booking_token: str,
-    *,
-    html_lang: str = SCRAPE_LANGUAGE,
-    currency: str,
-    country: Optional[str] = None,
-) -> str:
-    token = booking_token.strip()
-    if not token:
-        raise ValueError("booking_token must not be blank")
-    params = {"hl": html_lang, "curr": currency, "booking_token": token}
-    if country:
-        params["gl"] = country
-    return f"{SEARCH_URL}?" + urlencode(params)
-
-
 def google_flights_url(
     trip: Trip,
     *,
     html_lang: str = SCRAPE_LANGUAGE,
     currency: str,
     country: Optional[str] = None,
-    booking_token: Optional[str] = None,
 ) -> Optional[str]:
-    """Owned Google Flights link for a trip, or a deeper itinerary when token is owned.
+    """Link a person can open to this trip's Google Flights results, or None.
 
-    If the trip cannot be turned into a search URL and there is no booking
-    token, the field is omitted. No invented tfs or token.
+    Browsers need the `/search` path: the bare `/travel/flights?tfs=` page that the
+    sweep fetches opens the Flights home in a browser, and so does a lone
+    `booking_token`. The link reproduces the query, not one itinerary.
     """
-    token = (booking_token or "").strip()
-    if token:
-        return build_itinerary_url(token, html_lang=html_lang, currency=currency, country=country)
     try:
-        return build_search_url(trip, html_lang=html_lang, currency=currency, country=country)
+        params = build_search_params(trip, html_lang=html_lang, currency=currency, country=country)
     except ValueError:
         return None
+    return f"{LINK_URL}?{urlencode(params)}"
 
 
 _BLOCKED_MEMO = threading.local()

@@ -354,19 +354,8 @@ def _stamp_offer_urls(
     country: Optional[str],
     retrieved_at: datetime,
 ) -> Tuple[FlightOffer, ...]:
-    stamped = tuple(
-        replace(
-            offer,
-            google_flights_url=google_flights_url(
-                trip,
-                currency=currency,
-                country=country,
-                booking_token=offer.booking_token,
-            ),
-        )
-        for offer in offers
-    )
     query_url = google_flights_url(trip, currency=currency, country=country)
+    stamped = tuple(replace(offer, google_flights_url=query_url) for offer in offers)
     result = _stamp_offer_evidence(
         QuerySuccess(
             query=trip,
