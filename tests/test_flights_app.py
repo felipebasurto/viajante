@@ -55,6 +55,11 @@ class FlightsAppTests(unittest.TestCase):
     def test_search_flights_points_at_the_view(self) -> None:
         meta = self.probe["tools"]["search_flights"]
         self.assertEqual(meta.get("ui", {}).get("resourceUri"), self.probe["uri"])
+        # Claude defers MCP tools behind tool search, and a deferred tool renders no view.
+        self.assertIs(meta.get("anthropic/alwaysLoad"), True)
+        for name, other in self.probe["tools"].items():
+            if name != "search_flights":
+                self.assertNotIn("anthropic/alwaysLoad", other, name)
 
     def test_other_tools_do_not_claim_the_view(self) -> None:
         for name, meta in self.probe["tools"].items():

@@ -605,7 +605,10 @@ def build_server():
                 idempotentHint=not writes,
                 openWorldHint=network,
             ),
-            meta={"ui": {"resourceUri": ui_resource}} if ui_resource else None,
+            # A tool Claude loads later through tool search shows raw JSON, never its view.
+            meta={"ui": {"resourceUri": ui_resource}, "anthropic/alwaysLoad": True}
+            if ui_resource
+            else None,
         )
 
         def decorate(stub):
