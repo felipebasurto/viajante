@@ -554,7 +554,7 @@ def build_server():
             unknown = sorted(set(arguments or {}) - set(declared)) if declared is not None else []
             if unknown:
                 raise ValueError(
-                    _TOOL_ERROR_PREFIX.format(name=name) + unknown_arguments_body(unknown)
+                    _TOOL_ERROR_PREFIX.format(name=name) + unknown_arguments_body(unknown, declared)
                 )
             return await super().call_tool(name, arguments, context)
 
@@ -686,13 +686,14 @@ def build_server():
     @tool("Search flights", search_flights_tool, network=True, ui_resource=FLIGHTS_APP_URI)
     def search_flights():
         """Google Flights search for named routes and dates. Each routes entry is
-        ORIGIN-DEST:YYYY-MM-DD. Use search_dates for the cheapest week and search_flex for
-        +/-N days. fetch=detail needs the browser extra and Chromium. Currency is currency, or
-        inferred from a named origin's owned country; if unproven, ask. Viajante does not
-        convert. Do not invent a bag fee. Cabin bags are carry_on (a total for the whole
-        party); checked bags is refused. max_stops is 0, 1 or 2. Metro codes (LON, NYC)
-        expand on one-way and rt routes and the result names how many Google requests that is.
-        One-way searches send clock bounds, max_duration,
+        ORIGIN-DEST:YYYY-MM-DD. A round trip is trip rt with one ORIGIN-DEST:OUT:BACK entry
+        (without trip rt that entry is two one-ways). Use search_dates for the cheapest week
+        and search_flex for +/-N days. fetch=detail needs the browser extra and Chromium.
+        Currency is currency, or inferred from a named origin's owned country; if unproven,
+        ask. Viajante does not convert. Do not invent a bag fee. Cabin bags are carry_on (a
+        total for the whole party); checked bags is refused. max_stops is 0, 1 or 2.
+        Metro codes (LON, NYC) expand on one-way and rt routes and the result names how many
+        Google requests that is. One-way searches send clock bounds, max_duration,
         max_layover, price_cap, less_emissions and hide_separate_tickets to the page, and check
         each one locally. exclude_basic_economy is refused. nearby_days (default 0, off)
         adds a ±N cheapest-fare grid on that search; round trips shift both dates and

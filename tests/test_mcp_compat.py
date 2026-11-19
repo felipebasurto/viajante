@@ -427,6 +427,12 @@ class InvalidParameterTests(_StateDir):
                 "unknown argument: max_stop",
             ),
             ({"routes": ["JFK-LHR:" + FUTURE], "max_stop": 1, "tpo": 2}, None, "max_stop, tpo"),
+            ({"routes": ["JFK-LHR:" + FUTURE], "max_stop": 1}, "max_stop", "max_stop -> max_stops"),
+            (
+                {"origin": "JFK", "destination": "LHR", "departure_date": FUTURE},
+                None,
+                "a round trip is trip rt with one ORIGIN-DEST:OUT:BACK",
+            ),
         ]
         for args, field, message in cases:
             with self.subTest(args=args):

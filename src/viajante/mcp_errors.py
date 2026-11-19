@@ -13,6 +13,7 @@ message does not single one out; a field is never guessed.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from typing import Any, Iterable, Mapping, Optional, Sequence
@@ -97,9 +98,23 @@ def validation_body(errors: Sequence[Mapping[str, Any]]) -> str:
     return json.dumps(error_body(INVALID_PARAMETER, "; ".join(parts), field))
 
 
-def unknown_arguments_body(unknown: Sequence[str]) -> str:
-    """JSON error body for top-level argument keys the tool does not declare."""
+def unknown_arguments_body(unknown: Sequence[str], declared: Iterable[str] = ()) -> str:
+    """JSON error body for top-level argument keys the tool does not declare.
+
+    The message names the closest declared parameter for each key, and the routes grammar
+    when the tool takes routes, so a caller without the schema can retry once correctly.
+    """
+    names = sorted(declared)
     message = "unknown argument: " + ", ".join(unknown)
+    close = {key: difflib.get_close_matches(key, names, n=1) for key in unknown}
+    hints = [f"{key} -> {match[0]}" for key, match in close.items() if match]
+    if hints:
+        message += ". Did you mean: " + ", ".join(hints)
+    if "routes" in names:
+        message += (
+            ". Routes go in routes as ORIGIN-DEST:YYYY-MM-DD; a round trip is trip rt"
+            " with one ORIGIN-DEST:OUT:BACK"
+        )
     return json.dumps(
         error_body(INVALID_PARAMETER, message, unknown[0] if len(unknown) == 1 else None)
     )
