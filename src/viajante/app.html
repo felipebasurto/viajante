@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>viajante flights</title>
+<title>viajante results</title>
 <style>
-/* Evidence view for search_flights. Follows the host theme; logos are Google Flights' own. */
+/* Evidence view for search_flights and search_hotels. Follows the host theme; logos are Google Flights' own. */
 :root {
   color-scheme: light dark;
   --ink: light-dark(#18181b, #f4f4f5);
@@ -123,8 +123,21 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .field { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
 .field b { font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .field span { overflow: hidden; text-overflow: ellipsis; }
-.bags { color: var(--one-stop); font-weight: 600; }
+.bags, .check { color: var(--one-stop); font-weight: 600; }
 .open { margin-left: auto; color: var(--accent); font-weight: 600; }
+
+.stay { padding-bottom: 8px; }
+.blurb { margin: 0; padding: 0 14px 12px 60px; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blurb:empty { display: none; }
+.stay:has(+ .blurb:empty) { padding-bottom: 12px; }
+.stay .logo { width: 36px; height: 36px; border-radius: 10px; border: 0; font-size: 15px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--card)); }
+.kind { font-size: 12.5px; color: var(--muted); }
+.rating { color: var(--ink); font-weight: 600; }
+.rating::before { content: "★ "; color: var(--accent); }
+.total { display: grid; text-align: right; }
+.total .muted { font-size: 11px; }
+.address { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.free { color: var(--nonstop); font-weight: 600; }
 
 .more {
   justify-self: center;
@@ -175,9 +188,17 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   var nextId = 1;
   var INIT_ID = nextId++;
 
+  // Rating scale per hotel provider: Google 0-5, Booking 0-10; Skiplagged states none.
+  var HOTEL_PROVIDERS = {
+    "google-hotels": { name: "Google Hotels", scale: 5 },
+    "booking.com": { name: "Booking.com", scale: 10 },
+    "skiplagged": { name: "Skiplagged", scale: null }
+  };
+  var LODGING = { entire_home: "Entire home", private_room: "Private room", hotel: "Hotel" };
+
   // Fallback sentences when a row carries a reason and no note. Only provider_empty reads as none.
   var REASON_TEXT = {
-    provider_empty: "The provider returned no flights for this query.",
+    provider_empty: "The provider returned no results for this query.",
     filtered_out: "viajante's filters removed every row the provider returned. Availability is not disproved.",
     not_loaded: "The search did not complete. Availability is unknown."
   };
@@ -338,8 +359,7 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     return flight;
   }
 
-  function renderOffer(offer, q, index) {
-    var url = offer.google_flights_url;
+  function cardShell(url, index) {
     var card = el(url ? "a" : "article", "card");
     card.style.setProperty("--i", String(Math.min(index, 8)));
     if (url) {
@@ -348,6 +368,12 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       card.rel = "noopener noreferrer";
       card.addEventListener("click", openLink);
     }
+    return card;
+  }
+
+  function renderOffer(offer, q, index) {
+    var url = offer.google_flights_url;
+    var card = cardShell(url, index);
     var legs = journeys(offer);
     var first = legs[0].segments[0];
 
@@ -370,11 +396,90 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     return card;
   }
 
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
+  // Lodging label from owned evidence only: the provider's class label, else the parsed kind.
+  function lodgingLabel(offer) {
+    var parts = [offer.class_label || LODGING[offer.lodging_kind]];
+    if (offer.lodging_kind === "entire_home") {
+      if (offer.sleeps) parts.push("Sleeps " + offer.sleeps);
+      if (offer.bedrooms) parts.push(plural(offer.bedrooms, "bedroom"));
+    }
+    return parts.filter(Boolean).join(" · ");
+  }
+
+  // A filter the provider applied is not card evidence: a silent card says only that.
+  function cancellation(offer, chips) {
+    if (offer.cancellation_evidence === "free") return el("span", "free", "Free cancellation");
+    if (offer.cancellation_evidence === "non_refundable") return el("span", "muted", "Non-refundable");
+    var filtered = chips.some(function (chip) { return /^free_cancellation\b/.test(chip); });
+    return filtered ? field("Cancellation", "Filter applied") : el("span", "check", "Check cancellation");
+  }
+
+  function renderHotel(offer, q, chips, provider, currency, index) {
+    var card = cardShell(offer.link, index);
+    var top = el("div", "top stay");
+    var mark = el("span", "logo", (offer.title || "?").trim().charAt(0).toUpperCase());
+    mark.setAttribute("aria-hidden", "true");
+    top.appendChild(mark);
+
+    var name = el("div", "carrier");
+    name.appendChild(el("span", "airline", offer.title));
+    var kind = el("span", "kind num");
+    var label = lodgingLabel(offer);
+    if (label) kind.appendChild(document.createTextNode(label));
+    if (offer.rating) {
+      if (label) kind.appendChild(document.createTextNode(" · "));
+      var scale = provider && provider.scale ? "/" + provider.scale : "";
+      kind.appendChild(el("span", "rating", offer.rating + scale));
+      if (offer.review_count) kind.appendChild(document.createTextNode(" (" + offer.review_count.toLocaleString("en") + ")"));
+    }
+    name.appendChild(kind);
+    top.appendChild(name);
+
+    var total = el("div", "total");
+    var price = typeof offer.total_price === "number" && currency
+      ? offer.total_price.toLocaleString("en", { maximumFractionDigits: 2 }) + " " + currency
+      : offer.total_price_text;
+    total.appendChild(el("span", "price num", price));
+    if (q.nights) total.appendChild(el("span", "muted num", plural(q.nights, "night") + " total"));
+    top.appendChild(total);
+    card.appendChild(top);
+    // The provider's property text, not a description of the priced room.
+    card.appendChild(el("p", "blurb", offer.details || offer.address));
+
+    var stub = el("div", "stub");
+    if (offer.address && offer.details) stub.appendChild(el("span", "address", offer.address));
+    if (typeof offer.distance_km === "number") stub.appendChild(field("Distance", offer.distance_km.toFixed(1) + " km"));
+    stub.appendChild(cancellation(offer, chips));
+    if (offer.link && provider) stub.appendChild(el("span", "open", provider.name + " ↗"));
+    card.appendChild(stub);
+    return card;
+  }
+
+  function flightHead(q) {
+    var stops = Array.isArray(q.legs) && q.legs.length
+      ? [q.legs[0].origin].concat(q.legs.map(function (leg) { return leg.destination; }))
+      : [q.origin, q.destination];
+    if (q.return_date) stops = [q.origin, q.destination, q.origin];
+    var dates = [q.departure_date && day(q.departure_date), q.return_date && day(q.return_date)].filter(Boolean).join(" – ");
+    return [stops.filter(Boolean).join(" → ") || "Query", dates];
+  }
+
+  function hotelHead(row, q) {
+    var party = [q.check_in && q.check_out ? day(q.check_in) + " – " + day(q.check_out) : "",
+      q.nights ? plural(q.nights, "night") : "", q.adults ? plural(q.adults, "adult") : "",
+      q.rooms > 1 ? plural(q.rooms, "room") : ""];
+    return [row.resolved_place || q.location || "Query", party.filter(Boolean).join(" · ")];
+  }
+
   function renderQueries(data) {
     var list = document.getElementById("queries");
     var notes = [];
     var rows = data.queries || [];
     var empties = 0;
+    var hotels = data.price_basis === "total_stay";
+    var provider = hotels ? HOTEL_PROVIDERS[data.provider] : null;
     list.textContent = "";
     rows.forEach(function (row) {
       var section = el("section", "query");
@@ -382,19 +487,17 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       var offers = row.offers || [];
 
       var head = el("header", "query-head");
-      var stops = Array.isArray(q.legs) && q.legs.length
-        ? [q.legs[0].origin].concat(q.legs.map(function (leg) { return leg.destination; }))
-        : [q.origin, q.destination];
-      if (q.return_date) stops = [q.origin, q.destination, q.origin];
-      head.appendChild(el("span", "route", stops.filter(Boolean).join(" → ") || "Query"));
-      var dates = [q.departure_date && day(q.departure_date), q.return_date && day(q.return_date)].filter(Boolean).join(" – ");
-      head.appendChild(el("span", "muted", dates));
+      var title = hotels ? hotelHead(row, q) : flightHead(q);
+      head.appendChild(el("span", "route", title[0]));
+      head.appendChild(el("span", "muted num", title[1]));
       if (offers.length && typeof row.raw_count === "number" && row.raw_count > offers.length) {
         head.appendChild(el("span", "muted count num", offers.length + " of " + row.raw_count));
       }
       section.appendChild(head);
 
       (row.page_errors || []).forEach(function (err) { if (err && err.message) notes.push(err.message); });
+      var skipped = (row.applied && row.applied.not_applied) || [];
+      if (skipped.length) notes.push("Not applied by " + (provider ? provider.name : "the provider") + ": " + skipped.join(", ").replace(/_/g, " ") + ".");
 
       if (!offers.length) {
         var text = (row.empty_reason && REASON_TEXT[row.empty_reason]) || "No offers in this query.";
@@ -402,12 +505,15 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         empties++;
         section.appendChild(el("div", "empty", text));
       }
+      var draw = hotels
+        ? function (offer, i) { return renderHotel(offer, q, (row.applied && row.applied.chips) || [], provider, data.currency, i); }
+        : function (offer, i) { return renderOffer(offer, q, i); };
       var extra = offers.slice(FIRST_SHOWN).map(function (offer, i) {
-        var card = renderOffer(offer, q, i);
+        var card = draw(offer, i);
         card.hidden = true;
         return card;
       });
-      offers.slice(0, FIRST_SHOWN).forEach(function (offer, i) { section.appendChild(renderOffer(offer, q, i)); });
+      offers.slice(0, FIRST_SHOWN).forEach(function (offer, i) { section.appendChild(draw(offer, i)); });
       extra.forEach(function (card) { section.appendChild(card); });
       if (extra.length) {
         var more = el("button", "more", "Show " + extra.length + " more");
@@ -460,13 +566,16 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     if (msg.method === "ui/notifications/host-context-changed") {
       applyHostContext(msg.params);
     } else if (msg.method === "ui/notifications/tool-input") {
-      var routes = msg.params && msg.params.arguments && msg.params.arguments.routes;
-      if (routes && document.getElementById("queries").childElementCount === 0) {
-        var pretty = [].concat(routes).map(function (spec) {
-          var m = /^([A-Z]{3})-([A-Z]{3}):(\d{4}-\d{2}-\d{2})/.exec(String(spec));
-          return m ? m[1] + " → " + m[2] + ", " + day(m[3]) : String(spec);
-        });
-        showWaiting("Searching " + pretty.join(" · ") + "…");
+      var args = (msg.params && msg.params.arguments) || {};
+      if (document.getElementById("queries").childElementCount === 0) {
+        var stays = args.stays || (args.location ? [args] : []);
+        var pretty = args.routes
+          ? [].concat(args.routes).map(function (spec) {
+              var m = /^([A-Z]{3})-([A-Z]{3}):(\d{4}-\d{2}-\d{2})/.exec(String(spec));
+              return m ? m[1] + " → " + m[2] + ", " + day(m[3]) : String(spec);
+            })
+          : [].concat(stays).map(function (s) { return "hotels in " + s.location + (s.check_in ? ", " + day(s.check_in) : ""); });
+        if (pretty.length) showWaiting("Searching " + pretty.join(" · ") + "…");
       }
     } else if (msg.method === "ui/notifications/tool-cancelled") {
       showWaiting("Search cancelled.");
@@ -483,7 +592,7 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     method: "ui/initialize",
     params: {
       protocolVersion: PROTOCOL,
-      appInfo: { name: "viajante flights", version: "1" },
+      appInfo: { name: "viajante results", version: "1" },
       appCapabilities: {}
     }
   });

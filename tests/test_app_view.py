@@ -1,5 +1,5 @@
-"""The search_flights MCP App: the tool points at its view, the view is served, and the
-view page keeps the evidence rules. Offline.
+"""The results MCP App: search_flights and search_hotels point at the view, the view is
+served, and the view page keeps the evidence rules. Offline.
 
 The SDK is imported in a subprocess so this module never leaves `mcp` loaded for the other
 tests, which check that the SDK stays unimported until they need it.
@@ -16,18 +16,19 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HTML_PATH = ROOT / "src" / "viajante" / "flights_app.html"
+HTML_PATH = ROOT / "src" / "viajante" / "app.html"
+VIEW_TOOLS = ("search_flights", "search_hotels")
 
 _PROBE = """
 import asyncio, json
-from viajante.mcp_server import APP_MIME_TYPE, FLIGHTS_APP_URI, build_server
+from viajante.mcp_server import APP_MIME_TYPE, APP_URI, build_server
 server = build_server()
 tools = asyncio.run(server.list_tools())
 resources = asyncio.run(server.list_resources())
-read = list(asyncio.run(server.read_resource(FLIGHTS_APP_URI)))
+read = list(asyncio.run(server.read_resource(APP_URI)))
 print(json.dumps({
     "resource_meta": read[0].meta,
-    "uri": FLIGHTS_APP_URI,
+    "uri": APP_URI,
     "mime": APP_MIME_TYPE,
     "tools": {t.name: (t.meta or {}) for t in tools},
     "resources": [{"uri": str(r.uri), "mime": r.mime_type} for r in resources],
@@ -46,25 +47,36 @@ def _probe() -> dict:
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-class FlightsAppTests(unittest.TestCase):
+class AppViewTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.probe = _probe()
         cls.html = HTML_PATH.read_text(encoding="utf-8")
 
-    def test_search_flights_points_at_the_view(self) -> None:
-        meta = self.probe["tools"]["search_flights"]
-        self.assertEqual(meta.get("ui", {}).get("resourceUri"), self.probe["uri"])
-        # Claude defers MCP tools behind tool search, and a deferred tool renders no view.
-        self.assertIs(meta.get("anthropic/alwaysLoad"), True)
-        for name, other in self.probe["tools"].items():
-            if name != "search_flights":
-                self.assertNotIn("anthropic/alwaysLoad", other, name)
+    def test_flights_and_hotels_point_at_the_view(self) -> None:
+        for name in VIEW_TOOLS:
+            meta = self.probe["tools"][name]
+            self.assertEqual(meta.get("ui", {}).get("resourceUri"), self.probe["uri"], name)
+            # Claude defers MCP tools behind tool search, and a deferred tool renders no view.
+            self.assertIs(meta.get("anthropic/alwaysLoad"), True, name)
 
     def test_other_tools_do_not_claim_the_view(self) -> None:
         for name, meta in self.probe["tools"].items():
-            if name != "search_flights":
+            if name not in VIEW_TOOLS:
                 self.assertNotIn("ui", meta, name)
+                self.assertNotIn("anthropic/alwaysLoad", meta, name)
+
+    def test_hotel_cards_state_only_owned_evidence(self) -> None:
+        html = self.html
+        # Hotel rows are recognised by their total-stay price basis, never by a guess.
+        self.assertIn('price_basis === "total_stay"', html)
+        # Free cancellation only from the card's own evidence; a silent card is not confirmed.
+        self.assertIn('cancellation_evidence === "free"', html)
+        self.assertIn('"Check cancellation"', html)
+        # Ratings keep the provider's scale: Google 0-5, Booking 0-10.
+        self.assertIn('"google-hotels": { name: "Google Hotels", scale: 5 }', html)
+        self.assertIn('"booking.com": { name: "Booking.com", scale: 10 }', html)
+        self.assertNotIn("per night", html.casefold())
 
     def test_the_view_is_served_as_an_mcp_app(self) -> None:
         match = [r for r in self.probe["resources"] if r["uri"] == self.probe["uri"]]
@@ -99,7 +111,8 @@ class FlightsAppTests(unittest.TestCase):
         # No recommendation prose and no "none found" wording outside provider_empty.
         html = self.html.casefold()
         for banned in ("cheapest", "recommend", "best deal", "skip", "no flights found"):
-            self.assertNotIn(banned, html, banned)
+            # Whole words: the provider name Skiplagged is not advice.
+            self.assertIsNone(re.search(rf"\b{banned}\b", html), banned)
         self.assertIn('provider_empty: "', html)
         self.assertIn("filtered_out", html)
         self.assertIn("not_loaded", html)

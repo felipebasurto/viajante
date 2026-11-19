@@ -475,18 +475,18 @@ def _run_options(*, http: bool, host: str, port: int) -> dict[str, object]:
     return options
 
 
-# MCP Apps view for search_flights. The tool result stays the same text and JSON envelope;
-# a host that renders Apps shows this page, and every other client ignores the metadata.
-FLIGHTS_APP_URI = "ui://viajante/flights.html"
+# MCP Apps view for search_flights and search_hotels. The tool result stays the same text and
+# JSON envelope; a host that renders Apps shows this page, and every other client ignores it.
+APP_URI = "ui://viajante/results.html"
 APP_MIME_TYPE = "text/html;profile=mcp-app"
 # The view's only external load: Google Flights' airline logo images, by IATA carrier code.
-FLIGHTS_APP_LOGOS = "https://www.gstatic.com"
+APP_LOGOS = "https://www.gstatic.com"
 
 
-def _flights_app_html() -> str:
+def _app_html() -> str:
     from importlib.resources import files
 
-    return files("viajante").joinpath("flights_app.html").read_text(encoding="utf-8")
+    return files("viajante").joinpath("app.html").read_text(encoding="utf-8")
 
 
 def build_server():
@@ -656,15 +656,16 @@ def build_server():
         return decorate
 
     @server.resource(
-        FLIGHTS_APP_URI,
-        name="flights-app",
-        title="viajante flight results",
-        description="Read-only view of a search_flights result: envelope, route rows and offers.",
+        APP_URI,
+        name="results-app",
+        title="viajante results",
+        description="Read-only view of a search_flights or search_hotels result: envelope, "
+        "query rows and offers.",
         mime_type=APP_MIME_TYPE,
-        meta={"ui": {"csp": {"resourceDomains": [FLIGHTS_APP_LOGOS]}, "prefersBorder": False}},
+        meta={"ui": {"csp": {"resourceDomains": [APP_LOGOS]}, "prefersBorder": False}},
     )
-    def flights_app_resource() -> str:
-        return _flights_app_html()
+    def app_resource() -> str:
+        return _app_html()
 
     @server.resource(
         "viajante://guide",
@@ -686,7 +687,7 @@ def build_server():
         """
         return stamp_local(dict(runtime_info()))
 
-    @tool("Search flights", search_flights_tool, network=True, ui_resource=FLIGHTS_APP_URI)
+    @tool("Search flights", search_flights_tool, network=True, ui_resource=APP_URI)
     def search_flights():
         """Google Flights search for named routes and dates. Each routes entry is
         ORIGIN-DEST:YYYY-MM-DD. A round trip is trip rt with one ORIGIN-DEST:OUT:BACK entry
@@ -767,7 +768,7 @@ def build_server():
         for the month.
         """
 
-    @tool("Search hotels", search_hotels_tool, network=True)
+    @tool("Search hotels", search_hotels_tool, network=True, ui_resource=APP_URI)
     def search_hotels():
         """Hotel search. Quotes are total-stay prices, not per person. Currency is required (no
         origin airport), except source skiplagged, whose quotes are USD. Quotes come back in
