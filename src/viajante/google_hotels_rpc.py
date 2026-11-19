@@ -20,7 +20,7 @@ SORT_RELEVANCE = None
 _REQUEST_META = (1, None, None, None, None, None, 13, None, 0)
 _HOTEL_ENTRY_KEY = "397419284"
 PHOTO_HOST = "https://lh3.googleusercontent.com"
-MAX_PHOTOS = 3
+MAX_PHOTOS = 1
 NON_PROPERTY_TITLES = frozenset(
     {
         "closed",

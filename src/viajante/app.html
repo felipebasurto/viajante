@@ -126,25 +126,23 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bags, .check { color: var(--one-stop); font-weight: 600; }
 .open { margin-left: auto; color: var(--accent); font-weight: 600; }
 
-.stay { padding-bottom: 8px; }
-.blurb { margin: 0; padding: 0 14px 12px 60px; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.blurb:empty { display: none; }
-.photos { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 2px; height: 156px; background: var(--stub); border-radius: 13px 13px 0 0; overflow: hidden; }
-.photos img { width: 100%; height: 100%; object-fit: cover; display: block; min-width: 0; }
-.photos img:first-child { grid-row: span 2; }
-.photos[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
-.photos[data-count="2"] img { grid-row: span 2; }
-.has-photos .top { padding-top: 12px; }
-.has-photos .blurb { padding-left: 14px; }
-.stay:has(+ .blurb:empty) { padding-bottom: 12px; }
-.stay .logo { width: 36px; height: 36px; border-radius: 10px; border: 0; font-size: 15px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--card)); }
-.kind { font-size: 12.5px; color: var(--muted); }
+.stays { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.stay {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 10px 14px 10px 10px; color: inherit; text-decoration: none;
+  transition: background-color 150ms ease-out;
+}
+.stay + .stay { border-top: 1px solid var(--line); }
+@media (hover: hover) and (pointer: fine) { a.stay:hover { background: var(--stub); } }
+a.stay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.thumb { width: 64px; height: 48px; border-radius: 8px; overflow: hidden; background: var(--stub); display: grid; place-items: center; font-weight: 600; color: var(--muted); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.meta { font-size: 12.5px; color: var(--muted); }
 .rating { color: var(--ink); font-weight: 600; }
 .rating::before { content: "★ "; color: var(--accent); }
 .total { display: grid; text-align: right; }
 .total .muted { font-size: 11px; }
-.address { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.free { color: var(--nonstop); font-weight: 600; }
+.free { color: var(--nonstop); }
 
 .more {
   justify-self: center;
@@ -416,83 +414,79 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     return parts.filter(Boolean).join(" · ");
   }
 
-  // A filter the provider applied is not card evidence: a silent card says only that.
-  function cancellation(offer, chips) {
+  // Cancellation on a row only from the card's own evidence. A filter the provider applied
+  // is said once for the query (filterNote), never as a per-card fact.
+  function cancellation(offer, filtered) {
     if (offer.cancellation_evidence === "free") return el("span", "free", "Free cancellation");
-    if (offer.cancellation_evidence === "non_refundable") return el("span", "muted", "Non-refundable");
-    var filtered = chips.some(function (chip) { return /^free_cancellation\b/.test(chip); });
-    return filtered ? field("Cancellation", "Filter applied") : el("span", "check", "Check cancellation");
+    if (offer.cancellation_evidence === "non_refundable") return el("span", "", "Non-refundable");
+    return filtered ? null : el("span", "check", "Check cancellation");
   }
 
-  // Google's photo URLs end in a size suffix; ask for one sharp at the card's size.
-  function photoStrip(urls) {
-    urls = (urls || []).filter(function (u) { return String(u).indexOf(PHOTO_BASE) === 0; }).slice(0, 3);
-    if (!urls.length) return null;
-    var strip = el("div", "photos");
-    strip.dataset.count = String(urls.length);
-    urls.forEach(function (url, i) {
-      var img = document.createElement("img");
-      img.alt = "";
-      img.decoding = "async";
-      img.loading = "lazy";
-      img.referrerPolicy = "no-referrer";
-      img.onerror = function () {
-        img.remove();
-        strip.dataset.count = String(strip.childElementCount);
-        if (!strip.childElementCount) strip.remove();
-      };
-      img.src = url.replace(/=[^=\/]*$/, "") + (i ? "=w360-h240-n-k-no" : "=w720-h480-n-k-no");
-      strip.appendChild(img);
-    });
-    return strip;
+  function filterNote(offers, filtered, provider) {
+    var silent = offers.some(function (o) { return o.cancellation_evidence !== "free" && o.cancellation_evidence !== "non_refundable"; });
+    var where = provider ? " on " + provider.name : "";
+    return filtered && silent ? "Filtered for free cancellation" + where + ". Unmarked cards don't confirm it." : null;
   }
 
-  function renderHotel(offer, q, chips, provider, currency, index) {
-    var card = cardShell(offer.link, index);
-    var strip = photoStrip(offer.photos);
-    if (strip) {
-      card.classList.add("has-photos");
-      card.appendChild(strip);
+  // Google's photo URLs end in a size suffix; ask for one sharp at the thumbnail's size.
+  function thumb(offer) {
+    var box = el("span", "thumb");
+    box.setAttribute("aria-hidden", "true");
+    var initial = (offer.title || "?").trim().charAt(0).toUpperCase();
+    var url = (offer.photos || []).filter(function (u) { return String(u).indexOf(PHOTO_BASE) === 0; })[0];
+    if (!url) {
+      box.textContent = initial;
+      return box;
     }
-    var top = el("div", "top stay");
-    if (!strip) {
-      var mark = el("span", "logo", (offer.title || "?").trim().charAt(0).toUpperCase());
-      mark.setAttribute("aria-hidden", "true");
-      top.appendChild(mark);
+    var img = document.createElement("img");
+    img.alt = "";
+    img.decoding = "async";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.onerror = function () { box.textContent = initial; };
+    img.src = url.replace(/=[^=\/]*$/, "") + "=w192-h144-n-k-no";
+    box.appendChild(img);
+    return box;
+  }
+
+  function renderHotel(offer, provider, currency, filtered) {
+    var row = el(offer.link ? "a" : "div", "stay");
+    if (offer.link) {
+      row.href = offer.link;
+      row.target = "_blank";
+      row.rel = "noopener noreferrer";
+      row.addEventListener("click", openLink);
     }
+    row.appendChild(thumb(offer));
 
     var name = el("div", "carrier");
     name.appendChild(el("span", "airline", offer.title));
-    var kind = el("span", "kind num");
-    var label = lodgingLabel(offer);
-    if (label) kind.appendChild(document.createTextNode(label));
+    var meta = el("span", "meta num");
+    var parts = [lodgingLabel(offer)];
     if (offer.rating) {
-      if (label) kind.appendChild(document.createTextNode(" · "));
-      var scale = provider && provider.scale ? "/" + provider.scale : "";
-      kind.appendChild(el("span", "rating", offer.rating + scale));
-      if (offer.review_count) kind.appendChild(document.createTextNode(" (" + offer.review_count.toLocaleString("en") + ")"));
+      var rating = el("span", "rating", offer.rating + (provider && provider.scale ? "/" + provider.scale : ""));
+      var reviews = offer.review_count ? " (" + offer.review_count.toLocaleString("en") + ")" : "";
+      parts.push([rating, reviews]);
     }
-    name.appendChild(kind);
-    top.appendChild(name);
+    if (typeof offer.distance_km === "number") parts.push(offer.distance_km.toFixed(1) + " km");
+    parts.push(cancellation(offer, filtered));
+    parts.filter(Boolean).forEach(function (part, i) {
+      if (i) meta.appendChild(document.createTextNode(" · "));
+      [].concat(part).forEach(function (bit) {
+        meta.appendChild(typeof bit === "string" ? document.createTextNode(bit) : bit);
+      });
+    });
+    name.appendChild(meta);
+    row.appendChild(name);
 
     var total = el("div", "total");
     var price = typeof offer.total_price === "number" && currency
       ? offer.total_price.toLocaleString("en", { maximumFractionDigits: 2 }) + " " + currency
       : offer.total_price_text;
     total.appendChild(el("span", "price num", price));
-    if (q.nights) total.appendChild(el("span", "muted num", plural(q.nights, "night") + " total"));
-    top.appendChild(total);
-    card.appendChild(top);
-    // The provider's property text, not a description of the priced room.
-    card.appendChild(el("p", "blurb", offer.details || offer.address));
-
-    var stub = el("div", "stub");
-    if (offer.address && offer.details) stub.appendChild(el("span", "address", offer.address));
-    if (typeof offer.distance_km === "number") stub.appendChild(field("Distance", offer.distance_km.toFixed(1) + " km"));
-    stub.appendChild(cancellation(offer, chips));
-    if (offer.link && provider) stub.appendChild(el("span", "open", provider.name + " ↗"));
-    card.appendChild(stub);
-    return card;
+    total.appendChild(el("span", "muted", "total"));
+    row.appendChild(total);
+    return row;
   }
 
   function flightHead(q) {
@@ -543,16 +537,24 @@ a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         empties++;
         section.appendChild(el("div", "empty", text));
       }
+      var filtered = ((row.applied && row.applied.chips) || []).some(function (chip) { return /^free_cancellation\b/.test(chip); });
+      var note = hotels && filterNote(offers, filtered, provider);
+      if (note) notes.push(note);
       var draw = hotels
-        ? function (offer, i) { return renderHotel(offer, q, (row.applied && row.applied.chips) || [], provider, data.currency, i); }
+        ? function (offer) { return renderHotel(offer, provider, data.currency, filtered); }
         : function (offer, i) { return renderOffer(offer, q, i); };
+      var holder = section;
+      if (hotels && offers.length) {
+        holder = el("div", "stays");
+        section.appendChild(holder);
+      }
       var extra = offers.slice(FIRST_SHOWN).map(function (offer, i) {
         var card = draw(offer, i);
         card.hidden = true;
         return card;
       });
-      offers.slice(0, FIRST_SHOWN).forEach(function (offer, i) { section.appendChild(draw(offer, i)); });
-      extra.forEach(function (card) { section.appendChild(card); });
+      offers.slice(0, FIRST_SHOWN).forEach(function (offer, i) { holder.appendChild(draw(offer, i)); });
+      extra.forEach(function (card) { holder.appendChild(card); });
       if (extra.length) {
         var more = el("button", "more", "Show " + extra.length + " more");
         more.type = "button";

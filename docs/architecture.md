@@ -339,7 +339,7 @@ Three sources, one loop (`hotels.py`):
 - **Google Hotels** (MCP default): the `AtySUc` RPC on `batchexecute`, over the
   same Chrome-TLS session. Encode and parse live in `google_hotels_rpc.py`.
   Each stay carries the total-stay price text, rating (0–5), review count,
-  latitude/longitude, a Google link, and up to three `photos` from record[5][1]
+  latitude/longitude, a Google link, and the first of its `photos` from record[5][1]
   (only `lh3.googleusercontent.com` URLs; they show the property or its
   surroundings, never the priced room). Owned `place_types`, `class_label`, and
   `priced_adults` distinguish property type and the party actually priced;

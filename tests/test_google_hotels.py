@@ -195,7 +195,7 @@ class HotelsParseTests(unittest.TestCase):
         card = parse_hotels_page(_wrap_wrb(_search_payload(_hotel_record()))).cards[0]
         self.assertEqual((card.latitude, card.longitude, card.review_count), (50.1, 14.4, 10))
 
-    def test_card_keeps_the_first_three_google_photos(self) -> None:
+    def test_card_keeps_the_first_google_photo(self) -> None:
         # Live shape (London capture): record[5][1] is [[_, [url, ...]], ...].
         lh3 = "https://lh3.googleusercontent.com/grass-cs/p{}=s287-w287-h192-n-k-no-v1"
         record = _hotel_record()
@@ -213,7 +213,7 @@ class HotelsParseTests(unittest.TestCase):
         ]
         body = _wrap_wrb(_search_payload(record))
         card = parse_hotels_page(body).cards[0]
-        self.assertEqual(card.photos, (lh3.format(1), lh3.format(2), lh3.format(3)))
+        self.assertEqual(card.photos, (lh3.format(1),))
         client = _ScriptedHotelClient([SweepHttpResponse(200, body, "https://www.google.com/")] * 2)
         report = _run_search(
             (QUERY,),
