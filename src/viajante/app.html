@@ -38,9 +38,6 @@ main { display: grid; gap: 14px; min-width: 0; }
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 
-.note { display: flex; gap: 8px; align-items: baseline; color: var(--muted); font-size: 13px; padding-inline: 2px; }
-.note::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); transform: translateY(-1px); }
-
 .query { display: grid; gap: 8px; min-width: 0; }
 .query-head { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
 .route { font-weight: 600; font-size: 13px; padding: 4px 11px; border-radius: 999px; background: var(--ink); color: var(--card); }
@@ -180,7 +177,6 @@ a.stay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 <body>
 <main>
   <section id="queries"></section>
-  <p id="notice" class="note" aria-live="polite" hidden></p>
   <p id="waiting" class="waiting">Searching…</p>
 </main>
 <script>
@@ -414,19 +410,14 @@ a.stay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     return parts.filter(Boolean).join(" · ");
   }
 
-  // Cancellation on a row only from the card's own evidence. A filter the provider applied
-  // is said once for the query (filterNote), never as a per-card fact.
+  // Cancellation on a row only from the card's own evidence; a filter the provider applied
+  // is not card evidence, so a silent card under that filter shows nothing.
   function cancellation(offer, filtered) {
     if (offer.cancellation_evidence === "free") return el("span", "free", "Free cancellation");
     if (offer.cancellation_evidence === "non_refundable") return el("span", "", "Non-refundable");
     return filtered ? null : el("span", "check", "Check cancellation");
   }
 
-  function filterNote(offers, filtered, provider) {
-    var silent = offers.some(function (o) { return o.cancellation_evidence !== "free" && o.cancellation_evidence !== "non_refundable"; });
-    var where = provider ? " on " + provider.name : "";
-    return filtered && silent ? "Filtered for free cancellation" + where + ". Unmarked cards don't confirm it." : null;
-  }
 
   // Google's photo URLs end in a size suffix; ask for one sharp at the thumbnail's size.
   function thumb(offer) {
@@ -507,9 +498,7 @@ a.stay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
   function renderQueries(data) {
     var list = document.getElementById("queries");
-    var notes = [];
     var rows = data.queries || [];
-    var empties = 0;
     var hotels = data.price_basis === "total_stay";
     var provider = hotels ? HOTEL_PROVIDERS[data.provider] : null;
     list.textContent = "";
@@ -527,19 +516,12 @@ a.stay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
       }
       section.appendChild(head);
 
-      (row.page_errors || []).forEach(function (err) { if (err && err.message) notes.push(err.message); });
-      var skipped = (row.applied && row.applied.not_applied) || [];
-      if (skipped.length) notes.push("Not applied by " + (provider ? provider.name : "the provider") + ": " + skipped.join(", ").replace(/_/g, " ") + ".");
-
       if (!offers.length) {
         var text = (row.empty_reason && REASON_TEXT[row.empty_reason]) || "No offers in this query.";
         if (row.error && row.error.message) text += " " + row.error.message;
-        empties++;
         section.appendChild(el("div", "empty", text));
       }
       var filtered = ((row.applied && row.applied.chips) || []).some(function (chip) { return /^free_cancellation\b/.test(chip); });
-      var note = hotels && filterNote(offers, filtered, provider);
-      if (note) notes.push(note);
       var draw = hotels
         ? function (offer) { return renderHotel(offer, provider, data.currency, filtered); }
         : function (offer, i) { return renderOffer(offer, q, i); };
@@ -566,24 +548,17 @@ a.stay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
       }
       list.appendChild(section);
     });
-    return { notes: notes, allEmpty: rows.length > 0 && empties === rows.length };
-  }
-
-  // One quiet line: the per-query parse note when there is one, else the envelope's own note.
-  // When every query already shows its own empty box, that box says it.
-  function renderNotice(data, seen) {
-    var reason = data.empty_reason;
-    var lines = seen.allEmpty ? [] : seen.notes.length ? seen.notes.slice() : [data.completeness_note];
-    if (!seen.allEmpty) lines.push(reason && (data.empty_note || REASON_TEXT[reason]));
-    lines = lines.filter(Boolean);
-    var box = document.getElementById("notice");
-    box.textContent = lines.join(" ");
-    box.hidden = !lines.length;
+    // Coverage and filter notes stay in the result the agent reads; the view shows offers.
+    // A result with no query rows still says why in one box.
+    if (!rows.length) {
+      var reason = data.empty_reason;
+      list.appendChild(el("div", "empty", data.empty_note || (reason && REASON_TEXT[reason]) || data.completeness_note || REASON_TEXT.not_loaded));
+    }
   }
 
   function render(data) {
     document.getElementById("waiting").hidden = true;
-    renderNotice(data, renderQueries(data));
+    renderQueries(data);
   }
 
   function showWaiting(text) {
