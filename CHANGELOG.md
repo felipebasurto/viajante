@@ -9,6 +9,34 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-26
+
+### Added
+
+- `search_flights` and `search_hotels` show their results in an MCP Apps view
+  (`ui://viajante/results.html`) in clients that support it, such as Claude. Flights
+  are boarding-pass cards with one trajectory per leg, the first three offers and a
+  "Show N more" button, and the host's light or dark theme. Hotels are one list with a
+  Google photo, name, class, rating and total price. The view shows what the provider
+  returned, with no recommendation labels. Clients without MCP Apps get the same text
+  and JSON as before.
+- Google Hotels stays carry a `photos` key with the property's Google photo
+  (`lh3.googleusercontent.com` only).
+- `search_flights` asks Claude to load it up front (`anthropic/alwaysLoad`), so its
+  view renders when many tools are connected.
+- A public Google Flights page that fails the passenger occupancy check is kept in
+  the local state dir (`google-last-markup-failure.html` and a note) so the markup
+  change can be read. It never goes in the checkout and never changes the result.
+
+### Changed
+
+- Google Flights offer links use `/travel/flights/search?tfs=`, which opens the
+  query's results. The old links opened the Flights home page. `booking_token` stays
+  in the offer data but is no longer a link.
+- An unknown argument names the closest declared parameter and, on tools that take
+  routes, the route and round-trip grammar. The round-trip comma-date error names the
+  `OUT:BACK` form.
+
 ### Fixed
 
 - A throttled Explore no longer reports "no wrb.fr payload" when Google's
@@ -713,7 +741,9 @@ history up to commit 6ee0fb7.
 
 First public release.
 
-[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.5.7...develop
+[Unreleased]: https://github.com/felipebasurto/viajante/compare/v1.7.0...develop
+[1.7.0]: https://github.com/felipebasurto/viajante/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/felipebasurto/viajante/compare/v1.5.7...v1.6.0
 [1.5.7]: https://github.com/felipebasurto/viajante/compare/v1.5.6...v1.5.7
 [1.5.6]: https://github.com/felipebasurto/viajante/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/felipebasurto/viajante/compare/v1.5.4...v1.5.5

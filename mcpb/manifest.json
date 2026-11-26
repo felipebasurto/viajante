@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "viajante",
   "display_name": "Viajante",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Flight and hotel search from your own machine: Google Flights, Google Hotels and Booking evidence. No API keys.",
   "long_description": "Viajante returns provider evidence for flights and hotels: fares, dates, stops, clocks, hotel stays and re-checks of a finalist. It reads the public pages from this computer, so it needs no account or API key. Every result carries a status, so an empty or unfinished search is never reported as \"no flights\". Viajante does not convert currencies and does not recommend; the assistant weighs the evidence.",
   "author": {
