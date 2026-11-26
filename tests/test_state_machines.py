@@ -330,6 +330,44 @@ class ExploreCaptureTransitionTests(unittest.TestCase):
 
         self.assertTrue(raised.exception.timeout)
 
+    def test_empty_text_falls_back_to_body_bytes(self) -> None:
+        class _Delayed(_Response):
+            def text(self) -> str:
+                return ""
+
+            def body(self) -> bytes:
+                return b')]}\'\n\n39\n[["wrb.fr",null,null,null,null,[13]]]\n'
+
+        page = _ExplorePage([_Delayed(CATALOG, 200, _Body(""), post="req-a")])
+
+        pairs = capture_catalog(
+            _as_session(page), "https://www.google.com/travel/explore", _check_ok
+        )
+
+        self.assertIn("wrb.fr", pairs[0][1])
+        self.assertIn("[13]", pairs[0][1])
+
+    def test_empty_body_is_reread_after_settle(self) -> None:
+        class _Late(_Response):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.reads = 0
+
+            def text(self) -> str:
+                self.reads += 1
+                if self.reads == 1:
+                    return ""
+                return ')]}\'\n\n39\n[["wrb.fr",null,null,null,null,[13]]]\n'
+
+        page = _ExplorePage([_Late(CATALOG, 200, _Body(""), post="req-a")])
+
+        pairs = capture_catalog(
+            _as_session(page), "https://www.google.com/travel/explore", _check_ok
+        )
+
+        self.assertIn("wrb.fr", pairs[0][1])
+        self.assertIn("[13]", pairs[0][1])
+
     def test_a_captured_429_is_raised_through_the_check(self) -> None:
         def check(body, *, response=None, retry_after_seconds=None):
             if response is not None and response.status == 429:
