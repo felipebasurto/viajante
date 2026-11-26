@@ -9,6 +9,12 @@ history up to commit 6ee0fb7.
 
 ## [Unreleased]
 
+### Fixed
+
+- A throttled Explore no longer reports "no wrb.fr payload" when Google's
+  status-13 body arrives after the first read. It shows the normal Google-block
+  message.
+
 ## [1.6.0] - 2026-11-18
 
 ### Added

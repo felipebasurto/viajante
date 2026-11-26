@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import time
+from dataclasses import replace
 from typing import Callable
 
 from viajante.browser import BrowserSessionConfig, ChromiumSession
@@ -47,6 +48,35 @@ def explore_session(
     )
 
 
+def _catalog_response_text(response) -> str:
+    """Decoded GetExploreDestinations body.
+
+    Playwright ``response.text()`` can return an empty string if it is read
+    before the body is ready. Fall back to ``body()`` so a short RPC
+    status-13 envelope is not mistaken for a missing catalog payload.
+    """
+    body = response.text()
+    if body:
+        return body
+    raw_fn = getattr(response, "body", None)
+    if not callable(raw_fn):
+        return body or ""
+    try:
+        raw = raw_fn() or b""
+    except SearchDeadline:
+        raise
+    except Exception:
+        return body or ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, (bytes, bytearray)) and raw:
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return body or ""
+    return body or ""
+
+
 def capture_catalog(
     session: ChromiumSession, url: str, check: Check
 ) -> list[tuple[str | None, str]]:
@@ -56,16 +86,33 @@ def capture_catalog(
     provider stop ends the wait at once instead of after the full catalog timeout.
     """
     page = session.new_page()
-    captured: list[tuple[str | None, SweepHttpResponse, float | None]] = []
+    captured: list[tuple[str | None, SweepHttpResponse, float | None, object]] = []
 
     read_error: SweepTransportError | None = None
+
+    def _refresh_empty() -> None:
+        nonlocal read_error
+        for i, (post, response, retry_after, raw) in enumerate(captured):
+            if response.text:
+                continue
+            try:
+                body = _catalog_response_text(raw)
+            except SearchDeadline:
+                raise
+            except Exception as exc:
+                transport = _network_failure(exc)
+                if transport is not None:
+                    read_error = transport
+                continue
+            if body:
+                captured[i] = (post, replace(response, text=body), retry_after, raw)
 
     def _capture(response) -> None:
         nonlocal read_error
         if _EXPLORE_CATALOG_SERVICE not in response.url:
             return
         try:
-            body = response.text()
+            body = _catalog_response_text(response)
         except SearchDeadline:
             raise
         except Exception as exc:
@@ -86,6 +133,7 @@ def capture_catalog(
                 post,
                 SweepHttpResponse(response.status, body, response.url),
                 _retry_after_seconds(response),
+                response,
             )
         )
 
@@ -119,13 +167,15 @@ def capture_catalog(
             checkpoint()
             page.wait_for_timeout(250)
         checkpoint()
-        for _post, response, retry_after in captured:
+        _refresh_empty()
+        for _post, response, retry_after, _raw in captured:
             check(response.text, response=response, retry_after_seconds=retry_after)
         for elapsed in range(0, CONSENT_SETTLE_MS, 250):
             checkpoint()
             page.wait_for_timeout(min(250, CONSENT_SETTLE_MS - elapsed))
             checkpoint()
-            for _post, response, retry_after in captured:
+            _refresh_empty()
+            for _post, response, retry_after, _raw in captured:
                 check(response.text, response=response, retry_after_seconds=retry_after)
     finally:
         with contextlib.suppress(Exception):
@@ -137,7 +187,7 @@ def capture_catalog(
             "Google Explore issued no catalog request before the wait expired.",
             timeout=True,
         )
-    return [(post, response.text) for post, response, _retry_after in captured]
+    return [(post, response.text) for post, response, _retry_after, _raw in captured]
 
 
 def _network_failure(exc: BaseException) -> SweepTransportError | None:
