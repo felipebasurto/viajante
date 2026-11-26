@@ -19,6 +19,8 @@ SORT_RELEVANCE = None
 # Google drops brands/amenities/free-cancellation when this tail is missing.
 _REQUEST_META = (1, None, None, None, None, None, 13, None, 0)
 _HOTEL_ENTRY_KEY = "397419284"
+PHOTO_HOST = "https://lh3.googleusercontent.com"
+MAX_PHOTOS = 1
 NON_PROPERTY_TITLES = frozenset(
     {
         "closed",
@@ -286,6 +288,7 @@ def _record_to_card(record: list[Any]) -> Optional[RawHotelCard]:
         place_types=_place_types(record),
         class_label=_class_label(record),
         priced_adults=_priced_adults(record),
+        photos=_photos(record),
     )
 
 
@@ -331,6 +334,26 @@ def _class_label(record: list[Any]) -> Optional[str]:
     except (IndexError, KeyError, TypeError):
         return None
     return label.strip() if isinstance(label, str) and label.strip() else None
+
+
+def _photos(record: list[Any]) -> tuple[str, ...]:
+    # record[5][1] lists the property's photos as [_, [url, ...], ...]. Only Google's own
+    # image host is kept: the results view loads these, and its CSP names that one origin.
+    try:
+        entries = record[5][1]
+    except (IndexError, KeyError, TypeError):
+        return ()
+    urls: list[str] = []
+    for entry in entries if isinstance(entries, list) else ():
+        try:
+            url = entry[1][0]
+        except (IndexError, KeyError, TypeError):
+            continue
+        if isinstance(url, str) and url.startswith(PHOTO_HOST + "/") and url not in urls:
+            urls.append(url)
+        if len(urls) == MAX_PHOTOS:
+            break
+    return tuple(urls)
 
 
 def _priced_adults(record: list[Any]) -> Optional[int]:

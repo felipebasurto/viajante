@@ -1190,10 +1190,10 @@ class FlightsOrchestrationTests(unittest.TestCase):
         result = report.queries[0]
         assert isinstance(result, QuerySuccess)
         expected_query = google_flights_url(query, currency="EUR")
-        expected_offer = google_flights_url(query, currency="EUR", booking_token="tok")
+        expected_offer = expected_query
         self.assertEqual(result.google_flights_url, expected_query)
         self.assertEqual(result.offers[0].google_flights_url, expected_offer)
-        self.assertIn("booking_token=tok", result.offers[0].google_flights_url or "")
+        self.assertEqual(result.offers[0].booking_token, "tok")
         evidence = result.offers[0].evidence
         self.assertIsNotNone(evidence)
         assert evidence is not None
@@ -1202,7 +1202,7 @@ class FlightsOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence.fetch_backend, "sweep")
         self.assertEqual(evidence.query_url, expected_query)
         self.assertEqual(evidence.offer_url, expected_offer)
-        self.assertEqual(evidence.url_kind, "booking")
+        self.assertEqual(evidence.url_kind, "query")
         self.assertTrue(evidence.evidence_id.startswith("gf_"))
         payload = report.to_dict()
         self.assertEqual(payload["queries"][0]["query"]["google_flights_url"], expected_query)

@@ -57,6 +57,7 @@ CLI output, and the landing page; if a screen needs them to make sense, fix the 
 - Flags: `src/viajante/cli.py`; printed tables and exit codes: `src/viajante/cli_report.py`
 - `viajante feedback` (a prefilled GitHub issue link; no network call): `src/viajante/feedback.py`
 - Stdio / local HTTP MCP tools: `src/viajante/mcp_server.py` (descriptions, client-type overrides), `src/viajante/mcp_handlers.py` (parameters and defaults; the client schema is derived from these signatures)
+- MCP Apps results view for `search_flights` and `search_hotels` (`ui://viajante/results.html`): `src/viajante/app.html`; its wiring is in `mcp_server.py`
 - MCP result envelope: `src/viajante/envelope.py`
 - MCP input-error JSON body: `src/viajante/mcp_errors.py`
 - MCP server instructions and the `viajante://guide` text: `src/viajante/mcp_guide.py`

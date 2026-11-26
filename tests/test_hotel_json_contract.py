@@ -83,6 +83,7 @@ OFFER_KEYS = {
     "priced_adults",
     "provider_id",
     "distance_km",
+    "photos",
 }
 ERROR_KEYS = {"code", "message"}
 

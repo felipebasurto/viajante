@@ -21,7 +21,6 @@ from viajante.google_flights import (
     NoFlightsFound,
     _consent_reject_form,
     _is_consent_interstitial,
-    build_itinerary_url,
     build_search_params,
     build_search_url,
     google_flights_url,
@@ -182,30 +181,15 @@ class QueryEncodingTests(unittest.TestCase):
         self.assertEqual(params["hl"], "en")
         self.assertEqual(params["curr"], "EUR")
 
-    def test_booking_token_builds_a_google_flights_url(self) -> None:
-        url = build_itinerary_url("tok", currency="EUR")
-        parsed = parse_qs(urlparse(url).query)
-        self.assertEqual(urlparse(url).path, "/travel/flights")
-        self.assertEqual(parsed["hl"], ["en"])
-        self.assertEqual(parsed["curr"], ["EUR"])
-        self.assertEqual(parsed["booking_token"], ["tok"])
-        with self.assertRaises(ValueError):
-            build_itinerary_url("   ", currency="EUR")
-
-    def test_google_flights_url_uses_search_url_without_a_token(self) -> None:
+    def test_google_flights_url_opens_the_results_page_in_a_browser(self) -> None:
+        # A browser shows the Flights home for /travel/flights?tfs= (the sweep's fetch path)
+        # and for a lone booking_token; /travel/flights/search?tfs= opens the results.
         query = FlightQuery("MAD", "BCN", date(2026, 12, 4), max_stops=0)
         url = google_flights_url(query, currency="EUR")
-        self.assertEqual(url, GOLDEN_URL_DIRECT)
         self.assertEqual(
-            google_flights_url(query, booking_token="   ", currency="EUR"), GOLDEN_URL_DIRECT
+            url, GOLDEN_URL_DIRECT.replace("/travel/flights?", "/travel/flights/search?")
         )
-
-    def test_google_flights_url_prefers_owned_booking_token(self) -> None:
-        query = FlightQuery("JFK", "LHR", date(2026, 12, 4), max_stops=0)
-        url = google_flights_url(query, booking_token="tok", currency="EUR")
-        parsed = parse_qs(urlparse(url).query)
-        self.assertEqual(parsed["booking_token"], ["tok"])
-        self.assertNotIn("tfs", parsed)
+        self.assertNotIn("booking_token", url or "")
 
     def test_google_flights_url_encodes_multi_city_from_owned_tfs(self) -> None:
         trip = MultiCity(
@@ -215,13 +199,9 @@ class QueryEncodingTests(unittest.TestCase):
             )
         )
         url = google_flights_url(trip, currency="EUR")
-        self.assertEqual(url, build_search_url(trip, currency="EUR"))
         parsed = parse_qs(urlparse(url).query)
         self.assertEqual(parsed["tfs"], [encode_tfs(trip)])
         self.assertEqual(parsed["hl"], ["en"])
-        token_url = google_flights_url(trip, booking_token="tok", currency="EUR")
-        self.assertIn("booking_token=tok", token_url)
-        self.assertNotIn("tfs=", token_url)
 
     def test_google_flights_url_keeps_occupancy_and_currency(self) -> None:
         solo = google_flights_url(

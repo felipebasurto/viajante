@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>viajante results</title>
+<style>
+/* Evidence view for search_flights and search_hotels. Follows the host theme; airline logos and hotel photos are Google's own. */
+:root {
+  color-scheme: light dark;
+  --ink: light-dark(#18181b, #f4f4f5);
+  --muted: light-dark(#71717a, #a1a1aa);
+  --card: light-dark(#f7f7f8, #2a2a2d);
+  --stub: light-dark(#efeff1, #232326);
+  --line: light-dark(#e4e4e7, #3a3a3f);
+  --accent: light-dark(#2563eb, #6ea2ff);
+  --nonstop: light-dark(#15935c, #4ade9a);
+  --one-stop: light-dark(#c27803, #fbbf4a);
+  --two-stops: light-dark(#d9364f, #fb7c8f);
+  --unknown: var(--muted);
+  --shadow: light-dark(0 1px 2px rgb(24 24 27 / 0.05), 0 1px 2px rgb(0 0 0 / 0.3));
+  --shadow-hover: light-dark(0 6px 18px -6px rgb(24 24 27 / 0.16), 0 8px 22px -8px rgb(0 0 0 / 0.6));
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --stub-h: 32px;
+}
+* { box-sizing: border-box; }
+[hidden], #queries:empty { display: none !important; }
+html, body { margin: 0; }
+html { background: var(--host-bg, transparent); }
+body {
+  color: var(--ink);
+  font: 14px/1.4 var(--font-sans);
+  padding: 4px 4px 10px;
+  -webkit-font-smoothing: antialiased;
+}
+main { display: grid; gap: 14px; min-width: 0; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+
+.query { display: grid; gap: 8px; min-width: 0; }
+.query-head { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.route { font-weight: 600; font-size: 13px; padding: 4px 11px; border-radius: 999px; background: var(--ink); color: var(--card); }
+.query-head .count { margin-left: auto; font-size: 13px; }
+
+.card {
+  position: relative;
+  display: block;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  /* Boarding-pass notches where the stub starts. */
+  -webkit-mask: radial-gradient(circle 6px at 0 calc(100% - var(--stub-h)), #0000 97%, #000) left / 51% 100% no-repeat,
+                radial-gradient(circle 6px at 100% calc(100% - var(--stub-h)), #0000 97%, #000) right / 51% 100% no-repeat;
+          mask: radial-gradient(circle 6px at 0 calc(100% - var(--stub-h)), #0000 97%, #000) left / 51% 100% no-repeat,
+                radial-gradient(circle 6px at 100% calc(100% - var(--stub-h)), #0000 97%, #000) right / 51% 100% no-repeat;
+  transition: transform 180ms var(--ease-out), box-shadow 180ms var(--ease-out), border-color 180ms ease;
+  animation: card-in 280ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+.flight { --stops: var(--unknown); }
+.flight[data-stops="0"] { --stops: var(--nonstop); }
+.flight[data-stops="1"] { --stops: var(--one-stop); }
+.flight[data-stops="2"] { --stops: var(--two-stops); }
+@keyframes card-in { from { opacity: 0; transform: translateY(6px); } }
+@media (hover: hover) and (pointer: fine) {
+  a.card:hover { transform: translateY(-1px); box-shadow: var(--shadow-hover); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+}
+a.card:active { transform: scale(0.99); }
+a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .card { animation-name: card-fade; transition: box-shadow 180ms ease, border-color 180ms ease; }
+  a.card:hover, a.card:active { transform: none; }
+  @keyframes card-fade { from { opacity: 0; } }
+}
+
+.top { display: flex; align-items: center; gap: 10px; padding: 10px 14px 0; }
+.logo {
+  flex: none; width: 26px; height: 26px; border-radius: 7px; background: #fff;
+  border: 1px solid light-dark(#e8edf4, transparent);
+  display: grid; place-items: center; overflow: hidden;
+  font: 600 10px/1 var(--font-sans); color: #334155; letter-spacing: 0.02em;
+}
+.logo img { width: 20px; height: 20px; object-fit: contain; display: block; }
+.carrier { min-width: 0; flex: 1; display: grid; }
+.carrier > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.airline { font-weight: 600; }
+.price { font-size: 16px; font-weight: 600; color: var(--accent); letter-spacing: -0.01em; white-space: nowrap; }
+
+.flight { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 6px 14px 10px; }
+.flight + .flight { border-top: 1px solid var(--line); margin-inline: 14px; padding-inline: 0; padding-top: 10px; }
+.end { display: grid; }
+.end.arr { text-align: right; }
+.clock { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.plus { font-size: 11px; font-weight: 600; color: var(--muted); vertical-align: super; margin-left: 2px; }
+.iata { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; font-weight: 500; }
+.path { display: grid; gap: 4px; text-align: center; min-width: 0; }
+.path > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dur { font-size: 11px; color: var(--muted); }
+.track { position: relative; height: 2px; border-radius: 2px; background: var(--stops); opacity: 0.9; }
+.track::before, .track::after { content: ""; position: absolute; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--stops); transform: translate(-50%, -50%); left: 0; }
+.track::after { left: 100%; }
+.stop-dot { position: absolute; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--card); border: 2px solid var(--stops); transform: translate(-50%, -50%); }
+.stops { font-size: 11px; font-weight: 600; color: var(--stops); }
+
+.stub {
+  height: var(--stub-h);
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 14px;
+  background: var(--stub);
+  border-top: 1.5px dashed var(--line);
+  font-size: 11.5px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.field { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.field b { font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.field span { overflow: hidden; text-overflow: ellipsis; }
+.bags, .check { color: var(--one-stop); font-weight: 600; }
+.open { margin-left: auto; color: var(--accent); font-weight: 600; }
+
+.stays { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.stay {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 10px 14px 10px 10px; color: inherit; text-decoration: none;
+  transition: background-color 150ms ease-out;
+}
+.stay + .stay { border-top: 1px solid var(--line); }
+@media (hover: hover) and (pointer: fine) { a.stay:hover { background: var(--stub); } }
+a.stay:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.thumb { width: 64px; height: 48px; border-radius: 8px; overflow: hidden; background: var(--stub); display: grid; place-items: center; font-weight: 600; color: var(--muted); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.meta { font-size: 12.5px; color: var(--muted); }
+.rating { color: var(--ink); font-weight: 600; }
+.rating::before { content: "★ "; color: var(--accent); }
+.total { display: grid; text-align: right; }
+.total .muted { font-size: 11px; }
+.free { color: var(--nonstop); }
+
+.more {
+  justify-self: center;
+  font: 600 12px/1 var(--font-sans);
+  color: var(--accent);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: transform 140ms var(--ease-out), border-color 150ms ease;
+}
+@media (hover: hover) and (pointer: fine) { .more:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); } }
+.more:active { transform: scale(0.97); }
+.more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.empty, .waiting { color: var(--muted); padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+.waiting { display: grid; gap: 12px; margin: 0; }
+.waiting::after {
+  content: ""; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat var(--line);
+  background-size: 35% 100%;
+  animation: scan 1.4s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+}
+@keyframes scan { from { background-position: -60% 0; } to { background-position: 160% 0; } }
+@media (prefers-reduced-motion: reduce) { .waiting::after { animation: none; } }
+
+@media (max-width: 460px) {
+  .clock { font-size: 18px; }
+  .flight { gap: 10px; }
+  .field.cabin { display: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <section id="queries"></section>
+  <p id="waiting" class="waiting">Searching…</p>
+</main>
+<script>
+(function () {
+  "use strict";
+
+  var PROTOCOL = "2026-01-26";
+  var LOGO_BASE = "https://www.gstatic.com/flights/airline_logos/70px/";
+  var PHOTO_BASE = "https://lh3.googleusercontent.com/";
+  var FIRST_SHOWN = 3;
+  var nextId = 1;
+  var INIT_ID = nextId++;
+
+  // Rating scale per hotel provider: Google 0-5, Booking 0-10; Skiplagged states none.
+  var HOTEL_PROVIDERS = {
+    "google-hotels": { name: "Google Hotels", scale: 5 },
+    "booking.com": { name: "Booking.com", scale: 10 },
+    "skiplagged": { name: "Skiplagged", scale: null }
+  };
+  var LODGING = { entire_home: "Entire home", private_room: "Private room", hotel: "Hotel" };
+
+  // Fallback sentences when a row carries a reason and no note. Only provider_empty reads as none.
+  var REASON_TEXT = {
+    provider_empty: "The provider returned no results for this query.",
+    filtered_out: "viajante's filters removed every row the provider returned. Availability is not disproved.",
+    not_loaded: "The search did not complete. Availability is unknown."
+  };
+
+  function send(msg) { window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, msg), "*"); }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null && text !== "") node.textContent = String(text);
+    return node;
+  }
+
+  function applyHostContext(ctx) {
+    if (!ctx) return;
+    var root = document.documentElement;
+    if (ctx.theme === "light" || ctx.theme === "dark") root.style.colorScheme = ctx.theme;
+    var vars = (ctx.styles && ctx.styles.variables) || {};
+    if (vars["--font-sans"]) root.style.setProperty("--font-sans", vars["--font-sans"]);
+    if (vars["--color-background-primary"]) root.style.setProperty("--host-bg", vars["--color-background-primary"]);
+  }
+
+  function reportSize() {
+    var height = Math.ceil(document.documentElement.getBoundingClientRect().height);
+    if (height === reportSize.last) return;
+    reportSize.last = height;
+    send({ method: "ui/notifications/size-changed", params: { width: Math.ceil(window.innerWidth), height: height } });
+  }
+
+  function parseResult(params) {
+    if (!params) return null;
+    if (params.structuredContent && typeof params.structuredContent === "object") {
+      return params.structuredContent;
+    }
+    var blocks = params.content || [];
+    for (var i = 0; i < blocks.length; i++) {
+      if (blocks[i] && blocks[i].type === "text") {
+        try { return JSON.parse(blocks[i].text); } catch (e) { return null; }
+      }
+    }
+    return null;
+  }
+
+  function short(text) {
+    return String(text || "").replace(/ hr\b/g, "h").replace(/ min\b/g, "m");
+  }
+
+  function hm(minutes) {
+    var h = Math.floor(minutes / 60), m = minutes % 60;
+    return (h ? h + "h" : "") + (h && m ? " " : "") + (m ? m + "m" : "");
+  }
+
+  function day(iso) {
+    var t = Date.parse(iso + "T00:00:00Z");
+    if (isNaN(t)) return iso;
+    return new Date(t).toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  // One entry per journey the provider returned; an offer without legs is its own one leg.
+  function journeys(offer) {
+    var legs = (offer.legs || []).filter(Boolean);
+    if (!legs.length) return [{ departure: offer.departure, arrival: offer.arrival, duration: offer.duration, stops: offer.stops, stops_count: offer.stops_count, segments: [], layovers: [] }];
+    return legs.map(function (leg, i) {
+      var segs = leg.segments || [];
+      var own = i === 0 ? offer : {};
+      return {
+        departure: leg.departure || own.departure,
+        arrival: leg.arrival || own.arrival,
+        duration: leg.duration || own.duration,
+        stops: leg.stops || own.stops,
+        stops_count: segs.length ? segs.length - 1 : own.stops_count,
+        segments: segs,
+        layovers: leg.layovers || []
+      };
+    });
+  }
+
+  // Days between the first departure date and the last arrival date the provider returned.
+  function dayShift(segs) {
+    if (!segs.length) return 0;
+    var a = Date.parse(segs[0].departure_date), b = Date.parse(segs[segs.length - 1].arrival_date);
+    return isNaN(a) || isNaN(b) ? 0 : Math.round((b - a) / 86400000);
+  }
+
+  function stopsLabel(leg, segs) {
+    var lays = leg.layovers;
+    var label = leg.stops || "";
+    if (lays.length === 1 && lays[0].city) {
+      var stop = lays[0];
+      var time = typeof stop.hours === "number" ? " " + hm(Math.round(stop.hours * 60)) : "";
+      return label + " · " + stop.city + time;
+    }
+    var via = segs.slice(0, -1).map(function (s) { return s.destination; }).filter(Boolean);
+    return via.length ? label + " · " + via.join(", ") : label;
+  }
+
+  function logo(code, airline) {
+    var box = el("span", "logo");
+    box.setAttribute("aria-hidden", "true");
+    var mark = code || (airline || "").slice(0, 2).toUpperCase();
+    if (code && /^[A-Z0-9]{2}$/.test(code)) {
+      var img = document.createElement("img");
+      img.alt = "";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.onerror = function () { box.textContent = mark; };
+      img.src = LOGO_BASE + code + ".png";
+      box.appendChild(img);
+    } else {
+      box.textContent = mark;
+    }
+    return box;
+  }
+
+  function field(label, value, cls) {
+    var node = el("span", "field" + (cls ? " " + cls : ""));
+    node.appendChild(el("b", "", label));
+    node.appendChild(el("span", "num", value));
+    return node;
+  }
+
+  function openLink(event) {
+    event.preventDefault();
+    send({ id: nextId++, method: "ui/open-link", params: { url: event.currentTarget.href } });
+  }
+
+  function renderLeg(leg, dated) {
+    var segs = leg.segments;
+    var flight = el("div", "flight");
+    if (typeof leg.stops_count === "number") flight.dataset.stops = String(Math.min(leg.stops_count, 2));
+
+    var dep = el("div", "end");
+    dep.appendChild(el("span", "clock num", leg.departure));
+    dep.appendChild(el("span", "iata", segs.length ? segs[0].origin : ""));
+    flight.appendChild(dep);
+
+    var path = el("div", "path");
+    var date = dated && segs.length && segs[0].departure_date ? day(segs[0].departure_date) + " · " : "";
+    path.appendChild(el("span", "dur num", date + short(leg.duration)));
+    var track = el("div", "track");
+    var count = typeof leg.stops_count === "number" ? leg.stops_count : 0;
+    for (var i = 1; i <= count; i++) {
+      var dot = el("span", "stop-dot");
+      dot.style.left = (100 * i / (count + 1)) + "%";
+      track.appendChild(dot);
+    }
+    path.appendChild(track);
+    path.appendChild(el("span", "stops num", stopsLabel(leg, segs)));
+    flight.appendChild(path);
+
+    var arr = el("div", "end arr");
+    var clock = el("span", "clock num", leg.arrival);
+    var shift = dayShift(segs);
+    if (shift > 0) clock.appendChild(el("span", "plus", "+" + shift));
+    arr.appendChild(clock);
+    arr.appendChild(el("span", "iata", segs.length ? segs[segs.length - 1].destination : ""));
+    flight.appendChild(arr);
+    return flight;
+  }
+
+  function cardShell(url, index) {
+    var card = el(url ? "a" : "article", "card");
+    card.style.setProperty("--i", String(Math.min(index, 8)));
+    if (url) {
+      card.href = url;
+      card.target = "_blank";
+      card.rel = "noopener noreferrer";
+      card.addEventListener("click", openLink);
+    }
+    return card;
+  }
+
+  function renderOffer(offer, q, index) {
+    var url = offer.google_flights_url;
+    var card = cardShell(url, index);
+    var legs = journeys(offer);
+    var first = legs[0].segments[0];
+
+    var top = el("div", "top");
+    top.appendChild(logo(first ? first.carrier : null, offer.airline));
+    var carrier = el("div", "carrier");
+    carrier.appendChild(el("span", "airline", offer.airline || "Airline not returned"));
+    top.appendChild(carrier);
+    top.appendChild(el("span", "price num", offer.price_text));
+    card.appendChild(top);
+
+    legs.forEach(function (leg) { card.appendChild(renderLeg(leg, legs.length > 1)); });
+
+    var stub = el("div", "stub");
+    if (offer.flight_numbers && offer.flight_numbers.length) stub.appendChild(field("Flight", offer.flight_numbers.join(" · ")));
+    if (q.cabin) stub.appendChild(field("Class", q.cabin.replace(/_/g, " ").replace(/^./, function (c) { return c.toUpperCase(); }), "cabin"));
+    if (offer.needs_bag_verify) stub.appendChild(el("span", "bags", "Check bags"));
+    if (url) stub.appendChild(el("span", "open", "Google Flights ↗"));
+    card.appendChild(stub);
+    return card;
+  }
+
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
+  // Lodging label from owned evidence only: the provider's class label, else the parsed kind.
+  function lodgingLabel(offer) {
+    var parts = [offer.class_label || LODGING[offer.lodging_kind]];
+    if (offer.lodging_kind === "entire_home") {
+      if (offer.sleeps) parts.push("Sleeps " + offer.sleeps);
+      if (offer.bedrooms) parts.push(plural(offer.bedrooms, "bedroom"));
+    }
+    return parts.filter(Boolean).join(" · ");
+  }
+
+  // Cancellation on a row only from the card's own evidence; a filter the provider applied
+  // is not card evidence, so a silent card under that filter shows nothing.
+  function cancellation(offer, filtered) {
+    if (offer.cancellation_evidence === "free") return el("span", "free", "Free cancellation");
+    if (offer.cancellation_evidence === "non_refundable") return el("span", "", "Non-refundable");
+    return filtered ? null : el("span", "check", "Check cancellation");
+  }
+
+
+  // Google's photo URLs end in a size suffix; ask for one sharp at the thumbnail's size.
+  function thumb(offer) {
+    var box = el("span", "thumb");
+    box.setAttribute("aria-hidden", "true");
+    var initial = (offer.title || "?").trim().charAt(0).toUpperCase();
+    var url = (offer.photos || []).filter(function (u) { return String(u).indexOf(PHOTO_BASE) === 0; })[0];
+    if (!url) {
+      box.textContent = initial;
+      return box;
+    }
+    var img = document.createElement("img");
+    img.alt = "";
+    img.decoding = "async";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.onerror = function () { box.textContent = initial; };
+    img.src = url.replace(/=[^=\/]*$/, "") + "=w192-h144-n-k-no";
+    box.appendChild(img);
+    return box;
+  }
+
+  function renderHotel(offer, provider, currency, filtered) {
+    var row = el(offer.link ? "a" : "div", "stay");
+    if (offer.link) {
+      row.href = offer.link;
+      row.target = "_blank";
+      row.rel = "noopener noreferrer";
+      row.addEventListener("click", openLink);
+    }
+    row.appendChild(thumb(offer));
+
+    var name = el("div", "carrier");
+    name.appendChild(el("span", "airline", offer.title));
+    var meta = el("span", "meta num");
+    var parts = [lodgingLabel(offer)];
+    if (offer.rating) {
+      var rating = el("span", "rating", offer.rating + (provider && provider.scale ? "/" + provider.scale : ""));
+      var reviews = offer.review_count ? " (" + offer.review_count.toLocaleString("en") + ")" : "";
+      parts.push([rating, reviews]);
+    }
+    if (typeof offer.distance_km === "number") parts.push(offer.distance_km.toFixed(1) + " km");
+    parts.push(cancellation(offer, filtered));
+    parts.filter(Boolean).forEach(function (part, i) {
+      if (i) meta.appendChild(document.createTextNode(" · "));
+      [].concat(part).forEach(function (bit) {
+        meta.appendChild(typeof bit === "string" ? document.createTextNode(bit) : bit);
+      });
+    });
+    name.appendChild(meta);
+    row.appendChild(name);
+
+    var total = el("div", "total");
+    var price = typeof offer.total_price === "number" && currency
+      ? offer.total_price.toLocaleString("en", { maximumFractionDigits: 2 }) + " " + currency
+      : offer.total_price_text;
+    total.appendChild(el("span", "price num", price));
+    total.appendChild(el("span", "muted", "total"));
+    row.appendChild(total);
+    return row;
+  }
+
+  function flightHead(q) {
+    var stops = Array.isArray(q.legs) && q.legs.length
+      ? [q.legs[0].origin].concat(q.legs.map(function (leg) { return leg.destination; }))
+      : [q.origin, q.destination];
+    if (q.return_date) stops = [q.origin, q.destination, q.origin];
+    var dates = [q.departure_date && day(q.departure_date), q.return_date && day(q.return_date)].filter(Boolean).join(" – ");
+    return [stops.filter(Boolean).join(" → ") || "Query", dates];
+  }
+
+  function hotelHead(row, q) {
+    var party = [q.check_in && q.check_out ? day(q.check_in) + " – " + day(q.check_out) : "",
+      q.nights ? plural(q.nights, "night") : "", q.adults ? plural(q.adults, "adult") : "",
+      q.rooms > 1 ? plural(q.rooms, "room") : ""];
+    return [row.resolved_place || q.location || "Query", party.filter(Boolean).join(" · ")];
+  }
+
+  function renderQueries(data) {
+    var list = document.getElementById("queries");
+    var rows = data.queries || [];
+    var hotels = data.price_basis === "total_stay";
+    var provider = hotels ? HOTEL_PROVIDERS[data.provider] : null;
+    list.textContent = "";
+    rows.forEach(function (row) {
+      var section = el("section", "query");
+      var q = row.query || {};
+      var offers = row.offers || [];
+
+      var head = el("header", "query-head");
+      var title = hotels ? hotelHead(row, q) : flightHead(q);
+      head.appendChild(el("span", "route", title[0]));
+      head.appendChild(el("span", "muted num", title[1]));
+      if (offers.length && typeof row.raw_count === "number" && row.raw_count > offers.length) {
+        head.appendChild(el("span", "muted count num", offers.length + " of " + row.raw_count));
+      }
+      section.appendChild(head);
+
+      if (!offers.length) {
+        var text = (row.empty_reason && REASON_TEXT[row.empty_reason]) || "No offers in this query.";
+        if (row.error && row.error.message) text += " " + row.error.message;
+        section.appendChild(el("div", "empty", text));
+      }
+      var filtered = ((row.applied && row.applied.chips) || []).some(function (chip) { return /^free_cancellation\b/.test(chip); });
+      var draw = hotels
+        ? function (offer) { return renderHotel(offer, provider, data.currency, filtered); }
+        : function (offer, i) { return renderOffer(offer, q, i); };
+      var holder = section;
+      if (hotels && offers.length) {
+        holder = el("div", "stays");
+        section.appendChild(holder);
+      }
+      var extra = offers.slice(FIRST_SHOWN).map(function (offer, i) {
+        var card = draw(offer, i);
+        card.hidden = true;
+        return card;
+      });
+      offers.slice(0, FIRST_SHOWN).forEach(function (offer, i) { holder.appendChild(draw(offer, i)); });
+      extra.forEach(function (card) { holder.appendChild(card); });
+      if (extra.length) {
+        var more = el("button", "more", "Show " + extra.length + " more");
+        more.type = "button";
+        more.addEventListener("click", function () {
+          extra.forEach(function (card) { card.hidden = false; });
+          more.remove();
+        });
+        section.appendChild(more);
+      }
+      list.appendChild(section);
+    });
+    // Coverage and filter notes stay in the result the agent reads; the view shows offers.
+    // A result with no query rows still says why in one box.
+    if (!rows.length) {
+      var reason = data.empty_reason;
+      list.appendChild(el("div", "empty", data.empty_note || (reason && REASON_TEXT[reason]) || data.completeness_note || REASON_TEXT.not_loaded));
+    }
+  }
+
+  function render(data) {
+    document.getElementById("waiting").hidden = true;
+    renderQueries(data);
+  }
+
+  function showWaiting(text) {
+    var waiting = document.getElementById("waiting");
+    waiting.textContent = text;
+    waiting.hidden = false;
+  }
+
+  // MCP Apps handshake: ui/initialize request, then ui/notifications/initialized.
+  // Only the host window may drive the view.
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent) return;
+    var msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id === INIT_ID && msg.result) {
+      applyHostContext(msg.result.hostContext);
+      send({ method: "ui/notifications/initialized", params: {} });
+      return;
+    }
+    if (msg.method === "ui/notifications/host-context-changed") {
+      applyHostContext(msg.params);
+    } else if (msg.method === "ui/notifications/tool-input") {
+      var args = (msg.params && msg.params.arguments) || {};
+      if (document.getElementById("queries").childElementCount === 0) {
+        var stays = args.stays || (args.location ? [args] : []);
+        var pretty = args.routes
+          ? [].concat(args.routes).map(function (spec) {
+              var m = /^([A-Z]{3})-([A-Z]{3}):(\d{4}-\d{2}-\d{2})/.exec(String(spec));
+              return m ? m[1] + " → " + m[2] + ", " + day(m[3]) : String(spec);
+            })
+          : [].concat(stays).map(function (s) { return "hotels in " + s.location + (s.check_in ? ", " + day(s.check_in) : ""); });
+        if (pretty.length) showWaiting("Searching " + pretty.join(" · ") + "…");
+      }
+    } else if (msg.method === "ui/notifications/tool-cancelled") {
+      showWaiting("Search cancelled.");
+    } else if (msg.method === "ui/notifications/tool-result") {
+      var data = parseResult(msg.params);
+      if (data) render(data);
+    }
+  });
+
+  new ResizeObserver(reportSize).observe(document.documentElement);
+
+  send({
+    id: INIT_ID,
+    method: "ui/initialize",
+    params: {
+      protocolVersion: PROTOCOL,
+      appInfo: { name: "viajante results", version: "1" },
+      appCapabilities: {}
+    }
+  });
+})();
+</script>
+</body>
+</html>

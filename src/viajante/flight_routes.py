@@ -475,7 +475,9 @@ def _parse_round_trip_plan(
         raise ValueError(f"--trip rt expects exactly one {RT_GRAMMAR}")
     spec = specs[0]
     if "," in spec:
-        raise ValueError("--trip rt does not accept comma-separated dates")
+        raise ValueError(
+            f"--trip rt does not accept comma-separated dates; give one {RT_GRAMMAR} route"
+        )
     origin, destination, dates_part = _split_route(spec, grammar=RT_GRAMMAR)
     rt_match = _RT_DATES.fullmatch(dates_part)
     if rt_match is None:

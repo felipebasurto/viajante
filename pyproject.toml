@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viajante"
-version = "1.6.0"
+version = "1.7.0"
 description = "Flight and hotel search for the terminal, Python, and AI assistants."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,7 +35,7 @@ viajante-mcp = "viajante.mcp_server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-viajante = ["py.typed", "iata_rows.marshal", "THIRD_PARTY_NOTICES"]
+viajante = ["py.typed", "iata_rows.marshal", "THIRD_PARTY_NOTICES", "app.html"]
 
 [tool.ruff]
 line-length = 100

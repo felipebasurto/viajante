@@ -74,6 +74,7 @@ from viajante.ratelimit import (
     rate_limit_status,
     recorded_expiry,
 )
+from viajante.storage import default_state_dir, write_text_atomic
 from viajante.sweep_config import get_sweep_config
 from viajante.tfs import CABIN_SEAT, encode_explore_tfs, encode_tfs_selected_outbound
 
@@ -431,6 +432,25 @@ def _verify_provider_echo(labels: set[str | None], provider: ProviderShop) -> No
         )
 
 
+MARKUP_FAILURE_HTML = "google-last-markup-failure.html"
+MARKUP_FAILURE_NOTE = "google-last-markup-failure.txt"
+
+
+def keep_markup_failure(html: str, check: str) -> None:
+    """Keep the page that failed a markup check, for diagnosis, in the local state dir only.
+
+    The page is Google's own results markup. It stays in the state dir, never in the checkout.
+    A write error never changes the search result.
+    """
+    try:
+        state = default_state_dir()
+        state.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(html, state / MARKUP_FAILURE_HTML)
+        write_text_atomic(f"check: {check}\n", state / MARKUP_FAILURE_NOTE)
+    except OSError:
+        return
+
+
 class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
     """Read server-rendered ds:1 data; complete RTs with owned outbound selections."""
 
@@ -610,6 +630,7 @@ class PublicGoogleFlightsHttpSource(GoogleFlightsHttpSource):
                 live = node.css_first('[aria-live="polite"]')
                 echoed = None if live is None else live.text(strip=True)
             if echoed is None or str(echoed).strip() != str(expected):
+                keep_markup_failure(html, f"occupancy echo: {label}")
                 raise GoogleFlightsMarkupError(
                     "Public page did not echo the requested passenger occupancy."
                 )

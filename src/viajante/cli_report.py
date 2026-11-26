@@ -333,14 +333,11 @@ def _google_flights_url_for(
     *,
     currency: str,
     country: Optional[str] = None,
-    booking_token: Optional[str] = None,
     stored: Optional[str] = None,
 ) -> Optional[str]:
     if stored:
         return stored
-    return google_flights_url(
-        query, currency=currency, country=country, booking_token=booking_token
-    )
+    return google_flights_url(query, currency=currency, country=country)
 
 
 def _print_nearby_dates(grid: NearbyDates, currency: str) -> None:
@@ -420,20 +417,10 @@ def _print_report(report, *, sort: FlightSort = "ranked") -> None:
             if not result.offers:
                 print("  (no eligible offers)")
                 _print_google_flights_url(query_url, indent="  ")
-            print_per_offer = any(offer.booking_token for offer in result.offers)
             for offer in result.offers:
                 print(_format_offer_row(offer, currency))
                 _print_offer_legs(offer, result.query)
-                if print_per_offer:
-                    _print_google_flights_url(
-                        _google_flights_url_for(
-                            result.query,
-                            currency=currency,
-                            booking_token=offer.booking_token,
-                            stored=offer.google_flights_url,
-                        )
-                    )
-            if result.offers and not print_per_offer:
+            if result.offers:
                 _print_google_flights_url(query_url, indent="  ")
             if result.stops_compare is not None:
                 print(format_stops_compare(result.stops_compare, currency))

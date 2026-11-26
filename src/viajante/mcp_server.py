@@ -475,6 +475,21 @@ def _run_options(*, http: bool, host: str, port: int) -> dict[str, object]:
     return options
 
 
+# MCP Apps view for search_flights and search_hotels. The tool result stays the same text and
+# JSON envelope; a host that renders Apps shows this page, and every other client ignores it.
+APP_URI = "ui://viajante/results.html"
+APP_MIME_TYPE = "text/html;profile=mcp-app"
+# The view's only external loads: Google Flights' airline logos (by IATA carrier code) and
+# the hotel photos Google Hotels returned.
+APP_IMAGE_ORIGINS = ["https://www.gstatic.com", "https://lh3.googleusercontent.com"]
+
+
+def _app_html() -> str:
+    from importlib.resources import files
+
+    return files("viajante").joinpath("app.html").read_text(encoding="utf-8")
+
+
 def build_server():
     global _ROOM_RATES, _ENV_DEADLINE, _DeadlineSeconds
     from mcp.server.mcpserver import MCPServer
@@ -540,7 +555,7 @@ def build_server():
             unknown = sorted(set(arguments or {}) - set(declared)) if declared is not None else []
             if unknown:
                 raise ValueError(
-                    _TOOL_ERROR_PREFIX.format(name=name) + unknown_arguments_body(unknown)
+                    _TOOL_ERROR_PREFIX.format(name=name) + unknown_arguments_body(unknown, declared)
                 )
             return await super().call_tool(name, arguments, context)
 
@@ -578,6 +593,7 @@ def build_server():
         writes: bool = False,
         returns: type = ToolEnvelope,
         search: Optional[Callable[[Mapping[str, object]], bool]] = None,
+        ui_resource: Optional[str] = None,
     ):
         # Tools only read unless `writes`; openWorldHint is True only when the tool asks a
         # provider. A writing tool is neither read-only nor idempotent (it appends), but
@@ -590,6 +606,10 @@ def build_server():
                 idempotentHint=not writes,
                 openWorldHint=network,
             ),
+            # A tool Claude loads later through tool search shows raw JSON, never its view.
+            meta={"ui": {"resourceUri": ui_resource}, "anthropic/alwaysLoad": True}
+            if ui_resource
+            else None,
         )
 
         def decorate(stub):
@@ -637,6 +657,18 @@ def build_server():
         return decorate
 
     @server.resource(
+        APP_URI,
+        name="results-app",
+        title="viajante results",
+        description="Read-only view of a search_flights or search_hotels result: envelope, "
+        "query rows and offers.",
+        mime_type=APP_MIME_TYPE,
+        meta={"ui": {"csp": {"resourceDomains": APP_IMAGE_ORIGINS}, "prefersBorder": False}},
+    )
+    def app_resource() -> str:
+        return _app_html()
+
+    @server.resource(
         "viajante://guide",
         name="guide",
         title="viajante operational guide",
@@ -656,16 +688,17 @@ def build_server():
         """
         return stamp_local(dict(runtime_info()))
 
-    @tool("Search flights", search_flights_tool, network=True)
+    @tool("Search flights", search_flights_tool, network=True, ui_resource=APP_URI)
     def search_flights():
         """Google Flights search for named routes and dates. Each routes entry is
-        ORIGIN-DEST:YYYY-MM-DD. Use search_dates for the cheapest week and search_flex for
-        +/-N days. fetch=detail needs the browser extra and Chromium. Currency is currency, or
-        inferred from a named origin's owned country; if unproven, ask. Viajante does not
-        convert. Do not invent a bag fee. Cabin bags are carry_on (a total for the whole
-        party); checked bags is refused. max_stops is 0, 1 or 2. Metro codes (LON, NYC)
-        expand on one-way and rt routes and the result names how many Google requests that is.
-        One-way searches send clock bounds, max_duration,
+        ORIGIN-DEST:YYYY-MM-DD. A round trip is trip rt with one ORIGIN-DEST:OUT:BACK entry
+        (without trip rt that entry is two one-ways). Use search_dates for the cheapest week
+        and search_flex for +/-N days. fetch=detail needs the browser extra and Chromium.
+        Currency is currency, or inferred from a named origin's owned country; if unproven,
+        ask. Viajante does not convert. Do not invent a bag fee. Cabin bags are carry_on (a
+        total for the whole party); checked bags is refused. max_stops is 0, 1 or 2.
+        Metro codes (LON, NYC) expand on one-way and rt routes and the result names how many
+        Google requests that is. One-way searches send clock bounds, max_duration,
         max_layover, price_cap, less_emissions and hide_separate_tickets to the page, and check
         each one locally. exclude_basic_economy is refused. nearby_days (default 0, off)
         adds a ±N cheapest-fare grid on that search; round trips shift both dates and
@@ -736,7 +769,7 @@ def build_server():
         for the month.
         """
 
-    @tool("Search hotels", search_hotels_tool, network=True)
+    @tool("Search hotels", search_hotels_tool, network=True, ui_resource=APP_URI)
     def search_hotels():
         """Hotel search. Quotes are total-stay prices, not per person. Currency is required (no
         origin airport), except source skiplagged, whose quotes are USD. Quotes come back in
